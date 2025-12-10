@@ -8,14 +8,18 @@ import LogPanel from '@/components/panels/LogPanel.vue'
 import RightPanel from '@/components/panels/RightPanel.vue'
 import ParetoPanel from '@/components/panels/ParetoPanel.vue'
 import ImportGisDialog from '@/components/dialogs/ImportGisDialog.vue'
-import { useAppStore } from '@/stores'
+import { useAppStore, useRouteStore } from '@/stores'
 
 const appStore = useAppStore()
+const routeStore = useRouteStore()
 const selectedExtent = ref<[number, number, number, number] | undefined>()
 const showImportGisDialog = ref(false)
 
 // 从 store 获取面板显示状态
 const panelVisibility = computed(() => appStore.panelVisibility)
+
+// 是否有 Pareto 路径数据
+const hasParetoRoutes = computed(() => routeStore.paretoRoutes.length > 0)
 
 // ParetoPanel 折叠状态
 const paretoPanelCollapsed = ref(false)
@@ -47,6 +51,7 @@ const handleSelectRoute = (routeId: string) => {
         
         <!-- Pareto 路径列表面板 (地图右上角浮动) -->
         <ParetoPanel 
+          v-if="hasParetoRoutes"
           v-model:collapsed="paretoPanelCollapsed"
           @select-route="handleSelectRoute"
         />

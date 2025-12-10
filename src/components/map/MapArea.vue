@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { useMapStore, useLayerStore, useAppStore } from '@/stores'
+import { useMapStore, useLayerStore, useAppStore, useRouteStore } from '@/stores'
 import { Button, Tooltip } from '@/components/ui'
 import { 
   MousePointer, Move, Pencil, Plus, Trash2, Square, Edit3,
@@ -20,7 +20,9 @@ import OSM from 'ol/source/OSM'
 import { DragBox } from 'ol/interaction'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
-import { Style, Stroke, Fill, Icon } from 'ol/style'
+import LineString from 'ol/geom/LineString'
+import Circle from 'ol/geom/Circle'
+import { Style, Stroke, Fill, Icon, Circle as CircleStyle, Text } from 'ol/style'
 import Heatmap from 'ol/layer/Heatmap'
 import 'ol/ol.css'
 
@@ -33,6 +35,7 @@ import earthquakeIconUrl from '@/assets/earthquake.svg'
 const mapStore = useMapStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
+const routeStore = useRouteStore()
 
 const emit = defineEmits<{
   (e: 'area-selected', extent: [number, number, number, number]): void
@@ -41,6 +44,7 @@ const emit = defineEmits<{
 const mapContainer = ref<HTMLElement | null>(null)
 const loading = ref(true)
 const coordinates = ref({ lon: 0, lat: 0 })
+const isPlanning = ref(false)
 
 let map: Map | null = null
 let dragBox: DragBox | null = null
@@ -51,6 +55,8 @@ let earthquakeIconLayer: WebGLPointsLayer<VectorSource> | null = null
 let earthquakeHeatmapLayer: Heatmap | null = null
 let volcanoDataLoaded = false
 let earthquakeDataLoaded = false
+let routeLayer: VectorLayer<VectorSource> | null = null
+let routeSource: VectorSource | null = null
 
 const toolModes = [
   { value: 'select', label: '选择', icon: MousePointer },
@@ -384,6 +390,137 @@ const initMap = () => {
   appStore.addLog('INFO', '地图初始化完成')
 }
 
+// 路径颜色配置
+const routeColors = ['#3b82f6', '#10b981', '#f59e0b'] // 蓝、绿、橙
+
+// 绑制 Pareto 路径到地图
+const drawParetoRoutes = () => {
+  if (!map) return
+  
+  // 如果图层已存在，先清除
+  if (routeSource) {
+    routeSource.clear()
+  } else {
+    // 创建路径图层
+    routeSource = new VectorSource()
+    routeLayer = new VectorLayer({
+      source: routeSource,
+      zIndex: 200,
+    })
+    map.addLayer(routeLayer)
+  }
+  
+  const routes = routeStore.paretoRoutes
+  
+  routes.forEach((route, index) => {
+    const color = routeColors[index % routeColors.length]
+    const isSelected = routeStore.selectedRoute?.id === route.id
+    
+    // 提取路径坐标
+    const coords = route.points.map(p => p.coordinates)
+    
+    // 创建路径线
+    const lineFeature = new Feature({
+      geometry: new LineString(coords),
+      routeId: route.id,
+      routeName: route.name,
+    })
+    
+    lineFeature.setStyle(new Style({
+      stroke: new Stroke({
+        color: color,
+        width: isSelected ? 5 : 3,
+        lineDash: isSelected ? undefined : [8, 4],
+      }),
+    }))
+    
+    routeSource!.addFeature(lineFeature)
+    
+    // 添加路径点
+    route.points.forEach((point, pointIndex) => {
+      const pointFeature = new Feature({
+        geometry: new Point(point.coordinates),
+        routeId: route.id,
+        pointType: point.type,
+        pointName: point.name,
+      })
+      
+      // 根据点类型设置样式
+      let pointColor = color
+      let radius = 6
+      if (point.type === 'landing') {
+        radius = 10
+      } else if (point.type === 'repeater') {
+        radius = 8
+      }
+      
+      pointFeature.setStyle(new Style({
+        image: new CircleStyle({
+          radius: radius,
+          fill: new Fill({ color: pointColor }),
+          stroke: new Stroke({ color: '#fff', width: 2 }),
+        }),
+        text: point.name ? new Text({
+          text: point.name,
+          offsetY: -18,
+          font: '12px sans-serif',
+          fill: new Fill({ color: '#333' }),
+          stroke: new Stroke({ color: '#fff', width: 3 }),
+        }) : undefined,
+      }))
+      
+      routeSource!.addFeature(pointFeature)
+    })
+  })
+  
+  // 缩放到路径范围
+  if (routes.length > 0 && routeSource.getFeatures().length > 0) {
+    const extent = routeSource.getExtent()
+    map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
+  }
+}
+
+// 监听选中路径变化，更新样式
+watch(() => routeStore.selectedRoute, () => {
+  if (routeSource && routeStore.paretoRoutes.length > 0) {
+    drawParetoRoutes()
+  }
+})
+
+// 清除地图上的路径
+const clearRoutes = () => {
+  if (routeSource) {
+    routeSource.clear()
+  }
+}
+
+// 停止规划
+const handleStopPlanning = () => {
+  // 清除地图上的路径
+  clearRoutes()
+  
+  // 清除 store 中的路径数据
+  routeStore.clearParetoRoutes()
+  
+  // 关闭 Pareto 分析面板
+  appStore.setPanelVisible('paretoAnalysisPanel', false)
+  
+  // 更新状态
+  isPlanning.value = false
+  
+  appStore.showNotification({ type: 'info', message: '已停止规划，路径已清除' })
+  appStore.addLog('INFO', '停止规划，清除路径数据')
+}
+
+// 切换规划状态
+const togglePlanning = () => {
+  if (isPlanning.value) {
+    handleStopPlanning()
+  } else {
+    handleRunPlanning()
+  }
+}
+
 const handleRunPlanning = () => {
   let hasHeatmapData = false
   const enabledLayers: string[] = []
@@ -403,11 +540,22 @@ const handleRunPlanning = () => {
     enabledLayers.push('地震')
   }
 
+  // 生成三条 Pareto 路径并显示分析面板
+  routeStore.generateMockParetoRoutes()
+  appStore.setPanelVisible('paretoAnalysisPanel', true)
+  
+  // 在地图上绘制路径
+  drawParetoRoutes()
+  
+  // 更新状态
+  isPlanning.value = true
+
   if (hasHeatmapData) {
-    appStore.showNotification({ type: 'success', message: `规划运行完成，已生成 ${enabledLayers.join('、')} 热力图` })
-    appStore.addLog('INFO', `规划运行完成: ${enabledLayers.join(', ')}`)
+    appStore.showNotification({ type: 'success', message: `规划运行完成，已生成 ${enabledLayers.join('、')} 热力图和 3 条 Pareto 路径` })
+    appStore.addLog('INFO', `规划运行完成: ${enabledLayers.join(', ')}，生成 3 条 Pareto 路径`)
   } else {
-    appStore.showNotification({ type: 'warning', message: '请先勾选要分析的图层（如火山区域、地震活动）' })
+    appStore.showNotification({ type: 'success', message: '规划运行完成，已生成 3 条 Pareto 最优路径' })
+    appStore.addLog('INFO', '规划运行完成，生成 3 条 Pareto 路径')
   }
 }
 
@@ -480,14 +628,15 @@ onUnmounted(() => {
       </div>
 
       <div class="flex items-center gap-2">
-        <Tooltip content="运行规划">
-          <Button size="sm" @click="handleRunPlanning">
-            <Play class="w-4 h-4 mr-1" /> 运行规划
-          </Button>
-        </Tooltip>
-        <Tooltip content="停止">
-          <Button variant="destructive" size="sm" @click="handleAction('停止规划')">
-            <Pause class="w-4 h-4 mr-1" /> 停止
+        <Tooltip :content="isPlanning ? '停止规划' : '运行规划'">
+          <Button 
+            :variant="isPlanning ? 'destructive' : 'default'" 
+            size="sm" 
+            @click="togglePlanning"
+          >
+            <Pause v-if="isPlanning" class="w-4 h-4 mr-1" />
+            <Play v-else class="w-4 h-4 mr-1" />
+            {{ isPlanning ? '停止' : '运行规划' }}
           </Button>
         </Tooltip>
         <Tooltip content="导出RPL">
