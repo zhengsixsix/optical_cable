@@ -5,7 +5,7 @@ import { createLayerRepository } from '@/repositories'
 
 export const useLayerStore = defineStore('layer', () => {
   const repository = createLayerRepository()
-  
+
   // 状态
   const layers = ref<LayerConfig[]>([
     { id: 'volcano', name: '火山区域', type: 'both', visible: false, loaded: false, loading: false },
@@ -14,6 +14,7 @@ export const useLayerStore = defineStore('layer', () => {
     { id: 'slope', name: '海洋坡度', type: 'heatmap', visible: false, loaded: false, loading: false },
     { id: 'fishing', name: '海洋渔区分布', type: 'point', visible: false, loaded: false, loading: false },
     { id: 'shipping', name: '航道分布', type: 'vector', visible: false, loaded: false, loading: false },
+    { id: 'coldCoral', name: '冷水珊瑚', type: 'vector', visible: false, loaded: false, loading: false },
   ])
 
   // Getters
@@ -86,10 +87,10 @@ export const useLayerStore = defineStore('layer', () => {
   async function loadLayer(id: string) {
     const layer = layers.value.find(l => l.id === id)
     if (!layer) return
-    
+
     layer.loading = true
     layer.error = false
-    
+
     try {
       await new Promise(resolve => setTimeout(resolve, 1000))
       layer.loaded = true

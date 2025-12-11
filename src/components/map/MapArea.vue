@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useMapStore, useLayerStore, useAppStore, useRouteStore } from '@/stores'
 import { Button, Tooltip } from '@/components/ui'
-import { 
+import {
   MousePointer, Move, Pencil, Plus, Trash2, Square, Edit3,
   Play, Pause, Download, Loader2
 } from 'lucide-vue-next'
@@ -27,6 +27,8 @@ import Heatmap from 'ol/layer/Heatmap'
 import 'ol/ol.css'
 
 import { loadVolcanoData, loadEarthquakeData } from '@/utils/dataLoader'
+import { useShpLoader } from '@/services/ShpLoader'
+import { createColdCoralLayers } from '@/utils/layerFactory'
 
 // 图标资源
 import volcanoIconUrl from '@/assets/volcano.svg'
@@ -55,6 +57,9 @@ let earthquakeIconLayer: WebGLPointsLayer<VectorSource> | null = null
 let earthquakeHeatmapLayer: Heatmap | null = null
 let volcanoDataLoaded = false
 let earthquakeDataLoaded = false
+
+let coldCoralLayers: (VectorLayer<VectorSource> | WebGLPointsLayer<VectorSource>)[] = []
+let coldCoralDataLoaded = false
 let routeLayer: VectorLayer<VectorSource> | null = null
 let routeSource: VectorSource | null = null
 
@@ -139,7 +144,7 @@ const initMap = () => {
       if (options.extent) {
         map?.getView().fit(options.extent, { padding: [20, 20, 20, 20] })
       }
-    }).catch(() => {})
+    }).catch(() => { })
   }
 
   map.on('pointermove', (evt) => {
@@ -380,6 +385,108 @@ const initMap = () => {
     { immediate: false }
   )
 
+  // 加载并渲染冷水珊瑚数据
+  const loadAndRenderColdCoral = async () => {
+    if (!map || coldCoralDataLoaded) return
+
+    layerStore.setLayerLoading('coldCoral', true)
+    const shpLoader = useShpLoader()
+
+    try {
+      console.log('开始加载冷水珊瑚 SHP 数据...')
+      // 加载 zip 文件
+      const geojsonData = await shpLoader.load('/data/海草.zip')
+
+      console.log('原始 GeoJSON 数据:', geojsonData)
+      if (Array.isArray(geojsonData)) {
+        console.log(`检测到 ${geojsonData.length} 个图层`)
+        geojsonData.forEach((g, i) => console.log(`图层 ${i} 要素数量:`, g.features?.length))
+      } else {
+        console.log('检测到单图层, 要素数量:', geojsonData.features?.length)
+      }
+
+      // 解析为 Features
+      const features = shpLoader.parseFeatures(geojsonData)
+      console.log(`解析完成，共 ${features.length} 个要素`)
+
+      if (features.length === 0) {
+        layerStore.setLayerLoading('coldCoral', false)
+        return
+      }
+
+      // 使用工厂方法创建图层
+      const layers = createColdCoralLayers(features)
+
+      layers.forEach((layer: any) => {
+        map!.addLayer(layer)
+        // 类型断言以适配数组类型
+        coldCoralLayers.push(layer)
+      })
+
+      if (layers.length === 0) {
+        layerStore.setLayerLoading('coldCoral', false)
+        return
+      }
+
+      coldCoralDataLoaded = true
+      layerStore.setLayerLoaded('coldCoral', true)
+
+      appStore.showNotification({ type: 'success', message: `已加载冷水珊瑚数据，共 ${layers.length} 个图层` })
+      appStore.addLog('INFO', `冷水珊瑚数据加载完成`)
+
+      // 计算所有要素的范围并缩放 (恢复全球视图)
+      // 获取所有图层的源并计算总范围
+      let totalExtent: number[] | null = null
+
+      layers.forEach((layer: any) => {
+        const source = layer.getSource()
+        if (source && typeof source.getExtent === 'function') {
+          const extent = source.getExtent()
+          if (!totalExtent) {
+            totalExtent = extent
+          } else {
+            // 扩展总范围
+            import('ol/extent').then(({ extend }) => {
+              extend(totalExtent!, extent)
+            })
+          }
+        }
+      })
+
+      if (totalExtent) {
+        console.log('数据总范围:', totalExtent)
+        map.getView().fit(totalExtent, {
+          padding: [50, 50, 50, 50],
+          duration: 1000,
+          maxZoom: 10
+        })
+      }
+
+    } catch (error) {
+      console.error('加载冷水珊瑚数据失败:', error)
+      layerStore.setLayerLoading('coldCoral', false)
+      appStore.showNotification({ type: 'error', message: '加载冷水珊瑚数据失败' })
+    }
+  }
+
+  const setColdCoralVisible = (visible: boolean) => {
+    coldCoralLayers.forEach(layer => layer.setVisible(visible))
+  }
+
+  // 监听冷水珊瑚图层可见性
+  watch(
+    () => layerStore.layers.find(l => l.id === 'coldCoral')?.visible,
+    async (visible) => {
+      if (visible) {
+        if (!coldCoralDataLoaded) await loadAndRenderColdCoral()
+        else setColdCoralVisible(true)
+      } else {
+        setColdCoralVisible(false)
+      }
+    },
+    { immediate: false }
+  )
+
   setTimeout(() => {
     loading.value = false
     if (loadedCount === 0) {
@@ -396,7 +503,7 @@ const routeColors = ['#3b82f6', '#10b981', '#f59e0b'] // 蓝、绿、橙
 // 绑制 Pareto 路径到地图
 const drawParetoRoutes = () => {
   if (!map) return
-  
+
   // 如果图层已存在，先清除
   if (routeSource) {
     routeSource.clear()
@@ -409,23 +516,23 @@ const drawParetoRoutes = () => {
     })
     map.addLayer(routeLayer)
   }
-  
+
   const routes = routeStore.paretoRoutes
-  
+
   routes.forEach((route, index) => {
     const color = routeColors[index % routeColors.length]
     const isSelected = routeStore.selectedRoute?.id === route.id
-    
+
     // 提取路径坐标
     const coords = route.points.map(p => p.coordinates)
-    
+
     // 创建路径线
     const lineFeature = new Feature({
       geometry: new LineString(coords),
       routeId: route.id,
       routeName: route.name,
     })
-    
+
     lineFeature.setStyle(new Style({
       stroke: new Stroke({
         color: color,
@@ -433,9 +540,9 @@ const drawParetoRoutes = () => {
         lineDash: isSelected ? undefined : [8, 4],
       }),
     }))
-    
+
     routeSource!.addFeature(lineFeature)
-    
+
     // 添加路径点
     route.points.forEach((point, pointIndex) => {
       const pointFeature = new Feature({
@@ -444,7 +551,7 @@ const drawParetoRoutes = () => {
         pointType: point.type,
         pointName: point.name,
       })
-      
+
       // 根据点类型设置样式
       let pointColor = color
       let radius = 6
@@ -453,7 +560,7 @@ const drawParetoRoutes = () => {
       } else if (point.type === 'repeater') {
         radius = 8
       }
-      
+
       pointFeature.setStyle(new Style({
         image: new CircleStyle({
           radius: radius,
@@ -468,11 +575,11 @@ const drawParetoRoutes = () => {
           stroke: new Stroke({ color: '#fff', width: 3 }),
         }) : undefined,
       }))
-      
+
       routeSource!.addFeature(pointFeature)
     })
   })
-  
+
   // 缩放到路径范围
   if (routes.length > 0 && routeSource.getFeatures().length > 0) {
     const extent = routeSource.getExtent()
@@ -498,16 +605,16 @@ const clearRoutes = () => {
 const handleStopPlanning = () => {
   // 清除地图上的路径
   clearRoutes()
-  
+
   // 清除 store 中的路径数据
   routeStore.clearParetoRoutes()
-  
+
   // 关闭 Pareto 分析面板
   appStore.setPanelVisible('paretoAnalysisPanel', false)
-  
+
   // 更新状态
   isPlanning.value = false
-  
+
   appStore.showNotification({ type: 'info', message: '已停止规划，路径已清除' })
   appStore.addLog('INFO', '停止规划，清除路径数据')
 }
@@ -543,10 +650,10 @@ const handleRunPlanning = () => {
   // 生成三条 Pareto 路径并显示分析面板
   routeStore.generateMockParetoRoutes()
   appStore.setPanelVisible('paretoAnalysisPanel', true)
-  
+
   // 在地图上绘制路径
   drawParetoRoutes()
-  
+
   // 更新状态
   isPlanning.value = true
 
@@ -577,15 +684,12 @@ onUnmounted(() => {
         <!-- 工具模式 -->
         <div class="flex rounded-md border overflow-hidden">
           <Tooltip v-for="mode in toolModes" :key="mode.value" :content="mode.label">
-            <button
-              :class="[
-                'px-3 py-1.5 text-xs flex items-center gap-1 transition-colors',
-                mapStore.toolMode === mode.value 
-                  ? 'bg-primary text-white' 
-                  : 'bg-white hover:bg-gray-100'
-              ]"
-              @click="mapStore.setToolMode(mode.value as any)"
-            >
+            <button :class="[
+              'px-3 py-1.5 text-xs flex items-center gap-1 transition-colors',
+              mapStore.toolMode === mode.value
+                ? 'bg-primary text-white'
+                : 'bg-white hover:bg-gray-100'
+            ]" @click="mapStore.setToolMode(mode.value as any)">
               <component :is="mode.icon" class="w-4 h-4" />
               {{ mode.label }}
             </button>
@@ -611,11 +715,7 @@ onUnmounted(() => {
 
         <div class="flex gap-1">
           <Tooltip content="框选区域">
-            <Button 
-              :variant="mapStore.isBoxSelecting ? 'default' : 'outline'" 
-              size="sm" 
-              @click="toggleBoxSelect"
-            >
+            <Button :variant="mapStore.isBoxSelecting ? 'default' : 'outline'" size="sm" @click="toggleBoxSelect">
               <Square class="w-4 h-4 mr-1" /> 区域选择
             </Button>
           </Tooltip>
@@ -629,11 +729,7 @@ onUnmounted(() => {
 
       <div class="flex items-center gap-2">
         <Tooltip :content="isPlanning ? '停止规划' : '运行规划'">
-          <Button 
-            :variant="isPlanning ? 'destructive' : 'default'" 
-            size="sm" 
-            @click="togglePlanning"
-          >
+          <Button :variant="isPlanning ? 'destructive' : 'default'" size="sm" @click="togglePlanning">
             <Pause v-if="isPlanning" class="w-4 h-4 mr-1" />
             <Play v-else class="w-4 h-4 mr-1" />
             {{ isPlanning ? '停止' : '运行规划' }}
@@ -667,10 +763,8 @@ onUnmounted(() => {
       <div class="absolute bottom-5 right-5 bg-white/95 p-3 rounded-md shadow z-10">
         <div class="text-xs font-semibold text-gray-700 mb-2 text-center">高程 (m)</div>
         <div class="flex">
-          <div 
-            class="w-4 h-60 rounded border"
-            style="background: linear-gradient(to bottom, #fff 0%, #c8c8c8 5%, #a0522d 10%, #c86432 15%, #f0c832 22%, #c8dc64 30%, #64c832 38%, #228b22 45%, #c8f0ff 46%, #96dcff 50%, #0078c8 60%, #1e3c96 75%, #0a1e64 88%, #000014 100%);"
-          />
+          <div class="w-4 h-60 rounded border"
+            style="background: linear-gradient(to bottom, #fff 0%, #c8c8c8 5%, #a0522d 10%, #c86432 15%, #f0c832 22%, #c8dc64 30%, #64c832 38%, #228b22 45%, #c8f0ff 46%, #96dcff 50%, #0078c8 60%, #1e3c96 75%, #0a1e64 88%, #000014 100%);" />
           <div class="flex flex-col justify-between ml-1.5 text-[10px] text-gray-700 font-medium">
             <span>8848</span>
             <span>6500</span>

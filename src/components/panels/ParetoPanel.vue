@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed, onMounted} from 'vue'
+import {computed} from 'vue'
 import {useRouteStore} from '@/stores'
 import {ChevronDown, ChevronUp, Route, DollarSign, AlertTriangle} from 'lucide-vue-next'
 import {cn} from '@/lib/utils'
@@ -61,10 +61,7 @@ const getRiskColor = (risk: number) => {
   return 'text-red-500'
 }
 
-// 组件挂载时加载路由
-onMounted(() => {
-  routeStore.loadRoutes()
-})
+
 </script>
 
 <template>
