@@ -4,7 +4,7 @@ import { useMapStore, useLayerStore, useAppStore, useRouteStore } from '@/stores
 import { Button, Tooltip } from '@/components/ui'
 import {
   MousePointer, Move, Pencil, Plus, Trash2, Square, Edit3,
-  Play, Pause, Download, Loader2
+  Play, Pause, Download, Loader2, Settings, Radio, FileSpreadsheet
 } from 'lucide-vue-next'
 
 // OpenLayers imports
@@ -17,7 +17,7 @@ import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import OSM from 'ol/source/OSM'
-import { DragBox } from 'ol/interaction'
+import { DragBox, DragPan } from 'ol/interaction'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
@@ -47,6 +47,9 @@ const mapContainer = ref<HTMLElement | null>(null)
 const loading = ref(true)
 const coordinates = ref({ lon: 0, lat: 0 })
 const isPlanning = ref(false)
+const isEditingRoute = ref(false)
+const selectedPointFeature = ref<Feature | null>(null)
+const isDraggingPoint = ref(false)
 
 let map: Map | null = null
 let dragBox: DragBox | null = null
@@ -94,6 +97,171 @@ const toggleBoxSelect = () => {
 const handleAction = (actionName: string) => {
   appStore.showNotification({ type: 'info', message: `已执行操作: ${actionName}` })
   appStore.addLog('INFO', actionName)
+}
+
+// 开启/关闭路径编辑模式
+const toggleRouteEditing = () => {
+  isEditingRoute.value = !isEditingRoute.value
+
+  if (isEditingRoute.value) {
+    mapStore.setToolMode('select')
+    appStore.showNotification({ type: 'info', message: '路径编辑模式已开启，点击路径点可拖拽调整位置' })
+    appStore.addLog('INFO', '开启路径编辑模式')
+    enablePointDragging()
+  } else {
+    appStore.showNotification({ type: 'info', message: '路径编辑模式已关闭' })
+    appStore.addLog('INFO', '关闭路径编辑模式')
+    disablePointDragging()
+  }
+}
+
+// 获取DragPan交互
+let dragPanInteraction: DragPan | null = null
+
+// 启用点拖拽
+const enablePointDragging = () => {
+  if (!map) return
+
+  // 找到DragPan交互并保存引用
+  map.getInteractions().forEach((interaction) => {
+    if (interaction instanceof DragPan) {
+      dragPanInteraction = interaction
+    }
+  })
+
+    ; (map as any).on('pointermove', handlePointerMove)
+    ; (map as any).on('pointerdown', handlePointerDown)
+    ; (map as any).on('pointerup', handlePointerUp)
+}
+
+// 禁用点拖拽
+const disablePointDragging = () => {
+  if (!map) return
+
+    ; (map as any).un('pointermove', handlePointerMove)
+    ; (map as any).un('pointerdown', handlePointerDown)
+    ; (map as any).un('pointerup', handlePointerUp)
+  selectedPointFeature.value = null
+  isDraggingPoint.value = false
+  dragPanInteraction = null
+}
+
+// 处理指针移动
+const handlePointerMove = (evt: any) => {
+  if (!isEditingRoute.value) return
+
+  if (isDraggingPoint.value && selectedPointFeature.value) {
+    const geom = selectedPointFeature.value.getGeometry() as Point
+    geom.setCoordinates(evt.coordinate)
+    updateRouteLineFromPoints()
+  } else {
+    // 检测是否悬停在点上
+    const features = map?.getFeaturesAtPixel(evt.pixel, {
+      layerFilter: (layer) => layer === routeLayer
+    })
+
+    const pointFeature = features?.find(f => f.getGeometry()?.getType() === 'Point')
+    if (pointFeature) {
+      mapContainer.value!.style.cursor = 'grab'
+    } else {
+      mapContainer.value!.style.cursor = 'default'
+    }
+  }
+}
+
+// 处理指针按下
+const handlePointerDown = (evt: any) => {
+  if (!isEditingRoute.value) return
+
+  const features = map?.getFeaturesAtPixel(evt.pixel, {
+    layerFilter: (layer) => layer === routeLayer
+  })
+
+  const pointFeature = features?.find(f => f.getGeometry()?.getType() === 'Point')
+  if (pointFeature) {
+    selectedPointFeature.value = pointFeature as Feature
+    isDraggingPoint.value = true
+    mapContainer.value!.style.cursor = 'grabbing'
+
+    // 拖动点时禁用地图拖拽
+    if (dragPanInteraction) {
+      dragPanInteraction.setActive(false)
+    }
+  }
+}
+
+// 处理指针抬起
+const handlePointerUp = () => {
+  if (isDraggingPoint.value && selectedPointFeature.value) {
+    const geom = selectedPointFeature.value.getGeometry() as Point
+    const coords = geom.getCoordinates()
+    appStore.showNotification({
+      type: 'success',
+      message: `点已移动到 ${coords[0].toFixed(4)}°, ${coords[1].toFixed(4)}°`
+    })
+  }
+
+  // 恢复地图拖拽
+  if (dragPanInteraction) {
+    dragPanInteraction.setActive(true)
+  }
+
+  isDraggingPoint.value = false
+  selectedPointFeature.value = null
+  if (mapContainer.value) {
+    mapContainer.value.style.cursor = 'default'
+  }
+}
+
+// 更新路径线（根据点位置）
+const updateRouteLineFromPoints = () => {
+  if (!routeSource) return
+
+  const features = routeSource.getFeatures()
+  const lineFeatures = features.filter(f => f.getGeometry()?.getType() === 'LineString')
+  const pointFeatures = features.filter(f => f.getGeometry()?.getType() === 'Point')
+
+  // 按路由ID分组并按pointIndex排序
+  const routeGroups: Record<string, Feature[]> = {}
+  pointFeatures.forEach(pf => {
+    const routeId = pf.get('routeId')
+    if (!routeGroups[routeId]) routeGroups[routeId] = []
+    routeGroups[routeId].push(pf)
+  })
+
+  // 更新每条路径线
+  lineFeatures.forEach(lf => {
+    const routeId = lf.get('routeId')
+    const points = routeGroups[routeId]
+    if (points && points.length > 1) {
+      // 按pointIndex排序确保顺序正确
+      points.sort((a, b) => (a.get('pointIndex') || 0) - (b.get('pointIndex') || 0))
+      const coords = points.map(p => (p.getGeometry() as Point).getCoordinates())
+        ; (lf.getGeometry() as LineString).setCoordinates(coords)
+    }
+  })
+}
+
+// 打开分段参数面板
+const openSegmentPanel = () => {
+  appStore.setPanelVisible('segmentConfigPanel', true)
+  appStore.showNotification({ type: 'info', message: '分段参数配置面板已打开' })
+}
+
+// 打开中继器配置面板
+const openRepeaterPanel = () => {
+  appStore.setPanelVisible('repeaterConfigPanel', true)
+  appStore.showNotification({ type: 'info', message: '中继器配置面板已打开' })
+}
+
+// 导出RPL表格
+const exportRPL = () => {
+  appStore.openDialog('rpl-manage')
+}
+
+// 打开SLD系统布局图
+const openSLD = () => {
+  appStore.openDialog('sld-manage')
 }
 
 const initMap = () => {
@@ -393,11 +561,7 @@ const initMap = () => {
     const shpLoader = useShpLoader()
 
     try {
-      console.log('开始加载冷水珊瑚 SHP 数据...')
-      // 加载 zip 文件
       const geojsonData = await shpLoader.load('/data/海草.zip')
-
-      console.log('原始 GeoJSON 数据:', geojsonData)
       if (Array.isArray(geojsonData)) {
         console.log(`检测到 ${geojsonData.length} 个图层`)
         geojsonData.forEach((g, i) => console.log(`图层 ${i} 要素数量:`, g.features?.length))
@@ -548,6 +712,7 @@ const drawParetoRoutes = () => {
       const pointFeature = new Feature({
         geometry: new Point(point.coordinates),
         routeId: route.id,
+        pointIndex: pointIndex,
         pointType: point.type,
         pointName: point.name,
       })
@@ -720,8 +885,14 @@ onUnmounted(() => {
             </Button>
           </Tooltip>
           <Tooltip content="路径调整">
-            <Button variant="outline" size="sm" @click="handleAction('路径调整')">
+            <Button :variant="isEditingRoute ? 'default' : 'outline'" size="sm" :disabled="!isPlanning"
+              @click="toggleRouteEditing">
               <Edit3 class="w-4 h-4 mr-1" /> 路径调整
+            </Button>
+          </Tooltip>
+          <Tooltip content="分段参数">
+            <Button variant="outline" size="sm" @click="openSegmentPanel">
+              <Settings class="w-4 h-4 mr-1" /> 分段参数
             </Button>
           </Tooltip>
         </div>
@@ -735,9 +906,9 @@ onUnmounted(() => {
             {{ isPlanning ? '停止' : '运行规划' }}
           </Button>
         </Tooltip>
-        <Tooltip content="导出RPL">
-          <Button variant="outline" size="sm" @click="handleAction('导出RPL')">
-            <Download class="w-4 h-4 mr-1" /> 导出RPL
+        <Tooltip content="导出RPL表格">
+          <Button variant="outline" size="sm" :disabled="!isPlanning" @click="exportRPL">
+            <FileSpreadsheet class="w-4 h-4 mr-1" /> 导出RPL
           </Button>
         </Tooltip>
       </div>

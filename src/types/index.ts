@@ -3,6 +3,9 @@ export * from './layer'
 export * from './route'
 export * from './map'
 export * from './settings'
+export * from './rpl'
+export * from './sld'
+export * from './connector'
 
 // 通用类型
 export interface Notification {

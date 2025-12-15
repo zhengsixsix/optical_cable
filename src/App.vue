@@ -7,6 +7,9 @@ import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
 import UserManageDialog from '@/components/dialogs/UserManageDialog.vue'
 import AlarmManageDialog from '@/components/dialogs/AlarmManageDialog.vue'
 import HelpDialog from '@/components/dialogs/HelpDialog.vue'
+import RPLManageDialog from '@/components/dialogs/RPLManageDialog.vue'
+import SLDManageDialog from '@/components/dialogs/SLDManageDialog.vue'
+import RouteEditDialog from '@/components/dialogs/RouteEditDialog.vue'
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()
@@ -79,6 +82,21 @@ onMounted(async () => {
   <HelpDialog
     :visible="['about', 'manual', 'support'].includes(appStore.activeDialog || '')"
     :mode="(appStore.activeDialog as 'about' | 'manual' | 'support') || 'about'"
+    @close="appStore.closeDialog()"
+  />
+
+  <RPLManageDialog
+    :visible="appStore.activeDialog === 'rpl-manage'"
+    @close="appStore.closeDialog()"
+  />
+
+  <SLDManageDialog
+    :visible="appStore.activeDialog === 'sld-manage'"
+    @close="appStore.closeDialog()"
+  />
+
+  <RouteEditDialog
+    :visible="appStore.activeDialog === 'route-edit'"
     @close="appStore.closeDialog()"
   />
 

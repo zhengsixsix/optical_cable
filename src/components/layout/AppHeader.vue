@@ -292,7 +292,7 @@ const togglePanel = (panel: string) => {
             <RouterLink to="/design" class="block px-4 py-2 hover:bg-gray-100 text-sm no-underline text-gray-700"
                         active-class="bg-blue-50 text-blue-600 font-medium">传输系统规划
             </RouterLink>
-          </div>
+                      </div>
         </div>
 
         <!-- Monitoring Menu -->

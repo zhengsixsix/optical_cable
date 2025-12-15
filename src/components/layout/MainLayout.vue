@@ -6,6 +6,9 @@ import AppHeader from './AppHeader.vue'
   <div class="h-full flex flex-col overflow-hidden">
     <!-- Header is now in App.vue -->
     
+    <!-- 工具栏插槽 -->
+    <slot name="toolbar" />
+    
     <main class="flex-1 overflow-hidden p-2">
       <div class="h-full grid grid-cols-[300px_1fr_300px] gap-2">
         <!-- 左侧面板 -->

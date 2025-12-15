@@ -15,6 +15,8 @@ export interface PanelVisibility {
   dataPanel: boolean
   layerDetailPanel: boolean
   paretoAnalysisPanel: boolean
+  segmentConfigPanel: boolean
+  repeaterConfigPanel: boolean
 }
 
 export const useAppStore = defineStore('app', () => {
@@ -33,6 +35,8 @@ export const useAppStore = defineStore('app', () => {
     dataPanel: false,
     layerDetailPanel: false,
     paretoAnalysisPanel: false,
+    segmentConfigPanel: false,
+    repeaterConfigPanel: false,
   })
   
   const logs = ref<LogEntry[]>([
@@ -145,6 +149,8 @@ export const useAppStore = defineStore('app', () => {
       dataPanel: '数据管理',
       layerDetailPanel: '图层详情',
       paretoAnalysisPanel: 'Pareto分析',
+      segmentConfigPanel: '分段参数配置',
+      repeaterConfigPanel: '中继器配置',
     }
     return names[panelName]
   }

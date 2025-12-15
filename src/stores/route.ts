@@ -31,8 +31,7 @@ export const useRouteStore = defineStore('route', () => {
   async function loadRoutes() {
     try {
       routes.value = await repository.getRoutes()
-      // 使用 Pareto 支配算法计算最优路径
-      paretoRoutes.value = calculateParetoFront(routes.value)
+      // 不在初始化时计算Pareto路径，只有运行规划时才显示
     } catch (error) {
       console.error('加载路由失败:', error)
     }
