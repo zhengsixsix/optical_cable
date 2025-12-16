@@ -11,6 +11,7 @@ const activeTab = ref('route')
 const tabs = [
   { id: 'route', label: '路径规划配置', icon: MapPin },
   { id: 'transmission', label: '传输系统配置', icon: Radio },
+  { id: 'fiber', label: '光纤仿真模型' },
   { id: 'monitoring', label: '监控系统配置', icon: Activity },
   { id: 'cable', label: '器件库-电缆', icon: Cpu },
   { id: 'repeater', label: '器件库-中继器' },
@@ -43,10 +44,22 @@ const transConfig = reactive({
 const monitorConfig = reactive({
   dataSourceType: settingsStore.monitoringConfig.dataSourceType,
   connectionAddress: settingsStore.monitoringConfig.connectionAddress,
+  authToken: settingsStore.monitoringConfig.authToken,
   powerThreshold: settingsStore.monitoringConfig.powerThreshold,
   temperatureThreshold: settingsStore.monitoringConfig.temperatureThreshold,
   berThreshold: settingsStore.monitoringConfig.berThreshold,
 })
+
+// 光纤仿真配置本地状态
+const fiberConfig = reactive({
+  model: settingsStore.fiberSimulationConfig.model,
+})
+
+// 光纤仿真模型选项
+const fiberModelOptions = [
+  { value: 'GN', label: 'GN Model (高斯噪声模型)', desc: '适用于计算速度要求高、精度要求一般的场景' },
+  { value: 'EGN', label: 'EGN Model (增强型高斯噪声模型)', desc: '适用于仿真精度要求高、可容忍较长计算时间的场景' },
+]
 
 // 规划模式选项
 const planningModeOptions = [
@@ -102,9 +115,15 @@ const handleSave = () => {
   settingsStore.updateMonitoringConfig({
     dataSourceType: monitorConfig.dataSourceType as 'realtime' | 'history',
     connectionAddress: monitorConfig.connectionAddress,
+    authToken: monitorConfig.authToken,
     powerThreshold: monitorConfig.powerThreshold,
     temperatureThreshold: monitorConfig.temperatureThreshold,
     berThreshold: monitorConfig.berThreshold,
+  })
+  
+  // 保存光纤仿真配置
+  settingsStore.updateFiberSimulationConfig({
+    model: fiberConfig.model as 'GN' | 'EGN',
   })
   
   settingsStore.saveToLocalStorage()
@@ -349,6 +368,47 @@ const handleReset = () => {
               </div>
             </div>
 
+            <!-- 光纤仿真模型配置 -->
+            <div v-if="activeTab === 'fiber'" class="space-y-6 max-w-3xl">
+              <h3 class="font-semibold text-gray-700 text-lg">光纤仿真模型配置</h3>
+              
+              <div class="p-4 bg-gray-50 rounded-lg space-y-4">
+                <h4 class="font-medium text-gray-700">仿真模型偏好</h4>
+                <p class="text-xs text-gray-500 mb-3">选择光纤非线性效应计算模型，影响仿真精度和计算速度</p>
+                <div class="space-y-3">
+                  <label 
+                    v-for="opt in fiberModelOptions" 
+                    :key="opt.value"
+                    :class="[
+                      'flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all',
+                      fiberConfig.model === opt.value 
+                        ? 'border-blue-500 bg-blue-50' 
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                    ]"
+                  >
+                    <input 
+                      type="radio" 
+                      :value="opt.value" 
+                      v-model="fiberConfig.model"
+                      class="w-4 h-4 text-blue-600 mt-0.5"
+                    />
+                    <div>
+                      <span class="text-sm font-medium">{{ opt.label }}</span>
+                      <p class="text-xs text-gray-500 mt-1">{{ opt.desc }}</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+              
+              <div class="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <h4 class="font-medium text-blue-700 mb-2">模型说明</h4>
+                <ul class="text-xs text-blue-600 space-y-1">
+                  <li><strong>GN Model</strong>: 高斯噪声模型，时间复杂度低，适合快速估算</li>
+                  <li><strong>EGN Model</strong>: 增强型高斯噪声模型，时间复杂度高，适合精确仿真</li>
+                </ul>
+              </div>
+            </div>
+
             <!-- 监控系统配置 -->
             <div v-if="activeTab === 'monitoring'" class="space-y-6 max-w-3xl">
               <h3 class="font-semibold text-gray-700 text-lg">监控系统配置</h3>
@@ -375,13 +435,23 @@ const handleReset = () => {
                     </div>
                   </div>
                   <div>
-                    <label class="text-xs text-gray-500">连接地址</label>
+                    <label class="text-xs text-gray-500">连接地址 (WebSocket)</label>
                     <input 
                       v-model="monitorConfig.connectionAddress"
                       type="text" 
                       placeholder="ws://localhost:8080/monitor"
                       class="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
                     />
+                  </div>
+                  <div>
+                    <label class="text-xs text-gray-500">认证Token</label>
+                    <input 
+                      v-model="monitorConfig.authToken"
+                      type="password" 
+                      placeholder="输入用户鉴权Token"
+                      class="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                    />
+                    <p class="text-xs text-gray-400 mt-1">用于第三方告警源的身份验证</p>
                   </div>
                 </div>
               </div>

@@ -5,14 +5,60 @@ import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import MonitorPanel from '@/components/panels/MonitorPanel.vue'
 import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin } from 'lucide-vue-next'
 
-// 设备列表数据
+// 设备列表数据 - 包含完整性能指标
 const devices = ref([
-  { id: 'r1', name: '中继器 R1', type: 'repeater', status: 'normal', voltage: '48.2V', temp: '4.2°C', location: 'KP 120' },
-  { id: 'r2', name: '中继器 R2', type: 'repeater', status: 'warning', voltage: '47.8V', temp: '5.1°C', location: 'KP 240' },
-  { id: 'r3', name: '中继器 R3', type: 'repeater', status: 'normal', voltage: '48.1V', temp: '4.0°C', location: 'KP 360' },
-  { id: 'b1', name: '分支器 B1', type: 'branching', status: 'normal', voltage: '48.0V', temp: '3.8°C', location: 'KP 200' },
-  { id: 'l1', name: '登陆站 L1', type: 'landing', status: 'error', voltage: '47.5V', temp: '22.5°C', location: '上海' },
-  { id: 'l2', name: '登陆站 L2', type: 'landing', status: 'normal', voltage: '48.3V', temp: '21.8°C', location: '冲绳' },
+  { 
+    id: 'r1', name: '中继器 R1', type: 'Repeater', neType: 'Repeater', status: 'normal', 
+    location: 'KP 120',
+    // 性能指标
+    inputPower: -12.5,   // 输入光功率 (dBm)
+    outputPower: 2.8,    // 输出光功率 (dBm)
+    pumpCurrent: 285,    // 泵浦电流 (mA)
+    pfeVoltage: 48.2,    // PFE电压 (V)
+    pfeCurrent: 1.25,    // PFE电流 (A)
+    temperature: 4.2,    // 温度 (°C)
+  },
+  { 
+    id: 'r2', name: '中继器 R2', type: 'Repeater', neType: 'Repeater', status: 'warning', 
+    location: 'KP 240',
+    inputPower: -13.2, outputPower: 2.5, pumpCurrent: 295,
+    pfeVoltage: 47.8, pfeCurrent: 1.28, temperature: 5.1,
+  },
+  { 
+    id: 'r3', name: '中继器 R3', type: 'Repeater', neType: 'Repeater', status: 'normal', 
+    location: 'KP 360',
+    inputPower: -12.8, outputPower: 2.6, pumpCurrent: 280,
+    pfeVoltage: 48.1, pfeCurrent: 1.22, temperature: 4.0,
+  },
+  { 
+    id: 'b1', name: '分支器 B1', type: 'BU', neType: 'BU', status: 'normal', 
+    location: 'KP 200',
+    inputPower: -10.5, outputPower: -11.2, pumpCurrent: 0,
+    pfeVoltage: 48.0, pfeCurrent: 0.85, temperature: 3.8,
+  },
+  { 
+    id: 'l1', name: '登陆站 L1', type: 'LandingStation', neType: 'SLTE', status: 'error', 
+    location: '上海',
+    inputPower: -8.2, outputPower: 4.0, pumpCurrent: 0,
+    pfeVoltage: 47.5, pfeCurrent: 15.2, temperature: 22.5,
+    // SLTE特有指标
+    qValue: 12.5,       // Q值 (dB)
+    ber: 1.2e-9,        // 误码率
+    osnr: 28.5,         // OSNR (dB)
+  },
+  { 
+    id: 'l2', name: '登陆站 L2', type: 'LandingStation', neType: 'SLTE', status: 'normal', 
+    location: '冲纳',
+    inputPower: -9.0, outputPower: 3.8, pumpCurrent: 0,
+    pfeVoltage: 48.3, pfeCurrent: 14.8, temperature: 21.8,
+    qValue: 13.2, ber: 5.5e-10, osnr: 29.2,
+  },
+  { 
+    id: 'pfe1', name: '供电设备 PFE1', type: 'PFE', neType: 'PFE', status: 'normal', 
+    location: '上海登陆站',
+    inputPower: 0, outputPower: 0, pumpCurrent: 0,
+    pfeVoltage: 380, pfeCurrent: 25.5, temperature: 35.2,
+  },
 ])
 
 // 选中的设备
@@ -165,37 +211,152 @@ const selectDevice = (id: string) => {
                 {{ selectedDeviceInfo.status === 'normal' ? '运行正常' : selectedDeviceInfo.status === 'warning' ? '告警中' : '故障' }}
               </span>
             </div>
-            <div class="grid grid-cols-3 gap-4">
-              <div class="flex items-center gap-2">
-                <Zap class="w-4 h-4 text-blue-500" />
-                <div>
-                  <div class="text-xs text-gray-500">供电电压</div>
-                  <div class="font-medium">{{ selectedDeviceInfo.voltage }}</div>
-                </div>
+            <!-- 基础性能指标 -->
+            <div class="grid grid-cols-4 gap-3 mb-3">
+              <div class="p-2 bg-white rounded border">
+                <div class="text-xs text-gray-500">输入光功率</div>
+                <div class="font-semibold text-blue-600">{{ selectedDeviceInfo.inputPower?.toFixed(1) }} dBm</div>
               </div>
-              <div class="flex items-center gap-2">
-                <Thermometer class="w-4 h-4 text-orange-500" />
-                <div>
-                  <div class="text-xs text-gray-500">设备温度</div>
-                  <div class="font-medium">{{ selectedDeviceInfo.temp }}</div>
-                </div>
+              <div class="p-2 bg-white rounded border">
+                <div class="text-xs text-gray-500">输出光功率</div>
+                <div class="font-semibold text-blue-600">{{ selectedDeviceInfo.outputPower?.toFixed(1) }} dBm</div>
               </div>
-              <div class="flex items-center gap-2">
-                <MapPin class="w-4 h-4 text-green-500" />
-                <div>
-                  <div class="text-xs text-gray-500">位置</div>
-                  <div class="font-medium">{{ selectedDeviceInfo.location }}</div>
-                </div>
+              <div class="p-2 bg-white rounded border">
+                <div class="text-xs text-gray-500">泵浦电流</div>
+                <div class="font-semibold text-purple-600">{{ selectedDeviceInfo.pumpCurrent }} mA</div>
+              </div>
+              <div class="p-2 bg-white rounded border">
+                <div class="text-xs text-gray-500">设备温度</div>
+                <div class="font-semibold text-orange-600">{{ selectedDeviceInfo.temperature?.toFixed(1) }} °C</div>
+              </div>
+            </div>
+            
+            <!-- PFE电压电流 -->
+            <div class="grid grid-cols-3 gap-3 mb-3">
+              <div class="p-2 bg-white rounded border">
+                <div class="text-xs text-gray-500">PFE电压</div>
+                <div class="font-semibold text-green-600">{{ selectedDeviceInfo.pfeVoltage?.toFixed(1) }} V</div>
+              </div>
+              <div class="p-2 bg-white rounded border">
+                <div class="text-xs text-gray-500">PFE电流</div>
+                <div class="font-semibold text-green-600">{{ selectedDeviceInfo.pfeCurrent?.toFixed(2) }} A</div>
+              </div>
+              <div class="p-2 bg-white rounded border">
+                <div class="text-xs text-gray-500">位置</div>
+                <div class="font-semibold text-gray-700">{{ selectedDeviceInfo.location }}</div>
+              </div>
+            </div>
+            
+            <!-- SLTE特有指标 (Q值/BER/OSNR) -->
+            <div v-if="selectedDeviceInfo.neType === 'SLTE'" class="grid grid-cols-3 gap-3">
+              <div class="p-2 bg-blue-50 rounded border border-blue-200">
+                <div class="text-xs text-blue-600">Q值</div>
+                <div class="font-semibold text-blue-700">{{ selectedDeviceInfo.qValue?.toFixed(1) }} dB</div>
+              </div>
+              <div class="p-2 bg-blue-50 rounded border border-blue-200">
+                <div class="text-xs text-blue-600">BER</div>
+                <div class="font-semibold text-blue-700">{{ selectedDeviceInfo.ber?.toExponential(1) }}</div>
+              </div>
+              <div class="p-2 bg-blue-50 rounded border border-blue-200">
+                <div class="text-xs text-blue-600">OSNR</div>
+                <div class="font-semibold text-blue-700">{{ selectedDeviceInfo.osnr?.toFixed(1) }} dB</div>
               </div>
             </div>
           </div>
           
-          <!-- 系统拓扑图占位 -->
-          <div class="flex-1 bg-gray-100 rounded-lg flex items-center justify-center min-h-[200px]">
-            <div class="text-center text-gray-500">
-              <Radio class="w-12 h-12 mx-auto mb-3 text-gray-400" />
-              <p class="text-sm font-medium">系统拓扑视图</p>
-              <p class="text-xs mt-1">选择左侧设备查看详情</p>
+          <!-- 系统拓扑图 -->
+          <div class="flex-1 bg-gray-100 rounded-lg min-h-[200px] p-4">
+            <!-- 未选中设备时显示占位符 -->
+            <div v-if="!selectedDeviceInfo" class="h-full flex items-center justify-center">
+              <div class="text-center text-gray-500">
+                <Radio class="w-12 h-12 mx-auto mb-3 text-gray-400" />
+                <p class="text-sm font-medium">系统拓扑视图</p>
+                <p class="text-xs mt-1">选择左侧设备查看详情</p>
+              </div>
+            </div>
+            
+            <!-- 选中设备时显示拓扑图 -->
+            <div v-else class="h-full flex flex-col">
+              <div class="text-xs text-gray-500 mb-3">设备在系统中的位置</div>
+              
+              <!-- 简化拓扑图 -->
+              <div class="flex-1 flex items-center justify-center">
+                <div class="flex items-center gap-2">
+                  <!-- 登陆站A -->
+                  <div class="flex flex-col items-center">
+                    <div class="w-10 h-10 bg-green-100 border-2 border-green-500 rounded flex items-center justify-center text-green-700 text-xs font-bold">
+                      L1
+                    </div>
+                    <span class="text-xs text-gray-500 mt-1">登陆站A</span>
+                  </div>
+                  
+                  <!-- 连接线 -->
+                  <div class="w-8 h-0.5 bg-blue-400"></div>
+                  
+                  <!-- 前置设备 -->
+                  <div class="flex flex-col items-center opacity-50">
+                    <div class="w-8 h-8 bg-blue-100 border-2 border-blue-400 rounded-full flex items-center justify-center text-blue-600 text-xs">
+                      ...
+                    </div>
+                  </div>
+                  
+                  <div class="w-8 h-0.5 bg-blue-400"></div>
+                  
+                  <!-- 当前选中设备 -->
+                  <div class="flex flex-col items-center">
+                    <div :class="[
+                      'w-12 h-12 border-3 rounded-full flex items-center justify-center text-sm font-bold shadow-lg ring-4 ring-offset-2',
+                      selectedDeviceInfo.neType === 'Repeater' ? 'bg-blue-500 border-blue-600 text-white ring-blue-200' :
+                      selectedDeviceInfo.neType === 'BU' ? 'bg-purple-500 border-purple-600 text-white ring-purple-200' :
+                      selectedDeviceInfo.neType === 'SLTE' ? 'bg-green-500 border-green-600 text-white ring-green-200' :
+                      'bg-yellow-500 border-yellow-600 text-white ring-yellow-200'
+                    ]">
+                      {{ selectedDeviceInfo.name.split(' ')[1] || selectedDeviceInfo.name.charAt(0) }}
+                    </div>
+                    <span class="text-xs font-medium text-gray-700 mt-1">{{ selectedDeviceInfo.name }}</span>
+                    <span class="text-xs text-gray-500">{{ selectedDeviceInfo.location }}</span>
+                  </div>
+                  
+                  <div class="w-8 h-0.5 bg-blue-400"></div>
+                  
+                  <!-- 后置设备 -->
+                  <div class="flex flex-col items-center opacity-50">
+                    <div class="w-8 h-8 bg-blue-100 border-2 border-blue-400 rounded-full flex items-center justify-center text-blue-600 text-xs">
+                      ...
+                    </div>
+                  </div>
+                  
+                  <div class="w-8 h-0.5 bg-blue-400"></div>
+                  
+                  <!-- 登陆站B -->
+                  <div class="flex flex-col items-center">
+                    <div class="w-10 h-10 bg-green-100 border-2 border-green-500 rounded flex items-center justify-center text-green-700 text-xs font-bold">
+                      L2
+                    </div>
+                    <span class="text-xs text-gray-500 mt-1">登陆站B</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 图例 -->
+              <div class="flex items-center justify-center gap-4 mt-3 pt-3 border-t border-gray-200">
+                <div class="flex items-center gap-1">
+                  <div class="w-3 h-3 bg-green-500 rounded"></div>
+                  <span class="text-xs text-gray-500">登陆站</span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <div class="w-3 h-3 bg-blue-500 rounded-full"></div>
+                  <span class="text-xs text-gray-500">中继器</span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <div class="w-3 h-3 bg-purple-500 rounded-full"></div>
+                  <span class="text-xs text-gray-500">分支器</span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <div class="w-4 h-0.5 bg-blue-400"></div>
+                  <span class="text-xs text-gray-500">光缆</span>
+                </div>
+              </div>
             </div>
           </div>
         </CardContent>

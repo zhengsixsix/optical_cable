@@ -1,5 +1,2 @@
 export { usePanel } from './usePanel'
-export { usePanelManager } from './usePanelManager'
-export { useErrorHandler } from './useErrorHandler'
-export { useGeoTiff } from './useGeoTiff'
 export { useMap } from './useMap'

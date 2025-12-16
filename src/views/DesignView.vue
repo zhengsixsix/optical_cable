@@ -6,7 +6,7 @@ import ConnectorPanel from '@/components/panels/ConnectorPanel.vue'
 import ConnectorDialog from '@/components/dialogs/ConnectorDialog.vue'
 import RepeaterConfigDialog from '@/components/dialogs/RepeaterConfigDialog.vue'
 import { useSettingsStore, useAppStore, useConnectorStore } from '@/stores'
-import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Link2, Send } from 'lucide-vue-next'
+import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Link2, Send, FileText, Download } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -391,6 +391,19 @@ const formatCost = (cost: number) => {
                 @click="handleReset">
                 <RotateCcw class="w-4 h-4 mr-2" /> 重置参数
               </Button>
+
+              <!-- 报告导出按钮 -->
+              <div class="pt-2 border-t border-gray-100 space-y-2">
+                <div class="text-xs text-gray-500 mb-1">报告导出</div>
+                <Button variant="outline" class="w-full border-green-300 hover:bg-green-50 text-green-700" size="sm"
+                  @click="appStore.openDialog('cost-report')">
+                  <FileText class="w-4 h-4 mr-2" /> 导出成本报告
+                </Button>
+                <Button variant="outline" class="w-full border-purple-300 hover:bg-purple-50 text-purple-700" size="sm"
+                  @click="appStore.openDialog('perf-report')">
+                  <FileText class="w-4 h-4 mr-2" /> 导出性能报告
+                </Button>
+              </div>
             </div>
         </CardContent>
       </Card>
@@ -398,15 +411,8 @@ const formatCost = (cost: number) => {
   </MainLayout>
 
   <!-- 弹框组件 -->
-  <RepeaterConfigDialog 
-    :visible="showRepeaterDialog" 
-    @close="showRepeaterDialog = false"
-    @saved="showRepeaterDialog = false"
-  />
-  <ConnectorDialog 
-    :visible="showConnectorDialog" 
-    :edit-id="editConnectorId"
-    @close="showConnectorDialog = false"
-    @saved="showConnectorDialog = false"
-  />
+  <RepeaterConfigDialog :visible="showRepeaterDialog" @close="showRepeaterDialog = false"
+    @saved="showRepeaterDialog = false" />
+  <ConnectorDialog :visible="showConnectorDialog" :edit-id="editConnectorId" @close="showConnectorDialog = false"
+    @saved="showConnectorDialog = false" />
 </template>

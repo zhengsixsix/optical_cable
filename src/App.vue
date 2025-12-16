@@ -10,6 +10,7 @@ import HelpDialog from '@/components/dialogs/HelpDialog.vue'
 import RPLManageDialog from '@/components/dialogs/RPLManageDialog.vue'
 import SLDManageDialog from '@/components/dialogs/SLDManageDialog.vue'
 import RouteEditDialog from '@/components/dialogs/RouteEditDialog.vue'
+import ReportDialog from '@/components/dialogs/ReportDialog.vue'
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()
@@ -97,6 +98,12 @@ onMounted(async () => {
 
   <RouteEditDialog
     :visible="appStore.activeDialog === 'route-edit'"
+    @close="appStore.closeDialog()"
+  />
+
+  <ReportDialog
+    :visible="appStore.activeDialog === 'cost-report' || appStore.activeDialog === 'perf-report'"
+    :mode="appStore.activeDialog === 'cost-report' ? 'cost' : 'perf'"
     @close="appStore.closeDialog()"
   />
 

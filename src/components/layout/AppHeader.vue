@@ -66,6 +66,8 @@ const showModal = (key: string) => {
     'export_pdf': 'export',
     'export_png': 'export',
     'export_excel': 'export',
+    'export_cost_report': 'cost-report',
+    'export_perf_report': 'perf-report',
     '主题设置': 'theme-settings',
     '关于软件': 'about',
     '用户手册': 'manual',
@@ -218,6 +220,17 @@ const togglePanel = (panel: string) => {
                        class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-blue-50/80 text-gray-700 hover:text-blue-600 transition-colors">
                       <FileSpreadsheet class="w-4 h-4 text-gray-400 group-hover/item:text-blue-500"/>
                       <span class="text-sm">导出报表数据</span>
+                    </a>
+                    <div class="h-px bg-gray-100 my-1 mx-2"></div>
+                    <a href="#" @click.prevent="showModal('export_cost_report')"
+                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-blue-50/80 text-gray-700 hover:text-blue-600 transition-colors">
+                      <FileText class="w-4 h-4 text-gray-400 group-hover/item:text-blue-500"/>
+                      <span class="text-sm">导出成本报告</span>
+                    </a>
+                    <a href="#" @click.prevent="showModal('export_perf_report')"
+                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-blue-50/80 text-gray-700 hover:text-blue-600 transition-colors">
+                      <FileText class="w-4 h-4 text-gray-400 group-hover/item:text-blue-500"/>
+                      <span class="text-sm">导出性能报告</span>
                     </a>
                   </div>
                 </div>
@@ -386,16 +399,18 @@ const togglePanel = (panel: string) => {
           <User class="w-3.5 h-3.5"/>
           {{ displayUserName }}
         </button>
-        <div
-            class="absolute top-full right-0 mt-1 bg-white text-gray-800 shadow-lg rounded-md py-1 min-w-[120px] hidden group-hover:block border border-gray-200 z-50">
-          <div class="px-3 py-2 text-xs text-gray-500 border-b">
-            {{ userStore.isAdmin ? '管理员' : '普通用户' }}
+        <!-- 使用pt-1包装器避免hover间隙问题 -->
+        <div class="absolute top-full right-0 pt-1 hidden group-hover:block z-50">
+          <div class="bg-white text-gray-800 shadow-lg rounded-md py-1 min-w-[120px] border border-gray-200">
+            <div class="px-3 py-2 text-xs text-gray-500 border-b">
+              {{ userStore.isAdmin ? '管理员' : '普通用户' }}
+            </div>
+            <a href="#" @click.prevent="handleLogout"
+               class="flex items-center gap-2 px-3 py-2 hover:bg-gray-100 text-sm no-underline text-gray-700">
+              <LogOut class="w-4 h-4"/>
+              退出登录
+            </a>
           </div>
-          <a href="#" @click.prevent="handleLogout"
-             class="flex items-center gap-2 px-3 py-2 hover:bg-gray-100 text-sm no-underline text-gray-700">
-            <LogOut class="w-4 h-4"/>
-            退出登录
-          </a>
         </div>
       </div>
       <RouterLink

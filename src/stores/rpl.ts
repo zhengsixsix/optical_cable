@@ -223,6 +223,9 @@ export const useRPLStore = defineStore('rpl', () => {
     selectedRecordIds.value = []
   }
 
+  // 有效的电缆类型列表
+  const validCableTypes: RPLCableCode[] = ['LW', 'LWS', 'SA', 'DA', 'SAS']
+
   function validateTable(): RPLValidationResult {
     const errors: RPLValidationResult['errors'] = []
     const warnings: RPLValidationResult['warnings'] = []
@@ -243,36 +246,73 @@ export const useRPLStore = defineStore('rpl', () => {
       }
     }
 
+    let prevCumulativeDistance = 0
+
     // 检查每条记录
     records.forEach((record, index) => {
-      // 坐标检查
+      const lineNum = index + 1
+
+      // 1. 序号连续性校验 (Continuity - Pos No.)
+      if (record.sequence !== lineNum) {
+        errors.push({ 
+          recordId: record.id, 
+          field: 'sequence', 
+          message: `连续性错误: 行${lineNum} 序号不连续，应为 ${lineNum}，实际为 ${record.sequence}` 
+        })
+      }
+
+      // 2. 格式校验 - 坐标检查
       if (record.longitude < -180 || record.longitude > 180) {
-        errors.push({ recordId: record.id, field: 'longitude', message: `序号${record.sequence}: 经度超出范围` })
+        errors.push({ recordId: record.id, field: 'longitude', message: `格式错误: 行${lineNum} 经度格式无效 (${record.longitude})` })
       }
       if (record.latitude < -90 || record.latitude > 90) {
-        errors.push({ recordId: record.id, field: 'latitude', message: `序号${record.sequence}: 纬度超出范围` })
+        errors.push({ recordId: record.id, field: 'latitude', message: `格式错误: 行${lineNum} 纬度格式无效 (${record.latitude})` })
       }
 
-      // 水深检查
+      // 3. 格式校验 - 余缆率非负
+      if (record.slack < 0) {
+        errors.push({ recordId: record.id, field: 'slack', message: `格式错误: 行${lineNum} Slack % 不能为负数` })
+      }
+      if (record.slack > 10) {
+        warnings.push({ recordId: record.id, field: 'slack', message: `行${lineNum}: 余缆率${record.slack}%超过建议值10%` })
+      }
+
+      // 4. 水深检查
       if (record.depth < 0) {
-        errors.push({ recordId: record.id, field: 'depth', message: `序号${record.sequence}: 水深不能为负数` })
+        errors.push({ recordId: record.id, field: 'depth', message: `格式错误: 行${lineNum} 水深不能为负数` })
       }
       if (record.depth > 11000) {
-        warnings.push({ recordId: record.id, field: 'depth', message: `序号${record.sequence}: 水深超过11000m，请确认` })
+        warnings.push({ recordId: record.id, field: 'depth', message: `行${lineNum}: 水深${record.depth}m超过11000m，请确认` })
       }
 
-      // 余缆率检查
-      if (record.slack < 0 || record.slack > 10) {
-        warnings.push({ recordId: record.id, field: 'slack', message: `序号${record.sequence}: 余缆率建议在0-10%之间` })
+      // 5. 引用校验 - Cable Type 必须在器件库中存在
+      if (record.cableType && !validCableTypes.includes(record.cableType)) {
+        errors.push({ 
+          recordId: record.id, 
+          field: 'cableType', 
+          message: `引用错误: 行${lineNum} 系统器件库中不存在海缆类型: ${record.cableType}` 
+        })
       }
 
-      // 中继器间距检查
+      // 6. 距离闭环校验 (Continuity - Distance)
+      const expectedCumulative = prevCumulativeDistance + record.segmentLength
+      const tolerance = 0.1 // 允许0.1km误差
+      if (Math.abs(record.cumulativeLength - expectedCumulative) > tolerance) {
+        errors.push({ 
+          recordId: record.id, 
+          field: 'cumulativeLength', 
+          message: `连续性错误: 行${lineNum} 距离计算不闭环 (预期: ${expectedCumulative.toFixed(2)}, 实际: ${record.cumulativeLength.toFixed(2)})` 
+        })
+      }
+      prevCumulativeDistance = record.cumulativeLength
+
+      // 7. 中继器间距检查
       if (index > 0 && record.pointType === 'repeater') {
         const prevRepeaterIndex = records.slice(0, index).reverse().findIndex(r => r.pointType === 'repeater')
         if (prevRepeaterIndex > -1) {
           const distance = record.cumulativeLength - records[index - 1 - prevRepeaterIndex].cumulativeLength
           if (distance > 120) {
-            warnings.push({ recordId: record.id, field: 'segmentLength', message: `序号${record.sequence}: 中继器间距${distance.toFixed(1)}km超过建议值120km` })
+            warnings.push({ recordId: record.id, field: 'segmentLength', message: `行${lineNum}: 中继器间距${distance.toFixed(1)}km超过建议值120km` })
           }
         }
       }
@@ -283,6 +323,74 @@ export const useRPLStore = defineStore('rpl', () => {
       errors,
       warnings,
     }
+  }
+
+  // 验证导入的RPL文件
+  function validateImportedRPL(headers: string[], rows: any[]): RPLValidationResult {
+    const errors: RPLValidationResult['errors'] = []
+    const warnings: RPLValidationResult['warnings'] = []
+
+    // 必填表头校验
+    const requiredHeaders = ['Pos No.', 'Event', 'Latitude', 'Longitude', 'Slack %', 'Cable Type', 'Distance (km) Between', 'Distance (km) Cumulative']
+    const missingHeaders = requiredHeaders.filter(h => !headers.includes(h))
+    if (missingHeaders.length > 0) {
+      errors.push({ 
+        recordId: '', 
+        field: 'headers', 
+        message: `格式错误: 缺失必填表头 [${missingHeaders.join(', ')}]` 
+      })
+      return { valid: false, errors, warnings }
+    }
+
+    let prevCumulativeDistance = 0
+
+    rows.forEach((row, index) => {
+      const lineNum = index + 1
+
+      // 序号连续性
+      if (row.posNo !== lineNum) {
+        errors.push({ 
+          recordId: `row-${lineNum}`, 
+          field: 'posNo', 
+          message: `连续性错误: 行${lineNum} 序号不连续，应为 ${lineNum}` 
+        })
+      }
+
+      // 经纬度格式校验
+      if (isNaN(row.latitude) || row.latitude < -90 || row.latitude > 90) {
+        errors.push({ recordId: `row-${lineNum}`, field: 'latitude', message: `格式错误: 行${lineNum} 纬度格式无效` })
+      }
+      if (isNaN(row.longitude) || row.longitude < -180 || row.longitude > 180) {
+        errors.push({ recordId: `row-${lineNum}`, field: 'longitude', message: `格式错误: 行${lineNum} 经度格式无效` })
+      }
+
+      // Slack非负校验
+      if (row.slack < 0) {
+        errors.push({ recordId: `row-${lineNum}`, field: 'slack', message: `格式错误: 行${lineNum} Slack % 不能为负数` })
+      }
+
+      // Cable Type引用校验
+      if (row.cableType && !validCableTypes.includes(row.cableType)) {
+        errors.push({ 
+          recordId: `row-${lineNum}`, 
+          field: 'cableType', 
+          message: `引用错误: 行${lineNum} 系统器件库中不存在海缆类型: ${row.cableType}` 
+        })
+      }
+
+      // 距离闭环校验
+      const expectedCum = prevCumulativeDistance + (row.distBetween || 0)
+      if (Math.abs((row.distCumulative || 0) - expectedCum) > 0.1) {
+        errors.push({ 
+          recordId: `row-${lineNum}`, 
+          field: 'distCumulative', 
+          message: `连续性错误: 行${lineNum} 距离计算不闭环 (预期: ${expectedCum.toFixed(2)}, 实际: ${row.distCumulative?.toFixed(2)})` 
+        })
+      }
+      prevCumulativeDistance = row.distCumulative || 0
+    })
+
+    return { valid: errors.length === 0, errors, warnings }
   }
 
   // 从路由生成RPL表格
@@ -457,6 +565,7 @@ export const useRPLStore = defineStore('rpl', () => {
     selectAllRecords,
     clearSelection,
     validateTable,
+    validateImportedRPL,
     generateFromRoute,
     exportToCSV,
     exportToJSON,

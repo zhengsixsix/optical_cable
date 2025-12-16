@@ -29,9 +29,19 @@ export interface TransmissionConfig {
 export interface MonitoringConfig {
   dataSourceType: 'realtime' | 'history'
   connectionAddress: string
+  authToken: string  // 认证Token
   powerThreshold: number
   temperatureThreshold: number
   berThreshold: string
+}
+
+// 光纤仿真模型类型
+export type FiberSimulationModel = 'GN' | 'EGN'
+
+// 光纤仿真配置接口
+export interface FiberSimulationConfig {
+  model: FiberSimulationModel  // 仿真模型偏好
+  description: string
 }
 
 // 默认配置
@@ -55,9 +65,16 @@ const defaultTransmissionConfig: TransmissionConfig = {
 const defaultMonitoringConfig: MonitoringConfig = {
   dataSourceType: 'realtime',
   connectionAddress: 'ws://localhost:8080/monitor',
+  authToken: '',
   powerThreshold: -25,
   temperatureThreshold: 45,
   berThreshold: '1e-6',
+}
+
+// 默认光纤仿真配置
+const defaultFiberSimulationConfig: FiberSimulationConfig = {
+  model: 'GN',
+  description: 'GN Model适用于计算速度要求高的场景',
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -71,6 +88,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const routePlanningConfig = ref<RoutePlanningConfig>({ ...defaultRoutePlanningConfig })
   const transmissionConfig = ref<TransmissionConfig>({ ...defaultTransmissionConfig })
   const monitoringConfig = ref<MonitoringConfig>({ ...defaultMonitoringConfig })
+  const fiberSimulationConfig = ref<FiberSimulationConfig>({ ...defaultFiberSimulationConfig })
   
   // 汇总的settings对象，兼容旧代码
   const settings = ref({
@@ -151,6 +169,7 @@ export const useSettingsStore = defineStore('settings', () => {
     routePlanningConfig.value = { ...defaultRoutePlanningConfig }
     transmissionConfig.value = { ...defaultTransmissionConfig }
     monitoringConfig.value = { ...defaultMonitoringConfig }
+    fiberSimulationConfig.value = { ...defaultFiberSimulationConfig }
     saveToLocalStorage()
   }
 
@@ -172,6 +191,12 @@ export const useSettingsStore = defineStore('settings', () => {
     saveToLocalStorage()
   }
 
+  // 更新光纤仿真配置
+  function updateFiberSimulationConfig(updates: Partial<FiberSimulationConfig>) {
+    fiberSimulationConfig.value = { ...fiberSimulationConfig.value, ...updates }
+    saveToLocalStorage()
+  }
+
   // 初始化时加载
   loadFromLocalStorage()
 
@@ -184,6 +209,7 @@ export const useSettingsStore = defineStore('settings', () => {
     routePlanningConfig,
     transmissionConfig,
     monitoringConfig,
+    fiberSimulationConfig,
     loadFromLocalStorage,
     saveToLocalStorage,
     updateCableType,
@@ -195,5 +221,6 @@ export const useSettingsStore = defineStore('settings', () => {
     updateRoutePlanningConfig,
     updateTransmissionConfig,
     updateMonitoringConfig,
+    updateFiberSimulationConfig,
   }
 })
