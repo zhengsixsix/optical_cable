@@ -28,6 +28,84 @@ const hoverInfo = ref({
   depth: 0
 })
 
+// 多 tif 文件支持
+interface TifMeta {
+  url: string
+  bbox: [number, number, number, number]
+  image: any
+  pixelWidth: number
+  pixelHeight: number
+  width: number
+  height: number
+}
+
+const DEM_FILES = ['/dem/1.tif', '/dem/2.tif', '/dem/3.tif', '/dem/4.tif', '/dem/5.tif', '/dem/6.tif']
+const tifMetaCache = ref<TifMeta[]>([])
+const metaLoaded = ref(false)
+
+// 预加载所有 tif 文件的元数据
+const loadTifMeta = async () => {
+  if (metaLoaded.value) return
+  
+  const metas: TifMeta[] = []
+  await Promise.all(DEM_FILES.map(async (url) => {
+    try {
+      const response = await fetch(url)
+      const arrayBuffer = await response.arrayBuffer()
+      const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer)
+      const image = await tiff.getImage()
+      const bbox = image.getBoundingBox() as [number, number, number, number]
+      const width = image.getWidth()
+      const height = image.getHeight()
+      const pixelWidth = (bbox[2] - bbox[0]) / width
+      const pixelHeight = (bbox[3] - bbox[1]) / height
+      
+      metas.push({ url, bbox, image, pixelWidth, pixelHeight, width, height })
+    } catch (e) {
+      console.warn(`加载 ${url} 元数据失败:`, e)
+    }
+  }))
+  
+  tifMetaCache.value = metas
+  metaLoaded.value = true
+}
+
+// 根据坐标找到对应的 tif 文件
+const findTifForPoint = (x: number, y: number): TifMeta | null => {
+  for (const meta of tifMetaCache.value) {
+    const [minX, minY, maxX, maxY] = meta.bbox
+    if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+      return meta
+    }
+  }
+  return null
+}
+
+// 从指定 tif 读取单点高程
+const getElevationFromTif = async (meta: TifMeta, x: number, y: number): Promise<number | null> => {
+  if (!meta.image) return null
+  
+  const [imgMinX, , , imgMaxY] = meta.bbox
+  const pixelX = Math.floor((x - imgMinX) / meta.pixelWidth)
+  const pixelY = Math.floor((imgMaxY - y) / meta.pixelHeight)
+  
+  if (pixelX < 0 || pixelX >= meta.width || pixelY < 0 || pixelY >= meta.height) {
+    return null
+  }
+  
+  try {
+    const rasters = await meta.image.readRasters({
+      window: [pixelX, pixelY, pixelX + 1, pixelY + 1],
+      width: 1,
+      height: 1,
+    })
+    const elevation = (rasters[0] as Int16Array)[0]
+    return elevation === -32767 ? 0 : elevation
+  } catch {
+    return null
+  }
+}
+
 // EPSG:3857 转经纬度
 const mercatorToLatLon = (x: number, y: number): [number, number] => {
   const lon = (x / 20037508.34) * 180
@@ -53,17 +131,8 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
   hasData.value = false
   
   try {
-    const response = await fetch('/dem.tif')
-    const arrayBuffer = await response.arrayBuffer()
-    const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer)
-    const image = await tiff.getImage()
-    
-    const bbox = image.getBoundingBox()
-    const imgWidth = image.getWidth()
-    const imgHeight = image.getHeight()
-    const [imgMinX, imgMinY, imgMaxX, imgMaxY] = bbox
-    const pixelWidth = (imgMaxX - imgMinX) / imgWidth
-    const pixelHeight = (imgMaxY - imgMinY) / imgHeight
+    // 预加载 tif 元数据
+    await loadTifMeta()
     
     const [extMinX, extMinY, extMaxX, extMaxY] = extent
     const centerY = (extMinY + extMaxY) / 2
@@ -80,21 +149,19 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
       const x = extMinX + (extMaxX - extMinX) * t
       const y = centerY
       
-      const pixelX = Math.floor((x - imgMinX) / pixelWidth)
-      const pixelY = Math.floor((imgMaxY - y) / pixelHeight)
+      // 转换为经纬度坐标（tif 文件是经纬度坐标系）
+      const [lon, lat] = mercatorToLatLon(x, y)
       
-      if (pixelX >= 0 && pixelX < imgWidth && pixelY >= 0 && pixelY < imgHeight) {
-        const rasters = await image.readRasters({
-          window: [pixelX, pixelY, pixelX + 1, pixelY + 1],
-          width: 1,
-          height: 1,
-        })
-        
-        const elevation = (rasters[0] as Int16Array)[0]
-        points.push({
-          distance: totalDistanceKm * t,
-          depth: elevation === -32767 ? 0 : elevation
-        })
+      // 从多个 tif 中查找对应的文件
+      const tifMeta = findTifForPoint(lon, lat)
+      if (tifMeta) {
+        const elevation = await getElevationFromTif(tifMeta, lon, lat)
+        if (elevation !== null) {
+          points.push({
+            distance: totalDistanceKm * t,
+            depth: elevation
+          })
+        }
       }
     }
     
