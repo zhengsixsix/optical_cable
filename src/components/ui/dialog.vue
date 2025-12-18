@@ -23,7 +23,7 @@ interface Props {
   description?: string
   width?: string
   closable?: boolean
-} 
+}
 
 const props = withDefaults(defineProps<Props>(), {
   open: false,
@@ -51,23 +51,19 @@ const isOpen = computed({
     <DialogPortal>
       <!-- 遮罩层 -->
       <DialogOverlay
-        class="fixed inset-0 bg-black/50 z-[100] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-      />
+        class="fixed inset-0 bg-black/50 z-[100] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
 
       <!-- 对话框内容 -->
-      <DialogContent
-        :class="cn(
-          'fixed left-1/2 top-1/2 z-[101] -translate-x-1/2 -translate-y-1/2',
-          'bg-white rounded-lg shadow-xl',
-          'data-[state=open]:animate-in data-[state=closed]:animate-out',
-          'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-          'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
-          'data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%]',
-          'data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]',
-          'max-h-[90vh] overflow-hidden flex flex-col'
-        )"
-        :style="{ width }"
-      >
+      <DialogContent :class="cn(
+        'fixed left-1/2 top-1/2 z-[101] -translate-x-1/2 -translate-y-1/2',
+        'bg-white rounded-lg shadow-xl',
+        'data-[state=open]:animate-in data-[state=closed]:animate-out',
+        'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+        'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+        'data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%]',
+        'data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]',
+        'max-h-[90vh] overflow-hidden flex flex-col'
+      )" :style="{ width }">
         <!-- 头部 -->
         <div v-if="title || closable" class="flex items-center justify-between px-6 py-4 border-b">
           <div>
@@ -78,10 +74,7 @@ const isOpen = computed({
               {{ description }}
             </DialogDescription>
           </div>
-          <DialogClose
-            v-if="closable"
-            class="rounded-full p-1.5 hover:bg-gray-100 transition-colors"
-          >
+          <DialogClose v-if="closable" class="rounded-full p-1.5 hover:bg-gray-100 transition-colors">
             <X class="w-5 h-5 text-gray-500" />
           </DialogClose>
         </div>

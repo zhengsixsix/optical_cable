@@ -12,8 +12,6 @@ export const useRouteStore = defineStore('route', () => {
   const currentRouteId = ref<string | null>(null)
   const selectedSegmentId = ref<string | null>(null)
   const paretoRoutes = ref<Route[]>([])
-  const isDrawing = ref(false)
-  const drawingPoints = ref<RoutePoint[]>([])
 
   // Getters
   const currentRoute = computed(() =>
@@ -82,77 +80,6 @@ export const useRouteStore = defineStore('route', () => {
     selectedSegmentId.value = segmentId
   }
 
-  function addPoint(point: RoutePoint) {
-    drawingPoints.value.push(point)
-  }
-
-
-  function removePoint(pointId: string) {
-    drawingPoints.value = drawingPoints.value.filter(p => p.id !== pointId)
-  }
-
-  function updatePoint(pointId: string, coordinates: [number, number]) {
-    const point = drawingPoints.value.find(p => p.id === pointId)
-    if (point) {
-      point.coordinates = coordinates
-    }
-  }
-
-  function startDrawing() {
-    isDrawing.value = true
-    drawingPoints.value = []
-  }
-
-  function stopDrawing() {
-    isDrawing.value = false
-  }
-
-  function clearDrawing() {
-    drawingPoints.value = []
-  }
-
-  async function saveCurrentRoute(name: string) {
-    if (drawingPoints.value.length < 2) return null
-
-    const segments = generateSegments(drawingPoints.value)
-    const totalLength = segments.reduce((sum, s) => sum + s.length, 0)
-    const totalCost = segments.reduce((sum, s) => sum + s.cost, 0)
-
-    // 计算风险分数（基于分段风险等级）
-    const riskScore = calculateRouteRisk(segments)
-
-    const newRoute: Route = {
-      id: `route-${Date.now()}`,
-      name,
-      points: [...drawingPoints.value],
-      segments,
-      totalLength,
-      totalCost,
-      riskScore,
-      // 结构化成本和风险
-      cost: {
-        cable: totalCost * 0.7,
-        installation: totalCost * 0.2,
-        equipment: totalCost * 0.1,
-        total: totalCost,
-      },
-      risk: {
-        seismic: riskScore * 0.4,
-        volcanic: riskScore * 0.3,
-        depth: riskScore * 0.3,
-        overall: riskScore,
-      },
-      distance: totalLength,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }
-
-    const saved = await repository.saveRoute(newRoute)
-    routes.value.push(saved)
-    // 重新计算 Pareto 前沿
-    paretoRoutes.value = calculateParetoFront(routes.value)
-    return saved
-  }
 
   /**
    * 根据分段风险等级计算路由整体风险
@@ -227,21 +154,12 @@ export const useRouteStore = defineStore('route', () => {
     currentRouteId,
     selectedSegmentId,
     paretoRoutes,
-    isDrawing,
-    drawingPoints,
     currentRoute,
     selectedRoute,
     selectedSegment,
     loadRoutes,
     selectRoute,
     selectSegment,
-    addPoint,
-    removePoint,
-    updatePoint,
-    startDrawing,
-    stopDrawing,
-    clearDrawing,
-    saveCurrentRoute,
     generateMockParetoRoutes,
     clearParetoRoutes,
   }

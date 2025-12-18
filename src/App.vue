@@ -11,6 +11,7 @@ import RPLManageDialog from '@/components/dialogs/RPLManageDialog.vue'
 import SLDManageDialog from '@/components/dialogs/SLDManageDialog.vue'
 import RouteEditDialog from '@/components/dialogs/RouteEditDialog.vue'
 import ReportDialog from '@/components/dialogs/ReportDialog.vue'
+import RPLExportDialog from '@/components/dialogs/RPLExportDialog.vue'
 import AlarmNotification from '@/components/notifications/AlarmNotification.vue'
 
 const routeStore = useRouteStore()
@@ -105,6 +106,11 @@ onMounted(async () => {
   <ReportDialog
     :visible="appStore.activeDialog === 'cost-report' || appStore.activeDialog === 'perf-report'"
     :mode="appStore.activeDialog === 'cost-report' ? 'cost' : 'perf'"
+    @close="appStore.closeDialog()"
+  />
+
+  <RPLExportDialog
+    :visible="appStore.activeDialog === 'rpl-export'"
     @close="appStore.closeDialog()"
   />
 

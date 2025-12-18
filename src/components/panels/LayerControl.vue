@@ -79,7 +79,7 @@ function handleLayerSettings(layerId: string) {
 }
 
 function handleExport(layerId: string) {
-  appStore.showNotification({ type: 'info', message: `导出 ${layerId} 数据` })
+  appStore.openDialog('export')
 }
 
 function handleReload(layerId: string) {

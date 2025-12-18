@@ -10,7 +10,7 @@ export const useLayerStore = defineStore('layer', () => {
   const layers = ref<LayerConfig[]>([
     { id: 'volcano', name: '火山区域', type: 'both', visible: false, loaded: false, loading: false },
     { id: 'earthquake', name: '地震活动', type: 'both', visible: false, loaded: false, loading: false },
-    { id: 'elevation', name: '海洋高程', type: 'raster', visible: true, loaded: true, loading: false },
+    { id: 'elevation', name: '海洋高程', type: 'raster', visible: false, loaded: false, loading: false },
     { id: 'slope', name: '海洋坡度', type: 'heatmap', visible: false, loaded: false, loading: false },
     { id: 'fishing', name: '海洋渔区分布', type: 'point', visible: false, loaded: false, loading: false },
     { id: 'shipping', name: '航道分布', type: 'vector', visible: false, loaded: false, loading: false },
