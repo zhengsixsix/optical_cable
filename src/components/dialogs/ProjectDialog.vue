@@ -73,8 +73,33 @@ const dialogWidth = computed(() => {
   return props.mode === 'new' ? 'w-[700px]' : 'w-[500px]'
 })
 
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const currentBrowseItem = ref<BaseDataItem | null>(null)
+const isBrowsingPath = ref(false)
+
 const handleBrowse = (item?: BaseDataItem) => {
-  appStore.showNotification({ type: 'info', message: '浏览文件功能待实现' })
+  if (item) {
+    currentBrowseItem.value = item
+    isBrowsingPath.value = false
+  } else {
+    currentBrowseItem.value = null
+    isBrowsingPath.value = true
+  }
+  fileInputRef.value?.click()
+}
+
+const handleFileSelected = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  if (target.files && target.files.length > 0) {
+    const file = target.files[0]
+    if (currentBrowseItem.value) {
+      currentBrowseItem.value.value = file.name
+      currentBrowseItem.value.checked = true
+    } else if (isBrowsingPath.value) {
+      savePath.value = file.name.replace(/[^\\/]+$/, '') || 'C:\\Projects\\'
+    }
+  }
+  target.value = ''
 }
 
 const handleSubmit = async () => {
@@ -98,6 +123,14 @@ const handleSubmit = async () => {
 
 <template>
   <Teleport to="body">
+    <!-- 隐藏的文件选择器 -->
+    <input
+      ref="fileInputRef"
+      type="file"
+      class="hidden"
+      accept=".tif,.tiff,.geojson,.json,.ucp"
+      @change="handleFileSelected"
+    >
     <div
       v-if="visible"
       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in duration-200"

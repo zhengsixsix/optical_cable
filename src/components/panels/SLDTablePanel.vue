@@ -103,10 +103,6 @@ const handleExportSegments = () => {
   appStore.showNotification({ type: 'success', message: '导出成功' })
 }
 
-const handleGenerateMock = () => {
-  sldStore.generateMockData()
-  appStore.showNotification({ type: 'success', message: '已生成示例数据' })
-}
 </script>
 
 <template>
@@ -116,15 +112,9 @@ const handleGenerateMock = () => {
         <Network class="w-5 h-5 text-purple-600" />
         <span class="font-semibold">SLD 表格管理</span>
       </div>
-      <div class="flex items-center gap-2">
-        <Button v-if="!currentTable" variant="outline" size="sm" @click="handleGenerateMock">
-          <Plus class="w-4 h-4 mr-1" />
-          生成示例
-        </Button>
-        <Button v-if="props.visible !== undefined" variant="ghost" size="sm" @click="emit('close')">
-          <X class="w-4 h-4" />
-        </Button>
-      </div>
+      <Button v-if="props.visible !== undefined" variant="ghost" size="sm" @click="emit('close')">
+        <X class="w-4 h-4" />
+      </Button>
     </CardHeader>
 
     <CardContent class="flex-1 flex flex-col overflow-hidden p-0">

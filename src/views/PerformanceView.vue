@@ -2,31 +2,16 @@
 import { ref } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Select } from '@/components/ui'
+import { mockPerformanceData, performanceDeviceOptions, performanceTimeRangeOptions } from '@/data/mockData'
 
-// 查询条件
+// 查询条件 - 从集中数据文件导入
 const selectedDevice = ref('r1')
-const deviceOptions = [
-  { value: 'r1', label: 'Repeater R1' },
-  { value: 'r2', label: 'Repeater R2' },
-  { value: 'b1', label: 'Branch Unit B1' },
-]
+const deviceOptions = performanceDeviceOptions
 
 const selectedTimeRange = ref('24h')
-const timeRangeOptions = [
-  { value: '24h', label: '最近 24 小时' },
-  { value: '7d', label: '最近 7 天' },
-  { value: '30d', label: '最近 30 天' },
-]
+const timeRangeOptions = performanceTimeRangeOptions
 
-// Mock Data for Performance History
-const performanceData = [
-  { id: 1, time: '2023-10-27 10:00', device: 'Repeater R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
-  { id: 2, time: '2023-10-27 11:00', device: 'Repeater R1', voltage: '48.1V', temp: '4.3°C', status: 'Normal' },
-  { id: 3, time: '2023-10-27 12:00', device: 'Repeater R1', voltage: '48.3V', temp: '4.2°C', status: 'Normal' },
-  { id: 4, time: '2023-10-27 13:00', device: 'Repeater R1', voltage: '48.2V', temp: '4.4°C', status: 'Warning' },
-  { id: 5, time: '2023-10-27 14:00', device: 'Repeater R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
-  { id: 6, time: '2023-10-27 15:00', device: 'Repeater R1', voltage: '48.1V', temp: '4.1°C', status: 'Normal' },
-]
+const performanceData = mockPerformanceData
 </script>
 
 <template>

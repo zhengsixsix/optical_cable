@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { defaultAdminUser, mockUsers } from '@/data/mockData'
 
 // 用户角色类型
 export type UserRole = 'admin' | 'user'
@@ -19,43 +20,15 @@ export interface User {
   lastLoginAt?: Date
 }
 
-// 默认管理员账户
-const defaultAdmin: User = {
-  id: 'admin-001',
-  username: 'admin',
-  password: '12345678',
-  phone: '13800000000',
-  role: 'admin',
-  status: 'approved',
-  createdAt: new Date('2024-01-01'),
-}
+// 默认管理员账户 - 从集中数据文件导入
+const defaultAdmin: User = defaultAdminUser as User
 
 export const useUserStore = defineStore('user', () => {
   // 当前登录用户
   const currentUser = ref<User | null>(null)
   
-  // 所有用户列表（模拟数据库）
-  const users = ref<User[]>([
-    defaultAdmin,
-    {
-      id: 'user-001',
-      username: 'zhangsan',
-      password: '123456',
-      phone: '13900001111',
-      role: 'user',
-      status: 'approved',
-      createdAt: new Date('2024-06-01'),
-    },
-    {
-      id: 'user-002',
-      username: 'lisi',
-      password: '123456',
-      phone: '13900002222',
-      role: 'user',
-      status: 'pending',
-      createdAt: new Date('2024-12-01'),
-    },
-  ])
+  // 所有用户列表 - 从集中数据文件导入
+  const users = ref<User[]>([defaultAdmin, ...mockUsers.map(u => u as User)])
 
   // 是否已登录
   const isLoggedIn = computed(() => currentUser.value !== null)

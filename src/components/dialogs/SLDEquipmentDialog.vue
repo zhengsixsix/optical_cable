@@ -4,6 +4,7 @@ import { useSLDStore, useAppStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { X, Save, Radio } from 'lucide-vue-next'
 import type { SLDEquipmentType } from '@/types'
+import { equipmentTypeOptions } from '@/data/mockData'
 
 const props = defineProps<{
   visible: boolean
@@ -33,15 +34,6 @@ const form = ref({
   manufacturer: '',
   remarks: '',
 })
-
-const equipmentTypeOptions = [
-  { value: 'TE', label: '终端设备 (TE)' },
-  { value: 'PFE', label: '供电设备 (PFE)' },
-  { value: 'REP', label: '中继器 (REP)' },
-  { value: 'BU', label: '分支器 (BU)' },
-  { value: 'JOINT', label: '接头 (JOINT)' },
-  { value: 'OADM', label: '光分插复用器 (OADM)' },
-]
 
 watch(() => props.visible, (val) => {
   if (val) {

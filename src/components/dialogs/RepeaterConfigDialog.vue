@@ -2,6 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import { Button } from '@/components/ui'
 import { useAppStore } from '@/stores'
+import { mockRepeaterConfigs, repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
 import { 
   X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio 
 } from 'lucide-vue-next'
@@ -35,42 +36,30 @@ interface RepeaterConfig {
 const repeaters = ref<RepeaterConfig[]>([])
 const selectedRepeaterId = ref<string | null>(null)
 
-const modelOptions = [
-  { value: 'EREP-C', label: 'EREP-C (C波段)' },
-  { value: 'EREP-C+L', label: 'EREP-C+L (C+L波段)' },
-  { value: 'EREP-S+C+L', label: 'EREP-S+C+L (全波段)' },
-]
-
-const recommendedSpacing = 80
-const maxSpacing = 120
+const modelOptions = repeaterModelOptions
+const recommendedSpacing = repeaterSpacingConfig.recommended
+const maxSpacing = repeaterSpacingConfig.max
 
 function generateMockRepeaters() {
-  const totalLength = 1550
-  const count = Math.ceil(totalLength / recommendedSpacing) - 1
-  
-  repeaters.value = []
   let prevKP = 0
-  
-  for (let i = 0; i < count; i++) {
-    const kp = (i + 1) * recommendedSpacing
-    if (kp >= totalLength - 20) break
-    
-    repeaters.value.push({
+  repeaters.value = mockRepeaterConfigs.map((cfg, i) => {
+    const spacing = cfg.kp - prevKP
+    prevKP = cfg.kp
+    return {
       id: `rep-${i}`,
       index: i,
-      name: `REP-${String(i + 1).padStart(2, '0')}`,
-      kp,
-      longitude: 121.5 + i * 1.5,
-      latitude: 31.2 - i * 1.2,
-      depth: 1500 + Math.random() * 2000,
-      spacing: kp - prevKP,
-      model: 'EREP-C+L',
-      gain: 15,
-      powerConsumption: 45,
+      name: cfg.name,
+      kp: cfg.kp,
+      longitude: cfg.longitude,
+      latitude: cfg.latitude,
+      depth: cfg.depth,
+      spacing,
+      model: cfg.model,
+      gain: cfg.gain,
+      powerConsumption: cfg.powerConsumption,
       remarks: '',
-    })
-    prevKP = kp
-  }
+    }
+  })
 }
 
 function recalculateSpacing() {

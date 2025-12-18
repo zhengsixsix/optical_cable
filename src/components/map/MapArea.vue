@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { useMapStore, useLayerStore, useAppStore, useRouteStore } from '@/stores'
+import { useMapStore, useLayerStore, useAppStore, useRouteStore, useRPLStore } from '@/stores'
+import { exportRPLFile } from '@/services'
 import { Button, Tooltip } from '@/components/ui'
+import RouteDrawPanel from '@/components/panels/RouteDrawPanel.vue'
 import {
   MousePointer, Move, Pencil, Plus, Trash2, Square, Edit3,
   Play, Pause, Download, Loader2, Settings, Radio, FileSpreadsheet
@@ -38,6 +40,7 @@ const mapStore = useMapStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
 const routeStore = useRouteStore()
+const rplStore = useRPLStore()
 
 const emit = defineEmits<{
   (e: 'area-selected', extent: [number, number, number, number]): void
@@ -48,6 +51,8 @@ const loading = ref(true)
 const coordinates = ref({ lon: 0, lat: 0 })
 const isPlanning = ref(false)
 const isEditingRoute = ref(false)
+const showDrawPanel = ref(false)
+const routeDrawPanelRef = ref<InstanceType<typeof RouteDrawPanel> | null>(null)
 const selectedPointFeature = ref<Feature | null>(null)
 const isDraggingPoint = ref(false)
 
@@ -248,15 +253,160 @@ const openSegmentPanel = () => {
   appStore.showNotification({ type: 'info', message: '分段参数配置面板已打开' })
 }
 
+// 处理绘制模式切换
+const handleDrawModeToggle = (mode: string) => {
+  if (mode === 'draw') {
+    showDrawPanel.value = true
+    routeStore.startDrawing()
+    appStore.showNotification({ type: 'info', message: '请在地图上点击添加路径起点' })
+    appStore.addLog('INFO', '进入路径绘制模式')
+  } else {
+    showDrawPanel.value = false
+  }
+}
+
+// 监听工具模式变化
+watch(() => mapStore.toolMode, (newMode, oldMode) => {
+  if (oldMode === 'draw' && newMode !== 'draw') {
+    // 如果从绘制模式切换出去，但还没完成绘制
+    if (routeStore.drawingPoints.length > 0 && routeStore.drawingPoints.length < 2) {
+      routeStore.clearDrawing()
+    }
+    showDrawPanel.value = false
+  }
+  if (newMode === 'draw') {
+    handleDrawModeToggle('draw')
+  }
+})
+
+// 添加绘制点
+const handleAddDrawingPoint = (lon: number, lat: number) => {
+  const pointId = `point-${Date.now()}`
+  const pointCount = routeStore.drawingPoints.length
+  
+  routeStore.addPoint({
+    id: pointId,
+    coordinates: [lon, lat] as [number, number],
+    type: pointCount === 0 ? 'landing' : 'waypoint'
+  })
+  
+  // 更新面板显示
+  if (routeDrawPanelRef.value) {
+    routeDrawPanelRef.value.updateFromMapClick(lon, lat)
+  }
+  
+  // 提示下一步
+  const newCount = routeStore.drawingPoints.length
+  if (newCount === 1) {
+    appStore.showNotification({ type: 'success', message: '起点已添加，请点击地图添加终点' })
+  } else if (newCount === 2) {
+    appStore.showNotification({ type: 'success', message: '终点已添加，可继续添加途经点或点击"完成绘制"' })
+  } else {
+    appStore.showNotification({ type: 'info', message: `已添加第 ${newCount} 个点` })
+  }
+  
+  // 在地图上绘制点
+  drawDrawingPoints()
+}
+
+// 从面板添加点
+const handlePanelAddPoint = (lon: number, lat: number) => {
+  handleAddDrawingPoint(lon, lat)
+}
+
+// 绘制当前绘制的点
+const drawDrawingPoints = () => {
+  if (!routeSource) {
+    routeSource = new VectorSource()
+    routeLayer = new VectorLayer({
+      source: routeSource,
+      zIndex: 200,
+    })
+    map?.addLayer(routeLayer)
+  }
+  
+  // 清除旧的绘制点
+  const features = routeSource.getFeatures()
+  features.filter(f => f.get('isDrawing')).forEach(f => routeSource!.removeFeature(f))
+  
+  // 绘制新点
+  routeStore.drawingPoints.forEach((point, index) => {
+    const pointFeature = new Feature({
+      geometry: new Point(point.coordinates),
+      isDrawing: true,
+      pointIndex: index
+    })
+    
+    const isStart = index === 0
+    const isEnd = index === routeStore.drawingPoints.length - 1 && index > 0
+    
+    pointFeature.setStyle(new Style({
+      image: new CircleStyle({
+        radius: 8,
+        fill: new Fill({ color: isStart ? '#22c55e' : isEnd ? '#ef4444' : '#3b82f6' }),
+        stroke: new Stroke({ color: '#fff', width: 2 })
+      }),
+      text: new Text({
+        text: isStart ? '起' : isEnd ? '终' : `${index + 1}`,
+        fill: new Fill({ color: '#fff' }),
+        font: 'bold 10px sans-serif',
+        offsetY: 1
+      })
+    }))
+    
+    routeSource!.addFeature(pointFeature)
+  })
+  
+  // 绘制连接线
+  if (routeStore.drawingPoints.length > 1) {
+    const coords = routeStore.drawingPoints.map(p => p.coordinates)
+    const lineFeature = new Feature({
+      geometry: new LineString(coords),
+      isDrawing: true
+    })
+    lineFeature.setStyle(new Style({
+      stroke: new Stroke({ color: '#3b82f6', width: 3, lineDash: [8, 4] })
+    }))
+    routeSource!.addFeature(lineFeature)
+  }
+}
+
+// 完成绘制
+const handleDrawComplete = () => {
+  showDrawPanel.value = false
+  mapStore.setToolMode('select')
+  appStore.showNotification({ type: 'success', message: '路径绘制完成，可以运行规划了' })
+  appStore.addLog('INFO', `路径绘制完成，共 ${routeStore.drawingPoints.length} 个点`)
+}
+
+// 关闭绘制面板
+const handleDrawPanelClose = () => {
+  showDrawPanel.value = false
+  mapStore.setToolMode('select')
+  // 清除绘制的点
+  if (routeSource) {
+    const features = routeSource.getFeatures()
+    features.filter(f => f.get('isDrawing')).forEach(f => routeSource!.removeFeature(f))
+  }
+}
+
 // 打开中继器配置面板
 const openRepeaterPanel = () => {
   appStore.setPanelVisible('repeaterConfigPanel', true)
   appStore.showNotification({ type: 'info', message: '中继器配置面板已打开' })
 }
 
-// 导出RPL表格
+// 导出RPL文件
 const exportRPL = () => {
-  appStore.openDialog('rpl-manage')
+  const table = rplStore.currentTable
+  if (!table || table.records.length === 0) {
+    appStore.showNotification({ type: 'warning', message: '没有可导出的RPL数据，请先进行路由规划' })
+    return
+  }
+  
+  // 导出为CSV格式（行业标准）
+  exportRPLFile(table, 'csv')
+  appStore.showNotification({ type: 'success', message: `RPL文件已导出: ${table.name}` })
 }
 
 // 打开SLD系统布局图
@@ -317,6 +467,14 @@ const initMap = () => {
 
   map.on('pointermove', (evt) => {
     coordinates.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
+  })
+
+  // 地图点击事件 - 处理绘制模式
+  map.on('click', (evt) => {
+    if (mapStore.toolMode === 'draw' && showDrawPanel.value) {
+      const [lon, lat] = evt.coordinate
+      handleAddDrawingPoint(lon, lat)
+    }
   })
 
   selectionSource = new VectorSource()
@@ -794,6 +952,24 @@ const togglePlanning = () => {
 }
 
 const handleRunPlanning = () => {
+  // 检查是否已绘制路径点（至少需要起点和终点）
+  if (routeStore.drawingPoints.length < 2) {
+    appStore.showNotification({ 
+      type: 'warning', 
+      message: '请先在地图上绘制路径（至少需要起点和终点）' 
+    })
+    appStore.addLog('WARN', '运行规划失败：未指定起终点')
+    
+    // 提示用户切换到绘制模式
+    if (mapStore.toolMode !== 'draw') {
+      appStore.showNotification({ 
+        type: 'info', 
+        message: '提示：点击工具栏"绘制"按钮，然后在地图上点击添加路径点' 
+      })
+    }
+    return
+  }
+
   let hasHeatmapData = false
   const enabledLayers: string[] = []
 
@@ -917,6 +1093,15 @@ onUnmounted(() => {
     <!-- 地图视口 -->
     <div class="flex-1 relative overflow-hidden">
       <div ref="mapContainer" class="w-full h-full" />
+
+      <!-- 路径绘制面板 -->
+      <RouteDrawPanel
+        ref="routeDrawPanelRef"
+        :visible="showDrawPanel"
+        @close="handleDrawPanelClose"
+        @add-point="handlePanelAddPoint"
+        @complete="handleDrawComplete"
+      />
 
       <!-- 加载状态 -->
       <div v-if="loading" class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center gap-3 z-50">

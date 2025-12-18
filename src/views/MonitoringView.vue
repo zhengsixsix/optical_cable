@@ -1,77 +1,81 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import MonitorPanel from '@/components/panels/MonitorPanel.vue'
+import PerformanceChart from '@/components/charts/PerformanceChart.vue'
 import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin } from 'lucide-vue-next'
+import { mockMonitorDevices, mockAlarmHistory } from '@/data/mockData'
 
-// 设备列表数据 - 包含完整性能指标
-const devices = ref([
-  { 
-    id: 'r1', name: '中继器 R1', type: 'Repeater', neType: 'Repeater', status: 'normal', 
-    location: 'KP 120',
-    // 性能指标
-    inputPower: -12.5,   // 输入光功率 (dBm)
-    outputPower: 2.8,    // 输出光功率 (dBm)
-    pumpCurrent: 285,    // 泵浦电流 (mA)
-    pfeVoltage: 48.2,    // PFE电压 (V)
-    pfeCurrent: 1.25,    // PFE电流 (A)
-    temperature: 4.2,    // 温度 (°C)
-  },
-  { 
-    id: 'r2', name: '中继器 R2', type: 'Repeater', neType: 'Repeater', status: 'warning', 
-    location: 'KP 240',
-    inputPower: -13.2, outputPower: 2.5, pumpCurrent: 295,
-    pfeVoltage: 47.8, pfeCurrent: 1.28, temperature: 5.1,
-  },
-  { 
-    id: 'r3', name: '中继器 R3', type: 'Repeater', neType: 'Repeater', status: 'normal', 
-    location: 'KP 360',
-    inputPower: -12.8, outputPower: 2.6, pumpCurrent: 280,
-    pfeVoltage: 48.1, pfeCurrent: 1.22, temperature: 4.0,
-  },
-  { 
-    id: 'b1', name: '分支器 B1', type: 'BU', neType: 'BU', status: 'normal', 
-    location: 'KP 200',
-    inputPower: -10.5, outputPower: -11.2, pumpCurrent: 0,
-    pfeVoltage: 48.0, pfeCurrent: 0.85, temperature: 3.8,
-  },
-  { 
-    id: 'l1', name: '登陆站 L1', type: 'LandingStation', neType: 'SLTE', status: 'error', 
-    location: '上海',
-    inputPower: -8.2, outputPower: 4.0, pumpCurrent: 0,
-    pfeVoltage: 47.5, pfeCurrent: 15.2, temperature: 22.5,
-    // SLTE特有指标
-    qValue: 12.5,       // Q值 (dB)
-    ber: 1.2e-9,        // 误码率
-    osnr: 28.5,         // OSNR (dB)
-  },
-  { 
-    id: 'l2', name: '登陆站 L2', type: 'LandingStation', neType: 'SLTE', status: 'normal', 
-    location: '冲纳',
-    inputPower: -9.0, outputPower: 3.8, pumpCurrent: 0,
-    pfeVoltage: 48.3, pfeCurrent: 14.8, temperature: 21.8,
-    qValue: 13.2, ber: 5.5e-10, osnr: 29.2,
-  },
-  { 
-    id: 'pfe1', name: '供电设备 PFE1', type: 'PFE', neType: 'PFE', status: 'normal', 
-    location: '上海登陆站',
-    inputPower: 0, outputPower: 0, pumpCurrent: 0,
-    pfeVoltage: 380, pfeCurrent: 25.5, temperature: 35.2,
-  },
-])
+// 设备列表数据 - 从集中数据文件导入
+const devices = ref([...mockMonitorDevices])
+
+// 性能历史数据（模拟）
+const performanceHistory = ref<{ time: string; value: number }[]>([])
+const temperatureHistory = ref<{ time: string; value: number }[]>([])
+
+// 生成模拟历史数据
+const generateHistoryData = () => {
+  const now = new Date()
+  const data: { time: string; value: number }[] = []
+  const tempData: { time: string; value: number }[] = []
+  
+  for (let i = 29; i >= 0; i--) {
+    const time = new Date(now.getTime() - i * 60000)
+    const timeStr = time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    data.push({ time: timeStr, value: -10 + Math.random() * 4 - 2 })
+    tempData.push({ time: timeStr, value: 3.5 + Math.random() * 1.5 })
+  }
+  
+  performanceHistory.value = data
+  temperatureHistory.value = tempData
+}
+
+// 性能曲线图数据
+const powerChartSeries = computed(() => [{
+  name: '输出光功率',
+  data: performanceHistory.value,
+  color: '#3b82f6',
+  unit: 'dBm'
+}])
+
+const tempChartSeries = computed(() => [{
+  name: '设备温度',
+  data: temperatureHistory.value,
+  color: '#f97316',
+  unit: '°C'
+}])
+
+// 自动刷新性能数据
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+const refreshPerformanceData = () => {
+  const now = new Date()
+  const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  
+  // 添加新数据点
+  performanceHistory.value.push({ time: timeStr, value: -10 + Math.random() * 4 - 2 })
+  temperatureHistory.value.push({ time: timeStr, value: 3.5 + Math.random() * 1.5 })
+  
+  // 保持最近30个点
+  if (performanceHistory.value.length > 30) performanceHistory.value.shift()
+  if (temperatureHistory.value.length > 30) temperatureHistory.value.shift()
+}
+
+onMounted(() => {
+  generateHistoryData()
+  refreshTimer = setInterval(refreshPerformanceData, 10000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+})
 
 // 选中的设备
 const selectedDevice = ref<string | null>(null)
 
-// 告警历史
-const alarmHistory = ref([
-  { id: 1, time: '14:30', device: '登陆站 L1', message: '供电电压异常', level: 'error' },
-  { id: 2, time: '12:15', device: '中继器 R2', message: '温度超过阈值', level: 'warning' },
-  { id: 3, time: '10:45', device: '中继器 R1', message: '信号恢复正常', level: 'info' },
-  { id: 4, time: '09:30', device: '分支器 B1', message: '端口连接正常', level: 'info' },
-  { id: 5, time: '08:00', device: '系统', message: '系统启动完成', level: 'info' },
-])
+// 告警历史 - 从集中数据文件导入
+const alarmHistory = ref([...mockAlarmHistory])
 
 // 选中设备的详情
 const selectedDeviceInfo = computed(() => {
@@ -365,6 +369,22 @@ const selectDevice = (id: string) => {
 
     <template #right>
       <MonitorPanel />
+      
+      <!-- 性能趋势曲线 -->
+      <div class="space-y-3">
+        <PerformanceChart 
+          title="输出光功率趋势" 
+          :series="powerChartSeries"
+          :height="150"
+          @refresh="generateHistoryData"
+        />
+        <PerformanceChart 
+          title="设备温度趋势" 
+          :series="tempChartSeries"
+          :height="150"
+          @refresh="generateHistoryData"
+        />
+      </div>
       
       <!-- 告警历史 -->
       <Card class="flex-1 overflow-hidden flex flex-col">

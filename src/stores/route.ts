@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Route, RoutePoint, RouteSegment, RouteCostBreakdown, RouteRiskAnalysis } from '@/types'
 import { createRouteRepository } from '@/repositories'
+import { mockParetoRoutes } from '@/data/mockData'
 
 export const useRouteStore = defineStore('route', () => {
   const repository = createRouteRepository()
@@ -191,93 +192,23 @@ export const useRouteStore = defineStore('route', () => {
   }
 
   /**
-   * 生成三条模拟 Pareto 路径数据
-   * 分别代表：低成本高风险、均衡、高成本低风险
+   * 生成 Pareto 路径数据 - 从集中数据文件导入
    */
   function generateMockParetoRoutes() {
     const now = new Date()
     
-    // 路径1: 低成本方案 (成本低，风险高)
-    const route1: Route = {
-      id: 'pareto-route-1',
-      name: '经济路线',
-      points: [
-        { id: 'p1-1', coordinates: [120.5, 25.0], type: 'landing', name: '起点A' },
-        { id: 'p1-2', coordinates: [125.0, 22.0], type: 'waypoint' },
-        { id: 'p1-3', coordinates: [130.0, 20.0], type: 'landing', name: '终点B' },
-      ],
-      segments: [
-        { id: 's1-1', startPointId: 'p1-1', endPointId: 'p1-2', length: 520, depth: 2500, cableType: 'lw', riskLevel: 'high', cost: 15600000 },
-        { id: 's1-2', startPointId: 'p1-2', endPointId: 'p1-3', length: 580, depth: 3200, cableType: 'lw', riskLevel: 'high', cost: 17400000 },
-      ],
-      totalLength: 1100,
-      totalCost: 33000000,
-      riskScore: 0.72,
-      cost: { cable: 23100000, installation: 6600000, equipment: 3300000, total: 33000000 },
-      risk: { seismic: 0.75, volcanic: 0.68, depth: 0.73, overall: 0.72 },
-      distance: 1100,
+    // 从集中数据创建路径
+    const paretoData = mockParetoRoutes.map(r => ({
+      ...r,
       createdAt: now,
       updatedAt: now,
-    }
+    })) as Route[]
 
-    // 路径2: 均衡方案 (成本中等，风险中等)
-    const route2: Route = {
-      id: 'pareto-route-2',
-      name: '均衡路线',
-      points: [
-        { id: 'p2-1', coordinates: [120.5, 25.0], type: 'landing', name: '起点A' },
-        { id: 'p2-2', coordinates: [123.5, 23.5], type: 'repeater' },
-        { id: 'p2-3', coordinates: [127.0, 21.5], type: 'waypoint' },
-        { id: 'p2-4', coordinates: [130.0, 20.0], type: 'landing', name: '终点B' },
-      ],
-      segments: [
-        { id: 's2-1', startPointId: 'p2-1', endPointId: 'p2-2', length: 380, depth: 1800, cableType: 'da', riskLevel: 'medium', cost: 15200000 },
-        { id: 's2-2', startPointId: 'p2-2', endPointId: 'p2-3', length: 420, depth: 2200, cableType: 'da', riskLevel: 'medium', cost: 16800000 },
-        { id: 's2-3', startPointId: 'p2-3', endPointId: 'p2-4', length: 350, depth: 2000, cableType: 'da', riskLevel: 'low', cost: 14000000 },
-      ],
-      totalLength: 1150,
-      totalCost: 46000000,
-      riskScore: 0.45,
-      cost: { cable: 32200000, installation: 9200000, equipment: 4600000, total: 46000000 },
-      risk: { seismic: 0.42, volcanic: 0.48, depth: 0.45, overall: 0.45 },
-      distance: 1150,
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    // 路径3: 安全方案 (成本高，风险低)
-    const route3: Route = {
-      id: 'pareto-route-3',
-      name: '安全路线',
-      points: [
-        { id: 'p3-1', coordinates: [120.5, 25.0], type: 'landing', name: '起点A' },
-        { id: 'p3-2', coordinates: [122.0, 24.0], type: 'repeater' },
-        { id: 'p3-3', coordinates: [124.5, 22.5], type: 'repeater' },
-        { id: 'p3-4', coordinates: [127.5, 21.0], type: 'waypoint' },
-        { id: 'p3-5', coordinates: [130.0, 20.0], type: 'landing', name: '终点B' },
-      ],
-      segments: [
-        { id: 's3-1', startPointId: 'p3-1', endPointId: 'p3-2', length: 200, depth: 800, cableType: 'sa', riskLevel: 'low', cost: 12000000 },
-        { id: 's3-2', startPointId: 'p3-2', endPointId: 'p3-3', length: 280, depth: 1200, cableType: 'sa', riskLevel: 'low', cost: 16800000 },
-        { id: 's3-3', startPointId: 'p3-3', endPointId: 'p3-4', length: 320, depth: 1500, cableType: 'sa', riskLevel: 'low', cost: 19200000 },
-        { id: 's3-4', startPointId: 'p3-4', endPointId: 'p3-5', length: 300, depth: 1100, cableType: 'sa', riskLevel: 'low', cost: 18000000 },
-      ],
-      totalLength: 1100,
-      totalCost: 66000000,
-      riskScore: 0.22,
-      cost: { cable: 46200000, installation: 13200000, equipment: 6600000, total: 66000000 },
-      risk: { seismic: 0.18, volcanic: 0.25, depth: 0.23, overall: 0.22 },
-      distance: 1100,
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    // 设置路径数据
-    routes.value = [route1, route2, route3]
-    paretoRoutes.value = [route1, route2, route3]
+    routes.value = paretoData
+    paretoRoutes.value = paretoData
     
     // 默认选中均衡路线
-    currentRouteId.value = route2.id
+    currentRouteId.value = 'pareto-route-2'
     
     return paretoRoutes.value
   }

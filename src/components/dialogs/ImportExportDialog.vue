@@ -4,6 +4,7 @@ import { Upload, Download, X, FileText, Check, AlertCircle, Loader2 } from 'luci
 import { useGeoService } from '@/services'
 import { useRouteStore, useAppStore } from '@/stores'
 import { Button } from '@/components/ui'
+import { supportedImportFormats as supportedFormats, exportFormatOptions as exportFormats } from '@/data/mockData'
 
 /**
  * ImportExportDialog 导入导出对话框
@@ -31,20 +32,6 @@ const selectedFile = ref<File | null>(null)
 const exportFormat = ref<'geojson' | 'kml' | 'csv'>('geojson')
 const resultMessage = ref('')
 const resultType = ref<'success' | 'error' | ''>('')
-
-// 支持的格式
-const supportedFormats = [
-  { ext: '.geojson', label: 'GeoJSON' },
-  { ext: '.json', label: 'JSON' },
-  { ext: '.kml', label: 'KML' },
-  { ext: '.csv', label: 'CSV' },
-]
-
-const exportFormats = [
-  { value: 'geojson', label: 'GeoJSON (.geojson)' },
-  { value: 'kml', label: 'KML (.kml)' },
-  { value: 'csv', label: 'CSV (.csv)' },
-]
 
 const dialogTitle = computed(() => 
   props.mode === 'import' ? '导入 GIS 数据' : '导出路由数据'

@@ -71,7 +71,6 @@ const defaultMonitoringConfig: MonitoringConfig = {
   berThreshold: '1e-6',
 }
 
-// 默认光纤仿真配置
 const defaultFiberSimulationConfig: FiberSimulationConfig = {
   model: 'GN',
   description: 'GN Model适用于计算速度要求高的场景',

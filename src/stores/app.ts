@@ -109,6 +109,46 @@ export const useAppStore = defineStore('app', () => {
     logs.value = []
   }
 
+  // 导出日志到文件
+  function exportLogs(format: 'txt' | 'csv' = 'txt') {
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '')
+    let content: string
+    let mimeType: string
+    let extension: string
+
+    if (format === 'csv') {
+      content = 'Time,Level,Message\n'
+      content += logs.value.map(log => 
+        `"${log.time}","${log.level}","${log.message.replace(/"/g, '""')}"`
+      ).join('\n')
+      mimeType = 'text/csv;charset=utf-8'
+      extension = 'csv'
+    } else {
+      content = `========================================\n`
+      content += `海底光缆智能规划软件 - 运行日志\n`
+      content += `导出时间: ${new Date().toLocaleString('zh-CN')}\n`
+      content += `日志条数: ${logs.value.length}\n`
+      content += `========================================\n\n`
+      content += logs.value.map(log => 
+        `[${log.time}] [${log.level}] ${log.message}`
+      ).join('\n')
+      mimeType = 'text/plain;charset=utf-8'
+      extension = 'txt'
+    }
+
+    const blob = new Blob([content], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `运行日志_${timestamp}.${extension}`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    addLog('INFO', `日志已导出: 运行日志_${timestamp}.${extension}`)
+  }
+
   function setLoading(loading: boolean) {
     isLoading.value = loading
   }
@@ -169,6 +209,7 @@ export const useAppStore = defineStore('app', () => {
     removeNotification,
     addLog,
     clearLogs,
+    exportLogs,
     setLoading,
     openDialog,
     closeDialog,

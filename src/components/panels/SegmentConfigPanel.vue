@@ -3,6 +3,13 @@ import { ref, computed, watch } from 'vue'
 import { useRouteStore, useAppStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { 
+  mockSegmentConfigs, 
+  type SegmentConfigData,
+  cableTypeOptions,
+  burialMethodOptions,
+  protectionOptions
+} from '@/data/mockData'
+import { 
   Settings, 
   Save, 
   RotateCcw,
@@ -17,55 +24,15 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update', segments: SegmentConfig[]): void
+  (e: 'update', segments: SegmentConfigData[]): void
   (e: 'close'): void
 }>()
 
 const routeStore = useRouteStore()
 const appStore = useAppStore()
 
-interface SegmentConfig {
-  id: string
-  index: number
-  startKP: number
-  endKP: number
-  length: number
-  cableType: string
-  slack: number
-  burialDepth: number
-  burialMethod: string
-  protection: string
-  avgDepth: number
-  maxDepth: number
-  expanded: boolean
-}
-
-const segments = ref<SegmentConfig[]>([])
+const segments = ref<SegmentConfigData[]>([])
 const selectedSegmentId = ref<string | null>(null)
-
-const cableTypeOptions = [
-  { value: 'LW', label: 'LW - 轻型无铠装' },
-  { value: 'LWS', label: 'LWS - 轻型加强' },
-  { value: 'SA', label: 'SA - 单铠装' },
-  { value: 'DA', label: 'DA - 双铠装' },
-  { value: 'SAS', label: 'SAS - 单铠装加强' },
-]
-
-const burialMethodOptions = [
-  { value: 'none', label: '不埋设' },
-  { value: 'plow', label: '犁埋' },
-  { value: 'jet', label: '喷射埋设' },
-  { value: 'ROV', label: 'ROV埋设' },
-  { value: 'dredge', label: '挖沟埋设' },
-]
-
-const protectionOptions = [
-  { value: 'none', label: '无防护' },
-  { value: 'rock', label: '抛石防护' },
-  { value: 'mattress', label: '护垫防护' },
-  { value: 'pipe', label: '套管防护' },
-  { value: 'anchor', label: '锚固防护' },
-]
 
 // 根据水深自动推荐电缆类型
 function recommendCableType(depth: number): string {
@@ -91,41 +58,9 @@ function recommendSlack(depth: number): number {
   return 2.0
 }
 
-// 初始化分段数据
+// 初始化分段数据 - 使用集中管理的mock数据
 function initSegments() {
-  // 直接使用mock数据，后续可对接真实路由数据
-  generateMockSegments()
-}
-
-function generateMockSegments() {
-  const mockData = [
-    { startKP: 0, endKP: 25, depth: 50, maxDepth: 80 },
-    { startKP: 25, endKP: 80, depth: 350, maxDepth: 500 },
-    { startKP: 80, endKP: 160, depth: 1200, maxDepth: 1500 },
-    { startKP: 160, endKP: 240, depth: 2500, maxDepth: 3200 },
-    { startKP: 240, endKP: 320, depth: 3500, maxDepth: 4200 },
-    { startKP: 320, endKP: 400, depth: 2800, maxDepth: 3500 },
-    { startKP: 400, endKP: 480, depth: 1500, maxDepth: 2000 },
-    { startKP: 480, endKP: 520, depth: 800, maxDepth: 1000 },
-    { startKP: 520, endKP: 580, depth: 200, maxDepth: 350 },
-    { startKP: 580, endKP: 620, depth: 50, maxDepth: 80 },
-  ]
-
-  segments.value = mockData.map((seg, index) => ({
-    id: `seg-${index}`,
-    index,
-    startKP: seg.startKP,
-    endKP: seg.endKP,
-    length: seg.endKP - seg.startKP,
-    cableType: recommendCableType(seg.depth),
-    slack: recommendSlack(seg.depth),
-    burialDepth: recommendBurialDepth(seg.depth),
-    burialMethod: seg.depth < 1500 ? 'plow' : 'none',
-    protection: seg.depth < 200 ? 'rock' : 'none',
-    avgDepth: seg.depth,
-    maxDepth: seg.maxDepth,
-    expanded: false,
-  }))
+  segments.value = JSON.parse(JSON.stringify(mockSegmentConfigs))
 }
 
 function toggleExpand(segId: string) {

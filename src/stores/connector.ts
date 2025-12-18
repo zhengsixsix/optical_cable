@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { ConnectorElement, ConnectorTable, ConnectorType } from '@/types'
+import { mockConnectorElements, ROUTE_ID, ROUTE_NAME } from '@/data/mockData'
+import { dataLinkService } from '@/services'
 
 export const useConnectorStore = defineStore('connector', () => {
   const tables = ref<ConnectorTable[]>([])
@@ -35,7 +37,7 @@ export const useConnectorStore = defineStore('connector', () => {
   }
 
   // 添加接线元
-  function addElement(element: Omit<ConnectorElement, 'id'>) {
+  function addElement(element: Omit<ConnectorElement, 'id'>, emitLink = true) {
     if (!currentTable.value) return null
     
     const newElement: ConnectorElement = {
@@ -44,11 +46,22 @@ export const useConnectorStore = defineStore('connector', () => {
     }
     currentTable.value.elements.push(newElement)
     currentTable.value.updatedAt = new Date().toISOString()
+    
+    // 触发数据联动
+    if (emitLink) {
+      dataLinkService.emit({
+        source: 'connector',
+        action: 'add',
+        data: newElement,
+        kp: newElement.kp,
+      })
+    }
+    
     return newElement.id
   }
 
   // 更新接线元
-  function updateElement(id: string, updates: Partial<ConnectorElement>) {
+  function updateElement(id: string, updates: Partial<ConnectorElement>, emitLink = true) {
     if (!currentTable.value) return false
     
     const index = currentTable.value.elements.findIndex(e => e.id === id)
@@ -59,18 +72,41 @@ export const useConnectorStore = defineStore('connector', () => {
       ...updates
     }
     currentTable.value.updatedAt = new Date().toISOString()
+    
+    // 触发数据联动
+    if (emitLink) {
+      dataLinkService.emit({
+        source: 'connector',
+        action: 'update',
+        data: currentTable.value.elements[index],
+        kp: currentTable.value.elements[index].kp,
+      })
+    }
+    
     return true
   }
 
   // 删除接线元
-  function deleteElement(id: string) {
+  function deleteElement(id: string, emitLink = true) {
     if (!currentTable.value) return false
     
     const index = currentTable.value.elements.findIndex(e => e.id === id)
     if (index === -1) return false
     
+    const element = currentTable.value.elements[index]
     currentTable.value.elements.splice(index, 1)
     currentTable.value.updatedAt = new Date().toISOString()
+    
+    // 触发数据联动
+    if (emitLink) {
+      dataLinkService.emit({
+        source: 'connector',
+        action: 'delete',
+        data: element,
+        kp: element.kp,
+      })
+    }
+    
     return true
   }
 
@@ -79,23 +115,48 @@ export const useConnectorStore = defineStore('connector', () => {
     return elements.value.filter(e => e.type === type)
   }
 
-  // 生成模拟数据
-  function generateMockData() {
-    if (!currentTable.value) {
-      createTable('默认接线元表')
+  // 初始化加载mock数据
+  function initMockData() {
+    if (tables.value.length === 0) {
+      createTable(`${ROUTE_NAME}_接线元`, ROUTE_ID)
+      // 初始化时不触发联动
+      mockConnectorElements.forEach(elem => addElement(elem, false))
     }
-    
-    const mockElements: Omit<ConnectorElement, 'id'>[] = [
-      { name: '接头盒 J1', type: 'joint', kp: 50, longitude: 122.5, latitude: 31.2, depth: 120, status: 'active', specifications: 'UJ-2000', remarks: '' },
-      { name: '分支单元 BU1', type: 'bu', kp: 200, longitude: 124.0, latitude: 30.5, depth: 2500, status: 'active', specifications: 'BU-4x4', manufacturer: 'SubCom', remarks: '四路分支' },
-      { name: '馈电设备 PFE1', type: 'pfe', kp: 0, longitude: 121.5, latitude: 31.4, depth: 0, status: 'active', specifications: 'PFE-15kV', remarks: '登陆站A' },
-      { name: '光放大器 OLA1', type: 'ola', kp: 80, longitude: 123.0, latitude: 31.0, depth: 800, status: 'active', specifications: 'EDFA-20dB', remarks: '' },
-      { name: '均衡器 EQ1', type: 'equalizer', kp: 150, longitude: 123.5, latitude: 30.8, depth: 1500, status: 'active', specifications: 'GEQ-C', remarks: '' },
-      { name: '耦合器 CP1', type: 'coupler', kp: 300, longitude: 125.0, latitude: 30.0, depth: 3000, status: 'planned', specifications: '1x2-50/50', remarks: '规划中' },
-    ]
-    
-    mockElements.forEach(elem => addElement(elem))
   }
+
+  // 监听其他模块的数据变更
+  function setupDataLinkListener() {
+    dataLinkService.subscribe('connector', (event) => {
+      if (!currentTable.value) return
+      
+      // 根据KP查找对应接线元
+      const element = currentTable.value.elements.find(
+        e => Math.abs(e.kp - (event.kp || 0)) < 1
+      )
+      
+      if (event.action === 'add' && !element) {
+        // RPL新增了关键点，同步创建接线元
+        const connData = dataLinkService.rplToConnectorElement(event.data)
+        if (connData) {
+          addElement(connData, false)
+        }
+      } else if (event.action === 'update' && element) {
+        // 同步更新坐标和深度
+        updateElement(element.id, {
+          longitude: event.data.longitude ?? element.longitude,
+          latitude: event.data.latitude ?? element.latitude,
+          depth: event.data.depth ?? element.depth,
+        }, false)
+      } else if (event.action === 'delete' && element) {
+        // 同步删除接线元
+        deleteElement(element.id, false)
+      }
+    })
+  }
+
+  // 自动加载mock数据
+  initMockData()
+  setupDataLinkListener()
 
   // 删除表格
   function deleteTable(tableId: string) {
@@ -120,7 +181,6 @@ export const useConnectorStore = defineStore('connector', () => {
     updateElement,
     deleteElement,
     getElementsByType,
-    generateMockData,
     deleteTable
   }
 })

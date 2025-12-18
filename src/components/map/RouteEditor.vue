@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouteStore, useMapStore, useAppStore } from '@/stores'
+import { mockEditableRoutePoints } from '@/data/mockData'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { 
   Edit3, 
@@ -86,27 +87,11 @@ function initPoints() {
 }
 
 function generateMockPoints() {
-  const mockRoute: Array<{ coords: [number, number], type: EditablePoint['type'], name?: string }> = [
-    { coords: [121.4737, 31.2304], type: 'landing', name: '上海登陆站' },
-    { coords: [122.1, 30.8], type: 'waypoint' },
-    { coords: [123.0, 30.2], type: 'waypoint' },
-    { coords: [124.0, 29.5], type: 'repeater', name: 'REP-01' },
-    { coords: [125.2, 28.5], type: 'waypoint' },
-    { coords: [126.5, 27.5], type: 'repeater', name: 'REP-02' },
-    { coords: [127.5, 26.5], type: 'branching', name: 'BU-01' },
-    { coords: [128.5, 25.5], type: 'waypoint' },
-    { coords: [129.5, 24.5], type: 'repeater', name: 'REP-03' },
-    { coords: [130.5, 23.5], type: 'waypoint' },
-    { coords: [131.5, 22.5], type: 'repeater', name: 'REP-04' },
-    { coords: [132.3, 21.8], type: 'waypoint' },
-    { coords: [132.8, 21.5], type: 'landing', name: '冲绳登陆站' },
-  ]
-
-  points.value = mockRoute.map((p, index) => ({
+  points.value = mockEditableRoutePoints.map((p, index) => ({
     id: `point-${index}`,
     index,
     coordinates: p.coords,
-    type: p.type,
+    type: p.type as EditablePoint['type'],
     name: p.name,
     isDragging: false,
     isSelected: false,

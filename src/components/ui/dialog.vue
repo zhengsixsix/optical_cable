@@ -23,7 +23,7 @@ interface Props {
   description?: string
   width?: string
   closable?: boolean
-}
+} 
 
 const props = withDefaults(defineProps<Props>(), {
   open: false,

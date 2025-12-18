@@ -11,6 +11,7 @@ import RPLManageDialog from '@/components/dialogs/RPLManageDialog.vue'
 import SLDManageDialog from '@/components/dialogs/SLDManageDialog.vue'
 import RouteEditDialog from '@/components/dialogs/RouteEditDialog.vue'
 import ReportDialog from '@/components/dialogs/ReportDialog.vue'
+import AlarmNotification from '@/components/notifications/AlarmNotification.vue'
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()
@@ -106,6 +107,9 @@ onMounted(async () => {
     :mode="appStore.activeDialog === 'cost-report' ? 'cost' : 'perf'"
     @close="appStore.closeDialog()"
   />
+
+  <!-- 告警实时推送通知 -->
+  <AlarmNotification />
 
 </template>
 

@@ -4,6 +4,7 @@ import { useSLDStore, useAppStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { X, Save, Cable } from 'lucide-vue-next'
 import type { FiberPairType } from '@/types'
+import { fiberPairTypeOptions, cableTypeOptionsSimple as cableTypeOptions } from '@/data/mockData'
 
 const props = defineProps<{
   visible: boolean
@@ -35,19 +36,6 @@ const form = ref({
 const equipmentOptions = computed(() => 
   sldStore.equipments.map(e => ({ value: e.id, label: `${e.name} (${e.type})` }))
 )
-
-const fiberPairTypeOptions = [
-  { value: 'working', label: '工作光纤' },
-  { value: 'protection', label: '保护光纤' },
-  { value: 'spare', label: '备用光纤' },
-]
-
-const cableTypeOptions = [
-  { value: 'LW', label: 'LW (轻型)' },
-  { value: 'LWS', label: 'LWS (轻型加强)' },
-  { value: 'SA', label: 'SA (单铠装)' },
-  { value: 'DA', label: 'DA (双铠装)' },
-]
 
 const totalLoss = computed(() => form.value.length * form.value.attenuation)
 

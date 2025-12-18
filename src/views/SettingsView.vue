@@ -3,6 +3,12 @@ import { ref, reactive } from 'vue'
 import { useSettingsStore, useAppStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { Save, RotateCcw, MapPin, Radio, Activity, Cpu } from 'lucide-vue-next'
+import {
+  fiberModelOptions,
+  planningModeOptions,
+  dataSourceOptions,
+  calculationModelOptions
+} from '@/data/mockData'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -55,32 +61,6 @@ const fiberConfig = reactive({
   model: settingsStore.fiberSimulationConfig.model,
 })
 
-// 光纤仿真模型选项
-const fiberModelOptions = [
-  { value: 'GN', label: 'GN Model (高斯噪声模型)', desc: '适用于计算速度要求高、精度要求一般的场景' },
-  { value: 'EGN', label: 'EGN Model (增强型高斯噪声模型)', desc: '适用于仿真精度要求高、可容忍较长计算时间的场景' },
-]
-
-// 规划模式选项
-const planningModeOptions = [
-  { value: 'point-to-point', label: '点对点规划' },
-  { value: 'multi-point', label: '多点规划' },
-]
-
-// 数据源类型选项
-const dataSourceOptions = [
-  { value: 'realtime', label: '网络实时数据' },
-  { value: 'history', label: '导入历史数据' },
-]
-
-// 计算模型选项
-const calculationModelOptions = [
-  { value: 'power', label: '计算光功率衰减' },
-  { value: 'ase', label: '计算线性噪声 (ASE等)' },
-  { value: 'nli', label: '计算非线性噪声 (NLI)' },
-  { value: 'amp', label: '封装光放大器增益与噪声模型' },
-  { value: 'passive', label: '计算无源器件插入损耗' },
-]
 
 const toggleModel = (modelId: string) => {
   const index = transConfig.models.indexOf(modelId)

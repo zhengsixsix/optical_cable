@@ -4,6 +4,7 @@ import { useRPLStore, useAppStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { X, Save, MapPin } from 'lucide-vue-next'
 import type { RPLRecord, RPLPointType, RPLCableCode } from '@/types'
+import { pointTypeOptions, cableTypeOptionsSimple as cableTypeOptions } from '@/data/mockData'
 
 const props = defineProps<{
   visible: boolean
@@ -32,22 +33,6 @@ const form = ref({
   burialDepth: 0,
   remarks: '',
 })
-
-const pointTypeOptions = [
-  { value: 'landing', label: '登陆站' },
-  { value: 'repeater', label: '中继器' },
-  { value: 'branching', label: '分支器' },
-  { value: 'joint', label: '接头' },
-  { value: 'waypoint', label: '航路点' },
-]
-
-const cableTypeOptions = [
-  { value: 'LW', label: 'LW (轻型)' },
-  { value: 'LWS', label: 'LWS (轻型加强)' },
-  { value: 'SA', label: 'SA (单铠装)' },
-  { value: 'DA', label: 'DA (双铠装)' },
-  { value: 'SAS', label: 'SAS (单铠装加强)' },
-]
 
 watch(() => props.visible, (val) => {
   if (val) {

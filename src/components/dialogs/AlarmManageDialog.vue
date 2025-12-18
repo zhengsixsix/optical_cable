@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { X, AlertTriangle, CheckCircle, XCircle, Filter, RefreshCw, Download, Trash2 } from 'lucide-vue-next'
+import { mockAlarmRecords, alarmFilterOptions } from '@/data/mockData'
 
 const props = defineProps<{
   visible: boolean
@@ -26,17 +27,8 @@ interface Alarm {
   type: string
 }
 
-// 模拟告警数据
-const alarms = ref<Alarm[]>([
-  { id: '1', time: '2024-12-10 14:30:25', device: '登陆站 L1', deviceType: 'landing', message: '供电电压低于阈值 (47.2V < 47.5V)', level: 'critical', status: 'active', type: 'voltage' },
-  { id: '2', time: '2024-12-10 14:28:15', device: '中继器 R2', deviceType: 'repeater', message: '设备温度超过警告阈值 (5.2°C > 5.0°C)', level: 'warning', status: 'active', type: 'temperature' },
-  { id: '3', time: '2024-12-10 12:15:30', device: '中继器 R1', deviceType: 'repeater', message: '输出光功率下降 (-2.5dBm)', level: 'major', status: 'acknowledged', type: 'power' },
-  { id: '4', time: '2024-12-10 10:45:00', device: '分支器 B1', deviceType: 'branching', message: '端口2连接异常', level: 'warning', status: 'cleared', type: 'other' },
-  { id: '5', time: '2024-12-10 09:30:20', device: '中继器 R3', deviceType: 'repeater', message: 'BER超过阈值 (1e-5 > 1e-6)', level: 'major', status: 'active', type: 'other' },
-  { id: '6', time: '2024-12-10 08:15:10', device: '登陆站 L2', deviceType: 'landing', message: 'OSNR下降告警 (25dB < 28dB)', level: 'warning', status: 'acknowledged', type: 'power' },
-  { id: '7', time: '2024-12-09 23:45:00', device: '中继器 R4', deviceType: 'repeater', message: '温度传感器故障', level: 'info', status: 'cleared', type: 'temperature' },
-  { id: '8', time: '2024-12-09 20:30:00', device: '登陆站 L1', deviceType: 'landing', message: '供电电压恢复正常', level: 'info', status: 'cleared', type: 'voltage' },
-])
+// 告警数据 - 从集中数据文件导入
+const alarms = ref<Alarm[]>([...mockAlarmRecords] as Alarm[])
 
 // 筛选条件
 const filterType = ref('all')
@@ -44,36 +36,8 @@ const filterLevel = ref('all')
 const filterDeviceType = ref('all')
 const filterStatus = ref('all')
 
-// 筛选选项
-const typeOptions = [
-  { value: 'all', label: '全部类型' },
-  { value: 'power', label: '光功率异常' },
-  { value: 'temperature', label: '温度异常' },
-  { value: 'voltage', label: '电压异常' },
-  { value: 'other', label: '其他' },
-]
-
-const levelOptions = [
-  { value: 'all', label: '全部级别' },
-  { value: 'info', label: '提示' },
-  { value: 'warning', label: '次要告警' },
-  { value: 'major', label: '重要告警' },
-  { value: 'critical', label: '紧急告警' },
-]
-
-const deviceTypeOptions = [
-  { value: 'all', label: '全部设备' },
-  { value: 'landing', label: '登陆站' },
-  { value: 'repeater', label: '中继器' },
-  { value: 'branching', label: '分支器' },
-]
-
-const statusOptions = [
-  { value: 'all', label: '全部状态' },
-  { value: 'active', label: '活动' },
-  { value: 'acknowledged', label: '已确认' },
-  { value: 'cleared', label: '已清除' },
-]
+// 筛选选项 - 从集中数据文件导入
+const { typeOptions, levelOptions, deviceTypeOptions, statusOptions } = alarmFilterOptions
 
 // 筛选后的告警列表
 const filteredAlarms = computed(() => {

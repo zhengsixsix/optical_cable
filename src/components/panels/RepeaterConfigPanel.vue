@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRouteStore, useAppStore } from '@/stores'
+import { mockRepeaterConfigs, repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { 
   Radio, 
@@ -44,43 +45,30 @@ const repeaters = ref<RepeaterConfig[]>([])
 const selectedRepeaterId = ref<string | null>(null)
 const dragIndex = ref<number | null>(null)
 
-const modelOptions = [
-  { value: 'EREP-C', label: 'EREP-C (C波段)' },
-  { value: 'EREP-C+L', label: 'EREP-C+L (C+L波段)' },
-  { value: 'EREP-S+C+L', label: 'EREP-S+C+L (全波段)' },
-]
-
-// 推荐中继器间距
-const recommendedSpacing = 80 // km
-const maxSpacing = 120 // km
+const modelOptions = repeaterModelOptions
+const recommendedSpacing = repeaterSpacingConfig.recommended
+const maxSpacing = repeaterSpacingConfig.max
 
 function generateMockRepeaters() {
-  const totalLength = 620
-  const count = Math.ceil(totalLength / recommendedSpacing) - 1
-  
-  repeaters.value = []
   let prevKP = 0
-  
-  for (let i = 0; i < count; i++) {
-    const kp = (i + 1) * recommendedSpacing
-    if (kp >= totalLength - 20) break
-    
-    repeaters.value.push({
+  repeaters.value = mockRepeaterConfigs.map((cfg, i) => {
+    const spacing = cfg.kp - prevKP
+    prevKP = cfg.kp
+    return {
       id: `rep-${i}`,
       index: i,
-      name: `REP-${String(i + 1).padStart(2, '0')}`,
-      kp,
-      longitude: 121.5 + i * 1.5,
-      latitude: 31.2 - i * 1.2,
-      depth: 1500 + Math.random() * 2000,
-      spacing: kp - prevKP,
-      model: 'EREP-C+L',
-      gain: 15,
-      powerConsumption: 45,
+      name: cfg.name,
+      kp: cfg.kp,
+      longitude: cfg.longitude,
+      latitude: cfg.latitude,
+      depth: cfg.depth,
+      spacing,
+      model: cfg.model,
+      gain: cfg.gain,
+      powerConsumption: cfg.powerConsumption,
       remarks: '',
-    })
-    prevKP = kp
-  }
+    }
+  })
 }
 
 function recalculateSpacing() {

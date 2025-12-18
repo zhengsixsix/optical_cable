@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useLayerStore, useAppStore } from '@/stores'
 import { Card, CardHeader, CardContent, Checkbox, Switch, Tag, Select } from '@/components/ui'
-import { RefreshCw, Download, Settings, Maximize2, X, MapPin, AlertTriangle, Eye, Upload, RotateCcw } from 'lucide-vue-next'
+import { RefreshCw, Download, Maximize2, X, MapPin, AlertTriangle, Eye, Upload, RotateCcw } from 'lucide-vue-next'
 
 const layerStore = useLayerStore()
 const appStore = useAppStore()
@@ -106,12 +106,6 @@ function handleReload(layerId: string) {
           @click="handleImportGis"
         >
           <Download class="w-3.5 h-3.5" />
-        </button>
-        <button 
-          class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 
-          title="图层设置"
-        >
-          <Settings class="w-3.5 h-3.5" />
         </button>
         <button 
           class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { 
   RPLTable, 
   RPLRecord, 
@@ -9,6 +9,8 @@ import type {
   RPLPointType,
   RPLCableCode 
 } from '@/types'
+import { mockRPLRecords, ROUTE_ID, ROUTE_NAME } from '@/data/mockData'
+import { dataLinkService } from '@/services'
 
 export const useRPLStore = defineStore('rpl', () => {
   // 状态
@@ -81,7 +83,7 @@ export const useRPLStore = defineStore('rpl', () => {
     }
   }
 
-  function addRecord(record: Omit<RPLRecord, 'id' | 'sequence'>): RPLRecord | null {
+  function addRecord(record: Omit<RPLRecord, 'id' | 'sequence'>, emitLink = true): RPLRecord | null {
     if (!currentTable.value) return null
     
     const newRecord: RPLRecord = {
@@ -93,21 +95,48 @@ export const useRPLStore = defineStore('rpl', () => {
     currentTable.value.records.push(newRecord)
     recalculateSequences()
     updateMetadata()
+    
+    // 触发数据联动
+    if (emitLink && newRecord.pointType !== 'waypoint') {
+      dataLinkService.emit({
+        source: 'rpl',
+        action: 'add',
+        data: newRecord,
+        kp: newRecord.kp,
+      })
+    }
+    
     return newRecord
   }
 
-  function updateRecord(recordId: string, data: Partial<RPLRecord>) {
+  function updateRecord(recordId: string, data: Partial<RPLRecord>, emitLink = true) {
     if (!currentTable.value) return
     
     const record = currentTable.value.records.find(r => r.id === recordId)
     if (record) {
+      const oldKp = record.kp
       Object.assign(record, data)
       updateMetadata()
+      
+      // 触发数据联动
+      if (emitLink && record.pointType !== 'waypoint') {
+        dataLinkService.emit({
+          source: 'rpl',
+          action: 'update',
+          data: record,
+          kp: record.kp,
+        })
+      }
     }
   }
 
-  function deleteRecords(recordIds: string[]) {
+  function deleteRecords(recordIds: string[], emitLink = true) {
     if (!currentTable.value) return
+    
+    // 记录要删除的记录信息用于联动
+    const deletedRecords = currentTable.value.records.filter(
+      r => recordIds.includes(r.id) && r.pointType !== 'waypoint'
+    )
     
     currentTable.value.records = currentTable.value.records.filter(
       r => !recordIds.includes(r.id)
@@ -117,6 +146,18 @@ export const useRPLStore = defineStore('rpl', () => {
     )
     recalculateSequences()
     updateMetadata()
+    
+    // 触发数据联动
+    if (emitLink) {
+      deletedRecords.forEach(record => {
+        dataLinkService.emit({
+          source: 'rpl',
+          action: 'delete',
+          data: record,
+          kp: record.kp,
+        })
+      })
+    }
   }
 
   function insertRecord(index: number, record: Omit<RPLRecord, 'id' | 'sequence'>): RPLRecord | null {
@@ -515,28 +556,41 @@ export const useRPLStore = defineStore('rpl', () => {
     }
   }
 
-  // 生成模拟数据
-  function generateMockData() {
-    const table = createTable('示例RPL表格', 'route-demo')
-    
-    const mockRecords: Omit<RPLRecord, 'id' | 'sequence'>[] = [
-      { kp: 0, longitude: 121.4737, latitude: 31.2304, depth: 15, pointType: 'landing', cableType: 'DA', segmentLength: 0, cumulativeLength: 0, slack: 0, burialDepth: 2.0, remarks: '上海登陆站' },
-      { kp: 25, longitude: 122.1, latitude: 30.8, depth: 45, pointType: 'waypoint', cableType: 'SA', segmentLength: 25, cumulativeLength: 25, slack: 2.5, burialDepth: 1.5, remarks: '' },
-      { kp: 80, longitude: 123.5, latitude: 29.5, depth: 120, pointType: 'waypoint', cableType: 'SA', segmentLength: 55, cumulativeLength: 80, slack: 2.5, burialDepth: 1.0, remarks: '' },
-      { kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 160, slack: 3.0, burialDepth: 0, remarks: 'R1中继器' },
-      { kp: 240, longitude: 127.0, latitude: 26.5, depth: 1200, pointType: 'waypoint', cableType: 'LW', segmentLength: 80, cumulativeLength: 240, slack: 2.5, burialDepth: 0, remarks: '' },
-      { kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 320, slack: 3.0, burialDepth: 0, remarks: 'R2中继器' },
-      { kp: 400, longitude: 129.8, latitude: 24.0, depth: 3200, pointType: 'waypoint', cableType: 'LW', segmentLength: 80, cumulativeLength: 400, slack: 2.5, burialDepth: 0, remarks: '' },
-      { kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 480, slack: 3.0, burialDepth: 0, remarks: 'R3中继器' },
-      { kp: 520, longitude: 131.0, latitude: 22.5, depth: 1500, pointType: 'branching', cableType: 'LW', segmentLength: 40, cumulativeLength: 520, slack: 2.5, burialDepth: 0, remarks: 'BU1分支器' },
-      { kp: 580, longitude: 131.8, latitude: 22.0, depth: 350, pointType: 'waypoint', cableType: 'SA', segmentLength: 60, cumulativeLength: 580, slack: 2.5, burialDepth: 1.0, remarks: '' },
-      { kp: 620, longitude: 132.3, latitude: 21.8, depth: 80, pointType: 'waypoint', cableType: 'DA', segmentLength: 40, cumulativeLength: 620, slack: 2.5, burialDepth: 1.5, remarks: '' },
-      { kp: 650, longitude: 132.8, latitude: 21.5, depth: 20, pointType: 'landing', cableType: 'DA', segmentLength: 30, cumulativeLength: 650, slack: 0, burialDepth: 2.0, remarks: '冲绳登陆站' },
-    ]
-
-    mockRecords.forEach(record => addRecord(record))
-    return table
+  // 初始化加载mock数据
+  function initMockData() {
+    if (tables.value.length === 0) {
+      const table = createTable(`${ROUTE_NAME}_RPL`, ROUTE_ID)
+      // 初始化时不触发联动，避免循环
+      mockRPLRecords.forEach(record => addRecord(record, false))
+      return table
+    }
+    return null
   }
+
+  // 监听其他模块的数据变更
+  function setupDataLinkListener() {
+    dataLinkService.subscribe('rpl', (event) => {
+      if (!currentTable.value) return
+      
+      // 根据KP查找对应记录
+      const record = currentTable.value.records.find(
+        r => Math.abs(r.kp - (event.kp || 0)) < 1
+      )
+      
+      if (event.action === 'update' && record) {
+        // 同步更新坐标和深度
+        updateRecord(record.id, {
+          longitude: event.data.longitude ?? record.longitude,
+          latitude: event.data.latitude ?? record.latitude,
+          depth: event.data.depth ?? record.depth,
+        }, false)
+      }
+    })
+  }
+
+  // 自动加载mock数据
+  initMockData()
+  setupDataLinkListener()
 
   return {
     // State
@@ -570,6 +624,5 @@ export const useRPLStore = defineStore('rpl', () => {
     exportToCSV,
     exportToJSON,
     importFromCSV,
-    generateMockData,
   }
 })

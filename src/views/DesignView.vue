@@ -6,6 +6,7 @@ import ConnectorPanel from '@/components/panels/ConnectorPanel.vue'
 import ConnectorDialog from '@/components/dialogs/ConnectorDialog.vue'
 import RepeaterConfigDialog from '@/components/dialogs/RepeaterConfigDialog.vue'
 import { useSettingsStore, useAppStore, useConnectorStore } from '@/stores'
+import { mockReportData } from '@/data/mockData'
 import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Link2, Send, FileText, Download } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
@@ -40,7 +41,7 @@ const designResult = computed(() => {
 
   if (!cable || !repeater) return null
 
-  const totalLength = 1550 // 模拟总长度 km
+  const totalLength = mockReportData.totalLength
   const repeaterCount = Math.ceil(totalLength / repeaterSpacing.value)
   const cableCost = totalLength * cable.costPerKm
   const repeaterCost = repeaterCount * repeater.cost

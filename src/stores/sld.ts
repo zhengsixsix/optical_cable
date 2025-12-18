@@ -9,6 +9,8 @@ import type {
   SLDEquipmentType,
   SLDValidationResult
 } from '@/types'
+import { mockSLDEquipments, mockSLDFiberSegments, mockTransmissionParams, ROUTE_ID, ROUTE_NAME } from '@/data/mockData'
+import { dataLinkService } from '@/services'
 
 export const useSLDStore = defineStore('sld', () => {
   // 状态
@@ -71,7 +73,7 @@ export const useSLDStore = defineStore('sld', () => {
   }
 
   // 设备操作
-  function addEquipment(equipment: Omit<SLDEquipment, 'id' | 'sequence'>): SLDEquipment | null {
+  function addEquipment(equipment: Omit<SLDEquipment, 'id' | 'sequence'>, emitLink = true): SLDEquipment | null {
     if (!currentTable.value) return null
     
     const newEquipment: SLDEquipment = {
@@ -83,21 +85,44 @@ export const useSLDStore = defineStore('sld', () => {
     currentTable.value.equipments.push(newEquipment)
     recalculateSequences()
     updateMetadata()
+    
+    // 触发数据联动
+    if (emitLink) {
+      dataLinkService.emit({
+        source: 'sld',
+        action: 'add',
+        data: newEquipment,
+        kp: newEquipment.kp,
+      })
+    }
+    
     return newEquipment
   }
 
-  function updateEquipment(equipmentId: string, data: Partial<SLDEquipment>) {
+  function updateEquipment(equipmentId: string, data: Partial<SLDEquipment>, emitLink = true) {
     if (!currentTable.value) return
     
     const equipment = currentTable.value.equipments.find(e => e.id === equipmentId)
     if (equipment) {
       Object.assign(equipment, data)
       updateMetadata()
+      
+      // 触发数据联动
+      if (emitLink) {
+        dataLinkService.emit({
+          source: 'sld',
+          action: 'update',
+          data: equipment,
+          kp: equipment.kp,
+        })
+      }
     }
   }
 
-  function deleteEquipment(equipmentId: string) {
+  function deleteEquipment(equipmentId: string, emitLink = true) {
     if (!currentTable.value) return
+    
+    const equipment = currentTable.value.equipments.find(e => e.id === equipmentId)
     
     currentTable.value.equipments = currentTable.value.equipments.filter(
       e => e.id !== equipmentId
@@ -108,6 +133,16 @@ export const useSLDStore = defineStore('sld', () => {
     )
     recalculateSequences()
     updateMetadata()
+    
+    // 触发数据联动
+    if (emitLink && equipment) {
+      dataLinkService.emit({
+        source: 'sld',
+        action: 'delete',
+        data: equipment,
+        kp: equipment.kp,
+      })
+    }
   }
 
   // 光纤段操作
@@ -339,49 +374,67 @@ export const useSLDStore = defineStore('sld', () => {
     return [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
   }
 
-  // 生成示例数据
-  function generateMockData() {
-    const table = createTable('示例SLD表格')
-    
-    // 添加设备
-    const mockEquipments: Omit<SLDEquipment, 'id' | 'sequence'>[] = [
-      { name: '上海终端站', type: 'TE', location: '上海', kp: 0, longitude: 121.4737, latitude: 31.2304, depth: 0, specifications: 'SLTE-400G', remarks: '' },
-      { name: 'PFE-SH', type: 'PFE', location: '上海', kp: 0.5, longitude: 121.48, latitude: 31.22, depth: 15, specifications: 'PFE-15kV', remarks: '' },
-      { name: 'REP-01', type: 'REP', location: 'KP 80', kp: 80, longitude: 123.5, latitude: 29.5, depth: 1200, specifications: 'EREP-C+L', remarks: '' },
-      { name: 'REP-02', type: 'REP', location: 'KP 160', kp: 160, longitude: 125.2, latitude: 28.0, depth: 2500, specifications: 'EREP-C+L', remarks: '' },
-      { name: 'BU-01', type: 'BU', location: 'KP 240', kp: 240, longitude: 127.0, latitude: 26.5, depth: 3200, specifications: 'BU-R3', remarks: '分支至台北' },
-      { name: 'REP-03', type: 'REP', location: 'KP 320', kp: 320, longitude: 128.5, latitude: 25.2, depth: 2800, specifications: 'EREP-C+L', remarks: '' },
-      { name: 'REP-04', type: 'REP', location: 'KP 400', kp: 400, longitude: 130.0, latitude: 24.0, depth: 1500, specifications: 'EREP-C+L', remarks: '' },
-      { name: 'PFE-OK', type: 'PFE', location: '冲绳', kp: 479, longitude: 131.8, latitude: 22.5, depth: 20, specifications: 'PFE-15kV', remarks: '' },
-      { name: '冲绳终端站', type: 'TE', location: '冲绳', kp: 480, longitude: 132.0, latitude: 22.3, depth: 0, specifications: 'SLTE-400G', remarks: '' },
-    ]
-
-    mockEquipments.forEach(eq => addEquipment(eq))
-
-    // 自动生成光纤段
-    const eqs = currentTable.value!.equipments
-    for (let i = 1; i < eqs.length; i++) {
-      const fromEq = eqs[i - 1]
-      const toEq = eqs[i]
-      const length = toEq.kp - fromEq.kp
-
-      addFiberSegment({
-        fromEquipmentId: fromEq.id,
-        toEquipmentId: toEq.id,
-        fromName: fromEq.name,
-        toName: toEq.name,
-        length,
-        fiberPairs: 8,
-        fiberPairType: 'working',
-        cableType: toEq.depth > 1500 ? 'LW' : (toEq.depth > 500 ? 'SA' : 'DA'),
-        attenuation: 0.2,
-        totalLoss: length * 0.2,
-        remarks: '',
+  // 初始化加载mock数据
+  function initMockData() {
+    if (tables.value.length === 0) {
+      const table = createTable(`${ROUTE_NAME}_SLD`, ROUTE_ID)
+      
+      // 更新传输参数
+      Object.assign(table.transmissionParams, mockTransmissionParams)
+      
+      // 添加设备（初始化时不触发联动）
+      mockSLDEquipments.forEach(eq => addEquipment(eq, false))
+      
+      // 添加光纤段，关联设备ID
+      const eqs = currentTable.value!.equipments
+      mockSLDFiberSegments.forEach((seg, index) => {
+        if (index < eqs.length - 1) {
+          addFiberSegment({
+            ...seg,
+            fromEquipmentId: eqs[index].id,
+            toEquipmentId: eqs[index + 1].id,
+          })
+        }
       })
+      
+      return table
     }
-
-    return table
+    return null
   }
+
+  // 监听其他模块的数据变更
+  function setupDataLinkListener() {
+    dataLinkService.subscribe('sld', (event) => {
+      if (!currentTable.value) return
+      
+      // 根据KP查找对应设备
+      const equipment = currentTable.value.equipments.find(
+        e => Math.abs(e.kp - (event.kp || 0)) < 1
+      )
+      
+      if (event.action === 'add' && !equipment) {
+        // RPL新增了关键点，同步创建SLD设备
+        const sldData = dataLinkService.rplToSldEquipment(event.data)
+        if (sldData) {
+          addEquipment(sldData, false)
+        }
+      } else if (event.action === 'update' && equipment) {
+        // 同步更新坐标和深度
+        updateEquipment(equipment.id, {
+          longitude: event.data.longitude ?? equipment.longitude,
+          latitude: event.data.latitude ?? equipment.latitude,
+          depth: event.data.depth ?? equipment.depth,
+        }, false)
+      } else if (event.action === 'delete' && equipment) {
+        // 同步删除设备
+        deleteEquipment(equipment.id, false)
+      }
+    })
+  }
+
+  // 自动加载mock数据
+  initMockData()
+  setupDataLinkListener()
 
   return {
     // State
@@ -408,6 +461,5 @@ export const useSLDStore = defineStore('sld', () => {
     generateFromRPL,
     exportEquipmentsToCSV,
     exportSegmentsToCSV,
-    generateMockData,
   }
 })

@@ -1,18 +1,9 @@
 import type { ILayerRepository } from '../interfaces'
 import type { LayerConfig, LayerData } from '@/types'
-
-// Mock 图层数据
-const mockLayers: LayerConfig[] = [
-  { id: 'volcano', name: '火山区域', type: 'both', visible: false, loaded: false, loading: false, zIndex: 100 },
-  { id: 'earthquake', name: '地震活动', type: 'both', visible: false, loaded: false, loading: false, zIndex: 100 },
-  { id: 'elevation', name: '海洋高程', type: 'raster', visible: true, loaded: true, loading: false, zIndex: 10 },
-  { id: 'slope', name: '海洋坡度', type: 'heatmap', visible: false, loaded: false, loading: false, zIndex: 20 },
-  { id: 'fishing', name: '海洋渔区分布', type: 'point', visible: false, loaded: false, loading: false, zIndex: 80 },
-  { id: 'shipping', name: '航道分布', type: 'vector', visible: false, loaded: false, loading: false, zIndex: 70 },
-]
+import { mockLayers as importedMockLayers } from '@/data/mockData'
 
 export class MockLayerRepository implements ILayerRepository {
-  private layers: LayerConfig[] = [...mockLayers]
+  private layers: LayerConfig[] = JSON.parse(JSON.stringify(importedMockLayers))
 
   async getLayers(): Promise<LayerConfig[]> {
     // 模拟网络延迟

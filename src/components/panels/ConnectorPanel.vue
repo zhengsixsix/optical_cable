@@ -55,11 +55,6 @@ const handleDelete = (id: string) => {
   appStore.showNotification({ type: 'success', message: '接线元已删除' })
 }
 
-// 生成模拟数据
-const handleGenerateMock = () => {
-  connectorStore.generateMockData()
-  appStore.showNotification({ type: 'success', message: '已生成模拟数据' })
-}
 </script>
 
 <template>
@@ -105,10 +100,7 @@ const handleGenerateMock = () => {
       <!-- 接线元列表 -->
       <div class="flex-1 overflow-auto pr-1">
         <div v-if="filteredElements.length === 0" class="text-center py-8 text-gray-400 text-xs">
-          <p class="mb-2">暂无接线元数据</p>
-          <Button variant="outline" size="sm" class="h-7 text-xs" @click="handleGenerateMock">
-            生成模拟数据
-          </Button>
+          <p>暂无接线元数据</p>
         </div>
         
         <div v-else class="space-y-2">

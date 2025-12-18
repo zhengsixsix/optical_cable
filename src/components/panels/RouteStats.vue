@@ -1,26 +1,14 @@
 <script setup lang="ts">
 import { Card, CardHeader, CardContent } from '@/components/ui'
 import { Printer, Settings, X } from 'lucide-vue-next'
+import { mockRouteStats } from '@/data/mockData'
 
 const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-// Mock 数据
-const stats = {
-  project: '新海缆工程',
-  totalLength: 1245.5,
-  countries: ['A', 'B', 'C'],
-  landingStations: 4,
-  branchingUnits: 2,
-  sections: [
-    { id: '01', length: 45.2, type: 'LPA' },
-    { id: '02', length: 78.3, type: 'SPA' },
-    { id: '03', length: 92.1, type: 'LPA' },
-    { id: '04', length: 56.8, type: 'SPA' },
-    { id: '05', length: 63.4, type: 'LPA' },
-  ]
-}
+// 路由统计数据 - 从集中数据文件导入
+const stats = mockRouteStats
 </script>
 
 <template>

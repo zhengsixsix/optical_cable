@@ -1,20 +1,15 @@
 <script setup lang="ts">
 import { Card, CardHeader, CardContent } from '@/components/ui'
 import { X } from 'lucide-vue-next'
+import { mockMonitorPanelDevices, mockMonitorPanelStats } from '@/data/mockData'
 
 const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-// Mock 设备数据
-const devices = [
-  { id: 1, name: 'A', code: 'DEV001', status: 'OK' },
-  { id: 2, name: 'B', code: 'DEV002', status: 'WARN' },
-  { id: 3, name: 'C', code: 'DEV003', status: 'OK' },
-  { id: 4, name: 'D', code: 'DEV004', status: 'ALARM' },
-  { id: 5, name: 'E', code: 'DEV005', status: 'OK' },
-  { id: 6, name: 'F', code: 'DEV006', status: 'OK' },
-]
+// 设备数据 - 从集中数据文件导入
+const devices = mockMonitorPanelDevices
+const stats = mockMonitorPanelStats
 
 function getStatusClass(status: string) {
   switch (status) {
@@ -39,19 +34,19 @@ function getStatusClass(status: string) {
       <div class="space-y-1.5">
         <div class="flex justify-between">
           <span class="text-gray-600">总体健康度:</span>
-          <span class="font-bold text-success">正常</span>
+          <span class="font-bold text-success">{{ stats.healthStatus }}</span>
         </div>
         <div class="flex justify-between">
           <span class="text-gray-600">活动告警数:</span>
-          <span class="font-bold text-danger">1</span>
+          <span class="font-bold text-danger">{{ stats.activeAlarms }}</span>
         </div>
         <div class="flex justify-between">
           <span class="text-gray-600">GSNR:</span>
-          <span class="font-bold">25 dB</span>
+          <span class="font-bold">{{ stats.gsnr }} dB</span>
         </div>
         <div class="flex justify-between">
           <span class="text-gray-600">余量:</span>
-          <span class="font-bold">3 dB</span>
+          <span class="font-bold">{{ stats.margin }} dB</span>
         </div>
       </div>
       

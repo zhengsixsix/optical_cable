@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { X, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-vue-next'
 import { useRouteStore, useSettingsStore, useAppStore } from '@/stores'
+import { mockReportData } from '@/data/mockData'
 
 const props = defineProps<{
   visible: boolean
@@ -37,7 +38,7 @@ const planningStatus = computed(() => {
 const costReportData = computed(() => {
   const cable = settingsStore.cableTypes[0]
   const repeater = settingsStore.repeaterTypes[0]
-  const totalLength = 1550 // 模拟数据
+  const totalLength = mockReportData.totalLength
   const repeaterCount = Math.ceil(totalLength / 80)
   
   return {
@@ -45,7 +46,7 @@ const costReportData = computed(() => {
     repeaterCost: planningStatus.value.transmissionPlanning ? repeaterCount * (repeater?.cost || 500000) : 0,
     laborCost: planningStatus.value.routePlanning ? totalLength * settingsStore.costFactors.laborCostPerKm : 0,
     surveyingCost: planningStatus.value.routePlanning ? totalLength * settingsStore.costFactors.surveyingCostPerKm : 0,
-    vesselCost: planningStatus.value.routePlanning ? 60 * settingsStore.costFactors.vesselCostPerDay : 0,
+    vesselCost: planningStatus.value.routePlanning ? mockReportData.vesselDays * settingsStore.costFactors.vesselCostPerDay : 0,
   }
 })
 
@@ -59,10 +60,10 @@ const perfReportData = computed(() => {
     }
   }
   return {
-    gsnr: 18.5,
+    gsnr: mockReportData.perfData.gsnr,
     capacity: settingsStore.transmissionConfig.channelCount * 100,
     wavelengths: settingsStore.transmissionConfig.channelCount,
-    margin: 3.2,
+    margin: mockReportData.perfData.margin,
   }
 })
 

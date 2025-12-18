@@ -135,10 +135,6 @@ const handleExportJSON = () => {
   appStore.showNotification({ type: 'success', message: '导出成功' })
 }
 
-const handleGenerateMock = () => {
-  rplStore.generateMockData()
-  appStore.showNotification({ type: 'success', message: '已生成示例数据' })
-}
 
 const applyFilter = () => {
   rplStore.setFilter({
@@ -172,15 +168,9 @@ const someSelected = computed(() =>
         <FileSpreadsheet class="w-5 h-5 text-blue-600" />
         <span class="font-semibold">RPL 表格管理</span>
       </div>
-      <div class="flex items-center gap-2">
-        <Button v-if="!currentTable" variant="outline" size="sm" @click="handleGenerateMock">
-          <Plus class="w-4 h-4 mr-1" />
-          生成示例
-        </Button>
-        <Button v-if="props.visible !== undefined" variant="ghost" size="sm" @click="emit('close')">
-          <X class="w-4 h-4" />
-        </Button>
-      </div>
+      <Button v-if="props.visible !== undefined" variant="ghost" size="sm" @click="emit('close')">
+        <X class="w-4 h-4" />
+      </Button>
     </CardHeader>
 
     <CardContent class="flex-1 flex flex-col overflow-hidden p-0">
@@ -396,9 +386,6 @@ const someSelected = computed(() =>
               <td colspan="13" class="px-4 py-8 text-center text-gray-400">
                 <FileSpreadsheet class="w-10 h-10 mx-auto mb-2 opacity-50" />
                 <p>暂无数据</p>
-                <Button variant="outline" size="sm" class="mt-2" @click="handleGenerateMock">
-                  生成示例数据
-                </Button>
               </td>
             </tr>
           </tbody>
