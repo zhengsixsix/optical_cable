@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Loader2 } from 'lucide-vue-next'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import * as GeoTIFF from 'geotiff'
+import { loadTifMeta, findTifForExtent, mercatorToLatLon } from '@/composables/useDemData'
+import { useRouteStore } from '@/stores'
+import { storeToRefs } from 'pinia'
 
 interface Props {
   extent?: [number, number, number, number]
@@ -11,179 +13,27 @@ interface Props {
 
 const props = defineProps<Props>()
 
+const routeStore = useRouteStore()
+const { currentRoute } = storeToRefs(routeStore)
+
 const containerRef = ref<HTMLElement | null>(null)
 const loading = ref(false)
 const hasData = ref(false)
 let isInitialized = false
 
-// 多 tif 文件支持
-interface TifMeta {
-  url: string
-  bbox: [number, number, number, number]
-  image: any
-  pixelWidth: number
-  pixelHeight: number
-  width: number
-  height: number
-}
-
-const DEM_FILES = ['/dem/1.tif', '/dem/2.tif', '/dem/3.tif', '/dem/4.tif', '/dem/5.tif', '/dem/6.tif']
-const tifMetaCache = ref<TifMeta[]>([])
-const metaLoaded = ref(false)
-
-// 预加载所有 tif 文件的元数据
-const loadTifMeta = async () => {
-  if (metaLoaded.value) return
-
-  const metas: TifMeta[] = []
-  await Promise.all(DEM_FILES.map(async (url) => {
-    try {
-      const response = await fetch(url)
-      const arrayBuffer = await response.arrayBuffer()
-      const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer)
-      const image = await tiff.getImage()
-      const bbox = image.getBoundingBox() as [number, number, number, number]
-      const width = image.getWidth()
-      const height = image.getHeight()
-      const pixelWidth = (bbox[2] - bbox[0]) / width
-      const pixelHeight = (bbox[3] - bbox[1]) / height
-
-      metas.push({ url, bbox, image, pixelWidth, pixelHeight, width, height })
-    } catch (e) {
-      console.warn(`加载 ${url} 元数据失败:`, e)
-    }
-  }))
-
-  tifMetaCache.value = metas
-  metaLoaded.value = true
-}
-
-// EPSG:3857 转经纬度
-const mercatorToLatLon = (x: number, y: number): [number, number] => {
-  const lon = (x / 20037508.34) * 180
-  let lat = (y / 20037508.34) * 180
-  lat = (180 / Math.PI) * (2 * Math.atan(Math.exp((lat * Math.PI) / 180)) - Math.PI / 2)
-  return [lon, lat]
-}
-
-// 查找与区域有交集的 tif 文件（输入是经纬度坐标）
-const findTifForExtent = (extentLonLat: [number, number, number, number]): TifMeta | null => {
-  const [extMinX, extMinY, extMaxX, extMaxY] = extentLonLat
-  for (const meta of tifMetaCache.value) {
-    const [minX, minY, maxX, maxY] = meta.bbox
-    // 检查是否有交集
-    if (extMinX <= maxX && extMaxX >= minX && extMinY <= maxY && extMaxY >= minY) {
-      return meta
-    }
-  }
-  return null
-}
-
 let scene: THREE.Scene | null = null
 let camera: THREE.PerspectiveCamera | null = null
 let renderer: THREE.WebGLRenderer | null = null
 let controls: OrbitControls | null = null
-let terrainMesh: THREE.Mesh | null = null
-let waterMesh: THREE.Mesh | null = null
+let terrainGroup: THREE.Group | null = null
+let routeGroup: THREE.Group | null = null
 let animationId: number | null = null
-let waterTime = 0
 
-// 立体水体着色器
-const waterVertexShader = `
-  uniform float uTime;
-  varying vec3 vWorldPos;
-  varying vec3 vNormal;
-  varying vec2 vUv;
-  
-  void main() {
-    vUv = uv;
-    vNormal = normalize(normalMatrix * normal);
-    
-    vec3 pos = position;
-    
-    // 顶面波浪效果
-    if (pos.y > 0.0) {
-      float wave1 = sin(pos.x * 0.3 + uTime * 1.5) * 0.8;
-      float wave2 = sin(pos.z * 0.4 + uTime * 1.2) * 0.6;
-      float wave3 = sin((pos.x + pos.z) * 0.2 + uTime * 2.0) * 0.4;
-      pos.y += wave1 + wave2 + wave3;
-    }
-    
-    vec4 worldPos = modelMatrix * vec4(pos, 1.0);
-    vWorldPos = worldPos.xyz;
-    
-    gl_Position = projectionMatrix * viewMatrix * worldPos;
-  }
-`
-
-const waterFragmentShader = `
-  uniform float uTime;
-  varying vec3 vWorldPos;
-  varying vec3 vNormal;
-  varying vec2 vUv;
-  
-  void main() {
-    // 深海到浅海的颜色
-    vec3 deepColor = vec3(0.0, 0.05, 0.15);
-    vec3 midColor = vec3(0.0, 0.15, 0.35);
-    vec3 surfaceColor = vec3(0.1, 0.4, 0.6);
-    
-    // 根据高度混合颜色
-    float heightFactor = clamp((vWorldPos.y + 20.0) / 40.0, 0.0, 1.0);
-    vec3 waterColor = mix(deepColor, midColor, heightFactor * 0.5);
-    waterColor = mix(waterColor, surfaceColor, heightFactor * heightFactor);
-    
-    // 流动光线效果
-    float flow1 = sin(vWorldPos.x * 0.1 + vWorldPos.z * 0.1 + uTime * 0.8) * 0.5 + 0.5;
-    float flow2 = sin(vWorldPos.x * 0.15 - vWorldPos.z * 0.08 + uTime * 0.6) * 0.5 + 0.5;
-    float caustics = flow1 * flow2 * 0.3 * heightFactor;
-    waterColor += vec3(caustics * 0.5, caustics * 0.7, caustics);
-    
-    // 边缘菲涅尔效果
-    vec3 viewDir = normalize(cameraPosition - vWorldPos);
-    float fresnel = pow(1.0 - max(dot(vNormal, viewDir), 0.0), 2.0);
-    waterColor += vec3(0.1, 0.2, 0.3) * fresnel * 0.5;
-    
-    // 深度透明度
-    float alpha = 0.75 + heightFactor * 0.15;
-    
-    gl_FragColor = vec4(waterColor, alpha);
-  }
-`
-
-// 创建立体水体
-const createWater = (seaLevel: number) => {
-  if (!scene) return
-
-  // 移除旧水体
-  if (waterMesh) {
-    scene.remove(waterMesh)
-    waterMesh.geometry.dispose()
-    if (waterMesh.material instanceof THREE.Material) {
-      waterMesh.material.dispose()
-    }
-  }
-
-  // 创建立体水块
-  const waterDepth = seaLevel + 5
-  const waterGeometry = new THREE.BoxGeometry(110, waterDepth, 110, 32, 16, 32)
-
-  const waterMaterial = new THREE.ShaderMaterial({
-    vertexShader: waterVertexShader,
-    fragmentShader: waterFragmentShader,
-    uniforms: {
-      uTime: { value: 0 }
-    },
-    transparent: true,
-    side: THREE.DoubleSide,
-    depthWrite: false
-  })
-
-  const mesh = new THREE.Mesh(waterGeometry, waterMaterial)
-  mesh.position.y = seaLevel / 2 - 2
-  scene.add(mesh)
-  waterMesh = mesh
-}
+// 存储当前地形的坐标范围和高程信息
+let currentExtentLonLat: [number, number, number, number] | null = null
+let currentElevData: { minElev: number; maxElev: number; elevRange: number } | null = null
+let currentElevArray: Int16Array | null = null
+let currentTerrainSize: { width: number; height: number } | null = null
 
 const initScene = () => {
   if (!containerRef.value || isInitialized) return
@@ -199,10 +49,10 @@ const initScene = () => {
   isInitialized = true
 
   scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x1a1a2e)
+  scene.background = new THREE.Color(0x0a1628)
 
   camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000)
-  camera.position.set(0, 100, 150)
+  camera.position.set(0, 120, 180)
 
   renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setSize(width, height)
@@ -212,16 +62,19 @@ const initScene = () => {
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.05
+  controls.maxPolarAngle = Math.PI / 2.1
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5)
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
   scene.add(ambientLight)
 
   const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
-  directionalLight.position.set(100, 100, 50)
+  directionalLight.position.set(100, 150, 80)
+  directionalLight.castShadow = true
   scene.add(directionalLight)
 
-  const gridHelper = new THREE.GridHelper(200, 20, 0x444444, 0x222222)
-  scene.add(gridHelper)
+  const backLight = new THREE.DirectionalLight(0x4488ff, 0.3)
+  backLight.position.set(-50, 50, -50)
+  scene.add(backLight)
 
   animate()
 }
@@ -229,15 +82,6 @@ const initScene = () => {
 const animate = () => {
   animationId = requestAnimationFrame(animate)
   controls?.update()
-
-  // 更新水面动画
-  if (waterMesh && waterMesh.material) {
-    waterTime += 0.01
-    const material = waterMesh.material as THREE.ShaderMaterial
-    if (material.uniforms) {
-      material.uniforms.uTime.value = waterTime
-    }
-  }
 
   if (renderer && scene && camera) {
     renderer.render(scene, camera)
@@ -249,7 +93,7 @@ const loadTerrainData = async (extent: [number, number, number, number]) => {
   hasData.value = false
 
   try {
-    // 预加载 tif 元数据
+    // 使用共享的 tif 元数据缓存
     await loadTifMeta()
 
     // 将 EPSG:3857 坐标转换为经纬度
@@ -298,6 +142,7 @@ const loadTerrainData = async (extent: [number, number, number, number]) => {
     })
 
     const elevationData = rasters[0] as Int16Array
+    currentExtentLonLat = extentLonLat
     createTerrain(elevationData, sampleWidth, sampleHeight)
     hasData.value = true
   } catch (error) {
@@ -310,15 +155,20 @@ const loadTerrainData = async (extent: [number, number, number, number]) => {
 const createTerrain = (elevationData: Int16Array, width: number, height: number) => {
   if (!scene) return
 
-  if (terrainMesh) {
-    scene.remove(terrainMesh)
-    terrainMesh.geometry.dispose()
-    if (terrainMesh.material instanceof THREE.Material) {
-      terrainMesh.material.dispose()
-    }
+  // 清除旧的地形组
+  if (terrainGroup) {
+    scene.remove(terrainGroup)
+    terrainGroup.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose()
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose()
+        }
+      }
+    })
   }
 
-  const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1)
+  terrainGroup = new THREE.Group()
 
   let minElev = Infinity
   let maxElev = -Infinity
@@ -329,49 +179,336 @@ const createTerrain = (elevationData: Int16Array, width: number, height: number)
     }
   }
 
-  const positions = geometry.attributes.position
-  const colors: number[] = []
   const elevRange = maxElev - minElev || 1
+  currentElevData = { minElev, maxElev, elevRange }
+  currentElevArray = elevationData
+  currentTerrainSize = { width, height }
 
+  // 创建顶面地形
+  const topGeometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1)
+  const positions = topGeometry.attributes.position
+  const colors: number[] = []
+
+  // PlaneGeometry 顶点从 y=-50 开始按行扫描，旋转后 z=50 在前
+  // tif 数据第一行是北边（高纬度），需要翻转行索引
   for (let i = 0; i < positions.count; i++) {
-    const elev = elevationData[i] || 0
-    const normalizedHeight = ((elev - minElev) / elevRange) * 30
+    const row = Math.floor(i / width)
+    const col = i % width
+    // 翻转行索引：让 tif 的第一行（北边）对应场景的 z=-50
+    const flippedRow = height - 1 - row
+    const dataIdx = flippedRow * width + col
+    
+    const elev = elevationData[dataIdx] || 0
+    const normalizedHeight = ((elev - minElev) / elevRange) * 40
     positions.setZ(i, elev === -32767 ? 0 : normalizedHeight)
 
-    const t = (elev - minElev) / elevRange
-    const color = getElevationColor(t)
+    const color = getElevationColor(elev)
     colors.push(color.r, color.g, color.b)
   }
 
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-  geometry.computeVertexNormals()
+  topGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  topGeometry.computeVertexNormals()
 
-  const material = new THREE.MeshLambertMaterial({
+  // 网格线框材质（保留顶点颜色）
+  const topMaterial = new THREE.MeshBasicMaterial({
     vertexColors: true,
-    side: THREE.DoubleSide,
+    wireframe: true,
+    wireframeLinewidth: 1,
   })
 
-  terrainMesh = new THREE.Mesh(geometry, material)
-  terrainMesh.rotation.x = -Math.PI / 2
-  scene.add(terrainMesh)
+  const topMesh = new THREE.Mesh(topGeometry, topMaterial)
+  topMesh.rotation.x = -Math.PI / 2
+  terrainGroup.add(topMesh)
 
-  // 计算海平面高度（0米对应的归一化高度）
-  const seaLevelNormalized = ((0 - minElev) / elevRange) * 30
-  createWater(Math.max(seaLevelNormalized, 0))
+  // 创建四个侧面（立体效果）
+  const baseHeight = -25
+  const sideColor = new THREE.Color(0x0a2040)
+
+  // 前侧面 (z = 50) - 对应 tif 的南边（翻转后的最后一行）
+  const frontVertices: number[] = []
+  const frontColors: number[] = []
+  for (let i = 0; i < width; i++) {
+    const idx = 0 * width + i  // tif 第一行翻转后在 z=50
+    const elev = elevationData[idx] || 0
+    const h = ((elev - minElev) / elevRange) * 40
+    const x = (i / (width - 1) - 0.5) * 100
+    frontVertices.push(x, h, 50, x, baseHeight, 50)
+    frontColors.push(sideColor.r, sideColor.g, sideColor.b)
+    frontColors.push(sideColor.r * 0.5, sideColor.g * 0.5, sideColor.b * 0.5)
+  }
+  createSideMesh(frontVertices, frontColors, width)
+
+  // 后侧面 (z = -50) - 对应 tif 的北边（翻转后的第一行）
+  const backVertices: number[] = []
+  const backColors: number[] = []
+  for (let i = 0; i < width; i++) {
+    const idx = (height - 1) * width + i  // tif 最后一行翻转后在 z=-50
+    const elev = elevationData[idx] || 0
+    const h = ((elev - minElev) / elevRange) * 40
+    const x = (i / (width - 1) - 0.5) * 100
+    backVertices.push(x, h, -50, x, baseHeight, -50)
+    backColors.push(sideColor.r, sideColor.g, sideColor.b)
+    backColors.push(sideColor.r * 0.5, sideColor.g * 0.5, sideColor.b * 0.5)
+  }
+  createSideMesh(backVertices, backColors, width)
+
+  // 左侧面 (x = -50)
+  const leftVertices: number[] = []
+  const leftColors: number[] = []
+  for (let j = 0; j < height; j++) {
+    const flippedJ = height - 1 - j
+    const idx = flippedJ * width
+    const elev = elevationData[idx] || 0
+    const h = ((elev - minElev) / elevRange) * 40
+    const z = (j / (height - 1) - 0.5) * 100
+    leftVertices.push(-50, h, z, -50, baseHeight, z)
+    leftColors.push(sideColor.r, sideColor.g, sideColor.b)
+    leftColors.push(sideColor.r * 0.5, sideColor.g * 0.5, sideColor.b * 0.5)
+  }
+  createSideMesh(leftVertices, leftColors, height)
+
+  // 右侧面 (x = 50)
+  const rightVertices: number[] = []
+  const rightColors: number[] = []
+  for (let j = 0; j < height; j++) {
+    const flippedJ = height - 1 - j
+    const idx = flippedJ * width + (width - 1)
+    const elev = elevationData[idx] || 0
+    const h = ((elev - minElev) / elevRange) * 40
+    const z = (j / (height - 1) - 0.5) * 100
+    rightVertices.push(50, h, z, 50, baseHeight, z)
+    rightColors.push(sideColor.r, sideColor.g, sideColor.b)
+    rightColors.push(sideColor.r * 0.5, sideColor.g * 0.5, sideColor.b * 0.5)
+  }
+  createSideMesh(rightVertices, rightColors, height)
+
+  // 创建底面
+  const bottomGeometry = new THREE.PlaneGeometry(100, 100)
+  const bottomMaterial = new THREE.MeshLambertMaterial({ color: 0x0a1a2a, side: THREE.BackSide })
+  const bottomMesh = new THREE.Mesh(bottomGeometry, bottomMaterial)
+  bottomMesh.rotation.x = -Math.PI / 2
+  bottomMesh.position.y = baseHeight
+  terrainGroup.add(bottomMesh)
+
+  scene.add(terrainGroup)
+
+  // 更新路径显示
+  updateRouteLine()
 
   if (camera) {
-    camera.position.set(0, 80, 120)
+    camera.position.set(0, 100, 150)
     camera.lookAt(0, 0, 0)
   }
 }
 
-const getElevationColor = (t: number): THREE.Color => {
-  if (t < 0.3) return new THREE.Color().setHSL(0.6, 0.8, 0.2 + t * 0.5)
-  if (t < 0.5) return new THREE.Color().setHSL(0.5, 0.7, 0.4 + (t - 0.3) * 0.5)
-  if (t < 0.6) return new THREE.Color().setHSL(0.3, 0.8, 0.4)
-  if (t < 0.75) return new THREE.Color().setHSL(0.15, 0.8, 0.5)
-  if (t < 0.9) return new THREE.Color().setHSL(0.08, 0.6, 0.4)
-  return new THREE.Color().setHSL(0, 0, 0.8 + (t - 0.9) * 2)
+// 创建侧面网格
+const createSideMesh = (vertices: number[], colors: number[], count: number) => {
+  if (!terrainGroup) return
+
+  const indices: number[] = []
+  for (let i = 0; i < count - 1; i++) {
+    const a = i * 2
+    const b = i * 2 + 1
+    const c = i * 2 + 2
+    const d = i * 2 + 3
+    indices.push(a, b, c, b, d, c)
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+
+  const material = new THREE.MeshBasicMaterial({ vertexColors: true, wireframe: true })
+  const mesh = new THREE.Mesh(geometry, material)
+  terrainGroup.add(mesh)
+}
+
+// 根据 3D 坐标获取地形高度
+const getTerrainHeight = (x: number, z: number): number => {
+  if (!currentElevArray || !currentTerrainSize || !currentElevData) return 0
+  
+  const { width, height } = currentTerrainSize
+  const { minElev, elevRange } = currentElevData
+  
+  // 将 3D 坐标 (-50 到 50) 转换为索引
+  // x: -50 到 50 对应 col: 0 到 width-1
+  // z: -50 到 50 对应 row: 0 到 height-1（已经在地形创建时翻转了）
+  const normX = (x / 100 + 0.5)
+  const normZ = (z / 100 + 0.5)
+  
+  const col = Math.floor(normX * (width - 1))
+  const row = Math.floor(normZ * (height - 1))
+  
+  // 边界检查
+  const clampedCol = Math.max(0, Math.min(width - 1, col))
+  const clampedRow = Math.max(0, Math.min(height - 1, row))
+  
+  // 翻转行索引（与地形创建一致）
+  const flippedRow = height - 1 - clampedRow
+  const idx = flippedRow * width + clampedCol
+  const elev = currentElevArray[idx] || 0
+  
+  // 转换为归一化高度
+  const normalizedHeight = ((elev - minElev) / elevRange) * 40
+  return elev === -32767 ? 0 : normalizedHeight
+}
+
+// 更新路径线
+const updateRouteLine = () => {
+  if (!scene || !currentExtentLonLat || !currentElevData) return
+
+  // 清除旧路径组
+  if (routeGroup) {
+    scene.remove(routeGroup)
+    routeGroup.traverse((child) => {
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+        child.geometry.dispose()
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose()
+        }
+      }
+    })
+    routeGroup = null
+  }
+
+  const route = currentRoute.value
+  if (!route || !route.points || route.points.length < 2) return
+
+  routeGroup = new THREE.Group()
+  const [extMinX, extMinY, extMaxX, extMaxY] = currentExtentLonLat
+
+  // 筛选在范围内的路径点，并计算贴地高度
+  const pointsIn3D: THREE.Vector3[] = []
+  const routePointsData: { x: number; z: number; type: string }[] = []
+
+  for (const point of route.points) {
+    const [lon, lat] = point.coordinates
+    
+    // 检查点是否在框选范围内
+    const margin = (extMaxX - extMinX) * 0.1
+    if (lon >= extMinX - margin && lon <= extMaxX + margin &&
+        lat >= extMinY - margin && lat <= extMaxY + margin) {
+      
+      // 转换为 3D 坐标 (-50 到 50)
+      // x: 经度从西到东
+      const x = ((lon - extMinX) / (extMaxX - extMinX) - 0.5) * 100
+      // z: 纬度从南到北（已在地形创建时统一处理）
+      const z = ((lat - extMinY) / (extMaxY - extMinY) - 0.5) * 100
+      
+      // 获取地形高度，贴地偏移 1.5
+      const terrainY = getTerrainHeight(x, z)
+      const y = terrainY + 1.5
+      
+      pointsIn3D.push(new THREE.Vector3(x, y, z))
+      routePointsData.push({ x, z, type: point.type || 'waypoint' })
+    }
+  }
+
+  if (pointsIn3D.length < 2) return
+
+  // 创建平滑曲线
+  const curve = new THREE.CatmullRomCurve3(pointsIn3D)
+  
+  // 沿曲线重新采样，让路径贴地
+  const sampledPoints: THREE.Vector3[] = []
+  const segments = 200
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments
+    const point = curve.getPoint(t)
+    // 重新计算贴地高度
+    const terrainY = getTerrainHeight(point.x, point.z)
+    point.y = terrainY + 1.5
+    sampledPoints.push(point)
+  }
+  
+  // 创建贴地曲线
+  const groundCurve = new THREE.CatmullRomCurve3(sampledPoints)
+  
+  // 创建圆柱形管道
+  const tubeGeometry = new THREE.TubeGeometry(groundCurve, 200, 1.2, 8, false)
+  const tubeMaterial = new THREE.MeshPhongMaterial({
+    color: 0xff3333,
+    shininess: 80,
+    emissive: 0x330000,
+  })
+  const tubeMesh = new THREE.Mesh(tubeGeometry, tubeMaterial)
+  routeGroup.add(tubeMesh)
+
+  // 添加路径点标记（不同类型用不同颜色）
+  for (const pd of routePointsData) {
+    const terrainY = getTerrainHeight(pd.x, pd.z)
+    const y = terrainY + 2.5
+    
+    // 根据节点类型设置颜色和大小
+    let color = 0xcccccc
+    let emissive = 0x222222
+    let size = 2.5
+    
+    switch (pd.type) {
+      case 'landing':
+        // 登陆站 - 绿色
+        color = 0x00ff88
+        emissive = 0x004422
+        size = 4
+        break
+      case 'repeater':
+        // 中继器 - 红色
+        color = 0xff4444
+        emissive = 0x441111
+        size = 3
+        break
+      case 'branching':
+        // 分支器 - 青色
+        color = 0x00ddff
+        emissive = 0x003344
+        size = 3.5
+        break
+      case 'joint':
+        // 接头 - 黄色
+        color = 0xffcc00
+        emissive = 0x332200
+        size = 2
+        break
+      default:
+        // 航路点 - 白色
+        color = 0xffffff
+        emissive = 0x333333
+        size = 2
+    }
+    
+    const sphereGeom = new THREE.SphereGeometry(size, 16, 16)
+    const sphereMat = new THREE.MeshPhongMaterial({
+      color,
+      emissive,
+      shininess: 100,
+    })
+    const sphere = new THREE.Mesh(sphereGeom, sphereMat)
+    sphere.position.set(pd.x, y, pd.z)
+    routeGroup.add(sphere)
+  }
+
+  scene.add(routeGroup)
+}
+
+// 根据实际高程值着色
+const getElevationColor = (elev: number): THREE.Color => {
+  // 海底区域（负值）：深蓝到浅蓝
+  if (elev < -4000) return new THREE.Color().setHSL(0.62, 0.9, 0.15)
+  if (elev < -2000) return new THREE.Color().setHSL(0.60, 0.85, 0.25)
+  if (elev < -500) return new THREE.Color().setHSL(0.58, 0.8, 0.35)
+  if (elev < -100) return new THREE.Color().setHSL(0.55, 0.75, 0.45)
+  if (elev < 0) return new THREE.Color().setHSL(0.52, 0.7, 0.55)
+  
+  // 海平面附近：沙滩/浅滩
+  if (elev < 50) return new THREE.Color().setHSL(0.15, 0.5, 0.7)
+  
+  // 陆地区域（正值）
+  if (elev < 200) return new THREE.Color().setHSL(0.25, 0.6, 0.45)
+  if (elev < 500) return new THREE.Color().setHSL(0.20, 0.5, 0.40)
+  if (elev < 1500) return new THREE.Color().setHSL(0.10, 0.4, 0.35)
+  return new THREE.Color().setHSL(0, 0, 0.9)
 }
 
 const handleResize = () => {
@@ -388,6 +525,13 @@ const handleResize = () => {
 watch(() => props.extent, (newExtent) => {
   if (newExtent) loadTerrainData(newExtent)
 }, { immediate: true })
+
+// 监听路径变化
+watch(currentRoute, () => {
+  if (hasData.value) {
+    updateRouteLine()
+  }
+})
 
 onMounted(() => {
   initScene()

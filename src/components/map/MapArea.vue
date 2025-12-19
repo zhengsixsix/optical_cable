@@ -305,7 +305,7 @@ const initMap = () => {
     })
 
     source.on('tileloaderror', () => {
-      appStore.showNotification({ type: 'error', message: 'GeoTIFF 加载失败' })
+      // appStore.showNotification({ type: 'error', message: 'GeoTIFF 加载失败' })
     })
 
     return new WebGLTileLayer({ source, style: rgbStyle, visible: true, opacity: 1 })
