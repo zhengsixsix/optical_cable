@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { useRouteStore, useLayerStore, useAppStore } from '@/stores'
+import { useRouteStore, useLayerStore, useAppStore, useUserStore } from '@/stores'
+import { initAppearance } from '@/composables'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
@@ -12,13 +13,17 @@ import SLDManageDialog from '@/components/dialogs/SLDManageDialog.vue'
 import RouteEditDialog from '@/components/dialogs/RouteEditDialog.vue'
 import ReportDialog from '@/components/dialogs/ReportDialog.vue'
 import RPLExportDialog from '@/components/dialogs/RPLExportDialog.vue'
+import AppearanceDialog from '@/components/dialogs/AppearanceDialog.vue'
 import AlarmNotification from '@/components/notifications/AlarmNotification.vue'
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
+const userStore = useUserStore()
 
 onMounted(async () => {
+  // 初始化外观设置
+  initAppearance()
   // 初始化数据
   await routeStore.loadRoutes()
   appStore.addLog('INFO', '应用初始化完成')
@@ -26,8 +31,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="h-screen flex flex-col overflow-hidden bg-[#f0f2f5]">
-    <AppHeader />
+  <div class="h-screen flex flex-col overflow-hidden" style="background-color: var(--app-bg-color);">
+    <AppHeader v-if="userStore.isLoggedIn" />
     <div class="flex-1 overflow-hidden relative">
       <RouterView />
     </div>
@@ -111,6 +116,11 @@ onMounted(async () => {
 
   <RPLExportDialog
     :visible="appStore.activeDialog === 'rpl-export'"
+    @close="appStore.closeDialog()"
+  />
+
+  <AppearanceDialog
+    :visible="appStore.activeDialog === 'appearance-settings'"
     @close="appStore.closeDialog()"
   />
 

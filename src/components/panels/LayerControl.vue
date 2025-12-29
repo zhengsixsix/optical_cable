@@ -88,10 +88,10 @@ function handleReload(layerId: string) {
 </script>
 
 <template>
-  <div class="flex flex-col flex-1 bg-white rounded shadow-sm overflow-hidden text-sm">
+  <div class="flex flex-col flex-1 rounded shadow-sm overflow-hidden text-sm" style="background-color: var(--app-card-bg); color: var(--app-text-color);">
     <!-- Panel Header -->
-    <div class="flex items-center justify-between px-3 py-2 bg-[#f5f7fa] border-b border-[#ebeef5]">
-      <span class="font-semibold text-[#303133]">图层信息</span>
+    <div class="flex items-center justify-between px-3 py-2" style="background-color: var(--app-bg-secondary); border-bottom: 1px solid var(--app-border-color);">
+      <span class="font-semibold">图层信息</span>
       <div class="flex gap-1">
         <button 
           class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 

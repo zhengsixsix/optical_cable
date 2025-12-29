@@ -339,6 +339,20 @@ const initMap = () => {
     coordinates.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
   })
 
+  // 双击事件 - 地图选点模式
+  map.on('dblclick', (evt) => {
+    if (appStore.mapSelectMode.active) {
+      const coord = evt.coordinate
+      const coordStr = `${coord[0].toFixed(6)},${coord[1].toFixed(6)}`
+      appStore.completeMapSelect(coordStr)
+      appStore.showNotification({ 
+        type: 'success', 
+        message: `已选择坐标: ${coordStr}` 
+      })
+      evt.preventDefault()
+    }
+  })
+
   selectionSource = new VectorSource()
   const selectionLayer = new VectorLayer({
     source: selectionSource,
@@ -862,9 +876,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex-1 bg-white rounded shadow-sm flex flex-col overflow-hidden">
+  <div class="flex-1 rounded shadow-sm flex flex-col overflow-hidden" style="background-color: var(--app-card-bg);">
     <!-- 工具栏 -->
-    <div class="h-12 px-4 bg-gradient-to-b from-white to-gray-50 border-b flex items-center justify-between">
+    <div class="h-12 px-4 border-b flex items-center justify-between" style="background-color: var(--app-bg-secondary); border-color: var(--app-border-color);">
       <div class="flex items-center gap-3">
         <!-- 工具模式 -->
         <div class="flex rounded-md border overflow-hidden">
@@ -872,16 +886,16 @@ onUnmounted(() => {
             <button :class="[
               'px-3 py-1.5 text-xs flex items-center gap-1 transition-colors',
               mapStore.toolMode === mode.value
-                ? 'bg-primary text-white'
-                : 'bg-white hover:bg-gray-100'
-            ]" @click="mapStore.setToolMode(mode.value as any)">
+                ? 'text-white'
+                : 'hover:opacity-80'
+            ]" :style="mapStore.toolMode === mode.value ? { backgroundColor: 'var(--app-primary-color)' } : { backgroundColor: 'var(--app-card-bg)', color: 'var(--app-text-color)' }" @click="mapStore.setToolMode(mode.value as any)">
               <component :is="mode.icon" class="w-4 h-4" />
               {{ mode.label }}
             </button>
           </Tooltip>
         </div>
 
-        <div class="w-px h-5 bg-gray-300" />
+        <div class="w-px h-5" style="background-color: var(--app-border-color);" />
 
         <div class="flex gap-1">
           <Tooltip content="添加节点">
@@ -896,7 +910,7 @@ onUnmounted(() => {
           </Tooltip>
         </div>
 
-        <div class="w-px h-5 bg-gray-300" />
+        <div class="w-px h-5" style="background-color: var(--app-border-color);" />
 
         <div class="flex gap-1">
           <Tooltip content="框选区域">
@@ -942,6 +956,15 @@ onUnmounted(() => {
       <div v-if="loading" class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center gap-3 z-50">
         <Loader2 class="w-8 h-8 text-primary animate-spin" />
         <span class="text-sm text-gray-600">正在加载 GeoTIFF 数据...</span>
+      </div>
+
+      <!-- 地图选点模式提示 -->
+      <div v-if="appStore.mapSelectMode.active" 
+        class="absolute top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg z-20 flex items-center gap-3">
+        <span class="text-sm font-medium">
+          请双击地图选择{{ appStore.mapSelectMode.type === 'start' ? '起点' : appStore.mapSelectMode.type === 'end' ? '终点' : '规划范围' }}坐标
+        </span>
+        <button @click="appStore.cancelMapSelect" class="text-white/80 hover:text-white text-xs underline">取消</button>
       </div>
 
       <!-- 坐标显示 -->

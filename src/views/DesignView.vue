@@ -5,9 +5,10 @@ import { Card, CardHeader, CardContent, Button, Select, Tooltip } from '@/compon
 import ConnectorPanel from '@/components/panels/ConnectorPanel.vue'
 import ConnectorDialog from '@/components/dialogs/ConnectorDialog.vue'
 import RepeaterConfigDialog from '@/components/dialogs/RepeaterConfigDialog.vue'
+import SystemDesignMap from '@/components/map/SystemDesignMap.vue'
 import { useSettingsStore, useAppStore, useConnectorStore } from '@/stores'
 import { mockReportData } from '@/data/mockData'
-import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Link2, Send, FileText, Download } from 'lucide-vue-next'
+import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Link2, Send, FileText, Download, Edit3 } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -90,6 +91,10 @@ const showRepeaterDialog = ref(false)
 const showConnectorDialog = ref(false)
 const editConnectorId = ref<string | null>(null)
 
+// 设备编辑弹框
+const showDeviceEditDialog = ref(false)
+const editingDevice = ref<any>(null)
+
 // 打开中继器配置弹框
 const openRepeaterPanel = () => {
   showRepeaterDialog.value = true
@@ -138,6 +143,102 @@ const formatCost = (cost: number) => {
   if (cost >= 1000) return `$${(cost / 1000).toFixed(0)}K`
   return `$${cost.toFixed(0)}`
 }
+
+// 地图组件引用
+const systemDesignMapRef = ref<InstanceType<typeof SystemDesignMap> | null>(null)
+
+// 是否开启编辑模式
+const isEditMode = ref(false)
+
+// 选中的节点
+const selectedPointId = ref<string | null>(null)
+
+// 路由节点数据 - 使用 connectorStore 数据
+const routePoints = computed(() => connectorStore.elements)
+
+// 切换编辑模式
+const toggleEditMode = () => {
+  isEditMode.value = !isEditMode.value
+  if (isEditMode.value) {
+    appStore.showNotification({ type: 'info', message: '已开启编辑模式，可拖拽调整中继器位置' })
+  } else {
+    appStore.showNotification({ type: 'info', message: '已关闭编辑模式' })
+  }
+}
+
+// 点击节点
+const handlePointClick = (pointId: string) => {
+  selectedPointId.value = pointId
+}
+
+// 节点移动
+const handlePointMoved = (pointId: string, longitude: number, latitude: number) => {
+  const point = routePoints.value.find(p => p.id === pointId)
+  if (point) {
+    connectorStore.updateElement(pointId, { longitude, latitude })
+    appStore.showNotification({
+      type: 'success',
+      message: `${point.name} 已移动到 ${longitude.toFixed(4)}°, ${latitude.toFixed(4)}°`
+    })
+    appStore.addLog('INFO', `设备 ${point.name} 位置已更新`)
+  }
+}
+
+// 线路点击
+const handleLineClick = () => {
+  selectedPointId.value = null
+  appStore.showNotification({ type: 'info', message: '已选中线路' })
+}
+
+// 编辑操作
+const handleEdit = (type: 'point' | 'line', id: string | null) => {
+  if (type === 'point' && id) {
+    const point = routePoints.value.find(p => p.id === id)
+    if (point) {
+      editingDevice.value = { ...point }
+      showDeviceEditDialog.value = true
+    }
+  } else if (type === 'line') {
+    appStore.showNotification({ type: 'info', message: '编辑线路参数' })
+  }
+}
+
+// 保存设备编辑
+const saveDeviceEdit = () => {
+  if (!editingDevice.value) return
+
+  const success = connectorStore.updateElement(editingDevice.value.id, {
+    name: editingDevice.value.name,
+    longitude: editingDevice.value.longitude,
+    latitude: editingDevice.value.latitude,
+    kp: editingDevice.value.kp,
+    depth: editingDevice.value.depth,
+    type: editingDevice.value.type,
+    specifications: editingDevice.value.specifications,
+    remarks: editingDevice.value.remarks
+  })
+
+  if (success) {
+    appStore.showNotification({ type: 'success', message: `设备 ${editingDevice.value.name} 已更新` })
+    appStore.addLog('INFO', `更新设备 ${editingDevice.value.name}`)
+  }
+  showDeviceEditDialog.value = false
+  editingDevice.value = null
+}
+
+// 删除操作
+const handleDelete = (type: 'point' | 'line', id: string | null) => {
+  if (type === 'point' && id) {
+    const point = routePoints.value.find(p => p.id === id)
+    if (point) {
+      connectorStore.deleteElement(id)
+      appStore.showNotification({ type: 'success', message: `已删除设备: ${point.name}` })
+      appStore.addLog('INFO', `删除设备 ${point.name}`)
+    }
+  } else if (type === 'line') {
+    appStore.showNotification({ type: 'warning', message: '线路不可删除' })
+  }
+}
 </script>
 
 <template>
@@ -153,6 +254,11 @@ const formatCost = (cost: number) => {
           <Tooltip content="3.1.3 中继器位置手动调整">
             <Button variant="outline" size="sm" @click="openRepeaterPanel">
               <Radio class="w-4 h-4 mr-1" /> 中继器配置
+            </Button>
+          </Tooltip>
+          <Tooltip content="5.2.2 中继器手动调整">
+            <Button :variant="isEditMode ? 'default' : 'outline'" size="sm" @click="toggleEditMode">
+              <Edit3 class="w-4 h-4 mr-1" /> {{ isEditMode ? '退出编辑' : '位置调整' }}
             </Button>
           </Tooltip>
           <Tooltip content="3.1.4 参数提交">
@@ -180,7 +286,7 @@ const formatCost = (cost: number) => {
       <Card class="flex-shrink-0">
         <CardHeader class="pb-2">
           <span class="font-semibold text-sm flex items-center gap-2">
-            <Cable class="w-4 h-4 text-blue-500" />
+            <Cable class="w-4 h-4 text-primary" />
             参数配置
           </span>
         </CardHeader>
@@ -197,15 +303,15 @@ const formatCost = (cost: number) => {
             <div>
               <div class="flex justify-between items-center mb-1">
                 <label class="text-xs text-gray-500 font-medium">中继器间距</label>
-                <span class="text-xs font-bold text-blue-600">{{ repeaterSpacing }} km</span>
+                <span class="text-xs font-bold text-primary">{{ repeaterSpacing }} km</span>
               </div>
               <input v-model.number="repeaterSpacing" type="range" min="40" max="120" step="5"
-                class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary" />
             </div>
             <div>
               <label class="block text-xs text-gray-500 mb-1 font-medium">目标容量 (Tbps)</label>
               <input v-model.number="targetCapacity" type="number" min="10" max="500"
-                class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors" />
+                class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors" />
             </div>
           </div>
         </CardContent>
@@ -225,71 +331,11 @@ const formatCost = (cost: number) => {
           </span>
         </CardHeader>
         <CardContent class="flex-1 flex flex-col overflow-hidden p-0">
-          <!-- 系统示意图 -->
-          <div class="flex-1 bg-white p-6 flex flex-col justify-center">
-            <div class="relative py-8">
-              <!-- 背景线 -->
-              <div class="absolute top-1/2 left-0 right-0 h-px bg-gray-200" />
-
-              <!-- 主光缆线 -->
-              <div class="relative mx-12">
-                <div class="h-1 bg-blue-600 rounded-full" />
-
-                <!-- 设备标记 -->
-                <div class="absolute -top-8 left-0 right-0 flex justify-between items-end">
-                  <!-- 登陆站A -->
-                  <div class="text-center -ml-4 group">
-                    <div
-                      class="w-8 h-8 bg-white border-2 border-green-600 rounded flex items-center justify-center text-green-700 text-xs font-bold shadow-sm group-hover:bg-green-50 transition-colors">
-                      L1
-                    </div>
-                    <div class="text-xs mt-2 text-gray-600 font-medium">登陆站A</div>
-                  </div>
-
-                  <!-- 中继器 -->
-                  <template v-for="item in displayRepeaters" :key="item.id">
-                    <div v-if="item.label === '...'" class="text-center">
-                      <div
-                        class="w-6 h-6 flex items-center justify-center text-gray-400 font-bold text-lg bg-white z-10">
-                        ...</div>
-                      <div class="text-xs mt-2 text-gray-400">×{{ (designResult?.repeaterCount || 0) - 4 }}</div>
-                    </div>
-                    <div v-else class="text-center group cursor-pointer">
-                      <div
-                        class="w-6 h-6 bg-white border-2 border-blue-600 rounded-full flex items-center justify-center text-blue-700 text-[10px] font-bold shadow-sm group-hover:bg-blue-50 transition-colors z-10 relative">
-                        {{ item.label }}
-                      </div>
-                      <div class="text-[10px] mt-2 text-gray-500">中继器</div>
-                    </div>
-                  </template>
-
-                  <!-- 登陆站B -->
-                  <div class="text-center -mr-4 group">
-                    <div
-                      class="w-8 h-8 bg-white border-2 border-green-600 rounded flex items-center justify-center text-green-700 text-xs font-bold shadow-sm group-hover:bg-green-50 transition-colors">
-                      L2
-                    </div>
-                    <div class="text-xs mt-2 text-gray-600 font-medium">登陆站B</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 图例 -->
-            <div class="flex justify-center gap-8 mt-4 pt-4 border-t border-gray-100">
-              <div class="flex items-center gap-2">
-                <div class="w-3 h-3 bg-white border-2 border-green-600 rounded" />
-                <span class="text-xs text-gray-600">登陆站</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-3 h-3 bg-white border-2 border-blue-600 rounded-full" />
-                <span class="text-xs text-gray-600">中继器 (×{{ designResult?.repeaterCount || 0 }})</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-6 h-1 bg-blue-600 rounded-full" />
-                <span class="text-xs text-gray-600">光缆</span>
-              </div>
-            </div>
+          <!-- 地图视图 -->
+          <div class="flex-1 min-h-[300px]">
+            <SystemDesignMap ref="systemDesignMapRef" :route-points="routePoints" :selected-point-id="selectedPointId"
+              :editable="isEditMode" @point-click="handlePointClick" @point-moved="handlePointMoved"
+              @line-click="handleLineClick" @edit="handleEdit" @delete="handleDelete" />
           </div>
 
           <!-- 系统概览数据 -->
@@ -329,11 +375,11 @@ const formatCost = (cost: number) => {
             <!-- 系统概览 -->
             <div class="grid grid-cols-2 gap-3">
               <div class="p-3 bg-gray-50 rounded border border-gray-200 text-center">
-                <div class="text-lg font-bold text-blue-700">{{ designResult.totalLength.toLocaleString() }}</div>
+                <div class="text-lg font-bold text-primary">{{ designResult.totalLength.toLocaleString() }}</div>
                 <div class="text-xs text-gray-500 mt-1">总长度 (km)</div>
               </div>
               <div class="p-3 bg-gray-50 rounded border border-gray-200 text-center">
-                <div class="text-lg font-bold text-blue-700">{{ designResult.repeaterCount }}</div>
+                <div class="text-lg font-bold text-primary">{{ designResult.repeaterCount }}</div>
                 <div class="text-xs text-gray-500 mt-1">中继器数</div>
               </div>
             </div>
@@ -385,7 +431,8 @@ const formatCost = (cost: number) => {
 
             <!-- 操作按钮 -->
             <div class="mt-auto pt-4 border-t border-gray-100 space-y-2 flex-shrink-0">
-              <Button class="w-full bg-blue-600 hover:bg-blue-700 text-white" size="sm" @click="handleSave">
+              <Button class="w-full bg-primary hover:bg-primary hover:brightness-90 text-white" size="sm"
+                @click="handleSave">
                 <Save class="w-4 h-4 mr-2" /> 保存设计
               </Button>
               <Button variant="outline" class="w-full border-gray-300 hover:bg-gray-50 text-gray-700" size="sm"
@@ -416,4 +463,74 @@ const formatCost = (cost: number) => {
     @saved="showRepeaterDialog = false" />
   <ConnectorDialog :visible="showConnectorDialog" :edit-id="editConnectorId" @close="showConnectorDialog = false"
     @saved="showConnectorDialog = false" />
+
+  <!-- 设备编辑弹框 -->
+  <div v-if="showDeviceEditDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-lg shadow-xl w-[480px] max-h-[90vh] overflow-auto">
+      <div class="px-4 py-3 border-b flex items-center justify-between">
+        <h3 class="font-semibold text-gray-800">编辑设备</h3>
+        <button class="text-gray-400 hover:text-gray-600" @click="showDeviceEditDialog = false">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div v-if="editingDevice" class="p-4 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">设备名称</label>
+          <input v-model="editingDevice.name" type="text"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">经度</label>
+            <input v-model.number="editingDevice.longitude" type="number" step="0.0001"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">纬度</label>
+            <input v-model.number="editingDevice.latitude" type="number" step="0.0001"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">KP (km)</label>
+            <input v-model.number="editingDevice.kp" type="number" step="0.1"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">深度 (m)</label>
+            <input v-model.number="editingDevice.depth" type="number"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">设备类型</label>
+          <select v-model="editingDevice.type"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            <option value="joint">接头盒</option>
+            <option value="ola">光放大器</option>
+            <option value="bu">分支单元</option>
+            <option value="pfe">馈电设备</option>
+            <option value="equalizer">均衡器</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">规格型号</label>
+          <input v-model="editingDevice.specifications" type="text"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">备注</label>
+          <textarea v-model="editingDevice.remarks" rows="2"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
+        </div>
+      </div>
+      <div class="px-4 py-3 border-t flex justify-end gap-2">
+        <Button variant="outline" size="sm" @click="showDeviceEditDialog = false">取消</Button>
+        <Button size="sm" @click="saveDeviceEdit">保存</Button>
+      </div>
+    </div>
+  </div>
 </template>

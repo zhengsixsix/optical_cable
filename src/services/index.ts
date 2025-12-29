@@ -7,7 +7,3 @@ export { alarmWebSocketService, useAlarmWebSocket } from './AlarmWebSocketServic
 export type { AlarmCallback, ConnectionCallback } from './AlarmWebSocketService'
 export { projectFileService, useProjectFile } from './ProjectFileService'
 export type { UCPProject, UREProject, ProjectMetadata } from './ProjectFileService'
-export { performanceCalculator, usePerformanceCalculator } from './PerformanceCalculator'
-export type { RepeaterConfig, PerformanceResult } from './PerformanceCalculator'
-export { geometryValidationService, useGeometryValidation } from './GeometryValidationService'
-export type { ValidationResult, ValidationIssue } from './GeometryValidationService'

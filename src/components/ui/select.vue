@@ -55,28 +55,30 @@ const selectedLabel = computed(() => {
     <SelectTrigger
       :class="cn(
         'flex items-center justify-between w-full px-3 py-2',
-        'bg-white border border-input rounded-md text-sm',
-        'hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+        'border rounded-md text-sm',
+        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
         'disabled:opacity-50 disabled:cursor-not-allowed'
       )"
+      style="background-color: var(--app-card-bg); color: var(--app-text-color); border-color: var(--app-border-color);"
     >
       <SelectValue :placeholder="placeholder">
         {{ selectedLabel }}
       </SelectValue>
-      <ChevronDown class="w-4 h-4 text-gray-500" />
+      <ChevronDown class="w-4 h-4" style="color: var(--app-text-secondary);" />
     </SelectTrigger>
 
     <SelectPortal>
       <SelectContent
         :class="cn(
           'relative z-[200] min-w-[160px] overflow-hidden',
-          'bg-white rounded-md border shadow-lg',
+          'rounded-md border shadow-lg',
           'data-[state=open]:animate-in data-[state=closed]:animate-out',
           'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
           'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
           'data-[side=bottom]:slide-in-from-top-2',
           'data-[side=top]:slide-in-from-bottom-2'
         )"
+        style="background-color: var(--app-card-bg); border-color: var(--app-border-color);"
         position="popper"
         :side-offset="4"
       >
@@ -89,9 +91,9 @@ const selectedLabel = computed(() => {
             :class="cn(
               'relative flex items-center px-3 py-2 text-sm rounded cursor-pointer',
               'select-none outline-none',
-              'data-[highlighted]:bg-primary data-[highlighted]:text-white',
               'data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed'
             )"
+            style="color: var(--app-text-color);"
           >
             <SelectItemText>{{ option.label }}</SelectItemText>
             <SelectItemIndicator class="absolute right-2">

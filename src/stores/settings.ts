@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors } from '@/types'
-import { defaultSettings } from '@/types/settings'
+import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType } from '@/types'
+import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes } from '@/types/settings'
 
 const STORAGE_KEY = 'cable-planner-settings'
 
@@ -83,6 +83,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const branchingUnits = ref<BranchingUnit[]>([...defaultSettings.branchingUnits])
   const costFactors = ref<CostFactors>({ ...defaultSettings.costFactors })
   
+  // 新增器件类型
+  const fiberTypes = ref<FiberType[]>([...defaultFiberTypes])
+  const amplifierTypes = ref<AmplifierType[]>([...defaultAmplifierTypes])
+  const branchingUnitTypes = ref<BranchingUnitType[]>([...defaultBranchingUnitTypes])
+  const currentLibraryFile = ref('DefaultLibrary_v1.0.csv')
+  
   // 新增配置状态
   const routePlanningConfig = ref<RoutePlanningConfig>({ ...defaultRoutePlanningConfig })
   const transmissionConfig = ref<TransmissionConfig>({ ...defaultTransmissionConfig })
@@ -121,6 +127,10 @@ export const useSettingsStore = defineStore('settings', () => {
         repeaterTypes: repeaterTypes.value,
         branchingUnits: branchingUnits.value,
         costFactors: costFactors.value,
+        fiberTypes: fiberTypes.value,
+        amplifierTypes: amplifierTypes.value,
+        branchingUnitTypes: branchingUnitTypes.value,
+        currentLibraryFile: currentLibraryFile.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch (error) {
@@ -153,6 +163,83 @@ export const useSettingsStore = defineStore('settings', () => {
       repeaterTypes.value[index] = { ...repeaterTypes.value[index], ...updates }
       saveToLocalStorage()
     }
+  }
+
+  function addRepeaterType(repeater: RepeaterType) {
+    repeaterTypes.value.push(repeater)
+    saveToLocalStorage()
+  }
+
+  function removeRepeaterType(id: string) {
+    repeaterTypes.value = repeaterTypes.value.filter(r => r.id !== id)
+    saveToLocalStorage()
+  }
+
+  function addBranchingUnit(bu: BranchingUnit) {
+    branchingUnits.value.push(bu)
+    saveToLocalStorage()
+  }
+
+  function removeBranchingUnit(id: string) {
+    branchingUnits.value = branchingUnits.value.filter(b => b.id !== id)
+    saveToLocalStorage()
+  }
+
+  // 光纤类型管理
+  function addFiberType(fiber: FiberType) {
+    fiberTypes.value.push(fiber)
+    saveToLocalStorage()
+  }
+
+  function updateFiberType(id: string, updates: Partial<FiberType>) {
+    const index = fiberTypes.value.findIndex(f => f.id === id)
+    if (index >= 0) {
+      fiberTypes.value[index] = { ...fiberTypes.value[index], ...updates }
+      saveToLocalStorage()
+    }
+  }
+
+  function removeFiberType(id: string) {
+    fiberTypes.value = fiberTypes.value.filter(f => f.id !== id)
+    saveToLocalStorage()
+  }
+
+  // 放大器类型管理
+  function addAmplifierType(amp: AmplifierType) {
+    amplifierTypes.value.push(amp)
+    saveToLocalStorage()
+  }
+
+  function updateAmplifierType(id: string, updates: Partial<AmplifierType>) {
+    const index = amplifierTypes.value.findIndex(a => a.id === id)
+    if (index >= 0) {
+      amplifierTypes.value[index] = { ...amplifierTypes.value[index], ...updates }
+      saveToLocalStorage()
+    }
+  }
+
+  function removeAmplifierType(id: string) {
+    amplifierTypes.value = amplifierTypes.value.filter(a => a.id !== id)
+    saveToLocalStorage()
+  }
+
+  // 分支器类型管理
+  function addBranchingUnitType(bu: BranchingUnitType) {
+    branchingUnitTypes.value.push(bu)
+    saveToLocalStorage()
+  }
+
+  function updateBranchingUnitType(id: string, updates: Partial<BranchingUnitType>) {
+    const index = branchingUnitTypes.value.findIndex(b => b.id === id)
+    if (index >= 0) {
+      branchingUnitTypes.value[index] = { ...branchingUnitTypes.value[index], ...updates }
+      saveToLocalStorage()
+    }
+  }
+
+  function removeBranchingUnitType(id: string) {
+    branchingUnitTypes.value = branchingUnitTypes.value.filter(b => b.id !== id)
+    saveToLocalStorage()
   }
 
   function updateCostFactors(updates: Partial<CostFactors>) {
@@ -209,12 +296,33 @@ export const useSettingsStore = defineStore('settings', () => {
     transmissionConfig,
     monitoringConfig,
     fiberSimulationConfig,
+    // 新增器件类型
+    fiberTypes,
+    amplifierTypes,
+    branchingUnitTypes,
+    currentLibraryFile,
     loadFromLocalStorage,
     saveToLocalStorage,
     updateCableType,
     addCableType,
     removeCableType,
     updateRepeaterType,
+    addRepeaterType,
+    removeRepeaterType,
+    addBranchingUnit,
+    removeBranchingUnit,
+    // 光纤类型
+    addFiberType,
+    updateFiberType,
+    removeFiberType,
+    // 放大器类型
+    addAmplifierType,
+    updateAmplifierType,
+    removeAmplifierType,
+    // 分支器类型
+    addBranchingUnitType,
+    updateBranchingUnitType,
+    removeBranchingUnitType,
     updateCostFactors,
     resetToDefaults,
     updateRoutePlanningConfig,

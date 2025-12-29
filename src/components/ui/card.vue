@@ -11,9 +11,10 @@ const props = defineProps<Props>()
 <template>
   <div
     :class="cn(
-      'rounded-lg border bg-white text-card-foreground shadow-sm',
+      'rounded-lg border shadow-sm',
       props.class,
     )"
+    style="background-color: var(--app-card-bg); color: var(--app-text-color); border-color: var(--app-border-color);"
   >
     <slot />
   </div>

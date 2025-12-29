@@ -4,7 +4,12 @@ import router from './router'
 import App from './App.vue'
 import './style.css'
 
+import { initAppearance } from '@/composables'
+
 const app = createApp(App)
+
+// 初始化外观设置
+initAppearance()
 
 // 安装 Pinia
 app.use(createPinia())

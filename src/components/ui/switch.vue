@@ -46,16 +46,19 @@ const thumbClasses = computed(() => {
     :disabled="disabled"
     :class="cn(
       'peer inline-flex shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
-      isChecked ? 'bg-primary' : 'bg-input',
       sizeClasses
     )"
+    :style="isChecked 
+      ? { backgroundColor: 'var(--app-primary-color)' } 
+      : { backgroundColor: 'var(--app-border-color)' }"
     @click="isChecked = !isChecked"
   >
     <span
       :class="cn(
-        'pointer-events-none block rounded-full bg-background shadow-lg ring-0 transition-transform',
+        'pointer-events-none block rounded-full shadow-lg ring-0 transition-transform',
         thumbClasses
       )"
+      style="background-color: var(--app-card-bg);"
     />
   </button>
 </template>

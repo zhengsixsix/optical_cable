@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import {ref} from 'vue'
-import {useRouter} from 'vue-router'
-import {useUserStore, useAppStore} from '@/stores'
-import {User, Lock, Phone, ShieldCheck, Globe, ChevronRight} from 'lucide-vue-next'
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useUserStore, useAppStore } from '@/stores'
+import { User, Lock, Phone, ShieldCheck, Globe, ChevronRight } from 'lucide-vue-next'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -41,7 +41,7 @@ const handleLogin = async () => {
   loading.value = false
 
   if (result.success) {
-    appStore.showNotification({type: 'success', message: '登录成功，欢迎进入系统'})
+    appStore.showNotification({ type: 'success', message: '登录成功，欢迎进入系统' })
     router.push('/')
   } else {
     errorMessage.value = result.message
@@ -83,7 +83,7 @@ const handleRegister = async () => {
   loading.value = false
 
   if (result.success) {
-    appStore.showNotification({type: 'success', message: result.message})
+    appStore.showNotification({ type: 'success', message: result.message })
     mode.value = 'login'
     username.value = regUsername.value
     regUsername.value = ''
@@ -113,7 +113,7 @@ const switchMode = () => {
     <!-- 头部 LOGO -->
     <header class="relative z-10 px-8 py-6 flex items-center gap-3">
       <div class="w-10 h-10 bg-blue-700 rounded flex items-center justify-center shadow-md">
-        <Globe class="w-6 h-6 text-white"/>
+        <Globe class="w-6 h-6 text-white" />
       </div>
       <div>
         <h1 class="text-xl font-bold text-white tracking-wide">海缆智能规划系统</h1>
@@ -129,7 +129,7 @@ const switchMode = () => {
         <div class="hidden md:flex flex-col justify-between p-10 bg-[#172554] relative">
           <div class="relative z-10">
             <h2 class="text-3xl font-bold text-white mb-4 leading-tight">
-              智能规划<br/>
+              智能规划<br />
               <span class="text-blue-300">连接全球未来</span>
             </h2>
             <p class="text-blue-200/80 text-sm leading-relaxed mb-6">
@@ -138,13 +138,13 @@ const switchMode = () => {
             <div class="flex flex-col gap-4">
               <div class="flex items-center gap-3 text-blue-100/90 text-sm">
                 <div class="p-1.5 bg-blue-800/50 rounded">
-                  <ShieldCheck class="w-4 h-4 text-blue-300"/>
+                  <ShieldCheck class="w-4 h-4 text-blue-300" />
                 </div>
                 <span>国密级数据安全加密</span>
               </div>
               <div class="flex items-center gap-3 text-blue-100/90 text-sm">
                 <div class="p-1.5 bg-blue-800/50 rounded">
-                  <Globe class="w-4 h-4 text-blue-300"/>
+                  <Globe class="w-4 h-4 text-blue-300" />
                 </div>
                 <span>全球海底地形数据覆盖</span>
               </div>
@@ -167,8 +167,8 @@ const switchMode = () => {
 
           <!-- 错误提示 -->
           <div v-if="errorMessage"
-               class="mb-6 bg-red-50 border-l-4 border-red-500 p-3 text-sm text-red-700 flex items-center animate-pulse">
-            <ShieldCheck class="w-4 h-4 mr-2"/>
+            class="mb-6 bg-red-50 border-l-4 border-red-500 p-3 text-sm text-red-700 flex items-center animate-pulse">
+            <ShieldCheck class="w-4 h-4 mr-2" />
             {{ errorMessage }}
           </div>
 
@@ -178,15 +178,11 @@ const switchMode = () => {
               <label class="text-sm font-medium text-gray-600">账号</label>
               <div class="relative">
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <User class="h-5 w-5 text-gray-400"/>
+                  <User class="h-5 w-5 text-gray-400" />
                 </div>
-                <input
-                    v-model="username"
-                    type="text"
-                    class="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50 focus:bg-white"
-                    placeholder="请输入用户名"
-                    @keyup.enter="handleLogin"
-                >
+                <input v-model="username" type="text"
+                  class="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50 focus:bg-white"
+                  placeholder="请输入用户名" @keyup.enter="handleLogin">
               </div>
             </div>
 
@@ -194,15 +190,11 @@ const switchMode = () => {
               <label class="text-sm font-medium text-gray-600">密码</label>
               <div class="relative">
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock class="h-5 w-5 text-gray-400"/>
+                  <Lock class="h-5 w-5 text-gray-400" />
                 </div>
-                <input
-                    v-model="password"
-                    type="password"
-                    class="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50 focus:bg-white"
-                    placeholder="请输入密码"
-                    @keyup.enter="handleLogin"
-                >
+                <input v-model="password" type="password"
+                  class="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50 focus:bg-white"
+                  placeholder="请输入密码" @keyup.enter="handleLogin">
               </div>
             </div>
 
@@ -213,11 +205,8 @@ const switchMode = () => {
               </label>
             </div>
 
-            <button
-                @click="handleLogin"
-                :disabled="loading"
-                class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded shadow-sm text-sm font-medium text-white bg-blue-800 hover:bg-blue-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
+            <button @click="handleLogin" :disabled="loading"
+              class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
               <span v-if="loading" class="mr-2 animate-spin">⟳</span>
               {{ loading ? '登录中...' : '立即登录' }}
             </button>
@@ -230,43 +219,28 @@ const switchMode = () => {
           <!-- 注册表单 -->
           <div v-else class="space-y-4">
             <div class="relative">
-              <input
-                  v-model="regUsername"
-                  type="text"
-                  class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
-                  placeholder="用户名"
-              >
+              <input v-model="regUsername" type="text"
+                class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
+                placeholder="用户名">
             </div>
             <div class="relative">
-              <input
-                  v-model="regPhone"
-                  type="tel"
-                  class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
-                  placeholder="手机号码"
-              >
+              <input v-model="regPhone" type="tel"
+                class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
+                placeholder="手机号码">
             </div>
             <div class="relative">
-              <input
-                  v-model="regPassword"
-                  type="password"
-                  class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
-                  placeholder="设置密码"
-              >
+              <input v-model="regPassword" type="password"
+                class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
+                placeholder="设置密码">
             </div>
             <div class="relative">
-              <input
-                  v-model="regConfirmPassword"
-                  type="password"
-                  class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
-                  placeholder="确认密码"
-              >
+              <input v-model="regConfirmPassword" type="password"
+                class="block w-full px-3 py-2.5 border border-gray-300 rounded text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-gray-50"
+                placeholder="确认密码">
             </div>
 
-            <button
-                @click="handleRegister"
-                :disabled="loading"
-                class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded shadow-sm text-sm font-medium text-white bg-green-700 hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
+            <button @click="handleRegister" :disabled="loading"
+              class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded shadow-sm text-sm font-medium text-white bg-green-700 hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
               <span v-if="loading" class="mr-2 animate-spin">⟳</span>
               {{ loading ? '提交注册' : '注册账号' }}
             </button>
@@ -274,12 +248,10 @@ const switchMode = () => {
 
           <!-- 底部切换 -->
           <div class="mt-6 pt-6 border-t border-gray-100 flex items-center justify-between">
-            <button
-                @click="switchMode"
-                class="text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center group"
-            >
+            <button @click="switchMode"
+              class="text-sm font-medium text-blue-600 hover:text-blue-700 flex items-center group">
               {{ mode === 'login' ? '注册新账号' : '返回登录' }}
-              <ChevronRight class="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform"/>
+              <ChevronRight class="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
             </button>
             <span class="text-xs text-gray-400">系统版本 v2.0.0</span>
           </div>

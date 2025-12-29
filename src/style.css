@@ -27,6 +27,75 @@
     --destructive-foreground: 210 40% 98%;
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
+
+    /* 外观设置变量 */
+    --app-primary-color: #2563eb;
+    --app-primary-rgb: 37, 99, 235;
+    --app-bg-color: #f0f2f5;
+    --app-bg-secondary: #ffffff;
+    --app-text-color: #1f2937;
+    --app-text-secondary: #6b7280;
+    --app-border-color: #e5e7eb;
+    --app-header-bg: #003366;
+    --app-header-text: #ffffff;
+    --app-sidebar-bg: #ffffff;
+    --app-card-bg: #ffffff;
+    --app-font-family: 'Microsoft YaHei', 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', Arial, sans-serif;
+    --app-font-size: 14px;
+  }
+
+  /* 深色主题 */
+  :root.theme-dark {
+    --background: 222.2 47.4% 11.2%;
+    --foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --popover: 222.2 47.4% 11.2%;
+    --popover-foreground: 210 40% 98%;
+    --card: 222.2 47.4% 11.2%;
+    --card-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --ring: 217.2 91.2% 59.8%;
+
+    --app-primary-color: #3b82f6;
+    --app-primary-rgb: 59, 130, 246;
+    --app-bg-color: #111827;
+    --app-bg-secondary: #1f2937;
+    --app-text-color: #f9fafb;
+    --app-text-secondary: #9ca3af;
+    --app-border-color: #374151;
+    --app-header-bg: #0f172a;
+    --app-header-text: #f1f5f9;
+    --app-sidebar-bg: #1f2937;
+    --app-card-bg: #1f2937;
+  }
+
+  /* 蓝色主题 */
+  :root.theme-blue {
+    --primary: 199 89% 48%;
+    --primary-foreground: 210 40% 98%;
+    --ring: 199 89% 48%;
+
+    --app-primary-color: #0ea5e9;
+    --app-primary-rgb: 14, 165, 233;
+    --app-bg-color: #f0f9ff;
+    --app-bg-secondary: #ffffff;
+    --app-text-color: #0c4a6e;
+    --app-text-secondary: #0369a1;
+    --app-border-color: #bae6fd;
+    --app-header-bg: #0369a1;
+    --app-header-text: #ffffff;
+    --app-sidebar-bg: #f0f9ff;
+    --app-card-bg: #ffffff;
   }
 
   * {
@@ -34,11 +103,11 @@
   }
 
   body {
-    background-color: #f0f2f5;
-    color: hsl(var(--foreground));
-    font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+    background-color: var(--app-bg-color);
+    color: var(--app-text-color);
+    font-family: var(--app-font-family);
+    font-size: var(--app-font-size);
     overflow: hidden;
-    /* Match TifViewer overflow hidden */
   }
 }
 
@@ -49,15 +118,676 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--app-bg-secondary);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--app-border-color);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  background: var(--app-text-secondary);
+}
+
+/* 主题覆盖样式 - 深色模式 */
+.theme-dark .bg-white {
+  background-color: var(--app-card-bg) !important;
+}
+
+.theme-dark .bg-gray-50,
+.theme-dark .bg-gray-100 {
+  background-color: var(--app-bg-secondary) !important;
+}
+
+.theme-dark {
+  color: #f3f4f6 !important;
+}
+
+.theme-dark span,
+.theme-dark li,
+.theme-dark p,
+.theme-dark label,
+.theme-dark td,
+.theme-dark th {
+  color: #e5e7eb !important;
+}
+
+.theme-dark .text-card-foreground {
+  color: #f3f4f6 !important;
+}
+
+/* 深色主题下 muted 背景 */
+.theme-dark .bg-muted {
+  background-color: #374151 !important;
+}
+
+/* 深色主题下按钮样式 */
+.theme-dark .bg-primary {
+  background-color: var(--app-primary-color) !important;
+}
+
+.theme-dark .text-primary-foreground {
+  color: #ffffff !important;
+}
+
+.theme-dark .hover\:bg-muted:hover {
+  background-color: #4b5563 !important;
+}
+
+/* 深色主题下灰色按钮 */
+.theme-dark .text-gray-400,
+.theme-dark .text-gray-500 {
+  color: #9ca3af !important;
+}
+
+.theme-dark .hover\:text-blue-500:hover {
+  color: var(--app-primary-color) !important;
+}
+
+/* 深色主题下边框 */
+.theme-dark .border-b,
+.theme-dark .border {
+  border-color: var(--app-border-color) !important;
+}
+
+/* 主题覆盖样式 - 蓝色模式 */
+.theme-blue .bg-white {
+  background-color: var(--app-card-bg) !important;
+}
+
+.theme-blue .text-gray-700,
+.theme-blue .text-gray-800 {
+  color: var(--app-text-color) !important;
+}
+
+.theme-blue .text-gray-500,
+.theme-blue .text-gray-600 {
+  color: var(--app-text-secondary) !important;
+}
+
+/* 按钮主色调 */
+.bg-blue-600,
+.bg-blue-500 {
+  background-color: var(--app-primary-color) !important;
+}
+
+.text-blue-600,
+.text-blue-500 {
+  color: var(--app-primary-color) !important;
+}
+
+.hover\:bg-blue-700:hover {
+  background-color: color-mix(in srgb, var(--app-primary-color) 85%, black) !important;
+}
+
+.border-blue-500,
+.border-blue-600 {
+  border-color: var(--app-primary-color) !important;
+}
+
+.ring-blue-500,
+.focus\:ring-blue-500:focus {
+  --tw-ring-color: var(--app-primary-color) !important;
+}
+
+.accent-blue-600,
+.accent-blue-500 {
+  accent-color: var(--app-primary-color) !important;
+}
+
+/* 输入框样式 - 确保对比度 */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="color"],
+select,
+textarea {
+  background-color: var(--app-bg-secondary) !important;
+  color: var(--app-text-color) !important;
+  border-color: var(--app-border-color) !important;
+}
+
+/* 深色主题下输入框保持可读性 */
+.theme-dark input[type="text"],
+.theme-dark input[type="number"],
+.theme-dark input[type="email"],
+.theme-dark input[type="password"],
+.theme-dark select,
+.theme-dark textarea {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+}
+
+.theme-dark input[type="color"] {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+}
+
+.theme-dark input::placeholder,
+.theme-dark textarea::placeholder {
+  color: #9ca3af !important;
+}
+
+/* 蓝色主题输入框 */
+.theme-blue input[type="text"],
+.theme-blue input[type="number"],
+.theme-blue select,
+.theme-blue textarea {
+  background-color: #ffffff !important;
+  color: #0c4a6e !important;
+  border-color: #7dd3fc !important;
+}
+
+/* 深色主题下拉菜单 */
+.theme-dark .bg-white\/95 {
+  background-color: rgba(31, 41, 55, 0.95) !important;
+}
+
+.theme-dark .hover\:bg-blue-50\/80:hover {
+  background-color: rgba(55, 65, 81, 0.8) !important;
+}
+
+.theme-dark .hover\:bg-gray-100:hover {
+  background-color: #374151 !important;
+}
+
+/* 深色主题下坐标显示和图例 */
+.theme-dark .bg-white\/90 {
+  background-color: rgba(31, 41, 55, 0.9) !important;
+}
+
+.theme-dark .bg-white\/95 {
+  background-color: rgba(31, 41, 55, 0.95) !important;
+}
+
+.theme-dark .bg-white\/80 {
+  background-color: rgba(31, 41, 55, 0.8) !important;
+}
+
+/* 蓝色主题 muted 背景 */
+.theme-blue .bg-muted {
+  background-color: #e0f2fe !important;
+}
+
+/* Tabs 组件样式 */
+[data-state="active"] {
+  background-color: var(--app-card-bg) !important;
+  color: var(--app-primary-color) !important;
+}
+
+[data-state="inactive"] {
+  color: var(--app-text-secondary) !important;
+}
+
+[data-state="inactive"]:hover {
+  color: var(--app-text-color) !important;
+}
+
+/* 深色主题下所有文字颜色覆盖 */
+.theme-dark a {
+  color: #93c5fd !important;
+}
+
+.theme-dark a:hover {
+  color: #60a5fa !important;
+}
+
+/* 深色主题下所有灰色背景覆盖 */
+.theme-dark .bg-gray-200,
+.theme-dark .bg-gray-300 {
+  background-color: #374151 !important;
+}
+
+.theme-dark .bg-gray-800,
+.theme-dark .bg-gray-900 {
+  background-color: #111827 !important;
+}
+
+/* 深色主题下所有边框颜色 */
+.theme-dark .border-gray-100,
+.theme-dark .border-gray-200,
+.theme-dark .border-gray-300,
+.theme-dark .border-gray-400 {
+  border-color: #4b5563 !important;
+}
+
+/* 深色主题下所有 hover 状态 */
+.theme-dark .hover\:bg-white:hover {
+  background-color: #374151 !important;
+}
+
+/* 深色主题下 text-primary */
+.theme-dark .text-primary {
+  color: var(--app-primary-color) !important;
+}
+
+/* 深色主题下所有图标颜色 */
+.theme-dark svg {
+  color: inherit;
+}
+
+/* 蓝色主题 Tabs */
+.theme-blue [data-state="active"] {
+  background-color: #ffffff !important;
+  color: #0ea5e9 !important;
+}
+
+.theme-blue [data-state="inactive"] {
+  color: #0369a1 !important;
+}
+
+/* Select 下拉选项高亮 */
+[data-highlighted] {
+  background-color: var(--app-primary-color) !important;
+  color: #ffffff !important;
+}
+
+/* 深色主题下所有绿色状态 */
+.theme-dark .text-green-600,
+.theme-dark .text-green-500 {
+  color: #4ade80 !important;
+}
+
+/* 深色主题下所有红色状态 */
+.theme-dark .text-red-600,
+.theme-dark .text-red-500 {
+  color: #f87171 !important;
+}
+
+/* 深色主题下所有橙色状态 */
+.theme-dark .text-orange-500,
+.theme-dark .text-orange-600 {
+  color: #fb923c !important;
+}
+
+/* 深色主题下所有黄色状态 */
+.theme-dark .text-yellow-500,
+.theme-dark .text-yellow-600 {
+  color: #facc15 !important;
+}
+
+/* 深色主题下 shadow */
+.theme-dark .shadow,
+.theme-dark .shadow-sm,
+.theme-dark .shadow-md,
+.theme-dark .shadow-lg {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px -1px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* 深色主题下 dialog/modal 背景 */
+.theme-dark .bg-black\/50 {
+  background-color: rgba(0, 0, 0, 0.7) !important;
+}
+
+/* 蓝色主题下所有状态颜色 */
+.theme-blue .text-green-600 {
+  color: #059669 !important;
+}
+
+.theme-blue .text-red-600 {
+  color: #dc2626 !important;
+}
+
+/* 输入框焦点边框颜色 - 确保响应主题切换 */
+.focus\:border-blue-500:focus,
+.focus\:border-blue-400:focus,
+.focus\:border-blue-600:focus {
+  border-color: var(--app-primary-color) !important;
+}
+
+/* 更多 ring 颜色变体 */
+.focus\:ring-blue-500\/20:focus,
+.focus\:ring-blue-500\/30:focus,
+.focus\:ring-blue-400:focus {
+  --tw-ring-color: var(--app-primary-color) !important;
+}
+
+/* 设置页面左侧选中菜单项 */
+.theme-dark .bg-blue-600,
+.theme-blue .bg-blue-600 {
+  background-color: var(--app-primary-color) !important;
+}
+
+/* hover 状态的 blue 按钮 */
+.hover\:bg-blue-600:hover {
+  background-color: var(--app-primary-color) !important;
+}
+
+/* ========== 浅色主题/通用 hover 状态修复 ========== */
+
+/* 菜单项 hover 背景 - 确保透明度正确应用 */
+.hover\:bg-primary\/10:hover {
+  background-color: rgba(var(--app-primary-rgb), 0.1) !important;
+}
+
+/* 浅色主题下菜单 hover 文字颜色 */
+.theme-light .hover\:text-primary:hover {
+  color: var(--app-primary-color) !important;
+}
+
+/* 浅蓝 hover - 用于新建工程菜单等 */
+.hover\:bg-blue-50\/80:hover {
+  background-color: rgba(var(--app-primary-rgb), 0.08) !important;
+}
+
+/* ========== 深色主题 hover 状态修复 ========== */
+
+/* 深色主题下浅灰背景 hover - 用于列表项、表格行等 */
+.theme-dark .hover\:bg-gray-50:hover {
+  background-color: #374151 !important;
+}
+
+.theme-dark .hover\:bg-gray-200:hover {
+  background-color: #4b5563 !important;
+}
+
+/* 深色主题下浅蓝背景 hover - 用于选中行、高亮项等 */
+.theme-dark .hover\:bg-blue-50:hover {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+}
+
+/* 深色主题下选中状态背景 */
+.theme-dark .bg-blue-100 {
+  background-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+/* 深色主题下筛选面板背景 */
+.theme-dark .bg-blue-50 {
+  background-color: rgba(59, 130, 246, 0.1) !important;
+}
+
+/* 深色主题下表头背景 */
+.theme-dark .bg-gray-100 {
+  background-color: #374151 !important;
+}
+
+.theme-dark thead.bg-gray-100 {
+  background-color: #374151 !important;
+}
+
+/* 深色主题下底部状态栏 */
+.theme-dark .bg-gray-50 {
+  background-color: #1f2937 !important;
+}
+
+/* 深色主题下 tab 选中状态 */
+.theme-dark .bg-blue-100.text-blue-700 {
+  background-color: rgba(59, 130, 246, 0.3) !important;
+  color: #93c5fd !important;
+}
+
+/* 深色主题下删除按钮 hover */
+.theme-dark .hover\:bg-red-100:hover {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+}
+
+/* 深色主题下 hover:bg-primary/10 */
+.theme-dark .hover\:bg-primary\/10:hover {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+}
+
+/* 深色主题下分隔线 */
+.theme-dark .bg-gray-300 {
+  background-color: #4b5563 !important;
+}
+
+/* 深色主题下 disabled 状态文字 */
+.theme-dark .text-gray-300 {
+  color: #6b7280 !important;
+}
+
+/* ========== 蓝色主题 hover 状态修复 ========== */
+
+/* 蓝色主题下浅灰背景 hover */
+.theme-blue .hover\:bg-gray-50:hover {
+  background-color: #e0f2fe !important;
+}
+
+.theme-blue .hover\:bg-gray-100:hover {
+  background-color: #bae6fd !important;
+}
+
+.theme-blue .hover\:bg-gray-200:hover {
+  background-color: #7dd3fc !important;
+}
+
+/* 蓝色主题下浅蓝背景 hover */
+.theme-blue .hover\:bg-blue-50:hover {
+  background-color: #e0f2fe !important;
+}
+
+/* 蓝色主题下选中状态背景 */
+.theme-blue .bg-blue-100 {
+  background-color: #bae6fd !important;
+}
+
+.theme-blue .bg-blue-100.text-blue-700 {
+  color: #0369a1 !important;
+}
+
+/* 蓝色主题下筛选面板背景 */
+.theme-blue .bg-blue-50 {
+  background-color: #e0f2fe !important;
+}
+
+/* 蓝色主题下表头背景 */
+.theme-blue .bg-gray-100 {
+  background-color: #e0f2fe !important;
+}
+
+/* 蓝色主题下底部状态栏 */
+.theme-blue .bg-gray-50 {
+  background-color: #f0f9ff !important;
+}
+
+/* 蓝色主题下文字颜色 */
+.theme-blue .text-gray-600 {
+  color: var(--app-text-secondary) !important;
+}
+
+.theme-blue .text-gray-500 {
+  color: var(--app-text-secondary) !important;
+}
+
+.theme-blue .text-gray-400 {
+  color: #0284c7 !important;
+}
+
+/* 蓝色主题下 hover:bg-primary/10 */
+.theme-blue .hover\:bg-primary\/10:hover {
+  background-color: rgba(14, 165, 233, 0.15) !important;
+}
+
+/* ========== AppHeader 下拉菜单样式修复 ========== */
+
+/* 深色主题下菜单背景 */
+.theme-dark header .bg-white {
+  background-color: var(--app-card-bg) !important;
+}
+
+.theme-dark header .text-gray-800 {
+  color: var(--app-text-color) !important;
+}
+
+.theme-dark header .text-gray-700 {
+  color: #d1d5db !important;
+}
+
+.theme-dark header .border-gray-200 {
+  border-color: var(--app-border-color) !important;
+}
+
+/* 深色主题下退出按钮 hover */
+.theme-dark .hover\:bg-red-50:hover {
+  background-color: rgba(239, 68, 68, 0.15) !important;
+}
+
+/* 蓝色主题下菜单背景 */
+.theme-blue header .bg-white {
+  background-color: var(--app-card-bg) !important;
+}
+
+.theme-blue header .text-gray-800 {
+  color: var(--app-text-color) !important;
+}
+
+.theme-blue header .text-gray-700 {
+  color: var(--app-text-color) !important;
+}
+
+.theme-blue header .border-gray-200 {
+  border-color: var(--app-border-color) !important;
+}
+
+/* 蓝色主题下退出按钮 hover */
+.theme-blue .hover\:bg-red-50:hover {
+  background-color: #fef2f2 !important;
+}
+
+/* ========== 深色主题下边框颜色修复 ========== */
+.theme-dark .border-b {
+  border-color: var(--app-border-color) !important;
+}
+
+.theme-dark .border-dashed {
+  border-color: #4b5563 !important;
+}
+
+/* 深色主题下表格内容文字 */
+.theme-dark .text-gray-600 {
+  color: #9ca3af !important;
+}
+
+.theme-dark .text-gray-500 {
+  color: #9ca3af !important;
+}
+
+/* 深色主题下表格单元格边框 */
+.theme-dark .border-b {
+  border-color: #374151 !important;
+}
+
+/* 深色主题下加载状态颜色 */
+.theme-dark .text-blue-600 {
+  color: #60a5fa !important;
+}
+
+.theme-dark .text-blue-500 {
+  color: #60a5fa !important;
+}
+
+.theme-dark .text-blue-700 {
+  color: #93c5fd !important;
+}
+
+/* ========== 通用主题变量覆盖 ========== */
+
+/* Select 下拉选项 hover 状态 - 不选中时 */
+.theme-dark [data-radix-collection-item]:not([data-highlighted]):hover {
+  background-color: #374151 !important;
+}
+
+.theme-blue [data-radix-collection-item]:not([data-highlighted]):hover {
+  background-color: #e0f2fe !important;
+}
+
+/* ========== 深色主题 hover:bg-gray-700 ========== */
+.theme-dark .hover\:bg-gray-700:hover {
+  background-color: #4b5563 !important;
+}
+
+/* ========== 卡片标题样式 ========== */
+.theme-dark .font-semibold.text-gray-700 {
+  color: #e5e7eb !important;
+}
+
+.theme-blue .font-semibold.text-gray-700 {
+  color: var(--app-text-color) !important;
+}
+
+/* ========== 编辑器列表项 hover ========== */
+.theme-dark .hover\:bg-white\/50:hover {
+  background-color: rgba(55, 65, 81, 0.5) !important;
+}
+
+.theme-blue .hover\:bg-white\/50:hover {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* ========== 深色主题下卡片内容背景 ========== */
+.theme-dark CardContent.bg-\[\#1a1a2e\] {
+  background-color: #1a1a2e !important;
+}
+
+/* ========== 深色主题下 text-sm text-gray-700 ========== */
+.theme-dark .text-sm.text-gray-700 {
+  color: #d1d5db !important;
+}
+
+.theme-blue .text-sm.text-gray-700 {
+  color: var(--app-text-color) !important;
+}
+
+/* ========== Dialog/Modal 样式修复 ========== */
+
+/* 深色主题下 Dialog 背景 */
+.theme-dark .bg-white.rounded-xl,
+.theme-dark .bg-white.rounded-lg {
+  background-color: var(--app-card-bg) !important;
+}
+
+/* 深色主题下 Tab 选中状态 - 绿色 */
+.theme-dark .bg-green-100 {
+  background-color: rgba(74, 222, 128, 0.2) !important;
+}
+
+.theme-dark .text-green-700 {
+  color: #4ade80 !important;
+}
+
+.theme-dark .bg-green-100.text-green-700 {
+  background-color: rgba(74, 222, 128, 0.2) !important;
+  color: #4ade80 !important;
+}
+
+/* 深色主题下 Tab 选中状态 - 橙色 */
+.theme-dark .bg-orange-100 {
+  background-color: rgba(251, 146, 60, 0.2) !important;
+}
+
+.theme-dark .text-orange-700 {
+  color: #fb923c !important;
+}
+
+.theme-dark .bg-orange-100.text-orange-700 {
+  background-color: rgba(251, 146, 60, 0.2) !important;
+  color: #fb923c !important;
+}
+
+/* 深色主题下 text-gray-700 通用 */
+.theme-dark .text-gray-700 {
+  color: #d1d5db !important;
+}
+
+/* ========== 蓝色主题 Tab 选中状态 ========== */
+
+/* 蓝色主题下 Tab - 绿色 */
+.theme-blue .bg-green-100.text-green-700 {
+  background-color: #dcfce7 !important;
+  color: #15803d !important;
+}
+
+/* 蓝色主题下 Tab - 橙色 */
+.theme-blue .bg-orange-100.text-orange-700 {
+  background-color: #ffedd5 !important;
+  color: #c2410c !important;
+}
+
+/* ========== 深色主题下 .text-xs .text-gray-* 颜色 ========== */
+.theme-dark .text-xs.text-gray-400,
+.theme-dark .text-xs.text-gray-500 {
+  color: #9ca3af !important;
 }

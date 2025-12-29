@@ -119,8 +119,18 @@ export const useConnectorStore = defineStore('connector', () => {
   function initMockData() {
     if (tables.value.length === 0) {
       createTable(`${ROUTE_NAME}_接线元`, ROUTE_ID)
-      // 初始化时不触发联动
-      mockConnectorElements.forEach(elem => addElement(elem, false))
+      // 初始化时不触发联动，使用索引确保唯一ID
+      mockConnectorElements.forEach((elem, index) => {
+        if (!currentTable.value) return
+        const newElement = {
+          ...elem,
+          id: `elem-${index}`
+        }
+        currentTable.value.elements.push(newElement as any)
+      })
+      if (currentTable.value) {
+        currentTable.value.updatedAt = new Date().toISOString()
+      }
     }
   }
 

@@ -4,11 +4,38 @@ import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import MonitorPanel from '@/components/panels/MonitorPanel.vue'
 import PerformanceChart from '@/components/charts/PerformanceChart.vue'
+import MonitoringMap from '@/components/map/MonitoringMap.vue'
 import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin } from 'lucide-vue-next'
-import { mockMonitorDevices, mockAlarmHistory } from '@/data/mockData'
+import { mockAlarmHistory } from '@/data/mockData'
+import { useConnectorStore } from '@/stores'
 
-// 设备列表数据 - 从集中数据文件导入
-const devices = ref([...mockMonitorDevices])
+const connectorStore = useConnectorStore()
+
+// 地图组件引用
+const monitoringMapRef = ref<InstanceType<typeof MonitoringMap> | null>(null)
+
+// 模拟运行时监控数据
+const runtimeData: Record<string, any> = {
+  'elem-0': { inputPower: -12.5, outputPower: 2.8, pumpCurrent: 285, pfeVoltage: 48.2, pfeCurrent: 1.25, temperature: 4.2, status: 'normal' },
+  'elem-1': { inputPower: -13.2, outputPower: 2.5, pumpCurrent: 295, pfeVoltage: 47.8, pfeCurrent: 1.28, temperature: 5.1, status: 'warning' },
+  'elem-2': { inputPower: -12.8, outputPower: 2.6, pumpCurrent: 280, pfeVoltage: 48.1, pfeCurrent: 1.22, temperature: 4.0, status: 'normal' },
+  'elem-3': { inputPower: -10.5, outputPower: -11.2, pumpCurrent: 0, pfeVoltage: 48.0, pfeCurrent: 0.85, temperature: 3.8, status: 'normal' },
+  'elem-4': { inputPower: 0, outputPower: 0, pumpCurrent: 0, pfeVoltage: 380, pfeCurrent: 25.5, temperature: 35.2, status: 'normal' },
+  'elem-5': { inputPower: 0, outputPower: 0, pumpCurrent: 0, pfeVoltage: 380, pfeCurrent: 24.8, temperature: 34.5, status: 'normal' },
+}
+
+// 设备列表数据 - 合并 connectorStore 位置数据和运行时监控数据
+const devices = computed(() =>
+  connectorStore.elements.map(elem => {
+    const runtime = runtimeData[elem.id] || { status: 'normal', inputPower: 0, outputPower: 0, temperature: 20 }
+    return {
+      ...elem,
+      neType: elem.type,
+      location: `KP ${elem.kp}`,
+      ...runtime
+    }
+  })
+)
 
 // 性能历史数据（模拟）
 const performanceHistory = ref<{ time: string; value: number }[]>([])
@@ -19,14 +46,14 @@ const generateHistoryData = () => {
   const now = new Date()
   const data: { time: string; value: number }[] = []
   const tempData: { time: string; value: number }[] = []
-  
+
   for (let i = 29; i >= 0; i--) {
     const time = new Date(now.getTime() - i * 60000)
     const timeStr = time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     data.push({ time: timeStr, value: -10 + Math.random() * 4 - 2 })
     tempData.push({ time: timeStr, value: 3.5 + Math.random() * 1.5 })
   }
-  
+
   performanceHistory.value = data
   temperatureHistory.value = tempData
 }
@@ -52,11 +79,11 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 const refreshPerformanceData = () => {
   const now = new Date()
   const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  
+
   // 添加新数据点
   performanceHistory.value.push({ time: timeStr, value: -10 + Math.random() * 4 - 2 })
   temperatureHistory.value.push({ time: timeStr, value: 3.5 + Math.random() * 1.5 })
-  
+
   // 保持最近30个点
   if (performanceHistory.value.length > 30) performanceHistory.value.shift()
   if (temperatureHistory.value.length > 30) temperatureHistory.value.shift()
@@ -113,12 +140,21 @@ const getAlarmClass = (level: string) => {
   switch (level) {
     case 'error': return 'bg-red-50 border-l-4 border-red-500 text-red-700'
     case 'warning': return 'bg-yellow-50 border-l-4 border-yellow-500 text-yellow-700'
-    default: return 'bg-blue-50 border-l-4 border-blue-500 text-blue-700'
+    default: return 'bg-primary/5 border-l-4 border-primary text-primary'
   }
 }
 
 const selectDevice = (id: string) => {
   selectedDevice.value = selectedDevice.value === id ? null : id
+  // 选中设备时跳转到地图对应位置
+  if (selectedDevice.value && monitoringMapRef.value) {
+    monitoringMapRef.value.flyToDevice(selectedDevice.value)
+  }
+}
+
+// 地图上点击设备的处理
+const handleMapDeviceClick = (deviceId: string) => {
+  selectedDevice.value = deviceId
 }
 </script>
 
@@ -162,29 +198,20 @@ const selectDevice = (id: string) => {
         </CardHeader>
         <CardContent class="flex-1 overflow-auto p-0">
           <div class="divide-y">
-            <div 
-              v-for="device in devices" 
-              :key="device.id"
-              :class="[
-                'p-3 cursor-pointer transition-colors',
-                selectedDevice === device.id ? 'bg-blue-50' : 'hover:bg-gray-50'
-              ]"
-              @click="selectDevice(device.id)"
-            >
+            <div v-for="device in devices" :key="device.id" :class="[
+              'p-3 cursor-pointer transition-colors',
+              selectedDevice === device.id ? 'bg-primary/5' : 'hover:bg-gray-50'
+            ]" @click="selectDevice(device.id)">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <component :is="getStatusIcon(device.status)" 
-                    :class="[
-                      'w-4 h-4',
-                      device.status === 'normal' ? 'text-green-500' : 
+                  <component :is="getStatusIcon(device.status)" :class="[
+                    'w-4 h-4',
+                    device.status === 'normal' ? 'text-green-500' :
                       device.status === 'warning' ? 'text-yellow-500' : 'text-red-500'
-                    ]"
-                  />
+                  ]" />
                   <span class="text-sm font-medium">{{ device.name }}</span>
                 </div>
-                <span 
-                  :class="['text-xs px-2 py-0.5 rounded border', getStatusClass(device.status)]"
-                >
+                <span :class="['text-xs px-2 py-0.5 rounded border', getStatusClass(device.status)]">
                   {{ device.status === 'normal' ? '正常' : device.status === 'warning' ? '告警' : '故障' }}
                 </span>
               </div>
@@ -209,10 +236,9 @@ const selectDevice = (id: string) => {
           <div v-if="selectedDeviceInfo" class="mb-4 p-4 bg-gray-50 rounded-lg">
             <div class="flex items-center justify-between mb-3">
               <h3 class="font-semibold text-gray-700">{{ selectedDeviceInfo.name }}</h3>
-              <span 
-                :class="['text-xs px-2 py-1 rounded border', getStatusClass(selectedDeviceInfo.status)]"
-              >
-                {{ selectedDeviceInfo.status === 'normal' ? '运行正常' : selectedDeviceInfo.status === 'warning' ? '告警中' : '故障' }}
+              <span :class="['text-xs px-2 py-1 rounded border', getStatusClass(selectedDeviceInfo.status)]">
+                {{ selectedDeviceInfo.status === 'normal' ? '运行正常' : selectedDeviceInfo.status === 'warning' ? '告警中' :
+                '故障' }}
               </span>
             </div>
             <!-- 基础性能指标 -->
@@ -234,7 +260,7 @@ const selectDevice = (id: string) => {
                 <div class="font-semibold text-orange-600">{{ selectedDeviceInfo.temperature?.toFixed(1) }} °C</div>
               </div>
             </div>
-            
+
             <!-- PFE电压电流 -->
             <div class="grid grid-cols-3 gap-3 mb-3">
               <div class="p-2 bg-white rounded border">
@@ -250,7 +276,7 @@ const selectDevice = (id: string) => {
                 <div class="font-semibold text-gray-700">{{ selectedDeviceInfo.location }}</div>
               </div>
             </div>
-            
+
             <!-- SLTE特有指标 (Q值/BER/OSNR) -->
             <div v-if="selectedDeviceInfo.neType === 'SLTE'" class="grid grid-cols-3 gap-3">
               <div class="p-2 bg-blue-50 rounded border border-blue-200">
@@ -267,101 +293,11 @@ const selectDevice = (id: string) => {
               </div>
             </div>
           </div>
-          
-          <!-- 系统拓扑图 -->
-          <div class="flex-1 bg-gray-100 rounded-lg min-h-[200px] p-4">
-            <!-- 未选中设备时显示占位符 -->
-            <div v-if="!selectedDeviceInfo" class="h-full flex items-center justify-center">
-              <div class="text-center text-gray-500">
-                <Radio class="w-12 h-12 mx-auto mb-3 text-gray-400" />
-                <p class="text-sm font-medium">系统拓扑视图</p>
-                <p class="text-xs mt-1">选择左侧设备查看详情</p>
-              </div>
-            </div>
-            
-            <!-- 选中设备时显示拓扑图 -->
-            <div v-else class="h-full flex flex-col">
-              <div class="text-xs text-gray-500 mb-3">设备在系统中的位置</div>
-              
-              <!-- 简化拓扑图 -->
-              <div class="flex-1 flex items-center justify-center">
-                <div class="flex items-center gap-2">
-                  <!-- 登陆站A -->
-                  <div class="flex flex-col items-center">
-                    <div class="w-10 h-10 bg-green-100 border-2 border-green-500 rounded flex items-center justify-center text-green-700 text-xs font-bold">
-                      L1
-                    </div>
-                    <span class="text-xs text-gray-500 mt-1">登陆站A</span>
-                  </div>
-                  
-                  <!-- 连接线 -->
-                  <div class="w-8 h-0.5 bg-blue-400"></div>
-                  
-                  <!-- 前置设备 -->
-                  <div class="flex flex-col items-center opacity-50">
-                    <div class="w-8 h-8 bg-blue-100 border-2 border-blue-400 rounded-full flex items-center justify-center text-blue-600 text-xs">
-                      ...
-                    </div>
-                  </div>
-                  
-                  <div class="w-8 h-0.5 bg-blue-400"></div>
-                  
-                  <!-- 当前选中设备 -->
-                  <div class="flex flex-col items-center">
-                    <div :class="[
-                      'w-12 h-12 border-3 rounded-full flex items-center justify-center text-sm font-bold shadow-lg ring-4 ring-offset-2',
-                      selectedDeviceInfo.neType === 'Repeater' ? 'bg-blue-500 border-blue-600 text-white ring-blue-200' :
-                      selectedDeviceInfo.neType === 'BU' ? 'bg-purple-500 border-purple-600 text-white ring-purple-200' :
-                      selectedDeviceInfo.neType === 'SLTE' ? 'bg-green-500 border-green-600 text-white ring-green-200' :
-                      'bg-yellow-500 border-yellow-600 text-white ring-yellow-200'
-                    ]">
-                      {{ selectedDeviceInfo.name.split(' ')[1] || selectedDeviceInfo.name.charAt(0) }}
-                    </div>
-                    <span class="text-xs font-medium text-gray-700 mt-1">{{ selectedDeviceInfo.name }}</span>
-                    <span class="text-xs text-gray-500">{{ selectedDeviceInfo.location }}</span>
-                  </div>
-                  
-                  <div class="w-8 h-0.5 bg-blue-400"></div>
-                  
-                  <!-- 后置设备 -->
-                  <div class="flex flex-col items-center opacity-50">
-                    <div class="w-8 h-8 bg-blue-100 border-2 border-blue-400 rounded-full flex items-center justify-center text-blue-600 text-xs">
-                      ...
-                    </div>
-                  </div>
-                  
-                  <div class="w-8 h-0.5 bg-blue-400"></div>
-                  
-                  <!-- 登陆站B -->
-                  <div class="flex flex-col items-center">
-                    <div class="w-10 h-10 bg-green-100 border-2 border-green-500 rounded flex items-center justify-center text-green-700 text-xs font-bold">
-                      L2
-                    </div>
-                    <span class="text-xs text-gray-500 mt-1">登陆站B</span>
-                  </div>
-                </div>
-              </div>
-              
-              <!-- 图例 -->
-              <div class="flex items-center justify-center gap-4 mt-3 pt-3 border-t border-gray-200">
-                <div class="flex items-center gap-1">
-                  <div class="w-3 h-3 bg-green-500 rounded"></div>
-                  <span class="text-xs text-gray-500">登陆站</span>
-                </div>
-                <div class="flex items-center gap-1">
-                  <div class="w-3 h-3 bg-blue-500 rounded-full"></div>
-                  <span class="text-xs text-gray-500">中继器</span>
-                </div>
-                <div class="flex items-center gap-1">
-                  <div class="w-3 h-3 bg-purple-500 rounded-full"></div>
-                  <span class="text-xs text-gray-500">分支器</span>
-                </div>
-                <div class="flex items-center gap-1">
-                  <div class="w-4 h-0.5 bg-blue-400"></div>
-                  <span class="text-xs text-gray-500">光缆</span>
-                </div>
-              </div>
-            </div>
+
+          <!-- 地图视图 -->
+          <div class="flex-1 bg-gray-100 rounded-lg min-h-[300px] overflow-hidden">
+            <MonitoringMap ref="monitoringMapRef" :devices="devices" :selected-device-id="selectedDevice"
+              @device-click="handleMapDeviceClick" />
           </div>
         </CardContent>
       </Card>
@@ -369,23 +305,13 @@ const selectDevice = (id: string) => {
 
     <template #right>
       <MonitorPanel />
-      
+
       <!-- 性能趋势曲线 -->
       <div class="space-y-3">
-        <PerformanceChart 
-          title="输出光功率趋势" 
-          :series="powerChartSeries"
-          :height="150"
-          @refresh="generateHistoryData"
-        />
-        <PerformanceChart 
-          title="设备温度趋势" 
-          :series="tempChartSeries"
-          :height="150"
-          @refresh="generateHistoryData"
-        />
+        <PerformanceChart title="输出光功率趋势" :series="powerChartSeries" :height="150" @refresh="generateHistoryData" />
+        <PerformanceChart title="设备温度趋势" :series="tempChartSeries" :height="150" @refresh="generateHistoryData" />
       </div>
-      
+
       <!-- 告警历史 -->
       <Card class="flex-1 overflow-hidden flex flex-col">
         <CardHeader>
@@ -396,11 +322,7 @@ const selectDevice = (id: string) => {
         </CardHeader>
         <CardContent class="flex-1 overflow-auto p-0">
           <div class="divide-y">
-            <div 
-              v-for="alarm in alarmHistory"
-              :key="alarm.id"
-              :class="['px-3 py-2', getAlarmClass(alarm.level)]"
-            >
+            <div v-for="alarm in alarmHistory" :key="alarm.id" :class="['px-3 py-2', getAlarmClass(alarm.level)]">
               <div class="flex items-center justify-between">
                 <span class="text-xs font-medium">{{ alarm.device }}</span>
                 <span class="text-xs opacity-70">{{ alarm.time }}</span>

@@ -9,19 +9,20 @@ export default {
     extend: {
       colors: {
         // 主色调 - 匹配原 Element Plus 和原型设计
+        // 主色调 - 使用 CSS 变量支持动态换肤
         primary: {
-          DEFAULT: "#409EFF",
+          DEFAULT: "rgb(var(--app-primary-rgb) / <alpha-value>)",
           foreground: "#ffffff",
-          50: "#ecf5ff",
-          100: "#d9ecff",
-          200: "#c6e2ff",
-          300: "#a0cfff",
-          400: "#79bbff",
-          500: "#409EFF",
-          600: "#337ecc",
-          700: "#265eb8",
-          800: "#193e8f",
-          900: "#0d2066",
+          50: "rgb(var(--app-primary-rgb) / 0.05)",
+          100: "rgb(var(--app-primary-rgb) / 0.1)",
+          200: "rgb(var(--app-primary-rgb) / 0.2)",
+          300: "rgb(var(--app-primary-rgb) / 0.3)",
+          400: "rgb(var(--app-primary-rgb) / 0.5)",
+          500: "rgb(var(--app-primary-rgb) / 0.6)", // 对应原来的 400/500
+          600: "rgb(var(--app-primary-rgb) / 0.8)",
+          700: "rgb(var(--app-primary-rgb) / <alpha-value>)", // 默认主色
+          800: "rgb(var(--app-primary-rgb) / 0.9)",
+          900: "rgb(var(--app-primary-rgb) / 1)",
         },
         // 深蓝色 - 用于 header
         navy: {
@@ -69,11 +70,13 @@ export default {
         sm: "4px",
       },
       fontSize: {
-        xs: ["12px", "16px"],
-        sm: ["13px", "18px"],
-        base: ["14px", "20px"],
-        lg: ["16px", "24px"],
-        xl: ["18px", "28px"],
+        xs: ["calc(var(--app-font-size) - 2px)", "1.2"],
+        sm: ["calc(var(--app-font-size) - 1px)", "1.4"],
+        base: ["var(--app-font-size)", "1.5"],
+        lg: ["calc(var(--app-font-size) + 2px)", "1.5"],
+        xl: ["calc(var(--app-font-size) + 4px)", "1.5"],
+        "2xl": ["calc(var(--app-font-size) + 6px)", "1.5"],
+        "3xl": ["calc(var(--app-font-size) + 10px)", "1.5"],
       },
       boxShadow: {
         sm: "0 1px 3px rgba(0, 0, 0, 0.1)",

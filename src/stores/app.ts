@@ -1,8 +1,23 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Notification, LogEntry } from '@/types'
+import type { ProjectType, ProjectMetadata } from '@/services/ProjectFileService'
 
 export type ViewType = 'planning' | 'design' | 'monitoring' | 'settings'
+
+// 地图选点模式
+export interface MapSelectMode {
+  active: boolean
+  type: 'start' | 'end' | 'range' | null
+  callback: ((coord: string) => void) | null
+}
+
+// 项目状态
+export interface ProjectState {
+  currentProject: ProjectMetadata | null
+  isDirty: boolean
+  lastSavedAt: string | null
+}
 
 // 面板可见性状态类型
 export interface PanelVisibility {
@@ -23,6 +38,13 @@ export const useAppStore = defineStore('app', () => {
   // 状态
   const currentView = ref<ViewType>('planning')
   const notifications = ref<Notification[]>([])
+  
+  // 项目状态
+  const projectState = ref<ProjectState>({
+    currentProject: null,
+    isDirty: false,
+    lastSavedAt: null,
+  })
   
   // 面板可见性状态
   const panelVisibility = ref<PanelVisibility>({
@@ -53,9 +75,19 @@ export const useAppStore = defineStore('app', () => {
   const previousView = ref<ViewType | null>(null)
 
   const activeDialog = ref<string | null>(null)
+  
+  // 地图选点模式
+  const mapSelectMode = ref<MapSelectMode>({
+    active: false,
+    type: null,
+    callback: null,
+  })
 
   // Getters
   const recentLogs = computed(() => logs.value.slice(-50))
+  const hasOpenProject = computed(() => projectState.value.currentProject !== null)
+  const currentProjectName = computed(() => projectState.value.currentProject?.name || '')
+  const currentProjectType = computed(() => projectState.value.currentProject?.type || null)
 
   // Actions
   function switchView(view: ViewType) {
@@ -168,6 +200,67 @@ export const useAppStore = defineStore('app', () => {
     activeDialog.value = null
   }
 
+  // 开始地图选点模式
+  function startMapSelect(type: 'start' | 'end' | 'range', callback: (coord: string) => void) {
+    mapSelectMode.value = {
+      active: true,
+      type,
+      callback,
+    }
+    switchView('planning')
+    addLog('INFO', `进入地图选点模式: ${type === 'start' ? '起点' : type === 'end' ? '终点' : '规划范围'}`)
+    showNotification({ type: 'info', message: '请在地图上双击选择坐标点' })
+  }
+
+  // 完成地图选点
+  function completeMapSelect(coord: string) {
+    if (mapSelectMode.value.callback) {
+      mapSelectMode.value.callback(coord)
+    }
+    mapSelectMode.value = { active: false, type: null, callback: null }
+    addLog('INFO', `地图选点完成: ${coord}`)
+  }
+
+  // 取消地图选点
+  function cancelMapSelect() {
+    mapSelectMode.value = { active: false, type: null, callback: null }
+    addLog('INFO', '取消地图选点')
+  }
+
+  // 设置当前项目
+  function setCurrentProject(project: ProjectMetadata | null) {
+    projectState.value.currentProject = project
+    projectState.value.isDirty = false
+    if (project) {
+      addLog('INFO', `打开项目: ${project.name}`)
+    }
+  }
+
+  // 设置项目修改状态
+  function setProjectDirty(dirty: boolean) {
+    projectState.value.isDirty = dirty
+  }
+
+  // 保存项目后更新状态
+  function markProjectSaved() {
+    projectState.value.isDirty = false
+    projectState.value.lastSavedAt = new Date().toISOString()
+    if (projectState.value.currentProject) {
+      addLog('INFO', `项目已保存: ${projectState.value.currentProject.name}`)
+    }
+  }
+
+  // 关闭项目
+  function closeCurrentProject() {
+    const projectName = projectState.value.currentProject?.name
+    projectState.value.currentProject = null
+    projectState.value.isDirty = false
+    projectState.value.lastSavedAt = null
+    if (projectName) {
+      addLog('INFO', `关闭项目: ${projectName}`)
+    }
+  }
+
   // 切换面板可见性
   function togglePanel(panelName: keyof PanelVisibility) {
     panelVisibility.value[panelName] = !panelVisibility.value[panelName]
@@ -204,6 +297,11 @@ export const useAppStore = defineStore('app', () => {
     recentLogs,
     activeDialog,
     panelVisibility,
+    mapSelectMode,
+    projectState,
+    hasOpenProject,
+    currentProjectName,
+    currentProjectType,
     switchView,
     showNotification,
     removeNotification,
@@ -215,5 +313,12 @@ export const useAppStore = defineStore('app', () => {
     closeDialog,
     togglePanel,
     setPanelVisible,
+    startMapSelect,
+    completeMapSelect,
+    cancelMapSelect,
+    setCurrentProject,
+    setProjectDirty,
+    markProjectSaved,
+    closeCurrentProject,
   }
 })
