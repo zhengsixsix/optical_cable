@@ -5,23 +5,87 @@
 
 import { useRouteStore, useRPLStore, useSLDStore, useSettingsStore, useUserStore } from '@/stores'
 
+// 图层设置接口
+interface LayerSettings {
+  oceanElevation: boolean       // 海洋高程图
+  volcanoDistribution: boolean  // 海洋火山分布
+  fishingAreaDistribution: boolean // 海洋渔区分布
+  slopeMap: boolean             // 海洋坡度图
+  earthquakeDistribution: boolean // 海洋地震分布
+  shippingLanes: boolean        // 海洋航道图
+}
+
+// 器件库配置
+interface ComponentLibrary {
+  currentLibrary: string        // 当前器件库
+  customComponents: any[]       // 自定义器件
+}
+
+// 路径规划配置
+interface RoutePlanningConfig {
+  planningMode: 'manual' | 'auto' | 'hybrid'  // 规划模式
+  startCoordinate?: { lon: number; lat: number }  // 起点坐标
+  endCoordinate?: { lon: number; lat: number }    // 终点坐标
+  multiPointFile?: string       // 多点文件路径
+  avoidanceZones: any[]         // 规避区域
+  preferredDepthRange: [number, number]  // 首选水深范围
+}
+
+// 传输系统配置
+interface TransmissionConfig {
+  channelCount: number          // 波道数量
+  centerWavelength: number      // 中心波长(nm)
+  channelBandwidth: number      // 信道带宽(GHz)
+  calculationModel: string      // 计算模型
+}
+
+// 监控系统配置
+interface MonitoringConfig {
+  dataSourceType: 'websocket' | 'polling' | 'mqtt'  // 数据源类型
+  connectionAddress: string     // 连接地址
+  opticalPowerThreshold: number // 光功率阈值(dBm)
+  temperatureThreshold: number  // 温度阈值(℃)
+  berThreshold: number          // BER阈值
+}
+
 // 基础项目接口
 interface BaseProject {
   version: string
-  name: string
+  type: 'ucp' | 'use'
+  
+  // === 项目基本信息 ===
+  projectName: string           // 项目名称
+  name: string                  // 兼容旧字段
+  creatorUserId: string         // 创建用户ID(手机号)
+  creatorId: string             // 兼容旧字段
+  serverDirectory?: string      // 服务器目录
+  allowOtherUsers: boolean      // 是否允许其他用户打开
   createdAt: string
   updatedAt: string
-  creatorId: string           // 创建者用户ID
-  allowOtherUsers: boolean    // 是否允许其他用户打开
+  
+  // === 文件引用 ===
+  rplFiles: string[]            // RPL文件路径列表
+  
+  // === 路由规划数据 ===
   routePlanning: {
     routes: any[]
     rplTables: any[]
-    planningConfig: any
+    planningConfig: RoutePlanningConfig
   }
+  
+  // === GIS数据 ===
   gisData: {
     layers: string[]
     bounds: { northwest: { lon: number; lat: number }; southeast: { lon: number; lat: number } }
   }
+  
+  // === 图层设置 ===
+  layerSettings: LayerSettings
+  
+  // === 器件库配置 ===
+  componentLibrary: ComponentLibrary
+  
+  // === 设置 ===
   settings: {
     cableTypes: any[]
     costFactors: any
@@ -33,14 +97,30 @@ export interface UCPProject extends BaseProject {
   type: 'ucp'
 }
 
+// RPL与SLD文件关联
+interface RPLWithSLDFiles {
+  rplPath: string               // RPL文件路径
+  sldPaths: string[]            // 关联的SLD文件路径列表
+}
+
 // USE文件格式定义（传输系统规划工程）
 export interface USEProject extends BaseProject {
   type: 'use'
+  
+  // === RPL与SLD文件关联 ===
+  rplSldAssociations: RPLWithSLDFiles[]
+  
+  // === 传输规划 ===
   transmissionPlanning: {
     sldTables: any[]
-    transmissionConfig: any
+    transmissionConfig: TransmissionConfig
     repeaterConfigs: any[]
   }
+  
+  // === 监控配置 ===
+  monitoringConfig: MonitoringConfig
+  
+  // === 性能结果 ===
   performanceResults: {
     gsnr: number | null
     capacity: number | null
@@ -119,27 +199,74 @@ class ProjectFileService {
     const rplStore = useRPLStore()
     const settingsStore = useSettingsStore()
     const userStore = useUserStore()
+    const userId = userStore.currentUser?.id || ''
+
+    // 默认图层设置
+    const defaultLayerSettings: LayerSettings = {
+      oceanElevation: true,
+      volcanoDistribution: false,
+      fishingAreaDistribution: false,
+      slopeMap: false,
+      earthquakeDistribution: true,
+      shippingLanes: true,
+    }
+
+    // 默认器件库配置
+    const defaultComponentLibrary: ComponentLibrary = {
+      currentLibrary: 'default',
+      customComponents: [],
+    }
+
+    // 默认路径规划配置
+    const defaultPlanningConfig: RoutePlanningConfig = {
+      planningMode: 'manual',
+      avoidanceZones: [],
+      preferredDepthRange: [200, 4000],
+      ...(settingsStore.routePlanningConfig || {}),
+    }
 
     return {
-      version: '1.0.0',
+      version: '2.0.0',
       type: 'ucp',
-      name,
+      
+      // 项目基本信息
+      projectName: name,
+      name,  // 兼容旧字段
+      creatorUserId: userId,
+      creatorId: userId,  // 兼容旧字段
+      allowOtherUsers,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      creatorId: userStore.currentUser?.id || '',
-      allowOtherUsers,
+      
+      // 文件引用
+      rplFiles: [],
+      
+      // 路由规划数据
       routePlanning: {
         routes: routeStore.routes,
         rplTables: rplStore.tables,
-        planningConfig: settingsStore.routePlanningConfig,
+        planningConfig: defaultPlanningConfig,
       },
+      
+      // GIS数据
       gisData: {
         layers: [],
-        bounds: settingsStore.routePlanningConfig.planningRange,
+        bounds: settingsStore.routePlanningConfig?.planningRange || {
+          northwest: { lon: 100, lat: 40 },
+          southeast: { lon: 140, lat: 0 }
+        },
       },
+      
+      // 图层设置
+      layerSettings: defaultLayerSettings,
+      
+      // 器件库配置
+      componentLibrary: defaultComponentLibrary,
+      
+      // 设置
       settings: {
-        cableTypes: settingsStore.cableTypes,
-        costFactors: settingsStore.costFactors,
+        cableTypes: settingsStore.cableTypes || [],
+        costFactors: settingsStore.costFactors || {},
       },
     }
   }
@@ -149,15 +276,52 @@ class ProjectFileService {
     const ucpProject = this.createUCPProject(name, allowOtherUsers)
     const sldStore = useSLDStore()
     const settingsStore = useSettingsStore()
+    const rplStore = useRPLStore()
+
+    // 构建RPL与SLD关联
+    const rplSldAssociations: RPLWithSLDFiles[] = rplStore.tables.map(rplTable => ({
+      rplPath: `${rplTable.name}.rpl`,
+      sldPaths: sldStore.tables
+        .filter(sld => sld.routeId === rplTable.routeId)
+        .map(sld => `${sld.name}.sld`)
+    }))
+
+    // 默认传输配置
+    const defaultTransmissionConfig: TransmissionConfig = {
+      channelCount: 96,
+      centerWavelength: 1550,
+      channelBandwidth: 50,
+      calculationModel: 'GN-Model',
+      ...(settingsStore.transmissionConfig || {}),
+    }
+
+    // 默认监控配置
+    const defaultMonitoringConfig: MonitoringConfig = {
+      dataSourceType: 'websocket',
+      connectionAddress: '',
+      opticalPowerThreshold: -30,
+      temperatureThreshold: 45,
+      berThreshold: 1e-9,
+    }
 
     return {
       ...ucpProject,
       type: 'use',
+      
+      // RPL与SLD文件关联
+      rplSldAssociations,
+      
+      // 传输规划
       transmissionPlanning: {
         sldTables: sldStore.tables,
-        transmissionConfig: settingsStore.transmissionConfig,
+        transmissionConfig: defaultTransmissionConfig,
         repeaterConfigs: [],
       },
+      
+      // 监控配置
+      monitoringConfig: defaultMonitoringConfig,
+      
+      // 性能结果
       performanceResults: {
         gsnr: null,
         capacity: null,
@@ -276,19 +440,33 @@ class ProjectFileService {
 
   // 加载USE项目特有数据
   private loadUSEProjectData(project: USEProject): void {
-    if (project.transmissionPlanning) {
-      const sldStore = useSLDStore()
-      const settingsStore = useSettingsStore()
-      
-      // 恢复SLD数据
-      if (project.transmissionPlanning.sldTables) {
-        sldStore.tables = project.transmissionPlanning.sldTables
+    const sldStore = useSLDStore()
+    const settingsStore = useSettingsStore()
+    
+    // 恢复SLD数据
+    if (project.transmissionPlanning?.sldTables) {
+      sldStore.tables = project.transmissionPlanning.sldTables
+    }
+    
+    // 恢复传输配置
+    if (project.transmissionPlanning?.transmissionConfig) {
+      if (!settingsStore.transmissionConfig) {
+        (settingsStore as any).transmissionConfig = {}
       }
-      
-      // 恢复传输配置
-      if (project.transmissionPlanning.transmissionConfig) {
-        Object.assign(settingsStore.transmissionConfig, project.transmissionPlanning.transmissionConfig)
+      Object.assign(settingsStore.transmissionConfig, project.transmissionPlanning.transmissionConfig)
+    }
+    
+    // 恢复监控配置
+    if (project.monitoringConfig) {
+      if (!settingsStore.monitoringConfig) {
+        (settingsStore as any).monitoringConfig = {}
       }
+      Object.assign(settingsStore.monitoringConfig, project.monitoringConfig)
+    }
+    
+    // 记录RPL与SLD文件关联(供后续使用)
+    if (project.rplSldAssociations) {
+      console.log('RPL-SLD关联:', project.rplSldAssociations)
     }
   }
 
@@ -325,7 +503,26 @@ class ProjectFileService {
     
     // 恢复规划配置
     if (project.routePlanning?.planningConfig) {
+      if (!settingsStore.routePlanningConfig) {
+        (settingsStore as any).routePlanningConfig = {}
+      }
       Object.assign(settingsStore.routePlanningConfig, project.routePlanning.planningConfig)
+    }
+    
+    // 恢复图层设置
+    if (project.layerSettings) {
+      if (!settingsStore.layerSettings) {
+        (settingsStore as any).layerSettings = {}
+      }
+      Object.assign(settingsStore.layerSettings, project.layerSettings)
+    }
+    
+    // 恢复器件库配置
+    if (project.componentLibrary) {
+      if (!settingsStore.componentLibrary) {
+        (settingsStore as any).componentLibrary = {}
+      }
+      Object.assign(settingsStore.componentLibrary, project.componentLibrary)
     }
     
     // 恢复设置

@@ -6,6 +6,7 @@ export * from './settings'
 export * from './rpl'
 export * from './sld'
 export * from './connector'
+export * from './project'
 
 // 通用类型
 export interface Notification {

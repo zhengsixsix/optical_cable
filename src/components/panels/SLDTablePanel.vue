@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useSLDStore, useAppStore } from '@/stores'
+import { exportSLDFile, exportEquipmentsToCSV as exportSLDEquipmentsToCSV } from '@/services/SLDExportService'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { 
   Network, 
@@ -80,27 +81,21 @@ const handleValidate = () => {
 }
 
 const handleExportEquipments = () => {
-  const csv = sldStore.exportEquipmentsToCSV()
-  if (!csv) return
-  
+  if (!currentTable.value) return
+  const csv = exportSLDEquipmentsToCSV(currentTable.value)
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
-  link.download = `${currentTable.value?.name || 'SLD'}_设备表_${Date.now()}.csv`
+  link.download = `${currentTable.value.name || 'SLD'}_设备表_${Date.now()}.csv`
   link.click()
-  appStore.showNotification({ type: 'success', message: '导出成功' })
+  URL.revokeObjectURL(link.href)
+  appStore.showNotification({ type: 'success', message: '导出设备表成功' })
 }
 
-const handleExportSegments = () => {
-  const csv = sldStore.exportSegmentsToCSV()
-  if (!csv) return
-  
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `${currentTable.value?.name || 'SLD'}_光纤段表_${Date.now()}.csv`
-  link.click()
-  appStore.showNotification({ type: 'success', message: '导出成功' })
+const handleExportXML = () => {
+  if (!currentTable.value) return
+  exportSLDFile(currentTable.value)
+  appStore.showNotification({ type: 'success', message: '导出SLD XML成功' })
 }
 
 </script>
@@ -171,6 +166,10 @@ const handleExportSegments = () => {
           传输参数
         </button>
         <div class="flex-1" />
+        <Button variant="outline" size="sm" @click="handleExportXML">
+          <Download class="w-4 h-4 mr-1" />
+          导出XML
+        </Button>
         <Button variant="outline" size="sm" @click="handleValidate">
           <CheckCircle class="w-4 h-4 mr-1" />
           验证
@@ -186,7 +185,7 @@ const handleExportSegments = () => {
           </Button>
           <Button variant="outline" size="sm" @click="handleExportEquipments">
             <Download class="w-4 h-4 mr-1" />
-            导出CSV
+            导出设备表
           </Button>
         </div>
         <div class="flex-1 overflow-auto">
@@ -246,10 +245,7 @@ const handleExportSegments = () => {
             <Plus class="w-4 h-4 mr-1" />
             添加光纤段
           </Button>
-          <Button variant="outline" size="sm" @click="handleExportSegments">
-            <Download class="w-4 h-4 mr-1" />
-            导出CSV
-          </Button>
+          <span class="text-xs text-gray-400">完整数据请使用顶部“导出XML”</span>
         </div>
         <div class="flex-1 overflow-auto">
           <table class="w-full text-sm border-collapse">

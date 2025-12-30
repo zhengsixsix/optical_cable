@@ -493,65 +493,157 @@ export const useRPLStore = defineStore('rpl', () => {
     return map[type] || 'LW'
   }
 
-  // 导出为CSV格式
-  function exportToCSV(): string {
-    if (!currentTable.value) return ''
-    
-    const headers = ['序号', 'KP(km)', '经度', '纬度', '水深(m)', '点类型', '电缆类型', '分段长度(km)', '累计长度(km)', '余缆率(%)', '埋设深度(m)', '备注']
-    const rows = currentTable.value.records.map(r => [
-      r.sequence,
-      r.kp.toFixed(3),
-      r.longitude.toFixed(6),
-      r.latitude.toFixed(6),
-      r.depth.toFixed(1),
-      r.pointType,
-      r.cableType,
-      r.segmentLength.toFixed(3),
-      r.cumulativeLength.toFixed(3),
-      r.slack.toFixed(1),
-      r.burialDepth.toFixed(1),
-      r.remarks,
-    ])
-    
-    return [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+  // Event名称到pointType的反向映射
+  const EVENT_TO_POINT_TYPE: Record<string, RPLPointType> = {
+    'Start': 'landing',
+    'End': 'landing',
+    'Landing Station': 'landing',
+    'Repeater': 'repeater',
+    'Branching Unit': 'branching',
+    'Joint': 'joint',
+    'Alter Course': 'waypoint',
+    'Waypoint': 'waypoint',
   }
 
-  // 导出为JSON格式
-  function exportToJSON(): string {
-    if (!currentTable.value) return '{}'
-    return JSON.stringify(currentTable.value, null, 2)
+  // 解析度分秒格式的坐标
+  function parseDMSCoordinate(dms: string): number | null {
+    if (!dms) return null
+    // 匹配格式: "1° 17.425' N" 或 "121° 30.500' E"
+    const match = dms.match(/([\d.]+)\u00b0\s*([\d.]+)'\s*([NSEW])/i)
+    if (!match) return null
+    
+    const degrees = parseFloat(match[1])
+    const minutes = parseFloat(match[2])
+    const direction = match[3].toUpperCase()
+    
+    let decimal = degrees + minutes / 60
+    if (direction === 'S' || direction === 'W') {
+      decimal = -decimal
+    }
+    return decimal
   }
 
-  // 从CSV导入
+  // 解析CSV行，处理引号内的逗号
+  function parseCSVLine(line: string): string[] {
+    const result: string[] = []
+    let current = ''
+    let inQuotes = false
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i]
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"'
+          i++
+        } else {
+          inQuotes = !inQuotes
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim())
+        current = ''
+      } else {
+        current += char
+      }
+    }
+    result.push(current.trim())
+    return result
+  }
+
+  // 检测是否为新格式表头
+  function detectNewFormat(headers: string[]): boolean {
+    const newFormatIndicators = ['Latitude (DMS)', 'Longitude (DMS)', 'MPs', 'E.Dist', 'Route Distance']
+    return newFormatIndicators.some(indicator => 
+      headers.some(h => h.includes(indicator))
+    )
+  }
+
+  // 从CSV导入(支持新旧格式)
   function importFromCSV(csvContent: string, tableName: string, routeId: string): boolean {
     try {
-      const lines = csvContent.trim().split('\n')
+      const lines = csvContent.trim().split(/\r?\n/).filter(line => !line.startsWith('#') && line.trim())
       if (lines.length < 2) return false
 
+      // 检测是否有二级表头，跳过分组行
+      let headerLineIndex = 0
+      const firstLine = parseCSVLine(lines[0])
+      if (firstLine.some(h => ['Position', 'Coordinates', 'Navigation', 'Cable'].includes(h))) {
+        headerLineIndex = 1 // 跳过分组行
+      }
+      
+      const headers = parseCSVLine(lines[headerLineIndex])
+      const isNewFormat = detectNewFormat(headers)
+      
       const table = createTable(tableName, routeId)
       
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',')
-        if (cols.length < 10) continue
+      // 构建表头索引映射
+      const headerIndex: Record<string, number> = {}
+      headers.forEach((h, i) => { headerIndex[h] = i })
+      
+      for (let i = headerLineIndex + 1; i < lines.length; i++) {
+        const cols = parseCSVLine(lines[i])
+        if (cols.length < 5) continue
 
-        const record: Omit<RPLRecord, 'id' | 'sequence'> = {
-          kp: parseFloat(cols[1]) || 0,
-          longitude: parseFloat(cols[2]) || 0,
-          latitude: parseFloat(cols[3]) || 0,
-          depth: parseFloat(cols[4]) || 0,
-          pointType: (cols[5] as RPLPointType) || 'waypoint',
-          cableType: (cols[6] as RPLCableCode) || 'LW',
-          segmentLength: parseFloat(cols[7]) || 0,
-          cumulativeLength: parseFloat(cols[8]) || 0,
-          slack: parseFloat(cols[9]) || 2.5,
-          burialDepth: parseFloat(cols[10]) || 0,
-          remarks: cols[11] || '',
+        let record: Omit<RPLRecord, 'id' | 'sequence'>
+        
+        if (isNewFormat) {
+          // 新格式解析
+          const event = cols[headerIndex['Event']] || ''
+          const latDMS = cols[headerIndex['Latitude (DMS)']] || ''
+          const lonDMS = cols[headerIndex['Longitude (DMS)']] || ''
+          const latDec = cols[headerIndex['Latitude (Dec°)']] || cols[headerIndex['Latitude']] || ''
+          const routeDistBetween = cols[headerIndex['Between']] || cols[headerIndex['Route Distance Between']] || '0'
+          const routeDistCum = cols[headerIndex['Cumulative']] || cols[headerIndex['Route Distance Cumulative']] || '0'
+          const cableType = cols[headerIndex['Type']] || cols[headerIndex['Cable Type']] || 'LW'
+          const depth = cols[headerIndex['Approx Depth (m)']] || cols[headerIndex['Water Depth (m)']] || '0'
+          const burial = cols[headerIndex['Planned Burial (m)']] || cols[headerIndex['Burial Depth (m)']] || '0'
+          const remarks = cols[headerIndex['Additional Features']] || cols[headerIndex['Remarks']] || ''
+          
+          // 解析坐标
+          let latitude = parseDMSCoordinate(latDMS)
+          if (latitude === null) latitude = parseFloat(latDec) || 0
+          
+          let longitude = parseDMSCoordinate(lonDMS)
+          const lonDecIdx = headers.findIndex(h => h.includes('Longitude') && (h.includes('Dec') || h.includes('°')))
+          if (longitude === null && lonDecIdx >= 0) {
+            longitude = parseFloat(cols[lonDecIdx]) || 0
+          }
+          if (longitude === null) longitude = 0
+          
+          record = {
+            kp: parseFloat(routeDistCum) || 0,
+            longitude,
+            latitude,
+            depth: parseFloat(depth) || 0,
+            pointType: EVENT_TO_POINT_TYPE[event] || 'waypoint',
+            cableType: (cableType as RPLCableCode) || 'LW',
+            segmentLength: parseFloat(routeDistBetween) || 0,
+            cumulativeLength: parseFloat(routeDistCum) || 0,
+            slack: 2.5, // 默认值，可从 Cable Distance 计算
+            burialDepth: parseFloat(burial) || 0,
+            remarks,
+          }
+        } else {
+          // 旧格式解析
+          record = {
+            kp: parseFloat(cols[1]) || 0,
+            longitude: parseFloat(cols[2]) || 0,
+            latitude: parseFloat(cols[3]) || 0,
+            depth: parseFloat(cols[4]) || 0,
+            pointType: (cols[5] as RPLPointType) || 'waypoint',
+            cableType: (cols[6] as RPLCableCode) || 'LW',
+            segmentLength: parseFloat(cols[7]) || 0,
+            cumulativeLength: parseFloat(cols[8]) || 0,
+            slack: parseFloat(cols[9]) || 2.5,
+            burialDepth: parseFloat(cols[10]) || 0,
+            remarks: cols[11] || '',
+          }
         }
         addRecord(record)
       }
 
       return true
-    } catch {
+    } catch (e) {
+      console.error('CSV导入失败:', e)
       return false
     }
   }
@@ -621,8 +713,6 @@ export const useRPLStore = defineStore('rpl', () => {
     validateTable,
     validateImportedRPL,
     generateFromRoute,
-    exportToCSV,
-    exportToJSON,
     importFromCSV,
   }
 })

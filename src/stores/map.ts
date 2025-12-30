@@ -24,6 +24,10 @@ export const useMapStore = defineStore('map', () => {
     zoom.value = level
   }
 
+  function setProjection(proj: Projection) {
+    projection.value = proj
+  }
+
   function setExtent(ext: Extent | null) {
     extent.value = ext
   }
@@ -56,6 +60,7 @@ export const useMapStore = defineStore('map', () => {
     hasSelection,
     setCenter,
     setZoom,
+    setProjection,
     setExtent,
     setSelectedExtent,
     setToolMode,

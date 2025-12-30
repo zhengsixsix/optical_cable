@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAppStore, useUserStore } from '@/stores'
+import { useAppStore, useUserStore, useMapStore } from '@/stores'
+import { useProjectManager } from '@/composables'
+import type { Projection } from '@/types'
 import {
   FileText, FolderOpen, Save, FilePlus, LogOut,
   Download, Upload, ChevronRight, FileType,
@@ -13,13 +15,25 @@ const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
 const userStore = useUserStore()
+const mapStore = useMapStore()
+const projectManager = useProjectManager()
+
+// 暴露给 App.vue 使用
+defineExpose({ projectManager })
 
 // 坐标系选项
 const coordSystemOptions = [
   { value: 'EPSG:4326', label: 'WGS84 (EPSG:4326)' },
   { value: 'EPSG:3857', label: 'Web Mercator (EPSG:3857)' },
 ]
-const currentCoordSystem = ref('EPSG:4326')
+const currentCoordSystem = ref<Projection>(mapStore.projection)
+
+// 监听坐标系变化，同步到 mapStore
+watch(currentCoordSystem, (newProj) => {
+  mapStore.setProjection(newProj)
+  appStore.addLog('INFO', `坐标系已切换为 ${newProj}`)
+  appStore.showNotification({ type: 'info', message: `坐标系已切换为 ${newProj}` })
+})
 
 // 视图选项
 const viewOptions = [
@@ -52,16 +66,33 @@ const handleViewChange = (view: string) => {
   }
 }
 
+// 是否显示传输系统和监控菜单（无项目或 USE 项目时显示）
+const showTransmissionMenu = computed(() => {
+  const projectType = projectManager.currentProjectType.value
+  // 没有打开项目 或 打开的是 USE 项目 时显示
+  return !projectType || projectType === 'use'
+})
+
+// 项目操作处理
+const handleOpenProject = () => {
+  projectManager.openProject()
+}
+
+const handleSaveProject = () => {
+  projectManager.saveProject()
+}
+
+const handleSaveAsProject = () => {
+  projectManager.openSaveAsDialog()
+}
+
 const showModal = (key: string) => {
   console.log(`Menu Action: ${key}`)
 
   const map: Record<string, string> = {
     '新建工程': 'new-project',
-    '打开工程': 'open-project',
-    '保存工程': 'save-project',
-    '另存为': 'save-as-project',
     'import': 'import',
-    'importGis': 'import', // Re-use import dialog with mode switching if needed, for now just open import
+    'importGis': 'import',
     'export': 'export',
     'export_pdf': 'export',
     'export_png': 'export',
@@ -132,7 +163,7 @@ const togglePanel = (panel: string) => {
                 <span class="text-xs text-gray-400 font-light">Ctrl+N</span>
               </a>
 
-              <a href="#" @click.prevent="showModal('打开工程')"
+              <a href="#" @click.prevent="handleOpenProject"
                 class="group/item flex items-center justify-between px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                 <div class="flex items-center gap-3">
                   <FolderOpen class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
@@ -141,7 +172,7 @@ const togglePanel = (panel: string) => {
                 <span class="text-xs text-gray-400 font-light">Ctrl+O</span>
               </a>
 
-              <a href="#" @click.prevent="showModal('保存工程')"
+              <a href="#" @click.prevent="handleSaveProject"
                 class="group/item flex items-center justify-between px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                 <div class="flex items-center gap-3">
                   <Save class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
@@ -150,7 +181,7 @@ const togglePanel = (panel: string) => {
                 <span class="text-xs text-gray-400 font-light">Ctrl+S</span>
               </a>
 
-              <a href="#" @click.prevent="showModal('另存为')"
+              <a href="#" @click.prevent="handleSaveAsProject"
                 class="group/item flex items-center justify-between px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                 <div class="flex items-center gap-3">
                   <FileText class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
@@ -303,15 +334,16 @@ const togglePanel = (panel: string) => {
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
               active-class="bg-primary/10 text-primary font-medium">海缆路由规划
             </RouterLink>
-            <RouterLink to="/design"
+            <!-- 传输系统规划：无项目或 USE 项目时显示 -->
+            <RouterLink v-if="showTransmissionMenu" to="/design"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
               active-class="bg-primary/10 text-primary font-medium">传输系统规划
             </RouterLink>
           </div>
         </div>
 
-        <!-- Monitoring Menu -->
-        <div class="relative group h-full flex items-center px-4 cursor-pointer hover:bg-white/10 transition-colors">
+        <!-- Monitoring Menu - 无项目或 USE 项目时显示 -->
+        <div v-if="showTransmissionMenu" class="relative group h-full flex items-center px-4 cursor-pointer hover:bg-white/10 transition-colors">
           <span
             :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/monitoring') || $route.path.includes('/performance') }">监控</span>
           <div

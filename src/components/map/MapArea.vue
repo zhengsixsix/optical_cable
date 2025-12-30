@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { useMapStore, useLayerStore, useAppStore, useRouteStore, useRPLStore, useSettingsStore } from '@/stores'
-import { exportRPLFile } from '@/services'
+import { ref, onMounted, onUnmounted, watch, toRef } from 'vue'
+import { useMapStore, useLayerStore, useAppStore, useRouteStore, useSettingsStore } from '@/stores'
 import { Button, Tooltip } from '@/components/ui'
 import {
   MousePointer, Move, Plus, Trash2, Square, Edit3,
-  Play, Pause, Download, Loader2, Settings, Radio, FileSpreadsheet
+  Play, Pause, Loader2, Settings, FileSpreadsheet
 } from 'lucide-vue-next'
 
 // OpenLayers imports
@@ -25,6 +24,7 @@ import LineString from 'ol/geom/LineString'
 import Circle from 'ol/geom/Circle'
 import { Style, Stroke, Fill, Icon, Circle as CircleStyle, Text } from 'ol/style'
 import Heatmap from 'ol/layer/Heatmap'
+import { fromLonLat, toLonLat, transform, get as getProjection } from 'ol/proj'
 import 'ol/ol.css'
 
 import { loadVolcanoData, loadEarthquakeData } from '@/utils/dataLoader'
@@ -39,7 +39,9 @@ const mapStore = useMapStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
 const routeStore = useRouteStore()
-const rplStore = useRPLStore()
+
+// 监听投影变化
+const currentProjection = toRef(mapStore, 'projection')
 
 const emit = defineEmits<{
   (e: 'area-selected', extent: [number, number, number, number]): void
@@ -95,6 +97,55 @@ const toggleBoxSelect = () => {
     enableBoxSelect()
   }
 }
+
+// 切换地图投影
+const switchProjection = (newProjection: string) => {
+  if (!map) return
+  
+  const view = map.getView()
+  const oldProjection = view.getProjection().getCode()
+  
+  if (oldProjection === newProjection) return
+  
+  // 获取当前视图中心和缩放级别
+  const center = view.getCenter()
+  const zoom = view.getZoom()
+  
+  if (!center || zoom === undefined) return
+  
+  // 转换中心点到新投影
+  const newCenter = transform(center, oldProjection, newProjection)
+  
+  // 创建新视图
+  const newView = new View({
+    projection: newProjection,
+    center: newCenter,
+    zoom: zoom,
+    minZoom: 0,
+    maxZoom: 18,
+  })
+  
+  map.setView(newView)
+  
+  // 重新绑定鼠标移动事件
+  map.on('pointermove', (evt) => {
+    const coord = evt.coordinate
+    if (newProjection === 'EPSG:3857') {
+      // Web Mercator 转 WGS84 显示
+      const lonLat = toLonLat(coord)
+      coordinates.value = { lon: lonLat[0], lat: lonLat[1] }
+    } else {
+      coordinates.value = { lon: coord[0], lat: coord[1] }
+    }
+  })
+  
+  appStore.addLog('INFO', `地图投影已切换为 ${newProjection}`)
+}
+
+// 监听投影变化
+watch(currentProjection, (newProj) => {
+  switchProjection(newProj)
+})
 
 const handleAction = (actionName: string) => {
   appStore.showNotification({ type: 'info', message: `已执行操作: ${actionName}` })
@@ -248,40 +299,6 @@ const updateRouteLineFromPoints = () => {
 const openSegmentPanel = () => {
   appStore.setPanelVisible('segmentConfigPanel', true)
   appStore.showNotification({ type: 'info', message: '分段参数配置面板已打开' })
-}
-
-// 打开中继器配置面板
-const openRepeaterPanel = () => {
-  appStore.setPanelVisible('repeaterConfigPanel', true)
-  appStore.showNotification({ type: 'info', message: '中继器配置面板已打开' })
-}
-
-// 打开RPL导出对话框
-const openRPLExportDialog = () => {
-  const table = rplStore.currentTable
-  if (!table || table.records.length === 0) {
-    appStore.showNotification({ type: 'warning', message: '没有可导出的RPL数据，请先进行路由规划' })
-    return
-  }
-  appStore.openDialog('rpl-export')
-}
-
-// 导出RPL文件
-const exportRPL = () => {
-  const table = rplStore.currentTable
-  if (!table || table.records.length === 0) {
-    appStore.showNotification({ type: 'warning', message: '没有可导出的RPL数据，请先进行路由规划' })
-    return
-  }
-  
-  // 导出为CSV格式（行业标准）
-  exportRPLFile(table, 'csv')
-  appStore.showNotification({ type: 'success', message: `RPL文件已导出: ${table.name}` })
-}
-
-// 打开SLD系统布局图
-const openSLD = () => {
-  appStore.openDialog('sld-manage')
 }
 
 const initMap = () => {
@@ -941,7 +958,7 @@ onUnmounted(() => {
           </Button>
         </Tooltip>
         <Tooltip content="导出RPL表格">
-          <Button variant="outline" size="sm" :disabled="!isPlanning" @click="openRPLExportDialog">
+          <Button variant="outline" size="sm" :disabled="!isPlanning" @click="appStore.openDialog('rpl-manage')">
             <FileSpreadsheet class="w-4 h-4 mr-1" /> 导出RPL
           </Button>
         </Tooltip>

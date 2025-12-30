@@ -1,0 +1,77 @@
+{
+  "version": "2.0.0",
+  "type": "ucp",
+  "projectName": "太平洋海缆路由规划",
+  "name": "太平洋海缆路由规划",
+  "creatorUserId": "13800138000",
+  "creatorId": "13800138000",
+  "serverDirectory": "/projects/pacific-cable",
+  "allowOtherUsers": true,
+  "createdAt": "2025-12-30T08:00:00.000Z",
+  "updatedAt": "2025-12-30T09:00:00.000Z",
+  "rplFiles": [
+    "routes/main-route.rpl",
+    "routes/backup-route.rpl"
+  ],
+  "routePlanning": {
+    "routes": [
+      {
+        "id": "route-001",
+        "name": "上海-洛杉矶主线",
+        "startPoint": { "lng": 121.47, "lat": 31.23 },
+        "endPoint": { "lng": -118.24, "lat": 34.05 },
+        "waypoints": [
+          { "lng": 140.5, "lat": 35.2, "name": "日本近海" },
+          { "lng": -150.0, "lat": 40.0, "name": "太平洋中部" }
+        ],
+        "totalLength": 10500.5,
+        "status": "planned"
+      }
+    ],
+    "rplTables": [],
+    "planningConfig": {
+      "planningMode": "auto",
+      "startCoordinate": { "lon": 121.47, "lat": 31.23 },
+      "endCoordinate": { "lon": -118.24, "lat": 34.05 },
+      "avoidanceZones": [
+        {
+          "name": "地震活跃区",
+          "type": "polygon",
+          "coordinates": [[135, 30], [145, 30], [145, 40], [135, 40]]
+        }
+      ],
+      "preferredDepthRange": [1000, 5000]
+    }
+  },
+  "gisData": {
+    "layers": ["bathymetry", "seismic", "shipping"],
+    "bounds": {
+      "northwest": { "lon": 100, "lat": 50 },
+      "southeast": { "lon": -100, "lat": 20 }
+    }
+  },
+  "layerSettings": {
+    "oceanElevation": true,
+    "volcanoDistribution": true,
+    "fishingAreaDistribution": false,
+    "slopeMap": true,
+    "earthquakeDistribution": true,
+    "shippingLanes": true
+  },
+  "componentLibrary": {
+    "currentLibrary": "standard-2024",
+    "customComponents": []
+  },
+  "settings": {
+    "cableTypes": [
+      { "code": "LW", "name": "轻型深水缆", "weight": 2.5 },
+      { "code": "SA", "name": "单铠装缆", "weight": 8.0 },
+      { "code": "DA", "name": "双铠装缆", "weight": 15.0 }
+    ],
+    "costFactors": {
+      "cablePerKm": 25000,
+      "repeaterUnit": 800000,
+      "installationPerKm": 15000
+    }
+  }
+}

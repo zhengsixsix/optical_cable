@@ -1,0 +1,124 @@
+{
+  "version": "2.0.0",
+  "type": "use",
+  "projectName": "亚太海缆传输系统",
+  "name": "亚太海缆传输系统",
+  "creatorUserId": "13900139000",
+  "creatorId": "13900139000",
+  "serverDirectory": "/projects/apac-system",
+  "allowOtherUsers": false,
+  "createdAt": "2025-12-30T07:00:00.000Z",
+  "updatedAt": "2025-12-30T09:15:00.000Z",
+  "rplFiles": [
+    "routes/segment-a.rpl",
+    "routes/segment-b.rpl"
+  ],
+  "rplSldAssociations": [
+    {
+      "rplPath": "routes/segment-a.rpl",
+      "sldPaths": [
+        "sld/segment-a-design-v1.sld",
+        "sld/segment-a-design-v2.sld"
+      ]
+    },
+    {
+      "rplPath": "routes/segment-b.rpl",
+      "sldPaths": [
+        "sld/segment-b-design.sld"
+      ]
+    }
+  ],
+  "routePlanning": {
+    "routes": [
+      {
+        "id": "route-seg-a",
+        "name": "香港-新加坡段",
+        "startPoint": { "lng": 114.17, "lat": 22.28 },
+        "endPoint": { "lng": 103.85, "lat": 1.29 },
+        "totalLength": 2580.0,
+        "status": "designed"
+      },
+      {
+        "id": "route-seg-b",
+        "name": "新加坡-雅加达段",
+        "startPoint": { "lng": 103.85, "lat": 1.29 },
+        "endPoint": { "lng": 106.85, "lat": -6.21 },
+        "totalLength": 1150.0,
+        "status": "designed"
+      }
+    ],
+    "rplTables": [],
+    "planningConfig": {
+      "planningMode": "hybrid",
+      "avoidanceZones": [],
+      "preferredDepthRange": [500, 3000]
+    }
+  },
+  "gisData": {
+    "layers": ["bathymetry", "seismic"],
+    "bounds": {
+      "northwest": { "lon": 95, "lat": 30 },
+      "southeast": { "lon": 120, "lat": -10 }
+    }
+  },
+  "layerSettings": {
+    "oceanElevation": true,
+    "volcanoDistribution": false,
+    "fishingAreaDistribution": true,
+    "slopeMap": false,
+    "earthquakeDistribution": true,
+    "shippingLanes": true
+  },
+  "componentLibrary": {
+    "currentLibrary": "huawei-marine",
+    "customComponents": []
+  },
+  "settings": {
+    "cableTypes": [
+      { "code": "LW", "name": "轻型深水缆", "weight": 2.5 },
+      { "code": "SA", "name": "单铠装缆", "weight": 8.0 }
+    ],
+    "costFactors": {
+      "cablePerKm": 28000,
+      "repeaterUnit": 900000,
+      "installationPerKm": 18000
+    }
+  },
+  "transmissionPlanning": {
+    "sldTables": [
+      {
+        "id": "sld-001",
+        "name": "香港-新加坡传输设计",
+        "routeId": "route-seg-a",
+        "repeaterCount": 12,
+        "repeaterSpacing": 80
+      }
+    ],
+    "transmissionConfig": {
+      "channelCount": 96,
+      "centerWavelength": 1550,
+      "channelBandwidth": 50,
+      "calculationModel": "GN-Model"
+    },
+    "repeaterConfigs": [
+      {
+        "id": "rep-config-1",
+        "type": "EDFA",
+        "gain": 18.5,
+        "noiseFigure": 4.5
+      }
+    ]
+  },
+  "monitoringConfig": {
+    "dataSourceType": "websocket",
+    "connectionAddress": "ws://192.168.1.100:8080/monitor",
+    "opticalPowerThreshold": -25,
+    "temperatureThreshold": 50,
+    "berThreshold": 1e-12
+  },
+  "performanceResults": {
+    "gsnr": 18.5,
+    "capacity": 96000,
+    "margin": 3.2
+  }
+}

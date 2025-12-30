@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouteStore, useLayerStore, useAppStore, useUserStore } from '@/stores'
-import { initAppearance } from '@/composables'
+import { initAppearance, useProjectManager } from '@/composables'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
@@ -12,14 +12,16 @@ import RPLManageDialog from '@/components/dialogs/RPLManageDialog.vue'
 import SLDManageDialog from '@/components/dialogs/SLDManageDialog.vue'
 import RouteEditDialog from '@/components/dialogs/RouteEditDialog.vue'
 import ReportDialog from '@/components/dialogs/ReportDialog.vue'
-import RPLExportDialog from '@/components/dialogs/RPLExportDialog.vue'
 import AppearanceDialog from '@/components/dialogs/AppearanceDialog.vue'
 import AlarmNotification from '@/components/notifications/AlarmNotification.vue'
+import SavePromptDialog from '@/components/dialogs/SavePromptDialog.vue'
+import SaveAsDialog from '@/components/dialogs/SaveAsDialog.vue'
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
 const userStore = useUserStore()
+const projectManager = useProjectManager()
 
 onMounted(async () => {
   // 初始化外观设置
@@ -114,11 +116,6 @@ onMounted(async () => {
     @close="appStore.closeDialog()"
   />
 
-  <RPLExportDialog
-    :visible="appStore.activeDialog === 'rpl-export'"
-    @close="appStore.closeDialog()"
-  />
-
   <AppearanceDialog
     :visible="appStore.activeDialog === 'appearance-settings'"
     @close="appStore.closeDialog()"
@@ -126,6 +123,24 @@ onMounted(async () => {
 
   <!-- 告警实时推送通知 -->
   <AlarmNotification />
+
+  <!-- 保存提示对话框 -->
+  <SavePromptDialog
+    :visible="projectManager.openState.value.showSavePrompt"
+    :project-name="projectManager.currentProjectName.value"
+    @save="projectManager.handleSavePromptChoice('save')"
+    @discard="projectManager.handleSavePromptChoice('discard')"
+    @cancel="projectManager.handleSavePromptChoice('cancel')"
+  />
+
+  <!-- 另存为对话框 -->
+  <SaveAsDialog
+    :visible="projectManager.showSaveAsDialog.value"
+    :current-project-name="projectManager.currentProjectName.value"
+    :current-project-type="projectManager.currentProjectType.value"
+    @close="projectManager.showSaveAsDialog.value = false"
+    @save="({ projectName, savePath }) => projectManager.saveProjectAs(projectName, savePath)"
+  />
 
 </template>
 

@@ -1,4 +1,5 @@
 // SLD (System Layout Diagram) 表格类型定义
+// 符合行业标准的系统布局图文件格式
 
 // 设备类型
 export type SLDEquipmentType = 
@@ -11,6 +12,26 @@ export type SLDEquipmentType =
 
 // 光纤对类型
 export type FiberPairType = 'working' | 'protection' | 'spare'
+
+// SLD全局信息 (XML导出用)
+export interface SLDGlobalInfo {
+  systemName: string          // 系统名称
+  systemCode: string          // 系统代码
+  designCapacity: string      // 设计容量
+  totalLength: number         // 总长度(km)
+  fiberPairs: number          // 光纤对数
+  landingPoints: string[]     // 登陆点列表
+  createdDate: string         // 创建日期
+  lastModified: string        // 最后修改日期
+  version: string             // 版本号
+  author: string              // 作者
+  description?: string        // 描述
+}
+
+// SLD设备配置参数
+export interface SLDConfigParams {
+  [key: string]: string | number | boolean
+}
 
 // SLD设备记录
 export interface SLDEquipment {
@@ -26,6 +47,14 @@ export interface SLDEquipment {
   specifications: string     // 规格型号
   manufacturer?: string      // 制造商
   remarks: string            // 备注
+  
+  // === XML结构扩展字段 ===
+  routeKM?: number           // 路由位置(km)
+  systemKM?: number          // 系统位置(含余量)
+  upstreamId?: string        // 上游连接设备ID
+  downstreamId?: string      // 下游连接设备ID
+  branchId?: string          // 分支ID (BU专用)
+  configParams?: SLDConfigParams  // 配置参数键值对
 }
 
 // SLD光纤段

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRPLStore, useAppStore } from '@/stores'
+import { exportRPLFile } from '@/services'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { 
   Table, 
@@ -112,27 +113,9 @@ const handleValidate = () => {
 }
 
 const handleExportCSV = () => {
-  const csv = rplStore.exportToCSV()
-  if (!csv) return
-  
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `${currentTable.value?.name || 'RPL'}_${Date.now()}.csv`
-  link.click()
-  appStore.showNotification({ type: 'success', message: '导出成功' })
-}
-
-const handleExportJSON = () => {
-  const json = rplStore.exportToJSON()
-  if (!json) return
-  
-  const blob = new Blob([json], { type: 'application/json' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `${currentTable.value?.name || 'RPL'}_${Date.now()}.json`
-  link.click()
-  appStore.showNotification({ type: 'success', message: '导出成功' })
+  if (!currentTable.value) return
+  exportRPLFile(currentTable.value, 'csv')
+  appStore.showNotification({ type: 'success', message: '导出CSV成功' })
 }
 
 
@@ -246,16 +229,10 @@ const someSelected = computed(() =>
             验证
           </Button>
         </div>
-        <div class="flex items-center gap-2">
-          <Button variant="outline" size="sm" @click="handleExportCSV">
-            <Download class="w-4 h-4 mr-1" />
-            导出CSV
-          </Button>
-          <Button variant="outline" size="sm" @click="handleExportJSON">
-            <Download class="w-4 h-4 mr-1" />
-            导出JSON
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" @click="handleExportCSV">
+          <Download class="w-4 h-4 mr-1" />
+          导出 CSV
+        </Button>
       </div>
 
       <!-- 筛选面板 -->

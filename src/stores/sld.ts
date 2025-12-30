@@ -334,46 +334,6 @@ export const useSLDStore = defineStore('sld', () => {
     return map[pointType] || 'JOINT'
   }
 
-  // 导出CSV
-  function exportEquipmentsToCSV(): string {
-    if (!currentTable.value) return ''
-    
-    const headers = ['序号', '名称', '类型', '位置', 'KP(km)', '经度', '纬度', '水深(m)', '规格型号', '备注']
-    const rows = currentTable.value.equipments.map(e => [
-      e.sequence,
-      e.name,
-      e.type,
-      e.location,
-      e.kp.toFixed(3),
-      e.longitude.toFixed(6),
-      e.latitude.toFixed(6),
-      e.depth.toFixed(1),
-      e.specifications,
-      e.remarks,
-    ])
-    
-    return [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
-  }
-
-  function exportSegmentsToCSV(): string {
-    if (!currentTable.value) return ''
-    
-    const headers = ['序号', '起始设备', '终止设备', '长度(km)', '光纤对数', '电缆类型', '衰减(dB/km)', '总损耗(dB)', '备注']
-    const rows = currentTable.value.fiberSegments.map(s => [
-      s.sequence,
-      s.fromName,
-      s.toName,
-      s.length.toFixed(3),
-      s.fiberPairs,
-      s.cableType,
-      s.attenuation.toFixed(2),
-      s.totalLoss.toFixed(2),
-      s.remarks,
-    ])
-    
-    return [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
-  }
-
   // 初始化加载mock数据
   function initMockData() {
     if (tables.value.length === 0) {
@@ -459,7 +419,5 @@ export const useSLDStore = defineStore('sld', () => {
     updateTransmissionParams,
     validateTable,
     generateFromRPL,
-    exportEquipmentsToCSV,
-    exportSegmentsToCSV,
   }
 })
