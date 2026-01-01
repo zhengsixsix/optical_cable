@@ -442,6 +442,45 @@ export const cableTypeOptions = [
   { value: 'SAS', label: 'SAS - 单铠装加强' },
 ]
 
+// 海缆规格选项 - 用于线段详情弹窗
+export const cableSpecOptions = [
+  { value: 'LPA-1500', label: 'LPA-1500 (轻型)', category: 'LPA' as const, unitPrice: 28 },
+  { value: 'LPA-2000', label: 'LPA-2000 (轻型)', category: 'LPA' as const, unitPrice: 32 },
+  { value: 'LPA-2500', label: 'LPA-2500 (轻型)', category: 'LPA' as const, unitPrice: 38 },
+  { value: 'HPA-1500', label: 'HPA-1500 (铠装)', category: 'HPA' as const, unitPrice: 45 },
+  { value: 'HPA-2000', label: 'HPA-2000 (铠装)', category: 'HPA' as const, unitPrice: 52 },
+  { value: 'HPA-2500', label: 'HPA-2500 (铠装)', category: 'HPA' as const, unitPrice: 60 },
+]
+
+// 根据水深推荐海缆类型
+export function getRecommendedCableType(depth: number): string {
+  if (depth > 1500) return 'LPA-1500'
+  if (depth > 800) return 'LPA-2000'
+  if (depth > 200) return 'HPA-1500'
+  return 'HPA-2000'
+}
+
+// 计算推荐敷设余量 (根据路径长度)
+export function getRecommendedSlack(routeLength: number): number {
+  // 余量率约 5%
+  return Number((routeLength * 0.05).toFixed(2))
+}
+
+// 计算推荐敷设长度
+export function getRecommendedCableLength(routeLength: number): number {
+  return Number((routeLength * 1.05).toFixed(2))
+}
+
+// 计算成本
+export function calculateSegmentCost(cableType: string, cableLength: number) {
+  const spec = cableSpecOptions.find(s => s.value === cableType)
+  const unitPrice = spec?.unitPrice || 30
+  const materialCost = Number((unitPrice * cableLength).toFixed(2))
+  const installationCost = Number((materialCost * 0.3).toFixed(2)) // 施工成本约为材料成30%
+  const totalCost = Number((materialCost + installationCost).toFixed(2))
+  return { materialCost, installationCost, totalCost }
+}
+
 // 电缆类型选项 (简化版 - 用于 RPLRecordDialog/SLDSegmentDialog)
 export const cableTypeOptionsSimple = [
   { value: 'LW', label: 'LW (轻型)' },
