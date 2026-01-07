@@ -3,7 +3,7 @@
  * 支持 .ucp (路由规划工程) 和 .use (传输系统规划工程) 格式
  */
 
-import { useRouteStore, useRPLStore, useSLDStore, useSettingsStore, useUserStore } from '@/stores'
+import { useRouteStore, useRPLStore, useSLDStore, useSettingsStore, useUserStore, useConnectorStore, useMonitorStore, useLayerStore } from '@/stores'
 
 // 图层设置接口
 interface LayerSettings {
@@ -24,9 +24,9 @@ interface ComponentLibrary {
 // 路径规划配置
 interface RoutePlanningConfig {
   planningMode: 'manual' | 'auto' | 'hybrid'  // 规划模式
-  startCoordinate?: { lon: number; lat: number }  // 起点坐标
-  endCoordinate?: { lon: number; lat: number }    // 终点坐标
-  multiPointFile?: string       // 多点文件路径
+  startCoordinate: { lon: number; lat: number } | null  // 起点坐标
+  endCoordinate: { lon: number; lat: number } | null    // 终点坐标
+  multiPointFile: string | null       // 多点文件路径
   avoidanceZones: any[]         // 规避区域
   preferredDepthRange: [number, number]  // 首选水深范围
 }
@@ -199,16 +199,19 @@ class ProjectFileService {
     const rplStore = useRPLStore()
     const settingsStore = useSettingsStore()
     const userStore = useUserStore()
+    const connectorStore = useConnectorStore()
+    const monitorStore = useMonitorStore()
+    const layerStore = useLayerStore()
     const userId = userStore.currentUser?.id || ''
 
-    // 默认图层设置
-    const defaultLayerSettings: LayerSettings = {
-      oceanElevation: true,
-      volcanoDistribution: false,
-      fishingAreaDistribution: false,
-      slopeMap: false,
-      earthquakeDistribution: true,
-      shippingLanes: true,
+    // 从 layerStore 获取当前图层可见性设置
+    const layerSettings: LayerSettings = {
+      oceanElevation: layerStore.getLayerVisible('elevation'),
+      volcanoDistribution: layerStore.getLayerVisible('volcano'),
+      fishingAreaDistribution: layerStore.getLayerVisible('fishing'),
+      slopeMap: layerStore.getLayerVisible('slope'),
+      earthquakeDistribution: layerStore.getLayerVisible('earthquake'),
+      shippingLanes: layerStore.getLayerVisible('shipping'),
     }
 
     // 默认器件库配置
@@ -217,12 +220,31 @@ class ProjectFileService {
       customComponents: [],
     }
 
-    // 默认路径规划配置
-    const defaultPlanningConfig: RoutePlanningConfig = {
-      planningMode: 'manual',
-      avoidanceZones: [],
-      preferredDepthRange: [200, 4000],
-      ...(settingsStore.routePlanningConfig || {}),
+    // 路径规划配置
+    const planningConfig: RoutePlanningConfig = {
+      planningMode: settingsStore.routePlanningConfig?.planningMode || 'manual',
+      startCoordinate: settingsStore.routePlanningConfig?.startCoordinate || null,
+      endCoordinate: settingsStore.routePlanningConfig?.endCoordinate || null,
+      multiPointFile: settingsStore.routePlanningConfig?.multiPointFile || null,
+      avoidanceZones: settingsStore.routePlanningConfig?.avoidanceZones || [],
+      preferredDepthRange: settingsStore.routePlanningConfig?.preferredDepthRange || [200, 4000],
+    }
+
+    // 传输系统配置
+    const transmissionConfig: TransmissionConfig = {
+      channelCount: settingsStore.transmissionConfig?.channelCount || 96,
+      centerWavelength: settingsStore.transmissionConfig?.centerWavelength || 1550,
+      channelBandwidth: settingsStore.transmissionConfig?.channelBandwidth || 50,
+      calculationModel: settingsStore.transmissionConfig?.calculationModel || 'GN-Model',
+    }
+
+    // 监控系统配置
+    const monitoringConfig: MonitoringConfig = {
+      dataSourceType: settingsStore.monitoringConfig?.dataSourceType || 'websocket',
+      connectionAddress: settingsStore.monitoringConfig?.connectionAddress || '',
+      opticalPowerThreshold: settingsStore.monitoringConfig?.opticalPowerThreshold || -30,
+      temperatureThreshold: settingsStore.monitoringConfig?.temperatureThreshold || 45,
+      berThreshold: settingsStore.monitoringConfig?.berThreshold || 1e-9,
     }
 
     return {
@@ -234,18 +256,19 @@ class ProjectFileService {
       name,  // 兼容旧字段
       creatorUserId: userId,
       creatorId: userId,  // 兼容旧字段
+      serverDirectory: '',  // 项目在服务器目录
       allowOtherUsers,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       
-      // 文件引用
-      rplFiles: [],
+      // RPL文件列表（单文件模式下直接存数据）
+      rplFiles: rplStore.tables.map(t => t.name),
       
       // 路由规划数据
       routePlanning: {
         routes: routeStore.routes,
         rplTables: rplStore.tables,
-        planningConfig: defaultPlanningConfig,
+        planningConfig,
       },
       
       // GIS数据
@@ -258,7 +281,7 @@ class ProjectFileService {
       },
       
       // 图层设置
-      layerSettings: defaultLayerSettings,
+      layerSettings,
       
       // 器件库配置
       componentLibrary: defaultComponentLibrary,
@@ -268,7 +291,22 @@ class ProjectFileService {
         cableTypes: settingsStore.cableTypes || [],
         costFactors: settingsStore.costFactors || {},
       },
-    }
+      
+      // 传输系统配置
+      transmissionConfig,
+      
+      // 监控系统配置
+      monitoringConfig,
+      
+      // Connector 数据
+      connectorTables: connectorStore.tables,
+      
+      // Monitor 数据
+      monitorData: {
+        devices: monitorStore.devices,
+        alarmHistory: monitorStore.alarmHistory,
+      },
+    } as UCPProject
   }
 
   // 创建新的USE项目
@@ -474,15 +512,7 @@ class ProjectFileService {
   closeProject(): void {
     this.currentProject = null
     this.isDirty = false
-    
-    // 清空 stores
-    const routeStore = useRouteStore()
-    const rplStore = useRPLStore()
-    const sldStore = useSLDStore()
-    
-    routeStore.routes = []
-    rplStore.tables = []
-    sldStore.tables = []
+    // 注意：store 的清空由 projectDataStore.clearProjectData() 处理
   }
 
   // 加载项目数据到stores
@@ -490,6 +520,8 @@ class ProjectFileService {
     const routeStore = useRouteStore()
     const rplStore = useRPLStore()
     const settingsStore = useSettingsStore()
+    const connectorStore = useConnectorStore()
+    const monitorStore = useMonitorStore()
     
     // 恢复路由数据
     if (project.routePlanning?.routes) {
@@ -499,6 +531,24 @@ class ProjectFileService {
     // 恢复RPL数据
     if (project.routePlanning?.rplTables) {
       rplStore.tables = project.routePlanning.rplTables
+      // 选中第一个表格
+      if (rplStore.tables.length > 0) {
+        rplStore.currentTableId = rplStore.tables[0].id
+      }
+    }
+    
+    // 恢复 Connector 数据
+    if ((project as any).connectorTables) {
+      connectorStore.tables = (project as any).connectorTables
+      if (connectorStore.tables.length > 0) {
+        connectorStore.currentTableId = connectorStore.tables[0].id
+      }
+    }
+    
+    // 恢复 Monitor 数据
+    if ((project as any).monitorData) {
+      monitorStore.devices = (project as any).monitorData.devices || []
+      monitorStore.alarmHistory = (project as any).monitorData.alarmHistory || []
     }
     
     // 恢复规划配置
@@ -509,8 +559,20 @@ class ProjectFileService {
       Object.assign(settingsStore.routePlanningConfig, project.routePlanning.planningConfig)
     }
     
-    // 恢复图层设置
+    // 恢复图层设置并同步到 layerStore
     if (project.layerSettings) {
+      const layerStore = useLayerStore()
+      const ls = project.layerSettings
+      
+      // 同步到 layerStore
+      layerStore.setLayerVisible('elevation', ls.oceanElevation ?? false)
+      layerStore.setLayerVisible('volcano', ls.volcanoDistribution ?? false)
+      layerStore.setLayerVisible('fishing', ls.fishingAreaDistribution ?? false)
+      layerStore.setLayerVisible('slope', ls.slopeMap ?? false)
+      layerStore.setLayerVisible('earthquake', ls.earthquakeDistribution ?? false)
+      layerStore.setLayerVisible('shipping', ls.shippingLanes ?? false)
+      
+      // 保存到 settingsStore
       if (!settingsStore.layerSettings) {
         (settingsStore as any).layerSettings = {}
       }

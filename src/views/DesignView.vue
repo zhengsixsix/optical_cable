@@ -6,13 +6,13 @@ import ConnectorPanel from '@/components/panels/ConnectorPanel.vue'
 import ConnectorDialog from '@/components/dialogs/ConnectorDialog.vue'
 import RepeaterConfigDialog from '@/components/dialogs/RepeaterConfigDialog.vue'
 import SystemDesignMap from '@/components/map/SystemDesignMap.vue'
-import { useSettingsStore, useAppStore, useConnectorStore } from '@/stores'
-import { mockReportData } from '@/data/mockData'
+import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore } from '@/stores'
 import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Link2, Send, FileText, Download, Edit3 } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 const connectorStore = useConnectorStore()
+const rplStore = useRPLStore()
 
 // 本地编辑状态
 const selectedCableType = ref('lw')
@@ -35,14 +35,17 @@ const repeaterTypeOptions = computed(() =>
 const repeaterSpacing = ref(80)
 const targetCapacity = ref(100)
 
-// 计算结果
+// 计算结果 - 从 rplStore 动态获取总长度
 const designResult = computed(() => {
   const cable = settingsStore.settings.cableTypes.find(c => c.id === selectedCableType.value)
   const repeater = settingsStore.settings.repeaterTypes.find(r => r.id === selectedRepeaterType.value)
 
   if (!cable || !repeater) return null
 
-  const totalLength = mockReportData.totalLength
+  // 从 RPL store 获取总长度，无数据时默认0
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  if (totalLength === 0) return null
+  
   const repeaterCount = Math.ceil(totalLength / repeaterSpacing.value)
   const cableCost = totalLength * cable.costPerKm
   const repeaterCost = repeaterCount * repeater.cost

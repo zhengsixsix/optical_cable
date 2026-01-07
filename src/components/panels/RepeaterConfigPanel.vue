@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useRouteStore, useAppStore } from '@/stores'
-import { mockRepeaterConfigs, repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
+import { useRouteStore, useAppStore, useRPLStore } from '@/stores'
+import { repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { 
   Radio, 
@@ -25,6 +25,7 @@ const emit = defineEmits<{
 
 const routeStore = useRouteStore()
 const appStore = useAppStore()
+const rplStore = useRPLStore()
 
 interface RepeaterConfig {
   id: string
@@ -49,27 +50,39 @@ const modelOptions = repeaterModelOptions
 const recommendedSpacing = repeaterSpacingConfig.recommended
 const maxSpacing = repeaterSpacingConfig.max
 
-function generateMockRepeaters() {
+// 从 RPL 数据生成中继器配置
+function generateRepeatersFromRPL() {
+  const records = rplStore.currentTable?.records || []
+  const repeaterRecords = records.filter(r => r.pointType === 'repeater')
+  
+  if (repeaterRecords.length === 0) {
+    repeaters.value = []
+    return
+  }
+  
   let prevKP = 0
-  repeaters.value = mockRepeaterConfigs.map((cfg, i) => {
-    const spacing = cfg.kp - prevKP
-    prevKP = cfg.kp
+  repeaters.value = repeaterRecords.map((rec, i) => {
+    const spacing = rec.kp - prevKP
+    prevKP = rec.kp
     return {
       id: `rep-${i}`,
       index: i,
-      name: cfg.name,
-      kp: cfg.kp,
-      longitude: cfg.longitude,
-      latitude: cfg.latitude,
-      depth: cfg.depth,
+      name: rec.remarks || `REP-${String(i + 1).padStart(2, '0')}`,
+      kp: rec.kp,
+      longitude: rec.longitude,
+      latitude: rec.latitude,
+      depth: rec.depth,
       spacing,
-      model: cfg.model,
-      gain: cfg.gain,
-      powerConsumption: cfg.powerConsumption,
-      remarks: '',
+      model: 'EREP-C+L',
+      gain: 15,
+      powerConsumption: 45,
+      remarks: rec.remarks || '',
     }
   })
 }
+
+// 是否有数据
+const hasData = computed(() => rplStore.currentTable !== null)
 
 function recalculateSpacing() {
   repeaters.value.sort((a, b) => a.kp - b.kp)
@@ -168,8 +181,8 @@ const avgSpacing = computed(() => {
 const maxSpacingValue = computed(() => Math.max(...repeaters.value.map(r => r.spacing), 0))
 const totalPower = computed(() => repeaters.value.reduce((sum, r) => sum + r.powerConsumption, 0))
 
-watch(() => props.routeId, () => {
-  generateMockRepeaters()
+watch(() => [props.routeId, rplStore.currentTable], () => {
+  generateRepeatersFromRPL()
 }, { immediate: true })
 </script>
 

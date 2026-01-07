@@ -4,7 +4,7 @@
  */
 
 import { ref, computed } from 'vue'
-import { useAppStore, useUserStore } from '@/stores'
+import { useAppStore, useUserStore, useProjectDataStore } from '@/stores'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata } from '@/services/ProjectFileService'
 
 // 保存提示对话框的用户选择
@@ -19,6 +19,7 @@ interface OpenProjectState {
 export function useProjectManager() {
   const appStore = useAppStore()
   const userStore = useUserStore()
+  const projectDataStore = useProjectDataStore()
   
   // 状态
   const openState = ref<OpenProjectState>({
@@ -128,6 +129,11 @@ export function useProjectManager() {
       }
       
       appStore.setCurrentProject(metadata)
+      
+      // 设置数据联动并标记已加载（文件数据已由 ProjectFileService.importProject 加载）
+      projectDataStore.setupDataLinks()
+      projectDataStore.markDataLoaded()
+      
       appStore.showNotification({
         type: 'success',
         message: `项目已打开：${metadata.name}`,
@@ -233,6 +239,8 @@ export function useProjectManager() {
   function closeProject(): void {
     projectFileService.closeProject()
     appStore.closeCurrentProject()
+    // 清空项目数据
+    projectDataStore.clearProjectData()
   }
   
   /**

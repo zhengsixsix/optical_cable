@@ -2,8 +2,7 @@
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { X, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-vue-next'
-import { useRouteStore, useSettingsStore, useAppStore } from '@/stores'
-import { mockReportData } from '@/data/mockData'
+import { useRouteStore, useSettingsStore, useAppStore, useRPLStore } from '@/stores'
 
 const props = defineProps<{
   visible: boolean
@@ -17,6 +16,7 @@ const emit = defineEmits<{
 const routeStore = useRouteStore()
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
+const rplStore = useRPLStore()
 
 const isGenerating = ref(false)
 
@@ -34,19 +34,23 @@ const planningStatus = computed(() => {
   }
 })
 
+// 从 rplStore 动态获取总长度
+const totalLength = computed(() => rplStore.currentTable?.metadata?.totalLength ?? 0)
+
 // 报告数据
 const costReportData = computed(() => {
   const cable = settingsStore.cableTypes[0]
   const repeater = settingsStore.repeaterTypes[0]
-  const totalLength = mockReportData.totalLength
-  const repeaterCount = Math.ceil(totalLength / 80)
+  const length = totalLength.value
+  const repeaterCount = length > 0 ? Math.ceil(length / 80) : 0
+  const vesselDays = length > 0 ? Math.ceil(length / 50) : 0 // 估算：每天铺设50km
   
   return {
-    cableCost: planningStatus.value.routePlanning ? totalLength * (cable?.costPerKm || 15000) : 0,
+    cableCost: planningStatus.value.routePlanning ? length * (cable?.costPerKm || 15000) : 0,
     repeaterCost: planningStatus.value.transmissionPlanning ? repeaterCount * (repeater?.cost || 500000) : 0,
-    laborCost: planningStatus.value.routePlanning ? totalLength * settingsStore.costFactors.laborCostPerKm : 0,
-    surveyingCost: planningStatus.value.routePlanning ? totalLength * settingsStore.costFactors.surveyingCostPerKm : 0,
-    vesselCost: planningStatus.value.routePlanning ? mockReportData.vesselDays * settingsStore.costFactors.vesselCostPerDay : 0,
+    laborCost: planningStatus.value.routePlanning ? length * settingsStore.costFactors.laborCostPerKm : 0,
+    surveyingCost: planningStatus.value.routePlanning ? length * settingsStore.costFactors.surveyingCostPerKm : 0,
+    vesselCost: planningStatus.value.routePlanning ? vesselDays * settingsStore.costFactors.vesselCostPerDay : 0,
   }
 })
 
@@ -59,11 +63,16 @@ const perfReportData = computed(() => {
       margin: null,
     }
   }
+  // 根据线路长度和配置估算性能指标
+  const length = totalLength.value
+  const estimatedGsnr = length > 0 ? Math.max(15, 30 - length / 100) : null // 简化估算
+  const estimatedMargin = length > 0 ? Math.max(1, 5 - length / 500) : null
+  
   return {
-    gsnr: mockReportData.perfData.gsnr,
+    gsnr: estimatedGsnr,
     capacity: settingsStore.transmissionConfig.channelCount * 100,
     wavelengths: settingsStore.transmissionConfig.channelCount,
-    margin: mockReportData.perfData.margin,
+    margin: estimatedMargin,
   }
 })
 

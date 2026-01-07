@@ -680,9 +680,14 @@ export const useRPLStore = defineStore('rpl', () => {
     })
   }
 
-  // 自动加载mock数据
-  initMockData()
-  setupDataLinkListener()
+  // 清空数据
+  function clearData() {
+    tables.value = []
+    currentTableId.value = null
+    selectedRecordIds.value = []
+    filter.value = {}
+    isEditing.value = false
+  }
 
   return {
     // State
@@ -714,5 +719,9 @@ export const useRPLStore = defineStore('rpl', () => {
     validateImportedRPL,
     generateFromRoute,
     importFromCSV,
+    // 项目数据管理
+    initMockData,
+    setupDataLinkListener,
+    clearData,
   }
 })

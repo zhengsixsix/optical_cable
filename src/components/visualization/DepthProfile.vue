@@ -31,7 +31,7 @@ const hoverInfo = ref({
   x: 0,
   y: 0,
   distance: 0,
-  depth: 0
+  elevation: 0  // 正值=海拔，负值=水深
 })
 
 // 加载剖面数据
@@ -213,7 +213,7 @@ const handleMouseMove = (e: MouseEvent) => {
     x: x + 10,
     y: y - 40,
     distance: nearestPoint.distance,
-    depth: Math.abs(nearestPoint.depth)
+    elevation: nearestPoint.depth  // 保留原始值，正=陆地，负=海洋
   }
 }
 
@@ -257,14 +257,15 @@ watch(() => props.extent, (newExtent) => {
     </div>
 
     <div v-if="!hasData && !loading" class="absolute inset-0 flex items-center justify-center text-gray-500 text-xs">
-      <span>框选区域后显示水深剖面</span>
+      <span>框选区域后显示地形剖面</span>
     </div>
 
     <div v-if="hoverInfo.visible"
       class="absolute bg-black/80 text-white px-2 py-1 rounded text-xs pointer-events-none z-10"
       :style="{ left: hoverInfo.x + 'px', top: hoverInfo.y + 'px' }">
       <div>距离: {{ hoverInfo.distance.toFixed(2) }} km</div>
-      <div>水深: {{ hoverInfo.depth.toFixed(1) }} m</div>
+      <div v-if="hoverInfo.elevation >= 0">海拔: {{ hoverInfo.elevation.toFixed(1) }} m</div>
+      <div v-else>水深: {{ Math.abs(hoverInfo.elevation).toFixed(1) }} m</div>
     </div>
   </div>
 </template>

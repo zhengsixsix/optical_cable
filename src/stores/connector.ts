@@ -164,9 +164,11 @@ export const useConnectorStore = defineStore('connector', () => {
     })
   }
 
-  // 自动加载mock数据
-  initMockData()
-  setupDataLinkListener()
+  // 清空数据
+  function clearData() {
+    tables.value = []
+    currentTableId.value = null
+  }
 
   // 删除表格
   function deleteTable(tableId: string) {
@@ -191,6 +193,10 @@ export const useConnectorStore = defineStore('connector', () => {
     updateElement,
     deleteElement,
     getElementsByType,
-    deleteTable
+    deleteTable,
+    // 项目数据管理
+    initMockData,
+    setupDataLinkListener,
+    clearData,
   }
 })

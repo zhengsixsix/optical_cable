@@ -138,10 +138,92 @@ const handleImportLibrary = () => {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = '.csv'
-  input.onchange = (e: Event) => {
+  input.onchange = async (e: Event) => {
     const file = (e.target as HTMLInputElement).files?.[0]
-    if (file) {
-      appStore.showNotification({ type: 'success', message: `器件库文件 ${file.name} 导入成功` })
+    if (!file) return
+    
+    try {
+      const text = await file.text()
+      const lines = text.split('\n').map(line => line.trim()).filter(line => line)
+      
+      let currentSection = ''
+      let headers: string[] = []
+      const fiberTypes: any[] = []
+      const amplifierTypes: any[] = []
+      const branchingUnitTypes: any[] = []
+      
+      for (const line of lines) {
+        // 检测分区标记
+        if (line.startsWith('[') && line.endsWith(']')) {
+          currentSection = line.slice(1, -1)
+          headers = []
+          continue
+        }
+        
+        const values = line.split(',').map(v => v.trim())
+        
+        // 第一行是表头
+        if (headers.length === 0) {
+          headers = values
+          continue
+        }
+        
+        // 解析数据行
+        const row: Record<string, any> = {}
+        headers.forEach((h, i) => {
+          const val = values[i] || ''
+          // 数字字段转换
+          row[h] = isNaN(Number(val)) ? val : Number(val)
+        })
+        
+        if (currentSection === 'FiberTypes' && row.name) {
+          fiberTypes.push({
+            id: `fiber-${Date.now()}-${fiberTypes.length}`,
+            name: row.name,
+            nonlinearCoeff: row.nonlinearCoeff || 0,
+            effectiveArea: row.effectiveArea || 0,
+            dispersion: row.dispersion || 0,
+            nonlinearRefractiveIndex: row.nonlinearRefractiveIndex || 0,
+            attenuationCoeff: row.attenuationCoeff || 0,
+            secondOrderDispersion: row.secondOrderDispersion || 0,
+            simulationModel: row.simulationModel || 'GN',
+          })
+        } else if (currentSection === 'AmplifierTypes' && row.name) {
+          amplifierTypes.push({
+            id: `amp-${Date.now()}-${amplifierTypes.length}`,
+            name: row.name,
+            gain: row.gain || 0,
+            bandwidth: row.bandwidth || 0,
+            gainFlatness: row.gainFlatness || 0,
+            noiseFigure: row.noiseFigure || 0,
+            pumpPower: row.pumpPower || 0,
+            outputPower: row.outputPower || 0,
+            gainRangePower: row.gainRangePower || 0,
+          })
+        } else if (currentSection === 'BranchingUnitTypes' && row.name) {
+          branchingUnitTypes.push({
+            id: `bu-${Date.now()}-${branchingUnitTypes.length}`,
+            name: row.name,
+            portCount: row.portCount || 0,
+            insertionLoss: row.insertionLoss || 0,
+            wavelengthRange: row.wavelengthRange || 0,
+          })
+        }
+      }
+      
+      // 更新 store
+      fiberTypes.forEach(f => settingsStore.addFiberType(f))
+      amplifierTypes.forEach(a => settingsStore.addAmplifierType(a))
+      branchingUnitTypes.forEach(b => settingsStore.addBranchingUnitType(b))
+      settingsStore.currentLibraryFile = file.name
+      
+      const total = fiberTypes.length + amplifierTypes.length + branchingUnitTypes.length
+      appStore.showNotification({ 
+        type: 'success', 
+        message: `器件库导入成功：光纤${fiberTypes.length}种，放大器${amplifierTypes.length}种，分支器${branchingUnitTypes.length}种` 
+      })
+    } catch (err) {
+      appStore.showNotification({ type: 'error', message: 'CSV文件解析失败' })
     }
   }
   input.click()
@@ -598,7 +680,7 @@ const handleReset = () => {
               <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">器件库管理</h3>
               <div class="flex items-center justify-center gap-4 mb-4">
                 <span class="text-sm text-gray-600">当前器件库文件：</span>
-                <span class="text-sm text-gray-800 font-medium">{{ settingsStore.currentLibraryFile }}</span>
+                <span class="text-sm text-gray-800 font-medium">{{ settingsStore.currentLibraryFile || '未导入' }}</span>
               </div>
               <div class="flex justify-center gap-4">
                 <Button variant="outline" @click="handleImportLibrary">导入器件库</Button>
@@ -664,6 +746,9 @@ const handleReset = () => {
                       </tr>
                     </thead>
                     <tbody>
+                      <tr v-if="settingsStore.fiberTypes.length === 0">
+                        <td colspan="8" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                      </tr>
                       <tr v-for="fiber in settingsStore.fiberTypes" :key="fiber.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
                         <td class="px-3 py-2">{{ fiber.name }}</td>
@@ -709,6 +794,9 @@ const handleReset = () => {
                       </tr>
                     </thead>
                     <tbody>
+                      <tr v-if="settingsStore.amplifierTypes.length === 0">
+                        <td colspan="9" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                      </tr>
                       <tr v-for="amp in settingsStore.amplifierTypes" :key="amp.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
                         <td class="px-3 py-2">{{ amp.name }}</td>
@@ -751,6 +839,9 @@ const handleReset = () => {
                       </tr>
                     </thead>
                     <tbody>
+                      <tr v-if="settingsStore.branchingUnitTypes.length === 0">
+                        <td colspan="5" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                      </tr>
                       <tr v-for="bu in settingsStore.branchingUnitTypes" :key="bu.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
                         <td class="px-3 py-2">{{ bu.name }}</td>

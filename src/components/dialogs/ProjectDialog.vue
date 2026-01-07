@@ -96,15 +96,9 @@ const dialogWidth = computed(() => {
 })
 
 // 文件选择器引用
-const folderInputRef = ref<HTMLInputElement | null>(null)
 const rplInputRef = ref<HTMLInputElement | null>(null)
 const layerInputRef = ref<HTMLInputElement | null>(null)
 const currentBrowseItem = ref<LayerItem | null>(null)
-
-// 浏览文件夹（项目保存地址）
-const handleBrowsePath = () => {
-  folderInputRef.value?.click()
-}
 
 // 浏览RPL文件
 const handleBrowseRpl = () => {
@@ -115,19 +109,6 @@ const handleBrowseRpl = () => {
 const handleBrowseLayer = (item: LayerItem) => {
   currentBrowseItem.value = item
   layerInputRef.value?.click()
-}
-
-// 文件夹选择回调
-const handleFolderSelected = (e: Event) => {
-  const target = e.target as HTMLInputElement
-  if (target.files && target.files.length > 0) {
-    // 获取文件夹路径（从第一个文件的webkitRelativePath提取）
-    const file = target.files[0]
-    const relativePath = (file as any).webkitRelativePath || ''
-    const folderName = relativePath.split('/')[0] || file.name
-    savePath.value = folderName
-  }
-  target.value = ''
 }
 
 // RPL文件选择回调
@@ -177,14 +158,6 @@ const handleSubmit = async () => {
 
 <template>
   <Teleport to="body">
-    <!-- 文件夹选择器（项目保存地址） -->
-    <input
-      ref="folderInputRef"
-      type="file"
-      class="hidden"
-      webkitdirectory
-      @change="handleFolderSelected"
-    >
     <!-- RPL文件选择器 -->
     <input
       ref="rplInputRef"
@@ -261,23 +234,6 @@ const handleSubmit = async () => {
                 <button 
                   class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded transition-colors whitespace-nowrap"
                   @click="handleBrowseRpl"
-                >
-                  浏览
-                </button>
-              </div>
-              <!-- 项目保存地址 -->
-              <div class="flex items-center gap-3">
-                <label class="w-[110px] text-sm text-gray-600 shrink-0">项目保存地址：</label>
-                <input 
-                  v-model="savePath"
-                  type="text" 
-                  readonly
-                  placeholder="请选择保存目录"
-                  class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm bg-gray-50 cursor-default"
-                >
-                <button 
-                  class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded transition-colors whitespace-nowrap"
-                  @click="handleBrowsePath"
                 >
                   浏览
                 </button>

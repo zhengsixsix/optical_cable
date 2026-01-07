@@ -192,9 +192,12 @@ export const useMonitorStore = defineStore('monitor', () => {
     })
   }
 
-  // 初始化
-  initMockData()
-  setupDataLinkListener()
+  // 清空数据
+  function clearData() {
+    devices.value = []
+    alarmHistory.value = []
+    selectedDeviceId.value = null
+  }
 
   return {
     // State
@@ -216,5 +219,9 @@ export const useMonitorStore = defineStore('monitor', () => {
     acknowledgeAlarm,
     getActiveAlarms,
     getAlarmHistory,
+    // 项目数据管理
+    initMockData,
+    setupDataLinkListener,
+    clearData,
   }
 })

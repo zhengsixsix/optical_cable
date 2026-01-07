@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouteStore, useMapStore, useAppStore } from '@/stores'
-import { mockEditableRoutePoints } from '@/data/mockData'
+import { useRouteStore, useMapStore, useAppStore, useRPLStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { 
   Edit3, 
@@ -32,6 +31,7 @@ const emit = defineEmits<{
 const routeStore = useRouteStore()
 const mapStore = useMapStore()
 const appStore = useAppStore()
+const rplStore = useRPLStore()
 
 interface EditablePoint {
   id: string
@@ -81,23 +81,34 @@ function initPoints() {
       isNew: false,
     }))
   } else {
-    generateMockPoints()
+    // 从 RPL 数据生成点位
+    generatePointsFromRPL()
   }
   saveHistory('初始化')
 }
 
-function generateMockPoints() {
-  points.value = mockEditableRoutePoints.map((p, index) => ({
+// 从 RPL 记录生成可编辑点位
+function generatePointsFromRPL() {
+  const records = rplStore.currentTable?.records || []
+  if (records.length === 0) {
+    points.value = []
+    return
+  }
+  
+  points.value = records.map((rec, index) => ({
     id: `point-${index}`,
     index,
-    coordinates: p.coords,
-    type: p.type as EditablePoint['type'],
-    name: p.name,
+    coordinates: [rec.longitude, rec.latitude] as [number, number],
+    type: rec.pointType as EditablePoint['type'],
+    name: rec.remarks || undefined,
     isDragging: false,
     isSelected: false,
     isNew: false,
   }))
 }
+
+// 是否有数据
+const hasData = computed(() => points.value.length > 0 || rplStore.currentTable !== null)
 
 function saveHistory(action: string) {
   // 删除当前位置之后的历史
