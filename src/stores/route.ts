@@ -12,6 +12,7 @@ export const useRouteStore = defineStore('route', () => {
   const currentRouteId = ref<string | null>(null)
   const selectedSegmentId = ref<string | null>(null)
   const paretoRoutes = ref<Route[]>([])
+  const selectedRouteIds = ref<string[]>([])  // 多选路径ID数组
 
   // Getters
   const currentRoute = computed(() =>
@@ -78,6 +79,36 @@ export const useRouteStore = defineStore('route', () => {
 
   function selectSegment(segmentId: string | null) {
     selectedSegmentId.value = segmentId
+  }
+
+  /**
+   * 切换路径选中状态（多选）
+   */
+  function toggleRouteSelection(routeId: string) {
+    const index = selectedRouteIds.value.indexOf(routeId)
+    if (index > -1) {
+      selectedRouteIds.value.splice(index, 1)
+    } else {
+      selectedRouteIds.value.push(routeId)
+    }
+  }
+
+  /**
+   * 全选/取消全选路径
+   */
+  function selectAllRoutes(select: boolean) {
+    if (select) {
+      selectedRouteIds.value = paretoRoutes.value.map(r => r.id)
+    } else {
+      selectedRouteIds.value = []
+    }
+  }
+
+  /**
+   * 检查路径是否被选中
+   */
+  function isRouteSelected(routeId: string): boolean {
+    return selectedRouteIds.value.includes(routeId)
   }
 
 
@@ -154,12 +185,16 @@ export const useRouteStore = defineStore('route', () => {
     currentRouteId,
     selectedSegmentId,
     paretoRoutes,
+    selectedRouteIds,
     currentRoute,
     selectedRoute,
     selectedSegment,
     loadRoutes,
     selectRoute,
     selectSegment,
+    toggleRouteSelection,
+    selectAllRoutes,
+    isRouteSelected,
     generateMockParetoRoutes,
     clearParetoRoutes,
   }

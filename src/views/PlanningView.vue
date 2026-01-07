@@ -6,30 +6,18 @@ import RouteStats from '@/components/panels/RouteStats.vue'
 import MapArea from '@/components/map/MapArea.vue'
 import LogPanel from '@/components/panels/LogPanel.vue'
 import RightPanel from '@/components/panels/RightPanel.vue'
-import ParetoPanel from '@/components/panels/ParetoPanel.vue'
 import ImportGisDialog from '@/components/dialogs/ImportGisDialog.vue'
-import { useAppStore, useRouteStore } from '@/stores'
+import { useAppStore } from '@/stores'
 
 const appStore = useAppStore()
-const routeStore = useRouteStore()
 const selectedExtent = ref<[number, number, number, number] | undefined>()
 const showImportGisDialog = ref(false)
 
 // 从 store 获取面板显示状态
 const panelVisibility = computed(() => appStore.panelVisibility)
 
-// 是否有 Pareto 路径数据
-const hasParetoRoutes = computed(() => routeStore.paretoRoutes.length > 0)
-
-// ParetoPanel 折叠状态
-const paretoPanelCollapsed = ref(false)
-
 const handleAreaSelected = (extent: [number, number, number, number]) => {
   selectedExtent.value = extent
-}
-
-const handleSelectRoute = (routeId: string) => {
-  console.log('选中路径:', routeId)
 }
 </script>
 
@@ -45,18 +33,8 @@ const handleSelectRoute = (routeId: string) => {
     </template>
 
     <template #center>
-      <!-- 地图容器 (相对定位，用于承载 ParetoPanel) -->
-      <div class="flex-1 relative flex flex-col min-h-0">
-        <MapArea class="flex-1" @area-selected="handleAreaSelected" />
-        
-        <!-- Pareto 路径列表面板 (地图右上角浮动) -->
-        <ParetoPanel 
-          v-if="hasParetoRoutes"
-          v-model:collapsed="paretoPanelCollapsed"
-          @select-route="handleSelectRoute"
-        />
-      </div>
-      
+      <!-- 地图容器 (ParetoPanel已移入MapArea内部) -->
+      <MapArea class="flex-1" @area-selected="handleAreaSelected" />
       <LogPanel v-if="panelVisibility.logPanel" />
     </template>
 

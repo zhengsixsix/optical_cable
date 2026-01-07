@@ -7,6 +7,11 @@ import {
   Play, Pause, Loader2, Settings, FileSpreadsheet
 } from 'lucide-vue-next'
 
+// 新增组件导入
+import ParetoPanel from '@/components/panels/ParetoPanel.vue'
+import ParetoFrontierDialog from '@/components/dialogs/ParetoFrontierDialog.vue'
+import SegmentDetailDialog from '@/components/dialogs/SegmentDetailDialog.vue'
+
 // OpenLayers imports
 import Map from 'ol/Map'
 import View from 'ol/View'
@@ -55,6 +60,11 @@ const isEditingRoute = ref(false)
 const selectedPointFeature = ref<Feature | null>(null)
 const settingsStore = useSettingsStore()
 const isDraggingPoint = ref(false)
+
+// 新增弹窗状态
+const showParetoFrontierDialog = ref(false)
+const showSegmentDetailDialog = ref(false)
+const currentSegment = ref<{ id: string; length: number; depth: number } | null>(null)
 
 let map: Map | null = null
 let dragBox: DragBox | null = null
@@ -301,6 +311,29 @@ const openSegmentPanel = () => {
   appStore.showNotification({ type: 'info', message: '分段参数配置面板已打开' })
 }
 
+// 查看Pareto前沿图
+const handleViewParetoChart = () => {
+  showParetoFrontierDialog.value = true
+}
+
+// 选择路径事件
+const handleSelectRoute = (routeId: string) => {
+  // 重绘路径以更新选中状态
+  drawParetoRoutes()
+}
+
+// 打开线段详情弹窗
+const openSegmentDetailDialog = (segmentId: string, length: number, depth: number) => {
+  currentSegment.value = { id: segmentId, length, depth }
+  showSegmentDetailDialog.value = true
+}
+
+// 保存线段详情
+const handleSegmentSave = (data: any) => {
+  appStore.showNotification({ type: 'success', message: `线段 ${data.segmentId} 参数已保存` })
+  appStore.addLog('INFO', `线段参数已保存: ${JSON.stringify(data)}`)
+}
+
 const initMap = () => {
   if (!mapContainer.value) return
 
@@ -405,6 +438,32 @@ const initMap = () => {
     mapStore.setSelectedExtent(extent3857)
     emit('area-selected', extent3857)
     disableBoxSelect()
+  })
+
+  // 右键事件 - 路径线段详情
+  mapContainer.value.addEventListener('contextmenu', (evt: MouseEvent) => {
+    if (!map || !routeLayer || !isPlanning.value) return
+    
+    evt.preventDefault()
+    const pixel = map.getEventPixel(evt)
+    
+    // 检查是否右键了路径线
+    const features = map.getFeaturesAtPixel(pixel, {
+      layerFilter: layer => layer === routeLayer
+    })
+    
+    if (features && features.length > 0) {
+      const lineFeature = features.find(f => f.getGeometry()?.getType() === 'LineString')
+      if (lineFeature) {
+        const routeId = lineFeature.get('routeId')
+        const route = routeStore.paretoRoutes.find(r => r.id === routeId)
+        if (route && route.segments.length > 0) {
+          // 取第一个线段作为示例
+          const segment = route.segments[0]
+          openSegmentDetailDialog(segment.id, segment.length, segment.depth)
+        }
+      }
+    }
   })
 
   // 加载并渲染火山数据
@@ -825,8 +884,8 @@ const handleStopPlanning = () => {
   // 清除 store 中的路径数据
   routeStore.clearParetoRoutes()
 
-  // 关闭 Pareto 分析面板
-  appStore.setPanelVisible('paretoAnalysisPanel', false)
+  // 关闭 Pareto 分析面板（已用新组件替代）
+  // appStore.setPanelVisible('paretoAnalysisPanel', false)
 
   // 更新状态
   isPlanning.value = false
@@ -863,9 +922,9 @@ const handleRunPlanning = () => {
     enabledLayers.push('地震')
   }
 
-  // 生成三条 Pareto 路径并显示分析面板
+  // 生成三条 Pareto 路径（新ParetoPanel会自动显示）
   routeStore.generateMockParetoRoutes()
-  appStore.setPanelVisible('paretoAnalysisPanel', true)
+  // appStore.setPanelVisible('paretoAnalysisPanel', true)  // 已用新组件替代
 
   // 在地图上绘制路径
   drawParetoRoutes()
@@ -990,6 +1049,13 @@ onUnmounted(() => {
         <span>纬度: {{ coordinates.lat.toFixed(4) }}°</span>
       </div>
 
+      <!-- Pareto路径列表面板 -->
+      <ParetoPanel
+        v-if="isPlanning"
+        @view-pareto-chart="handleViewParetoChart"
+        @select-route="handleSelectRoute"
+      />
+
       <!-- 高程图例 -->
       <div class="absolute bottom-5 right-5 bg-white/95 p-3 rounded-md shadow z-10">
         <div class="text-xs font-semibold text-gray-700 mb-2 text-center">高程 (m)</div>
@@ -1014,5 +1080,19 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Pareto前沿图弹窗 -->
+    <ParetoFrontierDialog
+      v-model:visible="showParetoFrontierDialog"
+    />
+
+    <!-- 线段详情弹窗 -->
+    <SegmentDetailDialog
+      v-model:visible="showSegmentDetailDialog"
+      :segment-id="currentSegment?.id || ''"
+      :route-length="currentSegment?.length || 0"
+      :depth="currentSegment?.depth || 1000"
+      @save="handleSegmentSave"
+    />
   </div>
 </template>
