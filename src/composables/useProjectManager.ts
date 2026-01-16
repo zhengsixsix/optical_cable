@@ -117,18 +117,11 @@ export function useProjectManager() {
         return result
       }
       
-      // 成功打开
-      const project = result.project!
-      const metadata: ProjectMetadata = {
-        name: project.name || project.projectName,
-        path: file.name,
-        type: project.type,
-        lastModified: project.updatedAt,
-        creatorId: project.creatorId || project.creatorUserId,
-        allowOtherUsers: project.allowOtherUsers,
+      // 成功打开 - 从 projectFileService 获取元数据
+      const currentProject = projectFileService.getCurrentProject()
+      if (currentProject) {
+        appStore.setCurrentProject(currentProject)
       }
-      
-      appStore.setCurrentProject(metadata)
       
       // 设置数据联动并标记已加载（文件数据已由 ProjectFileService.importProject 加载）
       projectDataStore.setupDataLinks()
@@ -136,7 +129,7 @@ export function useProjectManager() {
       
       appStore.showNotification({
         type: 'success',
-        message: `项目已打开：${metadata.name}`,
+        message: `项目已打开：${currentProject?.name || file.name}`,
       })
       
       return result
@@ -160,7 +153,7 @@ export function useProjectManager() {
     isProcessing.value = true
     
     try {
-      const success = projectFileService.saveProject()
+      const success = await projectFileService.saveProject()
       
       if (success) {
         appStore.markProjectSaved()
@@ -195,20 +188,15 @@ export function useProjectManager() {
     isProcessing.value = true
     
     try {
-      const projectType = currentProjectType.value || 'ucp'
-      
-      // 根据项目类型导出
-      if (projectType === 'use') {
-        projectFileService.exportUSE(projectName)
-      } else {
-        projectFileService.exportUCP(projectName)
-      }
+      // 导出 USE 格式
+      await projectFileService.exportUSE(projectName)
       
       // 更新当前项目信息
       const newMetadata: ProjectMetadata = {
         name: projectName,
-        path: `${savePath}/${projectName}.${projectType}`,
-        type: projectType,
+        path: `${savePath}/${projectName}.use`,
+        type: 'use',
+        uuid: '',
         lastModified: new Date().toISOString(),
         creatorId: userStore.currentUser?.id || '',
         allowOtherUsers: false,

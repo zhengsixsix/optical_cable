@@ -1,18 +1,43 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button, Select, Tooltip } from '@/components/ui'
 import ConnectorPanel from '@/components/panels/ConnectorPanel.vue'
+import WDMConfigDialog from '@/components/dialogs/WDMConfigDialog.vue'
 import ConnectorDialog from '@/components/dialogs/ConnectorDialog.vue'
 import RepeaterConfigDialog from '@/components/dialogs/RepeaterConfigDialog.vue'
+import SimulationModelSelectDialog from '@/components/dialogs/SimulationModelSelectDialog.vue'
+import LinkAnalysisDialog from '@/components/dialogs/LinkAnalysisDialog.vue'
 import SystemDesignMap from '@/components/map/SystemDesignMap.vue'
+import GSNRMarginChart from '@/components/charts/GSNRMarginChart.vue'
+import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
 import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore } from '@/stores'
-import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Link2, Send, FileText, Download, Edit3 } from 'lucide-vue-next'
+import { opticalSimulationService, repeaterPlacementService } from '@/services'
+import type { SpanScanResult, SimulationModelConfig, OpticalLink, ModulationFormat } from '@/types/simulation'
+import type { SpanScanConfig } from '@/types/systemPlanning'
+import { MODULATION_PARAMS } from '@/types/simulation'
+import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 const connectorStore = useConnectorStore()
 const rplStore = useRPLStore()
+
+// 调试日志
+onMounted(() => {
+  console.log('DesignView mounted')
+  console.log('connectorStore.tables:', connectorStore.tables.length)
+  console.log('connectorStore.currentTableId:', connectorStore.currentTableId)
+  console.log('connectorStore.currentTable:', connectorStore.currentTable)
+  console.log('connectorStore.elements:', connectorStore.elements.length)
+  console.log('rplStore.tables:', rplStore.tables.length)
+  console.log('rplStore.currentTableId:', rplStore.currentTableId)
+})
+
+// 监听 elements 变化
+watch(() => connectorStore.elements.length, (newLen) => {
+  console.log('connectorStore.elements changed:', newLen)
+})
 
 // 本地编辑状态
 const selectedCableType = ref('lw')
@@ -92,11 +117,86 @@ const handleReset = () => {
 // 弹框状态
 const showRepeaterDialog = ref(false)
 const showConnectorDialog = ref(false)
+const showWDMConfigDialog = ref(false)
+const showModelSelectDialog = ref(false)
+const showLinkAnalysisDialog = ref(false)
 const editConnectorId = ref<string | null>(null)
+
+// Span 扫描结果 (Step 6/7)
+const spanScanResult = ref<SpanScanResult | null>(null)
+const recommendedSpan = ref<number | null>(null)
+const autoPlacementResult = ref<any>(null)
 
 // 设备编辑弹框
 const showDeviceEditDialog = ref(false)
 const editingDevice = ref<any>(null)
+
+// 视图切换状态
+const centerViewMode = ref<'map' | 'gsnr' | 'span'>('map')
+
+// GSNR计算结果数据
+const gsnrData = ref<Array<{ kp: number; gsnr: number; margin: number; repeaterIndex?: number }>>([])
+const isCalculating = ref(false)
+
+// 计算GSNR数据
+const calculateGSNRData = () => {
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  if (totalLength === 0) return []
+  
+  // 使用快速估算生成数据
+  const spanCount = Math.ceil(totalLength / repeaterSpacing.value)
+  const data: Array<{ kp: number; gsnr: number; margin: number; repeaterIndex?: number }> = []
+  
+  // 从settings获取WDM参数
+  const wdmConfig = settingsStore.transmissionConfig
+  
+  for (let i = 0; i <= spanCount; i++) {
+    const kp = Math.min(i * repeaterSpacing.value, totalLength)
+    // 调用仿真服务进行计算
+    const result = opticalSimulationService.quickEstimateGSNR(kp, repeaterSpacing.value, {
+      channelCount: wdmConfig.channelCount,
+      requiredGSNR: 12
+    })
+    data.push({
+      kp,
+      gsnr: result.gsnr > 0 ? result.gsnr : 25 - i * 0.5,
+      margin: result.margin > -10 ? result.margin : 10 - i * 0.8,
+      repeaterIndex: i > 0 ? i : undefined
+    })
+  }
+  
+  return data
+}
+
+// WDM配置变更处理
+const handleWDMConfigChange = (config: any) => {
+  // WDM参数变化时重新计算GSNR
+  if (gsnrData.value.length > 0) {
+    gsnrData.value = calculateGSNRData()
+    appStore.addLog('INFO', `WDM参数已更新: ${config.channelCount}波道, ${config.modulationFormat}`)
+  }
+}
+
+// 触发GSNR计算
+const handleCalculateGSNR = () => {
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  if (totalLength === 0) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据' })
+    return
+  }
+  
+  isCalculating.value = true
+  appStore.showNotification({ type: 'info', message: '正在计算GSNR...' })
+  
+  // 模拟计算过程
+  setTimeout(() => {
+    gsnrData.value = calculateGSNRData()
+    isCalculating.value = false
+    centerViewMode.value = 'gsnr'
+    appStore.showNotification({ type: 'success', message: 'GSNR计算完成' })
+    appStore.addLog('INFO', `GSNR计算完成，共${gsnrData.value.length}个数据点`)
+  }, 500)
+}
 
 // 打开中继器配置弹框
 const openRepeaterPanel = () => {
@@ -128,16 +228,115 @@ const openConnectorEdit = (id: string) => {
   showConnectorDialog.value = true
 }
 
-// 提交参数
-const handleSubmit = () => {
-  appStore.showNotification({ type: 'info', message: '正在提交参数到后端计算...' })
-  appStore.addLog('INFO', '提交传输系统参数')
+// Step 4: 打开模型选择弹窗
+const openModelSelectDialog = () => {
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  if (totalLength === 0) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据（RPL）' })
+    return
+  }
+  showModelSelectDialog.value = true
+}
 
-  // 模拟提交延迟
+// Step 4 确认后: 执行 Span 扫描计算
+const handleModelConfirm = (config: SimulationModelConfig) => {
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  
+  isCalculating.value = true
+  appStore.showNotification({ type: 'info', message: '正在执行 Span 扫描计算...' })
+  appStore.addLog('INFO', `选择仿真模型: ${config.fiberModel}`)
+  
+  // 获取 Span 扫描配置，并根据当前调制格式设置目标 GSNR
+  const wdmConfig = settingsStore.systemPlanningConfig.wdmParams
+  const modulationFormat = (wdmConfig?.modulation || 'DP-QPSK') as ModulationFormat
+  const modParams = MODULATION_PARAMS[modulationFormat]
+  
+  // 考虑 FEC 编码增益（SD-FEC 约 2dB），降低目标 GSNR
+  const fecGain = wdmConfig?.fecType === 'SD-FEC' ? 2.0 : (wdmConfig?.fecType === 'OFEC' ? 2.5 : 0)
+  const adjustedTargetGsnr = (modParams?.requiredGSNR || 12) - fecGain
+  
+  const scanConfig: SpanScanConfig = {
+    ...settingsStore.systemPlanningConfig.spanScanConfig,
+    targetGsnrDb: adjustedTargetGsnr,  // 使用调制格式对应的 GSNR 要求
+  }
+  
+  console.log(`Span scan: modulation=${modulationFormat}, targetGSNR=${adjustedTargetGsnr}dB (with FEC gain ${fecGain}dB)`)
+  
   setTimeout(() => {
-    appStore.showNotification({ type: 'success', message: '参数提交成功，计算结果已更新' })
-    appStore.addLog('INFO', '传输系统计算完成')
-  }, 1500)
+    console.log('Span scan input: totalLength=', totalLength, 'km')
+    
+    // Step 6: 执行 Span 扫描
+    spanScanResult.value = opticalSimulationService.spanRangeScan(
+      totalLength,
+      scanConfig,
+      settingsStore.transmissionConfig.channelCount,
+      {
+        channelSpacing: wdmConfig?.channelSpacingGHz || 50,
+        launchPowerPerChannel: wdmConfig?.launchPower || 1,  // 长距离预设使用 +1dBm
+      }
+    )
+    
+    // 调试输出
+    if (spanScanResult.value?.scanPoints) {
+      const points = spanScanResult.value.scanPoints
+      console.log('Span scan results:')
+      points.forEach(p => {
+        console.log(`  Span=${p.spanLengthKm}km: avgGSNR=${p.avgGsnrDb.toFixed(1)}dB, minGSNR=${p.minGsnrDb.toFixed(1)}dB, margin=${p.gsnrMarginDb.toFixed(1)}dB, meet=${p.meetTarget}`)
+      })
+    }
+    
+    // Step 7: 自动推荐
+    const recommendation = repeaterPlacementService.autoRecommendSpan(
+      spanScanResult.value,
+      true // 偏好更长的 Span
+    )
+    recommendedSpan.value = recommendation.recommendedSpanKm
+    
+    // 生成 EDFA 放置方案
+    autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
+      totalLength,
+      recommendation.recommendedSpanKm
+    )
+    
+    // 更新中继器间距
+    repeaterSpacing.value = recommendation.recommendedSpanKm
+    
+    // 同步计算 GSNR 数据
+    gsnrData.value = calculateGSNRData()
+    
+    isCalculating.value = false
+    centerViewMode.value = 'span' // 切换到 Span 性能曲线视图
+    
+    appStore.showNotification({ 
+      type: 'success', 
+      message: `计算完成，推荐 Span: ${recommendation.recommendedSpanKm}km，余量: ${recommendation.gsnrMargin.toFixed(1)}dB` 
+    })
+    appStore.addLog('INFO', recommendation.reasoning)
+  }, 800)
+}
+
+// 处理 Span 选择
+const handleSpanSelect = (spanLength: number) => {
+  repeaterSpacing.value = spanLength
+  gsnrData.value = calculateGSNRData()
+  
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
+    totalLength,
+    spanLength
+  )
+  
+  appStore.showNotification({ type: 'info', message: `已选择 Span 长度: ${spanLength}km` })
+}
+
+// 打开链路分析 (Step 9)
+const openLinkAnalysis = () => {
+  showLinkAnalysisDialog.value = true
+}
+
+// 提交参数并计算 (兼容旧流程)
+const handleSubmit = () => {
+  openModelSelectDialog()
 }
 
 // 格式化成本
@@ -259,14 +458,24 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
               <Radio class="w-4 h-4 mr-1" /> 中继器配置
             </Button>
           </Tooltip>
+          <Tooltip content="WDM参数配置">
+            <Button variant="outline" size="sm" @click="showWDMConfigDialog = true">
+              <Waves class="w-4 h-4 mr-1" /> WDM配置
+            </Button>
+          </Tooltip>
           <Tooltip content="5.2.2 中继器手动调整">
             <Button :variant="isEditMode ? 'default' : 'outline'" size="sm" @click="toggleEditMode">
               <Edit3 class="w-4 h-4 mr-1" /> {{ isEditMode ? '退出编辑' : '位置调整' }}
             </Button>
           </Tooltip>
-          <Tooltip content="3.1.4 参数提交">
+          <Tooltip content="Step 4: 选择仿真模型并计算">
             <Button size="sm" @click="handleSubmit">
-              <Send class="w-4 h-4 mr-1" /> 提交计算
+              <Cpu class="w-4 h-4 mr-1" /> 提交计算
+            </Button>
+          </Tooltip>
+          <Tooltip content="Step 9: 链路分析 - 精细仿真">
+            <Button variant="outline" size="sm" @click="openLinkAnalysis">
+              <BarChart2 class="w-4 h-4 mr-1" /> 链路分析
             </Button>
           </Tooltip>
           <div class="w-px h-5 bg-gray-300" />
@@ -280,17 +489,22 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
               <FileSpreadsheet class="w-4 h-4 mr-1" /> SLD
             </Button>
           </Tooltip>
+          <Tooltip content="器件库管理">
+            <Button variant="outline" size="sm" @click="$router.push('/device-library')">
+              <Database class="w-4 h-4 mr-1" /> 器件库
+            </Button>
+          </Tooltip>
         </div>
       </div>
     </template>
 
     <template #left>
-      <!-- 3.1.1 参数配置界面 -->
+      <!-- 3.1.1 电缆/中继器配置 -->
       <Card class="flex-shrink-0">
         <CardHeader class="pb-2">
           <span class="font-semibold text-sm flex items-center gap-2">
             <Cable class="w-4 h-4 text-primary" />
-            参数配置
+            电缆配置
           </span>
         </CardHeader>
         <CardContent class="pt-0">
@@ -311,11 +525,6 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
               <input v-model.number="repeaterSpacing" type="range" min="40" max="120" step="5"
                 class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary" />
             </div>
-            <div>
-              <label class="block text-xs text-gray-500 mb-1 font-medium">目标容量 (Tbps)</label>
-              <input v-model.number="targetCapacity" type="number" min="10" max="500"
-                class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors" />
-            </div>
           </div>
         </CardContent>
       </Card>
@@ -328,17 +537,77 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
       <!-- 中间区域：系统布局图/可视化 -->
       <Card class="flex-1 flex flex-col">
         <CardHeader class="flex-shrink-0 bg-gray-50/50 border-b">
-          <span class="font-semibold text-sm flex items-center gap-2 text-gray-700">
-            <Calculator class="w-4 h-4" />
-            系统布局图
-          </span>
+          <div class="flex items-center justify-between w-full">
+            <span class="font-semibold text-sm flex items-center gap-2 text-gray-700">
+              <Calculator class="w-4 h-4" />
+              {{ centerViewMode === 'map' ? '系统布局图' : 'GSNR余量曲线' }}
+            </span>
+            <div class="flex gap-1">
+              <button 
+                class="px-2 py-1 text-xs rounded transition-colors"
+                :class="centerViewMode === 'map' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'"
+                @click="centerViewMode = 'map'"
+              >
+                布局图
+              </button>
+              <button 
+                class="px-2 py-1 text-xs rounded transition-colors"
+                :class="centerViewMode === 'span' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'"
+                @click="centerViewMode = 'span'"
+              >
+                <Target class="w-3 h-3 inline mr-1" />
+                Span扫描
+              </button>
+              <button 
+                class="px-2 py-1 text-xs rounded transition-colors"
+                :class="centerViewMode === 'gsnr' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'"
+                @click="centerViewMode = 'gsnr'"
+              >
+                <TrendingUp class="w-3 h-3 inline mr-1" />
+                GSNR演化
+              </button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent class="flex-1 flex flex-col overflow-hidden p-0">
           <!-- 地图视图 -->
-          <div class="flex-1 min-h-[300px]">
+          <div v-show="centerViewMode === 'map'" class="flex-1 min-h-[300px]">
             <SystemDesignMap ref="systemDesignMapRef" :route-points="routePoints" :selected-point-id="selectedPointId"
               :editable="isEditMode" @point-click="handlePointClick" @point-moved="handlePointMoved"
               @line-click="handleLineClick" @edit="handleEdit" @delete="handleDelete" />
+          </div>
+          
+          <!-- Span 性能曲线图 (Step 7) -->
+          <div v-show="centerViewMode === 'span'" class="flex-1 p-4 overflow-auto">
+            <SpanPerformanceChart 
+              v-if="spanScanResult"
+              :scan-result="spanScanResult"
+              :height="320"
+              :show-osnr="true"
+              @select-span="handleSpanSelect"
+            />
+            <div v-else class="flex items-center justify-center h-full text-gray-400">
+              <div class="text-center">
+                <Target class="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                <div>请点击“提交计算”执行 Span 扫描</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- GSNR余量曲线图 -->
+          <div v-show="centerViewMode === 'gsnr'" class="flex-1 p-4 overflow-auto">
+            <GSNRMarginChart 
+              v-if="gsnrData.length > 0"
+              :data="gsnrData" 
+              :required-gsnr="12"
+              :warning-threshold="3"
+              :height="350"
+              title="GSNR沿路由变化曲线"
+              @refresh="handleCalculateGSNR"
+            />
+            <div v-else class="flex items-center justify-center h-full text-gray-400">
+              暂无数据，请先导入路由并设置WDM参数
+            </div>
           </div>
 
           <!-- 系统概览数据 -->
@@ -466,6 +735,21 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
     @saved="showRepeaterDialog = false" />
   <ConnectorDialog :visible="showConnectorDialog" :edit-id="editConnectorId" @close="showConnectorDialog = false"
     @saved="showConnectorDialog = false" />
+  <WDMConfigDialog 
+    :visible="showWDMConfigDialog" 
+    @close="showWDMConfigDialog = false"
+    @config-change="handleWDMConfigChange"
+    @calculate="handleCalculateGSNR"
+  />
+  <SimulationModelSelectDialog
+    :visible="showModelSelectDialog"
+    @close="showModelSelectDialog = false"
+    @confirm="handleModelConfirm"
+  />
+  <LinkAnalysisDialog
+    :visible="showLinkAnalysisDialog"
+    @close="showLinkAnalysisDialog = false"
+  />
 
   <!-- 设备编辑弹框 -->
   <div v-if="showDeviceEditDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

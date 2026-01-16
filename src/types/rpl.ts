@@ -18,50 +18,51 @@ export type RPLEventType =
 // RPL电缆类型代码
 export type RPLCableCode = 'LW' | 'LWS' | 'SA' | 'DA' | 'SAS'
 
-// RPL表格单条记录
+// RPL表格单条记录 - 基于 docs/RPL表头.xlsx 行业标准格式
 // 说明：系统内部以最小字段集维护记录；导出/导入时按行业标准字段补全（可计算字段可缺省）。
 export interface RPLRecord {
   id: string
 
   // === 系统内部字段（必填） ===
-  sequence: number           // 序号
+  sequence: number           // Pos No. - 序号
   kp: number                 // KP值 (千米桩)
   longitude: number          // 经度 (十进制度)
   latitude: number           // 纬度 (十进制度)
-  depth: number              // 水深 (m)
-  pointType: RPLPointType    // 点类型
-  cableType: RPLCableCode    // 电缆类型
-  segmentLength: number      // 分段长度 (km)
-  cumulativeLength: number   // 累计长度 (km)
-  slack: number              // 余量百分比 (%)
-  burialDepth: number        // 埋深 (m)
-  remarks: string            // 备注
+  depth: number              // Approx Depth (m) - 水深
+  pointType: RPLPointType    // Event - 点类型/事件
+  cableType: RPLCableCode    // Cable Type - 电缆类型
+  segmentLength: number      // Distance (km) Between Positions - 分段长度
+  cumulativeLength: number   // Distance (km) Cumulative Total - 累计长度
+  slack: number              // Slack % - 余缆率
+  burialDepth: number        // Target Burial Depth (m) - 目标埋设深度
+  remarks: string            // Planned Additional Route Features - 备注
 
   // === 行业标准导出字段（可选，可由导出服务计算） ===
-  event?: RPLEventType
-  latitudeDMS?: string
-  longitudeDMS?: string
-  decimalLatitudeDegrees?: number
-  radiansLatitude?: number
-  sinLatitude?: number
-  meridionalParts?: number
-  distanceFromEquator?: number
-  decimalLongitudeMinutes?: number
-  diffLatitude?: number
-  diffMPs?: number
-  diffEDist?: number
-  diffLongitude?: number
-  courseRadians?: number
-  distanceNmiles?: number
-  bearingT?: number
-  routeDistanceBetween?: number
-  routeDistanceCumulative?: number
-  cableDistanceBetween?: number
-  cableDistanceCumulative?: number
-  cumulativeByType?: number
-  approxDepth?: number
-  plannedBurialDepth?: number
-  additionalFeatures?: string
+  event?: RPLEventType                    // Event列显示名称
+  latitudeDMS?: string                    // Latitude ° ' Dir
+  longitudeDMS?: string                   // Longitude ° ' Dir
+  decimalLatitudeDegrees?: number         // Decimal Latitude (degrees)
+  radiansLatitude?: number                // Radians Latitude
+  sinLatitude?: number                    // Sin Latitude
+  meridionalParts?: number                // Meridional Parts
+  distanceFromEquator?: number            // Distance from Equator
+  decimalLongitudeMinutes?: number        // Decimal Longitude (minutes)
+  diffLatitude?: number                   // Difference in Latitude (degrees)
+  diffMPs?: number                        // Difference in MPs
+  diffEDist?: number                      // Difference in E Dist
+  diffLongitude?: number                  // Difference in Longitude (minutes)
+  courseRadians?: number                  // Course (Radians)
+  distanceNmiles?: number                 // Distance in nmiles (6087 ft)
+  bearingT?: number                       // Bearing °T
+  routeDistanceBetween?: number           // Distance (km) Between Positions
+  routeDistanceCumulative?: number        // Distance (km) Cumulative Total
+  cableDistanceBetween?: number           // Cable Distance (km) Between Positions
+  cableDistanceCumulative?: number        // Cable Distance (km) Cumulative Total
+  cumulativeByType?: number               // Cumulative by type
+  cableTotalsByType?: number              // Cable Totals By Type (km)
+  approxDepth?: number                    // Approx Depth (m)
+  targetBurialDepth?: number              // Target Burial Depth (m)
+  additionalFeatures?: string             // Planned Additional Route Features
 }
 
 // RPL表格

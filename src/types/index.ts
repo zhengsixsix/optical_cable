@@ -7,6 +7,8 @@ export * from './rpl'
 export * from './sld'
 export * from './connector'
 export * from './project'
+export * from './simulation'
+export * from './systemPlanning'
 
 // 通用类型
 export interface Notification {

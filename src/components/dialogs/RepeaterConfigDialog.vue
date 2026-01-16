@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { Button } from '@/components/ui'
-import { useAppStore } from '@/stores'
+import { useAppStore, useRPLStore } from '@/stores'
 import { mockRepeaterConfigs, repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
+import { repeaterPlacementService, type PlacementConfig } from '@/services/RepeaterPlacementService'
 import { 
-  X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio 
+  X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio, Zap, Map, Settings 
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -17,6 +18,19 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const rplStore = useRPLStore()
+
+// 智能落位配置
+const placementConfig = ref<Partial<PlacementConfig>>({
+  targetSpacing: 80,
+  minSpacing: 60,
+  maxSpacing: 100,
+  maxSlope: 15,
+  searchRadius: 5
+})
+
+// 显示智能落位面板
+const showPlacementPanel = ref(false)
 
 interface RepeaterConfig {
   id: string
@@ -134,6 +148,65 @@ function autoOptimize() {
   appStore.showNotification({ type: 'success', message: `已优化为 ${optimalCount} 个中继器` })
 }
 
+// 智能落位算法
+function smartPlacement() {
+  const routeData = rplStore.currentTable?.records
+  if (!routeData || routeData.length === 0) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据（RPL）' })
+    return
+  }
+  
+  // 配置落位服务
+  repeaterPlacementService.setConfig({
+    targetSpacing: placementConfig.value.targetSpacing || 80,
+    minSpacing: placementConfig.value.minSpacing || 60,
+    maxSpacing: placementConfig.value.maxSpacing || 100,
+    maxSlope: placementConfig.value.maxSlope || 15,
+    searchRadius: placementConfig.value.searchRadius || 5,
+    preferredDepthRange: { min: 1000, max: 5000 },
+    avoidanceZones: []
+  })
+  
+  // 转换路由数据格式
+  const routePoints = routeData.map(r => ({
+    id: r.id,
+    longitude: r.longitude,
+    latitude: r.latitude,
+    depth: r.depth || 3000
+  }))
+  
+  // 计算落位
+  const result = repeaterPlacementService.calculatePlacements(routePoints)
+  
+  // 转换结果
+  repeaters.value = result.locations.map((loc, i) => ({
+    id: loc.id,
+    index: loc.index,
+    name: `REP-${String(i + 1).padStart(2, '0')}`,
+    kp: loc.kp,
+    longitude: loc.longitude,
+    latitude: loc.latitude,
+    depth: loc.depth,
+    spacing: i === 0 ? loc.kp : loc.kp - result.locations[i - 1].kp,
+    model: 'EREP-C+L',
+    gain: 15,
+    powerConsumption: 45,
+    remarks: loc.adjustmentReason || '',
+  }))
+  
+  recalculateSpacing()
+  
+  // 显示结果统计
+  const message = `智能落位完成: ${result.totalCount}个中继器, 平均间距${result.averageSpacing.toFixed(1)}km`
+  if (result.feasibility.warnings.length > 0) {
+    appStore.showNotification({ type: 'warning', message: message + ` (有${result.feasibility.warnings.length}个警告)` })
+  } else {
+    appStore.showNotification({ type: 'success', message })
+  }
+  
+  appStore.addLog('INFO', `智能落位: 最优化比例${(result.statistics.optimalRatio * 100).toFixed(0)}%, 平均评分${result.statistics.averageScore.toFixed(0)}`)
+}
+
 function moveRepeater(repId: string, delta: number) {
   const rep = repeaters.value.find(r => r.id === repId)
   if (rep) {
@@ -186,9 +259,17 @@ function handleClose() {
             <h3 class="text-sm font-bold text-gray-800">中继器位置配置</h3>
           </div>
           <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" @click="smartPlacement" class="border-green-300 text-green-700 hover:bg-green-50">
+              <Zap class="w-4 h-4 mr-1" />
+              智能落位
+            </Button>
+            <Button variant="outline" size="sm" @click="showPlacementPanel = !showPlacementPanel">
+              <Settings class="w-4 h-4 mr-1" />
+              配置
+            </Button>
             <Button variant="outline" size="sm" @click="autoOptimize">
               <RotateCcw class="w-4 h-4 mr-1" />
-              自动优化
+              简单优化
             </Button>
             <Button variant="outline" size="sm" @click="addRepeater">
               <Plus class="w-4 h-4 mr-1" />
@@ -219,6 +300,44 @@ function handleClose() {
           <div class="text-center">
             <div class="font-bold text-purple-600">{{ totalPower }}</div>
             <div class="text-xs text-gray-500">总功耗(W)</div>
+          </div>
+        </div>
+
+        <!-- 智能落位配置面板 -->
+        <div v-if="showPlacementPanel" class="px-4 py-3 bg-green-50 border-b space-y-3">
+          <div class="text-xs font-medium text-green-700 flex items-center gap-1">
+            <Map class="w-3.5 h-3.5" />
+            智能落位配置
+          </div>
+          <div class="grid grid-cols-5 gap-3 text-xs">
+            <div>
+              <label class="block text-gray-600 mb-1">目标间距(km)</label>
+              <input v-model.number="placementConfig.targetSpacing" type="number" min="40" max="120" step="5"
+                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
+            </div>
+            <div>
+              <label class="block text-gray-600 mb-1">最小间距(km)</label>
+              <input v-model.number="placementConfig.minSpacing" type="number" min="30" max="100" step="5"
+                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
+            </div>
+            <div>
+              <label class="block text-gray-600 mb-1">最大间距(km)</label>
+              <input v-model.number="placementConfig.maxSpacing" type="number" min="60" max="150" step="5"
+                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
+            </div>
+            <div>
+              <label class="block text-gray-600 mb-1">最大坡度(°)</label>
+              <input v-model.number="placementConfig.maxSlope" type="number" min="5" max="30" step="1"
+                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
+            </div>
+            <div>
+              <label class="block text-gray-600 mb-1">搜索半径(km)</label>
+              <input v-model.number="placementConfig.searchRadius" type="number" min="1" max="20" step="1"
+                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
+            </div>
+          </div>
+          <div class="text-xs text-gray-500">
+            提示: 智能落位会自动规避陡坡和不良地形，确保中继器布置在平坦区域
           </div>
         </div>
 

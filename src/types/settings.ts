@@ -1,36 +1,82 @@
+import type {
+  GNModelParams,
+  EGNModelParams,
+  SSFMModelParams,
+  EDFASimpleParams,
+  EDFAFullParams,
+} from './systemPlanning'
+
+// ========== 模型参数抽屉机制 ==========
+
+/** 光纤模型参数抽屉 */
+export interface FiberModelDrawers {
+  /** GN 模型参数 */
+  gnParams?: GNModelParams
+  /** EGN 模型参数 */
+  egnParams?: EGNModelParams
+  /** SSFM 模型参数 */
+  ssfmParams?: SSFMModelParams
+}
+
+/** EDFA 模型参数抽屉 */
+export interface EDFAModelDrawers {
+  /** 简化模型参数 */
+  simpleParams?: EDFASimpleParams
+  /** 完整模型参数 */
+  fullParams?: EDFAFullParams
+}
+
 // 光纤类型
 export interface FiberType {
   id: string
   name: string                    // 光纤类型名称
+  fiberCategory?: string          // 光纤类型（如 G.654.E）
   nonlinearCoeff: number          // 非线性系数 γ (W⁻¹·km⁻¹)
   effectiveArea: number           // 有效面积 A_eff (μm²)
-  dispersion: number              // 色散 (ps/nm·km)
+  dispersion: number              // 色散系数 D (ps/nm·km)
+  dispersionSlope?: number        // 色散斜率 S (ps/nm²·km)
   nonlinearRefractiveIndex: number // 非线性折射率 n_2 (×10⁻²⁰ m²/W)
   attenuationCoeff: number        // 衰减系数 α (dB/km)
   secondOrderDispersion: number   // 二阶色散 β₂ (ps²)
   simulationModel?: 'GN' | 'EGN'  // 光纤仿真模型偏好
+  /** 模型参数抽屉 - 按计算模型分层的额外参数 */
+  modelDrawers?: FiberModelDrawers
 }
 
 // 放大器类型
 export interface AmplifierType {
   id: string
   name: string                    // 放大器类型名称
-  gain: number                    // 增益 (dB)
+  gain: number                    // 额定增益 (dB)
   bandwidth: number               // 带宽 (nm)
-  gainFlatness: number            // 增益平坦度 (dB)
-  noiseFigure: number             // 噪声系数 (dB)
+  gainFlatness: number            // 平坦度 (dB)
+  noiseFigure: number             // 噪声系数 NF (dB)
   pumpPower: number               // 泵浦功率 (mW)
-  outputPower: number             // 输出功率 (dBm)
+  outputPower: number             // 最大输出功率 (dBm)
+  saturationPower?: number        // 饱和功率 (dBm)
   gainRangePower: number          // 增益范围功率 (dB)
+  /** 工作模式 */
+  operatingMode?: 'fixed_gain' | 'fixed_output' | 'apc'
+  /** 模型参数抽屉 - 按计算模型分层的额外参数 */
+  modelDrawers?: EDFAModelDrawers
 }
 
-// 分支器类型
+// 分支器类型 (BU)
 export interface BranchingUnitType {
   id: string
   name: string                    // 分支器类型名称
   portCount: number               // 端口数量
-  insertionLoss: number           // 端口间插损 (dB)
+  /** 主干插损 (dB) - BU 的主干路径插损 */
+  trunkInsertionLoss: number
+  /** 分支插损 (dB) - BU 的分支路径插损 */
+  branchInsertionLoss: number
+  /** 通用插损 (dB) - 兼容旧字段 */
+  insertionLoss: number
   wavelengthRange: number         // 工作波长范围 (nm)
+  /** 单价 (USD) */
+  unitPrice?: number
+  /** 币种 */
+  currency?: 'USD' | 'CNY' | 'EUR'
 }
 
 // 电缆类型（保留兼容）

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Card, CardHeader, CardContent, Button } from '@/components/ui'
+import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { X, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-vue-next'
 import { useRouteStore, useSettingsStore, useAppStore, useRPLStore } from '@/stores'
+import { reportExportService } from '@/services'
 
 const props = defineProps<{
   visible: boolean
@@ -19,6 +20,14 @@ const appStore = useAppStore()
 const rplStore = useRPLStore()
 
 const isGenerating = ref(false)
+const exportFormat = ref<'txt' | 'json' | 'html' | 'csv'>('txt')
+
+const formatOptions = [
+  { value: 'txt', label: 'TXT 文本' },
+  { value: 'json', label: 'JSON' },
+  { value: 'html', label: 'HTML' },
+  { value: 'csv', label: 'CSV' },
+]
 
 const title = computed(() => props.mode === 'cost' ? '成本分析报告' : '性能分析报告')
 
@@ -93,23 +102,69 @@ const formatCurrency = (value: number) => {
 const handleExport = async () => {
   isGenerating.value = true
   
-  // 模拟生成报告
-  await new Promise(resolve => setTimeout(resolve, 1500))
-  
-  // 生成报告内容
-  const reportContent = generateReportContent()
-  
-  // 下载文件
-  const blob = new Blob([reportContent], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${props.mode === 'cost' ? '成本分析报告' : '性能分析报告'}_${new Date().toISOString().split('T')[0]}.txt`
-  a.click()
-  URL.revokeObjectURL(url)
-  
-  isGenerating.value = false
-  appStore.showNotification({ type: 'success', message: '报告已导出' })
+  try {
+    // 构建报告数据
+    const length = totalLength.value
+    const cable = settingsStore.cableTypes[0]
+    const repeater = settingsStore.repeaterTypes[0]
+    const repeaterCount = length > 0 ? Math.ceil(length / 80) : 0
+    
+    if (props.mode === 'cost') {
+      // 成本报告
+      await reportExportService.exportCostReport(
+        {
+          projectName: '海底光缆传输系统',
+          totalLength: length,
+          repeaterCount,
+          cableType: cable?.name || 'LW',
+          repeaterType: repeater?.name || '标准',
+          repeaterSpacing: 80,
+          costs: {
+            cable: costReportData.value.cableCost,
+            repeater: costReportData.value.repeaterCost,
+            labor: costReportData.value.laborCost,
+            surveying: costReportData.value.surveyingCost,
+            vessel: costReportData.value.vesselCost,
+            contingency: totalCost.value - (costReportData.value.cableCost + costReportData.value.repeaterCost + costReportData.value.laborCost + costReportData.value.surveyingCost + costReportData.value.vesselCost),
+            total: totalCost.value,
+          },
+        },
+        exportFormat.value
+      )
+    } else {
+      // 性能报告
+      const estimatedGsnr = length > 0 ? Math.max(15, 30 - length / 100) : 0
+      const estimatedMargin = length > 0 ? Math.max(1, 5 - length / 500) : 0
+      
+      await reportExportService.exportPerformanceReport(
+        {
+          projectName: '海底光缆传输系统',
+          totalLength: length,
+          repeaterCount,
+          channelCount: settingsStore.transmissionConfig.channelCount,
+          centerWavelength: settingsStore.transmissionConfig.centerWavelength,
+          performance: {
+            minGSNR: estimatedGsnr,
+            avgGSNR: estimatedGsnr + 2,
+            maxGSNR: estimatedGsnr + 5,
+            minMargin: estimatedMargin,
+            capacity: settingsStore.transmissionConfig.channelCount * 100,
+            wavelengths: settingsStore.transmissionConfig.channelCount,
+          },
+          bottlenecks: estimatedMargin < 3 ? [
+            { kp: length * 0.6, issue: 'GSNR余量较低', severity: 'warning' }
+          ] : [],
+        },
+        exportFormat.value
+      )
+    }
+    
+    appStore.showNotification({ type: 'success', message: `报告已导出 (${exportFormat.value.toUpperCase()})` })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: '报告导出失败' })
+  } finally {
+    isGenerating.value = false
+  }
 }
 
 const generateReportContent = () => {
@@ -273,13 +328,19 @@ const generateReportContent = () => {
         </CardContent>
         
         <!-- 底部按钮 -->
-        <div class="p-4 border-t flex justify-end gap-2 shrink-0">
-          <Button variant="outline" @click="emit('close')">取消</Button>
-          <Button @click="handleExport" :disabled="isGenerating">
-            <Loader2 v-if="isGenerating" class="w-4 h-4 mr-1 animate-spin" />
-            <Download v-else class="w-4 h-4 mr-1" />
-            {{ isGenerating ? '生成中...' : '导出报告' }}
-          </Button>
+        <div class="p-4 border-t flex items-center justify-between shrink-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-gray-600">导出格式:</span>
+            <Select v-model="exportFormat" :options="formatOptions" class="w-28" />
+          </div>
+          <div class="flex gap-2">
+            <Button variant="outline" @click="emit('close')">取消</Button>
+            <Button @click="handleExport" :disabled="isGenerating">
+              <Loader2 v-if="isGenerating" class="w-4 h-4 mr-1 animate-spin" />
+              <Download v-else class="w-4 h-4 mr-1" />
+              {{ isGenerating ? '生成中...' : '导出报告' }}
+            </Button>
+          </div>
         </div>
       </Card>
     </div>
