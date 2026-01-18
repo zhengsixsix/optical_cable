@@ -366,14 +366,27 @@ export const useRPLStore = defineStore('rpl', () => {
     }
   }
 
-  // 验证导入的RPL文件
+  // 验证导入的RPL文件 - 基于 docs/RPL表头.xlsx 行业标准
   function validateImportedRPL(headers: string[], rows: any[]): RPLValidationResult {
     const errors: RPLValidationResult['errors'] = []
     const warnings: RPLValidationResult['warnings'] = []
 
-    // 必填表头校验
-    const requiredHeaders = ['Pos No.', 'Event', 'Latitude', 'Longitude', 'Slack %', 'Cable Type', 'Distance (km) Between', 'Distance (km) Cumulative']
-    const missingHeaders = requiredHeaders.filter(h => !headers.includes(h))
+    // 必填表头校验 - 按行业标准字段名
+    const requiredHeaders = [
+      'Pos No.', 
+      'Event', 
+      'Decimal Latitude (degrees)', 
+      'Decimal Longitude (minutes)',
+      'Slack %', 
+      'Cable Type', 
+      'Between Positions',  // Distance (km) Between Positions
+      'Cumulative Total'    // Distance (km) Cumulative Total
+    ]
+    // 支持部分匹配表头名称
+    const hasHeader = (required: string) => headers.some(h => 
+      h.includes(required) || required.includes(h) || h === required
+    )
+    const missingHeaders = requiredHeaders.filter(h => !hasHeader(h))
     if (missingHeaders.length > 0) {
       errors.push({ 
         recordId: '', 
@@ -549,9 +562,23 @@ export const useRPLStore = defineStore('rpl', () => {
     return result
   }
 
-  // 检测是否为新格式表头
+  // 检测是否为新格式表头 - 基于 docs/RPL表头.xlsx 行业标准
   function detectNewFormat(headers: string[]): boolean {
-    const newFormatIndicators = ['Latitude (DMS)', 'Longitude (DMS)', 'MPs', 'E.Dist', 'Route Distance']
+    const newFormatIndicators = [
+      'Decimal Latitude (degrees)', 
+      'Radians Latitude', 
+      'Meridional Parts', 
+      'Distance from Equator',
+      'Decimal Longitude (minutes)',
+      'Difference in Latitude',
+      'Course (Radians)',
+      'Distance in nmiles',
+      'Bearing °T',
+      'Between Positions',
+      'Cumulative Total',
+      'Cumulative by type',
+      'Target Burial Depth'
+    ]
     return newFormatIndicators.some(indicator => 
       headers.some(h => h.includes(indicator))
     )
@@ -586,28 +613,51 @@ export const useRPLStore = defineStore('rpl', () => {
         let record: Omit<RPLRecord, 'id' | 'sequence'>
         
         if (isNewFormat) {
-          // 新格式解析
+          // 新格式解析 - 基于 docs/RPL表头.xlsx 行业标准
           const event = cols[headerIndex['Event']] || ''
-          const latDMS = cols[headerIndex['Latitude (DMS)']] || ''
-          const lonDMS = cols[headerIndex['Longitude (DMS)']] || ''
-          const latDec = cols[headerIndex['Latitude (Dec°)']] || cols[headerIndex['Latitude']] || ''
-          const routeDistBetween = cols[headerIndex['Between']] || cols[headerIndex['Route Distance Between']] || '0'
-          const routeDistCum = cols[headerIndex['Cumulative']] || cols[headerIndex['Route Distance Cumulative']] || '0'
+          // 度分秒格式纬经度 (Lat °, Lat ', Lat Dir)
+          const latDeg = cols[headerIndex['Lat °']] || ''
+          const latMin = cols[headerIndex["Lat '"]] || ''
+          const latDir = cols[headerIndex['Lat Dir']] || ''
+          const lonDeg = cols[headerIndex['Lon °']] || ''
+          const lonMin = cols[headerIndex["Lon '"]] || ''
+          const lonDir = cols[headerIndex['Lon Dir']] || ''
+          // 十进制格式
+          const latDec = cols[headerIndex['Decimal Latitude (degrees)']] || ''
+          const lonDecMin = cols[headerIndex['Decimal Longitude (minutes)']] || ''
+          // 距离和电缆
+          const routeDistBetween = cols[headerIndex['Between Positions']] || '0'
+          const routeDistCum = cols[headerIndex['Cumulative Total']] || '0'
+          const slackPct = cols[headerIndex['Slack %']] || '2.5'
           const cableType = cols[headerIndex['Type']] || cols[headerIndex['Cable Type']] || 'LW'
-          const depth = cols[headerIndex['Approx Depth (m)']] || cols[headerIndex['Water Depth (m)']] || '0'
-          const burial = cols[headerIndex['Planned Burial (m)']] || cols[headerIndex['Burial Depth (m)']] || '0'
-          const remarks = cols[headerIndex['Additional Features']] || cols[headerIndex['Remarks']] || ''
+          const depth = cols[headerIndex['Approx Depth (m)']] || '0'
+          const burial = cols[headerIndex['Target Burial Depth (m)']] || '0'
+          const remarks = cols[headerIndex['Additional Route Features']] || ''
           
-          // 解析坐标
-          let latitude = parseDMSCoordinate(latDMS)
-          if (latitude === null) latitude = parseFloat(latDec) || 0
+          // 解析坐标 - 支持度分秒分列和十进制格式
+          let latitude = 0
+          let longitude = 0
           
-          let longitude = parseDMSCoordinate(lonDMS)
-          const lonDecIdx = headers.findIndex(h => h.includes('Longitude') && (h.includes('Dec') || h.includes('°')))
-          if (longitude === null && lonDecIdx >= 0) {
-            longitude = parseFloat(cols[lonDecIdx]) || 0
+          // 优先使用十进制格式
+          if (latDec) {
+            latitude = parseFloat(latDec) || 0
+          } else if (latDeg && latMin) {
+            // 从度分秒分列计算
+            const degrees = parseFloat(latDeg) || 0
+            const minutes = parseFloat(latMin) || 0
+            latitude = degrees + minutes / 60
+            if (latDir === 'S') latitude = -latitude
           }
-          if (longitude === null) longitude = 0
+          
+          // 经度: Decimal Longitude (minutes) 是分格式，需要转换为度
+          if (lonDecMin) {
+            longitude = parseFloat(lonDecMin) / 60 || 0
+          } else if (lonDeg && lonMin) {
+            const degrees = parseFloat(lonDeg) || 0
+            const minutes = parseFloat(lonMin) || 0
+            longitude = degrees + minutes / 60
+            if (lonDir === 'W') longitude = -longitude
+          }
           
           record = {
             kp: parseFloat(routeDistCum) || 0,
@@ -618,7 +668,7 @@ export const useRPLStore = defineStore('rpl', () => {
             cableType: (cableType as RPLCableCode) || 'LW',
             segmentLength: parseFloat(routeDistBetween) || 0,
             cumulativeLength: parseFloat(routeDistCum) || 0,
-            slack: 2.5, // 默认值，可从 Cable Distance 计算
+            slack: parseFloat(slackPct) || 2.5,
             burialDepth: parseFloat(burial) || 0,
             remarks,
           }
@@ -680,9 +730,14 @@ export const useRPLStore = defineStore('rpl', () => {
     })
   }
 
-  // 自动加载mock数据
-  initMockData()
-  setupDataLinkListener()
+  // 清空数据
+  function clearData() {
+    tables.value = []
+    currentTableId.value = null
+    selectedRecordIds.value = []
+    filter.value = {}
+    isEditing.value = false
+  }
 
   return {
     // State
@@ -714,5 +769,9 @@ export const useRPLStore = defineStore('rpl', () => {
     validateImportedRPL,
     generateFromRoute,
     importFromCSV,
+    // 项目数据管理
+    initMockData,
+    setupDataLinkListener,
+    clearData,
   }
 })

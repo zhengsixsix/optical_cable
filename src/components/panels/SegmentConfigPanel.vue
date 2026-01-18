@@ -1,14 +1,29 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useRouteStore, useAppStore } from '@/stores'
+import { useRouteStore, useAppStore, useRPLStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { 
-  mockSegmentConfigs, 
-  type SegmentConfigData,
   cableTypeOptions,
   burialMethodOptions,
   protectionOptions
 } from '@/data/mockData'
+
+// 分段配置数据类型
+interface SegmentConfigData {
+  id: string
+  index: number
+  startKP: number
+  endKP: number
+  length: number
+  cableType: string
+  slack: number
+  burialDepth: number
+  burialMethod: string
+  protection: string
+  avgDepth: number
+  maxDepth: number
+  expanded: boolean
+}
 import { 
   Settings, 
   Save, 
@@ -30,6 +45,7 @@ const emit = defineEmits<{
 
 const routeStore = useRouteStore()
 const appStore = useAppStore()
+const rplStore = useRPLStore()
 
 const segments = ref<SegmentConfigData[]>([])
 const selectedSegmentId = ref<string | null>(null)
@@ -58,10 +74,63 @@ function recommendSlack(depth: number): number {
   return 2.0
 }
 
-// 初始化分段数据 - 使用集中管理的mock数据
+// 从 RPL 数据生成分段配置
 function initSegments() {
-  segments.value = JSON.parse(JSON.stringify(mockSegmentConfigs))
+  const records = rplStore.currentTable?.records || []
+  if (records.length < 2) {
+    segments.value = []
+    return
+  }
+  
+  // 根据电缆类型变化分段
+  const segs: SegmentConfigData[] = []
+  let segIndex = 0
+  let segStartKP = records[0].kp
+  let segCableType = records[0].cableType
+  let segDepths: number[] = [records[0].depth]
+  
+  for (let i = 1; i < records.length; i++) {
+    const rec = records[i]
+    
+    if (rec.cableType !== segCableType || i === records.length - 1) {
+      // 结束当前分段
+      const endKP = i === records.length - 1 ? rec.kp : records[i - 1].kp
+      if (i === records.length - 1) segDepths.push(rec.depth)
+      
+      const avgDepth = segDepths.reduce((a, b) => a + b, 0) / segDepths.length
+      const maxDepth = Math.max(...segDepths)
+      
+      segs.push({
+        id: `seg-${segIndex}`,
+        index: segIndex,
+        startKP: Math.round(segStartKP),
+        endKP: Math.round(endKP),
+        length: Math.round(endKP - segStartKP),
+        cableType: segCableType,
+        slack: recommendSlack(avgDepth),
+        burialDepth: recommendBurialDepth(avgDepth),
+        burialMethod: avgDepth < 1500 ? 'plow' : 'none',
+        protection: avgDepth < 200 ? 'rock' : 'none',
+        avgDepth: Math.round(avgDepth),
+        maxDepth: Math.round(maxDepth),
+        expanded: false,
+      })
+      
+      // 开始新分段
+      segIndex++
+      segStartKP = rec.kp
+      segCableType = rec.cableType
+      segDepths = [rec.depth]
+    } else {
+      segDepths.push(rec.depth)
+    }
+  }
+  
+  segments.value = segs
 }
+
+// 是否有数据
+const hasData = computed(() => rplStore.currentTable !== null && (rplStore.currentTable?.records?.length || 0) >= 2)
 
 function toggleExpand(segId: string) {
   const seg = segments.value.find(s => s.id === segId)

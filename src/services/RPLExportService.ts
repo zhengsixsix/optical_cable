@@ -13,16 +13,32 @@ const RAD_TO_DEG = 180 / Math.PI
 const EARTH_RADIUS_KM = 6371.0
 const EARTH_RADIUS_NM = 3440.065  // 海里
 
-// 行业标准RPL二级表头
+// 行业标准RPL二级表头 - 基于 docs/RPL表头.xlsx
 export const RPL_HEADER_GROUPS = [
-  { title: 'Position', columns: ['Pos No.', 'Event'] },
-  { title: 'Coordinates', columns: ['Latitude (DMS)', 'Latitude (Dec°)', 'Latitude (Rad)', 'Sin(Lat)', 'MPs', 'E.Dist', 'Longitude (DMS)', 'Longitude (Dec′)'] },
-  { title: 'Differences', columns: ['Diff Lat', 'Diff MPs', 'Diff E.Dist', 'Diff Long'] },
-  { title: 'Navigation', columns: ['Course (Rad)', 'Distance (NM)', 'Bearing T'] },
-  { title: 'Route Distance (km)', columns: ['Between', 'Cumulative'] },
-  { title: 'Cable Distance (km)', columns: ['Between', 'Cumulative', 'By Type'] },
-  { title: 'Cable', columns: ['Type', 'Approx Depth (m)', 'Planned Burial (m)'] },
-  { title: '', columns: ['Additional Features'] }
+  { title: '', columns: ['Pos No.', 'Event'] },
+  { title: 'Latitude', columns: ['Lat °', 'Lat \'', 'Lat Dir'] },
+  { title: 'Longitude', columns: ['Lon °', 'Lon \'', 'Lon Dir'] },
+  { title: '', columns: [
+    'Decimal Latitude (degrees)', 
+    'Radians Latitude', 
+    'Sin Latitude', 
+    'Meridional Parts', 
+    'Distance from Equator',
+    'Decimal Longitude (minutes)'
+  ]},
+  { title: 'Difference', columns: [
+    'Difference in Latitude (degrees)', 
+    'Difference in MPs', 
+    'Difference in E Dist', 
+    'Difference in Longitude (minutes)'
+  ]},
+  { title: '', columns: ['Course (Radians)', 'Distance in nmiles (6087 ft)', 'Bearing °T'] },
+  { title: 'Distance (km)', columns: ['Between Positions', 'Cumulative Total'] },
+  { title: '', columns: ['Slack %'] },
+  { title: 'Cable Distance (km)', columns: ['Between Positions', 'Cumulative Total'] },
+  { title: 'Cable', columns: ['Type', 'Cumulative by type', 'Cable Totals By Type (km)'] },
+  { title: '', columns: ['Approx Depth (m)', 'Target Burial Depth (m)'] },
+  { title: 'Planned', columns: ['Additional Route Features'] }
 ]
 
 // 平坦化表头用于CSV
@@ -249,35 +265,54 @@ export function calculateFullRecord(
   }
 }
 
-// 将计算后的记录转换为行业标准格式行
-function recordToStandardRow(record: CalculatedRPLRecord, index: number): (string | number)[] {
+// 解析度分秒字符串为单独的度、分、方向
+function parseDMSParts(dms: string): { degrees: string, minutes: string, direction: string } {
+  // 格式: "1° 17.425' N" 或 "121° 30.500' E"
+  const match = dms.match(/([\d.]+)\u00b0\s*([\d.]+)'\s*([NSEW])/i)
+  if (match) {
+    return { degrees: match[1], minutes: match[2], direction: match[3] }
+  }
+  return { degrees: '0', minutes: '0', direction: '' }
+}
+
+// 将计算后的记录转换为行业标准格式行 - 按 docs/RPL表头.xlsx 结构
+function recordToStandardRow(record: CalculatedRPLRecord, index: number, cableTotalsByType: Map<string, number>): (string | number)[] {
+  const latParts = parseDMSParts(record.latitudeDMS)
+  const lonParts = parseDMSParts(record.longitudeDMS)
+  
   return [
     index + 1,                                              // Pos No.
     EVENT_TYPE_MAP[record.pointType] || record.pointType,   // Event
-    record.latitudeDMS,                                     // Latitude (DMS)
-    record.decimalLatitudeDegrees.toFixed(6),               // Latitude (Dec°)
-    record.radiansLatitude.toFixed(8),                      // Latitude (Rad)
-    record.sinLatitude.toFixed(8),                          // Sin(Lat)
-    record.meridionalParts.toFixed(3),                      // MPs
-    record.distanceFromEquator.toFixed(3),                  // E.Dist
-    record.longitudeDMS,                                    // Longitude (DMS)
-    record.decimalLongitudeMinutes.toFixed(3),              // Longitude (Dec′)
-    record.diffLatitude.toFixed(4),                         // Diff Lat
-    record.diffMPs.toFixed(4),                              // Diff MPs
-    record.diffEDist.toFixed(4),                            // Diff E.Dist
-    record.diffLongitude.toFixed(4),                        // Diff Long
-    record.courseRadians.toFixed(6),                        // Course (Rad)
-    record.distanceNmiles.toFixed(4),                       // Distance (NM)
-    record.bearingT.toFixed(2),                             // Bearing T
-    record.routeDistanceBetween.toFixed(3),                 // Route Distance Between
-    record.routeDistanceCumulative.toFixed(3),              // Route Distance Cumulative
-    record.cableDistanceBetween.toFixed(3),                 // Cable Distance Between
-    record.cableDistanceCumulative.toFixed(3),              // Cable Distance Cumulative
-    record.cumulativeByType.toFixed(3),                     // Cable Cumulative By Type
+    latParts.degrees,                                       // Lat °
+    latParts.minutes,                                       // Lat '
+    latParts.direction,                                     // Lat Dir
+    lonParts.degrees,                                       // Lon °
+    lonParts.minutes,                                       // Lon '
+    lonParts.direction,                                     // Lon Dir
+    record.decimalLatitudeDegrees.toFixed(6),               // Decimal Latitude (degrees)
+    record.radiansLatitude.toFixed(8),                      // Radians Latitude
+    record.sinLatitude.toFixed(8),                          // Sin Latitude
+    record.meridionalParts.toFixed(3),                      // Meridional Parts
+    record.distanceFromEquator.toFixed(3),                  // Distance from Equator
+    record.decimalLongitudeMinutes.toFixed(3),              // Decimal Longitude (minutes)
+    record.diffLatitude.toFixed(4),                         // Difference in Latitude (degrees)
+    record.diffMPs.toFixed(4),                              // Difference in MPs
+    record.diffEDist.toFixed(4),                            // Difference in E Dist
+    record.diffLongitude.toFixed(4),                        // Difference in Longitude (minutes)
+    record.courseRadians.toFixed(6),                        // Course (Radians)
+    record.distanceNmiles.toFixed(4),                       // Distance in nmiles (6087 ft)
+    record.bearingT.toFixed(2),                             // Bearing °T
+    record.routeDistanceBetween.toFixed(3),                 // Distance (km) Between Positions
+    record.routeDistanceCumulative.toFixed(3),              // Distance (km) Cumulative Total
+    record.slack.toFixed(1),                                // Slack %
+    record.cableDistanceBetween.toFixed(3),                 // Cable Distance (km) Between Positions
+    record.cableDistanceCumulative.toFixed(3),              // Cable Distance (km) Cumulative Total
     record.cableType,                                       // Cable Type
-    record.approxDepth.toFixed(1),                          // Approx Depth
-    record.plannedBurialDepth.toFixed(2),                   // Planned Burial
-    record.additionalFeatures                               // Additional Features
+    record.cumulativeByType.toFixed(3),                     // Cumulative by type
+    (cableTotalsByType.get(record.cableType) || 0).toFixed(3), // Cable Totals By Type (km)
+    record.approxDepth.toFixed(1),                          // Approx Depth (m)
+    record.plannedBurialDepth.toFixed(2),                   // Target Burial Depth (m)
+    record.additionalFeatures                               // Planned Additional Route Features
   ]
 }
 
@@ -297,7 +332,7 @@ export function calculateAllRecords(records: RPLRecord[]): CalculatedRPLRecord[]
   return calculatedRecords
 }
 
-// 导出为CSV格式
+// 导出为CSV格式 - 按 docs/RPL表头.xlsx 结构
 export function exportToCSV(table: RPLTable): string {
   const rows: string[] = []
   
@@ -324,9 +359,16 @@ export function exportToCSV(table: RPLTable): string {
   // 计算完整字段
   const calculatedRecords = calculateAllRecords(table.records)
   
+  // 计算每种电缆类型的总长度
+  const cableTotalsByType = new Map<string, number>()
+  calculatedRecords.forEach(record => {
+    const currentTotal = cableTotalsByType.get(record.cableType) || 0
+    cableTotalsByType.set(record.cableType, currentTotal + record.cableDistanceBetween)
+  })
+  
   // 添加数据行
   calculatedRecords.forEach((record, index) => {
-    const row = recordToStandardRow(record, index)
+    const row = recordToStandardRow(record, index, cableTotalsByType)
     // CSV转义处理
     const csvRow = row.map(cell => {
       const str = String(cell)

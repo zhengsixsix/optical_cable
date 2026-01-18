@@ -1,0 +1,751 @@
+/**
+ * USE 文件格式类型定义
+ * 完全符合 use文件架构.md 文档规范
+ * 
+ * USE 文件底层为 ZIP 格式，包含：
+ * - project_data.json: 核心逻辑数据（六大模块）
+ * - cache/: 缓存目录（可选，存放风险成本热力图、仿真图表数据等）
+ */
+
+// ==================== 1. 元数据模块 (metadata) ====================
+
+/** 显示设置 */
+export interface DisplaySettings {
+  crs: string                    // 坐标参考系统，如 "EPSG:4326"
+  units: {
+    length: string               // 长度单位，如 "km"
+    depth: string                // 深度单位，如 "m"
+  }
+}
+
+/** 元数据模块 */
+export interface USEMetadata {
+  file_format_version: string    // 文件协议版本，如 "2.0"
+  project_uuid: string           // 项目唯一标识符
+  project_name: string           // 项目名称
+  creator_user_id: string        // 创建用户ID
+  resource_root_dir: string      // 本地资源根目录
+  allow_other_users: boolean     // 是否允许其他用户打开
+  created_at: string             // 创建时间 (ISO 8601)
+  updated_at: string             // 更新时间 (ISO 8601)
+  display_settings: DisplaySettings
+}
+
+// ==================== 2. 环境上下文模块 (environment_context) ====================
+
+/** 数据完整性校验 */
+export interface LayerIntegrity {
+  checksum: string               // SHA256 哈希值，格式 "sha256:xxx"
+  size_bytes: number             // 文件字节大小
+}
+
+/** 图层内容类型 */
+export type LayerContentType = 
+  | 'BATHYMETRY'    // 高程/水深图
+  | 'FISHING'       // 渔区
+  | 'SHIPPING'      // 航道
+  | 'VOLCANO'       // 火山
+  | 'EARTHQUAKE'    // 地震
+  | 'RESTRICTED'    // 禁区（不可通行，如军事禁区）
+
+/** 图层注册项 */
+export interface LayerRegistryItem {
+  layer_id: string               // 图层唯一标识符
+  name: string                   // 图层显示名称
+  file_format: string            // 物理文件格式，如 "GeoTIFF", "Shapefile", "GeoJSON"
+  relative_path: string          // 资源相对路径
+  content_type: LayerContentType // 图层内容类型
+  integrity: LayerIntegrity      // 数据完整性校验
+}
+
+/** 登陆站点属性 */
+export interface LandingPointProperties {
+  country?: string               // 国家代码
+  owner?: string                 // 所有者
+  [key: string]: any             // 扩展属性
+}
+
+/** 导入的登陆站点 */
+export interface ImportedLandingPoint {
+  id: string                     // 站点唯一ID
+  name: string                   // 站点显示名称
+  coords: [number, number]       // 经纬度坐标 [Lon, Lat]
+  properties: LandingPointProperties
+}
+
+/** 环境上下文模块 */
+export interface USEEnvironmentContext {
+  layer_registry: LayerRegistryItem[]
+  imported_landing_points: ImportedLandingPoint[]
+}
+
+// ==================== 3. 静态资源库模块 (libraries) ====================
+
+// ---------- 3.1 计算模型库 (libraries.models) ----------
+
+/** 模型输入参数定义 */
+export interface ModelInput {
+  param_id: string               // 参数唯一 ID，作为算法接口的参数名
+  label: string                  // 前端显示标签
+  unit: string                   // 参数单位（如 "dB/km", "W"）
+  type: 'float' | 'int' | 'string' | 'array'  // 数据类型
+  required: boolean              // 是否必填
+  default?: number | string | any[]  // 默认值（当 required=false 时生效）
+  source_hint?: string           // 系统自动取值路径提示（如 "fiber.attributes.attenuation"）
+}
+
+/** 模型输出参数定义 */
+export interface ModelOutput {
+  param_id: string               // 输出参数 ID
+  label: string                  // 前端显示标签
+  unit: string                   // 参数单位
+  type: 'float' | 'int' | 'string' | 'array'  // 数据类型
+}
+
+/** 参数约束条件 */
+export interface ModelConstraint {
+  param_id: string               // 约束的参数 ID
+  min?: number                   // 最小值
+  max?: number                   // 最大值
+}
+
+/** 模型适用领域 */
+export type ModelDomain = 'FIBER' | 'EDFA' | 'BU' | 'SYSTEM'
+
+/** 计算模型完整定义 */
+export interface ModelDefinition {
+  model_id: string               // 模型唯一标识符，系统稳定 ID
+  version: string                // 模型版本号
+  domain: ModelDomain            // 模型适用领域
+  display_name: string           // 前端显示名称
+  description: string            // 模型功能描述
+  entry_point: string            // 代码入口，格式为 "文件名:函数名"
+  language: string               // 实现语言（如 "python", "cpp"）
+  inputs: ModelInput[]           // 输入参数定义
+  outputs: ModelOutput[]         // 输出参数定义
+  constraints?: ModelConstraint[] // 参数约束条件（可选）
+}
+
+// ---------- 3.2 光纤参数库 (libraries.fibers) ----------
+
+/** 光纤物理参数 */
+export interface FiberAttributes {
+  attenuation: number            // 衰减系数 dB/km
+  A_eff: number                  // 有效面积 μm²
+  dispersion: number             // 色散系数 s/m²
+  dispersion_slope: number       // 色散斜率 s/m³
+  n2: number                     // 非线性折射率系数 1e-20 m²/W
+}
+
+/** 光纤模型参数配置 */
+export interface FiberModelParamsConfig {
+  is_configured: boolean         // 该模型的参数是否已完整配置
+  params: Record<string, any>    // 具体参数键值对，与 models[].inputs 的 param_id 对应
+}
+
+/** 光纤规格 */
+export interface FiberSpec {
+  id: string                     // 数据库内部唯一标识符
+  fiber_type_id: string          // 标准光纤类型名称，如 "G.654.E"
+  attributes: FiberAttributes    // 物理仿真核心参数
+  supported_models: string[]     // 支持的计算模型 ID 列表
+  model_params: Record<string, FiberModelParamsConfig>  // 以模型 ID 为 key 的参数配置
+}
+
+// ---------- 3.3 海缆铠装类型库 (libraries.cable_types) ----------
+
+/** 海缆成本参数 */
+export interface CableCommercialParams {
+  price_per_km: number           // 每公里单价
+  currency: string               // 货币类型，如 "USD"
+}
+
+/** 海缆铠装类型 */
+export interface CableTypeSpec {
+  id: string                     // 唯一索引
+  name: string                   // 海缆名称
+  type: string                   // 海缆类型，如 "SA", "LW", "DA"
+  commercial_params: CableCommercialParams
+}
+
+// ---------- 3.4 器件规格库 (libraries.components) ----------
+
+/** 器件类型 */
+export type ComponentType = 'EDFA' | 'BU'
+
+/** EDFA 光放大器规格 */
+export interface EDFASpecs {
+  gain_db: number                // 额定小信号增益
+  bandwidth_nm: number           // 工作带宽
+  noise_figure_db: number        // 噪声系数 (NF)
+  max_output_power_dbm: number   // 饱和输出功率
+  gain_flatness_db: number       // 增益平坦度
+}
+
+/** BU 分支器规格 */
+export interface BUSpecs {
+  port_count: number             // 端口数量 (3 或 4)
+  matrix: number[][]             // N×N 连通矩阵，1代表连通，0代表不通
+  thru_pair: [number, number]    // 主干直通路径端口对
+  loss_vals: {
+    thru: number                 // 直通路径插损 (典型值 0.8dB)
+    branch: number               // 分支路径插损 (典型值 3.5dB)
+  }
+}
+
+/** 器件模型参数配置 */
+export interface ComponentModelParamsConfig {
+  is_configured: boolean         // 该模型的参数是否已完整配置
+  params: Record<string, any>    // 具体参数键值对
+}
+
+/** 器件规格（通用） */
+export interface ComponentSpec {
+  id: string                     // 器件规格唯一索引
+  name: string                   // 器件显示名称
+  type: ComponentType            // 器件类型
+  specs: EDFASpecs | BUSpecs     // 具体规格参数
+  supported_models: string[]     // 支持的计算模型 ID 列表
+  model_params: Record<string, ComponentModelParamsConfig>  // 以模型 ID 为 key 的参数配置
+  commercial_params: {
+    unit_price: number           // 单价
+    currency: string             // 货币种类
+  }
+}
+
+/** 静态资源库模块 */
+export interface USELibraries {
+  fibers: FiberSpec[]
+  cable_types: CableTypeSpec[]
+  components: ComponentSpec[]
+  models: ModelDefinition[]      // 计算模型库
+}
+
+// ==================== 4. 路由工程模块 (route_engineering) ====================
+
+/** 几何点 [经度, 纬度, 水深(m), 累计表面距离(km)] */
+export type GeometryPoint = [number, number, number, number]
+
+/** 事件点类型 */
+export type KeyEventType = 'LandStation' | 'EDFA' | 'BU'
+
+/** 关键事件点 */
+export interface KeyEvent {
+  event_id: string               // 事件点唯一标识
+  type: KeyEventType             // 点位类型
+  geo_index: number              // 在 geometry_pool 中的索引（物理锚点）
+  component_ref_id?: string      // 引用 libraries.components 中的器件规格 ID
+  name?: string                  // 站点名称（用于 LandStation）
+}
+
+/** 海缆分段（工程级设计对象） */
+export interface RouteSegment {
+  segment_id: string             // 分段唯一标识
+  geometry_range: [number, number]  // 指向 geometry_pool 的索引区间 [start_index, end_index]
+  cable_struct_ref: string       // 引用 libraries.cable_types 中的 ID
+  slack_percent: number          // 敷设余量百分比（如 2.5 代表增加 2.5%）
+  burial_depth_m: number         // 设计埋深（米）
+  is_locked: boolean             // 锁定标记，若为 true 自动规划算法不可覆盖
+}
+
+/** Span 光学性能指标 */
+export interface SpanOpticalMetrics {
+  span_length_km: number         // span 光学长度（含 slack 后）
+  total_loss_db: number          // span 总损耗
+  osnr_db: number                // 光信噪比
+  q_factor: number               // Q 因子
+}
+
+/** 系统光学传输跨段 (Span) */
+export interface Span {
+  span_id: string                // span 唯一标识
+  from_event_id: string          // span 起点设备的 Event ID
+  from_port_index: number        // 起点设备的端口号
+  to_event_id: string            // span 终点设备的 Event ID
+  to_port_index: number          // 终点设备的端口号
+  geometry_range: [number, number]  // 指向 geometry_pool 的索引区间
+  fiber_spec_ref: string         // 引用 libraries.fibers 中的光纤型号 ID
+  optical_metrics: SpanOpticalMetrics | null  // 系统评估计算结果（可缓存）
+  is_locked: boolean             // 系统设计冻结标记
+}
+
+/** 路由工程模块 */
+export interface USERouteEngineering {
+  geometry_pool: GeometryPoint[] // 采样点的扁平数组
+  key_events: KeyEvent[]         // 关键事件点列表
+  segments: RouteSegment[]       // 海缆分段列表（工程对象）
+  spans: Span[]                  // 光学传输跨段列表（系统对象）
+}
+
+// ==================== 5. 系统工程模块 (system_engineering) ====================
+
+/** 星座图统计矩 */
+export interface ShapingMoments {
+  moment4: number                // 四阶矩
+  moment6: number                // 六阶矩
+}
+
+/** WDM 配置 */
+export interface WDMConfig {
+  channel_count: number          // 传输总波道数量（如 64, 96）
+  center_freq_thz: number        // 系统中心频率 THz（如 193.1）
+  channel_spacing_ghz: number    // 通道间隔 GHz（如 50.0 或 100.0）
+  baud_rate_gbaud: number        // 信号波特率 Gbaud（如 64.0）
+  launch_power_vector: number[]  // 单波入纤功率数组 dBm，长度等于 channel_count
+  initial_ase_vector: number[]   // 各信道初始 ASE 噪声数组 dBm
+  initial_nli_vector: number[]   // 各信道初始非线性噪声数组 dBm
+  modulation: string             // 调制格式名称，如 "16QAM"
+  shaping_moments: ShapingMoments
+}
+
+// ---------- 5.1 链路仿真缓存 (simulation_cache) ----------
+
+/** 链路标识 */
+export interface RouteRef {
+  from_station: string           // 起点站 event_id
+  to_station: string             // 终点站 event_id
+  route_hash: string             // 链路拓扑的哈希值
+}
+
+/** 模型选择 */
+export interface ModelSelection {
+  fiber_model_id: string         // 光纤传输计算模型 ID
+  edfa_model_id: string          // EDFA 计算模型 ID
+  bu_model_id: string | null     // BU 计算模型 ID，无 BU 时为 null
+}
+
+/** 仿真结果指标集合（矩阵式） */
+export interface SimulationMetricsMatrix {
+  gsnr_matrix_db: number[][]     // 广义信噪比矩阵 [span_count × channel_count]
+  osnr_matrix_db: number[][]     // 光信噪比矩阵
+  snr_ase_matrix_db: number[][]  // 线性信噪比矩阵
+  snr_nli_matrix_db: number[][]  // 非线性信噪比矩阵
+}
+
+/** 链路性能汇总 */
+export interface SimulationSummary {
+  total_length_km: number        // 链路总长度 (km)
+  total_span_count: number       // Span 总数
+  final_gsnr_avg_db: number      // 终端平均 GSNR (dB)
+  final_gsnr_min_db: number      // 终端最差 GSNR (dB)
+  final_osnr_avg_db: number      // 终端平均 OSNR (dB)
+  system_capacity_tbps: number   // 系统总容量 (Tbps)
+}
+
+/** 仿真结果缓存 */
+export interface SimulationCache {
+  is_valid: boolean              // 缓存有效性标识
+  timestamp: string              // 仿真完成的时间戳 (ISO 8601)
+  route_ref: RouteRef            // 本次仿真对应的链路标识
+  model_selection: ModelSelection  // 本次仿真使用的计算模型
+  span_sequence: string[]        // Span 序列，记录计算顺序
+  channel_count: number          // 信道数量
+  metrics: SimulationMetricsMatrix  // 仿真结果指标集合
+  summary: SimulationSummary     // 链路性能汇总
+}
+
+// ---------- 5.2 系统规划缓存 (system_planning_cache) ----------
+
+/** 器件选择 */
+export interface DeviceSelection {
+  fiber_spec_id: string          // 选用的光纤规格 ID
+  edfa_spec_id: string           // 选用的 EDFA 规格 ID
+  bu_spec_id: string | null      // 选用的 BU 规格 ID，无 BU 时为 null
+}
+
+/** Span 扫描配置 */
+export interface SweepConfig {
+  span_length_min_km: number     // Span 扫描范围下限 (km)
+  span_length_max_km: number     // Span 扫描范围上限 (km)
+  span_step_km: number           // Span 扫描步长 (km)
+  target_gsnr_db: number         // 目标 GSNR 性能门限 (dB)
+}
+
+/** Span 扫描结果 */
+export interface SweepResults {
+  span_lengths_km: number[]      // Span 长度序列 (km)
+  gsnr_per_span_db: number[][]   // 各 Span 配置下的 GSNR 值（按信道）
+  osnr_per_span_db: number[][]   // 各 Span 配置下的 OSNR 值（按信道）
+  feasible_range_km: [number, number]  // 满足目标 GSNR 的可行 Span 区间
+  recommended_span_km: number    // 系统推荐的最优 Span 长度 (km)
+}
+
+/** 用户决策记录 */
+export interface UserDecision {
+  selected_span_km: number       // 用户选定的 Span 长度 (km)
+  edfa_count: number             // 对应的 EDFA 数量
+  decision_time: string          // 用户确认时间戳 (ISO 8601)
+}
+
+/** 系统规划缓存 */
+export interface SystemPlanningCache {
+  is_valid: boolean              // 缓存有效性标识
+  timestamp: string              // 规划完成的时间戳 (ISO 8601)
+  route_ref: RouteRef            // 本次规划对应的链路标识
+  config_hash: string            // wdm_config + device_selection + model_selection 的组合哈希值
+  device_selection: DeviceSelection  // 本次规划选择的器件
+  model_selection: ModelSelection    // 本次规划使用的计算模型
+  sweep_config: SweepConfig      // Span 扫描配置参数
+  sweep_results: SweepResults    // Span 扫描计算结果
+  user_decision: UserDecision | null  // 用户最终决策记录
+}
+
+/** 系统工程模块 */
+export interface USESystemEngineering {
+  wdm_config: WDMConfig
+  simulation_cache: SimulationCache | null
+  system_planning_cache: SystemPlanningCache | null
+}
+
+// ==================== 6. 健康度监控模块 (health_monitoring) ====================
+
+/** 采集器连接参数 */
+export interface CollectorConnectionParams {
+  base_url: string               // API 基础 URL
+  method: string                 // HTTP 方法
+  response_format: string        // 响应格式
+  ssl_verify: string             // SSL 验证
+  [key: string]: string          // 扩展参数
+}
+
+/** 采集器配置 */
+export interface CollectorConfig {
+  gateway_name: string           // 网关/网管显示名称
+  driver_id: string              // 采集驱动标识
+  polling_interval: number       // 自动轮询周期（秒）
+  connection_params: CollectorConnectionParams
+}
+
+/** 设备映射项 */
+export interface DeviceMapping {
+  event_id: string               // 对应 key_events 中的事件 ID
+  external_index: string         // 外部索引键
+}
+
+/** 告警过滤级别 */
+export type AlarmSeverity = 'ALL' | 'WARNING' | 'ERROR'
+
+/** 视图过滤器设置 */
+export interface ViewFilters {
+  visible_types: string[]        // 可见设备类型
+  min_alarm_severity: AlarmSeverity
+}
+
+/** 视图设置 */
+export interface ViewSettings {
+  node_positions: Record<string, [number, number]>  // 节点坐标
+  filters: ViewFilters
+}
+
+/** 健康度监控模块 */
+export interface USEHealthMonitoring {
+  collector_config: CollectorConfig | null
+  device_mapping: DeviceMapping[]
+  view_settings: ViewSettings
+}
+
+// ==================== USE 项目数据结构 ====================
+
+/** USE 项目数据 (project_data.json 内容) */
+export interface USEProjectData {
+  metadata: USEMetadata
+  environment_context: USEEnvironmentContext
+  libraries: USELibraries
+  route_engineering: USERouteEngineering
+  system_engineering: USESystemEngineering
+  health_monitoring: USEHealthMonitoring
+}
+
+// ==================== 链路器件参数获取流程 ====================
+
+/** 链路元素类型 */
+export type LinkElementType = 'SPAN' | 'EDFA' | 'BU'
+
+/** 链路元素参数 */
+export interface LinkElementParams {
+  index: number                  // 元素在链路中的序号
+  element_type: LinkElementType  // 元素类型
+  model_id: string               // 使用的计算模型 ID
+  params: Record<string, any>    // 参数键值对
+}
+
+/** 链路参数组装结果 */
+export interface LinkParamsResult {
+  model_selection: {
+    SPAN: string                 // Span 使用的模型 ID
+    EDFA: string                 // EDFA 使用的模型 ID
+    BU: string | null            // BU 使用的模型 ID
+  }
+  link_params: LinkElementParams[]  // 有序的链路参数列表
+}
+
+// ==================== 工具函数 ====================
+
+/** 生成 UUID */
+export function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
+
+/** 生成哈希值 */
+export function generateHash(data: string): string {
+  let hash = 0
+  for (let i = 0; i < data.length; i++) {
+    const char = data.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0')
+}
+
+/** 创建默认的 WDM 配置 */
+export function createDefaultWDMConfig(channelCount: number = 96): WDMConfig {
+  return {
+    channel_count: channelCount,
+    center_freq_thz: 193.1,
+    channel_spacing_ghz: 50.0,
+    baud_rate_gbaud: 64.0,
+    launch_power_vector: new Array(channelCount).fill(-20.0),
+    initial_ase_vector: new Array(channelCount).fill(-60.0),
+    initial_nli_vector: new Array(channelCount).fill(-200.0),
+    modulation: '16QAM',
+    shaping_moments: { moment4: 1.32, moment6: 1.90 }
+  }
+}
+
+/** 创建默认的 USE 项目数据 */
+export function createDefaultUSEProjectData(
+  projectName: string,
+  creatorUserId: string
+): USEProjectData {
+  const now = new Date().toISOString()
+  
+  return {
+    metadata: {
+      file_format_version: '2.0',
+      project_uuid: generateUUID(),
+      project_name: projectName,
+      creator_user_id: creatorUserId,
+      resource_root_dir: '',
+      allow_other_users: false,
+      created_at: now,
+      updated_at: now,
+      display_settings: {
+        crs: 'EPSG:4326',
+        units: { length: 'km', depth: 'm' }
+      }
+    },
+    environment_context: {
+      layer_registry: [],
+      imported_landing_points: []
+    },
+    libraries: {
+      fibers: [],
+      cable_types: [],
+      components: [],
+      models: []
+    },
+    route_engineering: {
+      geometry_pool: [],
+      key_events: [],
+      segments: [],
+      spans: []
+    },
+    system_engineering: {
+      wdm_config: createDefaultWDMConfig(),
+      simulation_cache: null,
+      system_planning_cache: null
+    },
+    health_monitoring: {
+      collector_config: null,
+      device_mapping: [],
+      view_settings: {
+        node_positions: {},
+        filters: {
+          visible_types: ['EDFA', 'BU', 'LandStation'],
+          min_alarm_severity: 'ALL'
+        }
+      }
+    }
+  }
+}
+
+/** 创建默认的光纤规格 */
+export function createDefaultFiberSpec(id: string, name: string): FiberSpec {
+  return {
+    id,
+    fiber_type_id: name,
+    attributes: {
+      attenuation: 0.16,
+      A_eff: 80,
+      dispersion: 2.1e-5,
+      dispersion_slope: 60.0,
+      n2: 2.6
+    },
+    supported_models: ['fiber_gn_model', 'fiber_egn_model'],
+    model_params: {
+      fiber_gn_model: {
+        is_configured: true,
+        params: {
+          coherence_factor: 1.0,
+          noise_bandwidth_ghz: 12.5
+        }
+      },
+      fiber_egn_model: {
+        is_configured: false,
+        params: {}
+      }
+    }
+  }
+}
+
+/** 创建默认的 EDFA 规格 */
+export function createDefaultEDFASpec(id: string, name: string): ComponentSpec {
+  return {
+    id,
+    name,
+    type: 'EDFA',
+    specs: {
+      gain_db: 20.0,
+      bandwidth_nm: 35.0,
+      noise_figure_db: 5.0,
+      max_output_power_dbm: 20.0,
+      gain_flatness_db: 0.5
+    },
+    supported_models: ['edfa_gain_model'],
+    model_params: {
+      edfa_gain_model: {
+        is_configured: true,
+        params: {
+          gain_tilt_db_per_nm: 0.01
+        }
+      }
+    },
+    commercial_params: {
+      unit_price: 250000,
+      currency: 'USD'
+    }
+  }
+}
+
+/** 创建默认的 BU 规格 */
+export function createDefaultBUSpec(id: string, name: string, portCount: 3 | 4 = 3): ComponentSpec {
+  const matrix = portCount === 3
+    ? [[0, 1, 1], [1, 0, 1], [1, 1, 0]]
+    : [[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 0, 1], [1, 1, 1, 0]]
+
+  return {
+    id,
+    name,
+    type: 'BU',
+    specs: {
+      port_count: portCount,
+      matrix,
+      thru_pair: [1, 2],
+      loss_vals: {
+        thru: 0.8,
+        branch: 3.5
+      }
+    },
+    supported_models: ['bu_loss_model'],
+    model_params: {
+      bu_loss_model: {
+        is_configured: true,
+        params: {}
+      }
+    },
+    commercial_params: {
+      unit_price: portCount === 3 ? 180000 : 220000,
+      currency: 'USD'
+    }
+  }
+}
+
+/** 创建默认的计算模型定义 */
+export function createDefaultModels(): ModelDefinition[] {
+  return [
+    // 光纤线性损耗模型
+    {
+      model_id: 'fiber_linear_loss',
+      version: '1.0.0',
+      domain: 'FIBER',
+      display_name: 'Fiber Linear Loss Model',
+      description: 'Calculate linear attenuation loss for optical fiber span',
+      entry_point: 'fiber_loss.py:calculate_linear_loss',
+      language: 'python',
+      inputs: [
+        { param_id: 'attenuation', label: 'Attenuation Coefficient', unit: 'dB/km', type: 'float', required: true, source_hint: 'fiber.attributes.attenuation' },
+        { param_id: 'length', label: 'Fiber Length', unit: 'km', type: 'float', required: true, source_hint: 'span.length_km' }
+      ],
+      outputs: [
+        { param_id: 'total_loss_db', label: 'Total Loss', unit: 'dB', type: 'float' }
+      ],
+      constraints: [
+        { param_id: 'length', min: 0, max: 500 }
+      ]
+    },
+    // GN 模型
+    {
+      model_id: 'fiber_gn_model',
+      version: '1.0.0',
+      domain: 'FIBER',
+      display_name: 'GN Model',
+      description: 'Gaussian Noise model for fiber nonlinear interference calculation',
+      entry_point: 'gn_model.py:calculate_gn',
+      language: 'python',
+      inputs: [
+        { param_id: 'attenuation', label: 'Attenuation', unit: 'dB/km', type: 'float', required: true, source_hint: 'fiber.attributes.attenuation' },
+        { param_id: 'length', label: 'Length', unit: 'km', type: 'float', required: true, source_hint: 'span.length_km' },
+        { param_id: 'A_eff', label: 'Effective Area', unit: 'μm²', type: 'float', required: true, source_hint: 'fiber.attributes.A_eff' },
+        { param_id: 'n2', label: 'Nonlinear Index', unit: '1e-20 m²/W', type: 'float', required: true, source_hint: 'fiber.attributes.n2' },
+        { param_id: 'dispersion', label: 'Dispersion', unit: 's/m²', type: 'float', required: true, source_hint: 'fiber.attributes.dispersion' }
+      ],
+      outputs: [
+        { param_id: 'nli_power', label: 'NLI Power', unit: 'dBm', type: 'float' },
+        { param_id: 'gsnr', label: 'GSNR', unit: 'dB', type: 'float' }
+      ]
+    },
+    // EDFA 增益模型
+    {
+      model_id: 'edfa_gain_model',
+      version: '1.0.0',
+      domain: 'EDFA',
+      display_name: 'EDFA Gain Model',
+      description: 'Calculate EDFA output power considering saturation',
+      entry_point: 'edfa_model.py:calculate_gain',
+      language: 'python',
+      inputs: [
+        { param_id: 'input_power_dbm', label: 'Input Power', unit: 'dBm', type: 'float', required: true, source_hint: 'link.input_power_dbm' },
+        { param_id: 'gain_db', label: 'Nominal Gain', unit: 'dB', type: 'float', required: true, source_hint: 'component.specs.gain_db' },
+        { param_id: 'max_output_power_dbm', label: 'Saturation Power', unit: 'dBm', type: 'float', required: true, source_hint: 'component.specs.max_output_power_dbm' }
+      ],
+      outputs: [
+        { param_id: 'output_power_dbm', label: 'Output Power', unit: 'dBm', type: 'float' },
+        { param_id: 'actual_gain_db', label: 'Actual Gain', unit: 'dB', type: 'float' }
+      ]
+    },
+    // BU 损耗模型
+    {
+      model_id: 'bu_loss_model',
+      version: '1.0.0',
+      domain: 'BU',
+      display_name: 'BU Loss Model',
+      description: 'Calculate BU insertion loss based on port configuration',
+      entry_point: 'bu_model.py:calculate_loss',
+      language: 'python',
+      inputs: [
+        { param_id: 'input_port', label: 'Input Port', unit: '', type: 'int', required: true },
+        { param_id: 'output_port', label: 'Output Port', unit: '', type: 'int', required: true },
+        { param_id: 'thru_loss', label: 'Thru Loss', unit: 'dB', type: 'float', required: true, source_hint: 'component.specs.loss_vals.thru' },
+        { param_id: 'branch_loss', label: 'Branch Loss', unit: 'dB', type: 'float', required: true, source_hint: 'component.specs.loss_vals.branch' }
+      ],
+      outputs: [
+        { param_id: 'loss_db', label: 'Insertion Loss', unit: 'dB', type: 'float' },
+        { param_id: 'mode', label: 'Mode', unit: '', type: 'string' }
+      ]
+    }
+  ]
+}

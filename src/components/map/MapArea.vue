@@ -869,6 +869,29 @@ watch(() => routeStore.selectedRoute, () => {
   }
 })
 
+// 监听 paretoRoutes 变化（用于导入项目时自动显示路线）
+watch(() => routeStore.paretoRoutes.length, (newLen) => {
+  if (newLen > 0) {
+    // 新导入的路线，绘制并缩放
+    console.log('paretoRoutes changed, drawing routes:', newLen)
+    // 延迟执行确保 map 已初始化
+    if (map) {
+      drawParetoRoutes()
+    } else {
+      // 等待 map 初始化后再绘制
+      const checkMap = setInterval(() => {
+        if (map) {
+          clearInterval(checkMap)
+          drawParetoRoutes()
+        }
+      }, 100)
+      // 5秒后超时停止检查
+      setTimeout(() => clearInterval(checkMap), 5000)
+    }
+    isPlanning.value = true
+  }
+}, { immediate: true })
+
 // 清除地图上的路径
 const clearRoutes = () => {
   if (routeSource) {

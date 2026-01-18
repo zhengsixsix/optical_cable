@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
         meta: {title: '工程设置', requiresAuth: true},
     },
     {
+        path: '/device-library',
+        name: 'device-library',
+        component: () => import('@/views/DeviceLibraryView.vue'),
+        meta: {title: '器件库管理', requiresAuth: true},
+    },
+    {
         path: '/login',
         name: 'login',
         component: () => import('@/views/LoginView.vue'),

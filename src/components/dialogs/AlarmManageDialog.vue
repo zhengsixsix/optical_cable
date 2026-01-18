@@ -2,7 +2,8 @@
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { X, AlertTriangle, CheckCircle, XCircle, Filter, RefreshCw, Download, Trash2 } from 'lucide-vue-next'
-import { mockAlarmRecords, alarmFilterOptions } from '@/data/mockData'
+import { alarmFilterOptions } from '@/data/mockData'
+import { useMonitorStore } from '@/stores'
 
 const props = defineProps<{
   visible: boolean
@@ -27,8 +28,24 @@ interface Alarm {
   type: string
 }
 
-// 告警数据 - 从集中数据文件导入
-const alarms = ref<Alarm[]>([...mockAlarmRecords] as Alarm[])
+const monitorStore = useMonitorStore()
+
+// 告警数据 - 从 monitorStore 动态获取并转换格式
+const alarms = computed<Alarm[]>(() => 
+  monitorStore.alarmHistory.map(a => ({
+    id: String(a.id),
+    time: a.time,
+    device: a.device,
+    deviceType: a.neType || 'unknown',
+    message: a.message,
+    level: (a.level === 'error' ? 'critical' : a.level) as AlarmLevel,
+    status: a.status as AlarmStatus,
+    type: 'other',
+  }))
+)
+
+// 是否有数据
+const hasData = computed(() => monitorStore.alarmHistory.length > 0)
 
 // 筛选条件
 const filterType = ref('all')
@@ -97,17 +114,11 @@ const getStatusClass = (status: AlarmStatus) => {
 }
 
 const handleAcknowledge = (id: string) => {
-  const alarm = alarms.value.find(a => a.id === id)
-  if (alarm) {
-    alarm.status = 'acknowledged'
-  }
+  monitorStore.acknowledgeAlarm(Number(id))
 }
 
 const handleClear = (id: string) => {
-  const alarm = alarms.value.find(a => a.id === id)
-  if (alarm) {
-    alarm.status = 'cleared'
-  }
+  monitorStore.clearAlarm(Number(id))
 }
 
 const handleRefresh = () => {

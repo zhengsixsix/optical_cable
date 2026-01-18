@@ -392,9 +392,13 @@ export const useSLDStore = defineStore('sld', () => {
     })
   }
 
-  // 自动加载mock数据
-  initMockData()
-  setupDataLinkListener()
+  // 清空数据
+  function clearData() {
+    tables.value = []
+    currentTableId.value = null
+    selectedEquipmentId.value = null
+    selectedSegmentId.value = null
+  }
 
   return {
     // State
@@ -419,5 +423,9 @@ export const useSLDStore = defineStore('sld', () => {
     updateTransmissionParams,
     validateTable,
     generateFromRPL,
+    // 项目数据管理
+    initMockData,
+    setupDataLinkListener,
+    clearData,
   }
 })

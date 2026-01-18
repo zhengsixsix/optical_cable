@@ -6,7 +6,7 @@
   "creatorUserId": "13900139000",
   "creatorId": "13900139000",
   "serverDirectory": "/projects/apac-system",
-  "allowOtherUsers": false,
+  "allowOtherUsers": true,
   "createdAt": "2025-12-30T07:00:00.000Z",
   "updatedAt": "2025-12-30T09:15:00.000Z",
   "rplFiles": [
@@ -47,7 +47,36 @@
         "status": "designed"
       }
     ],
-    "rplTables": [],
+    "rplTables": [
+      {
+        "id": "rpl-apac-001",
+        "name": "亚太海缆_RPL",
+        "routeId": "route-seg-a",
+        "records": [
+          { "id": "rec-1", "sequence": 1, "kp": 0, "longitude": 114.17, "latitude": 22.28, "depth": 15, "pointType": "landing", "cableType": "DA", "segmentLength": 0, "cumulativeLength": 0, "slack": 0, "burialDepth": 2.0, "remarks": "香港登陆站" },
+          { "id": "rec-2", "sequence": 2, "kp": 200, "longitude": 113.5, "latitude": 20.0, "depth": 850, "pointType": "repeater", "cableType": "LW", "segmentLength": 200, "cumulativeLength": 200, "slack": 2.5, "burialDepth": 0, "remarks": "R1中继器" },
+          { "id": "rec-3", "sequence": 3, "kp": 450, "longitude": 112.0, "latitude": 16.0, "depth": 2500, "pointType": "repeater", "cableType": "LW", "segmentLength": 250, "cumulativeLength": 450, "slack": 3.0, "burialDepth": 0, "remarks": "R2中继器" },
+          { "id": "rec-4", "sequence": 4, "kp": 700, "longitude": 110.5, "latitude": 12.0, "depth": 3200, "pointType": "repeater", "cableType": "LW", "segmentLength": 250, "cumulativeLength": 700, "slack": 2.5, "burialDepth": 0, "remarks": "R3中继器" },
+          { "id": "rec-5", "sequence": 5, "kp": 950, "longitude": 108.5, "latitude": 8.0, "depth": 2800, "pointType": "repeater", "cableType": "LW", "segmentLength": 250, "cumulativeLength": 950, "slack": 3.0, "burialDepth": 0, "remarks": "R4中继器" },
+          { "id": "rec-6", "sequence": 6, "kp": 1200, "longitude": 106.5, "latitude": 4.5, "depth": 1500, "pointType": "branching", "cableType": "LW", "segmentLength": 250, "cumulativeLength": 1200, "slack": 2.5, "burialDepth": 0, "remarks": "BU1分支器" },
+          { "id": "rec-7", "sequence": 7, "kp": 1450, "longitude": 104.8, "latitude": 2.5, "depth": 350, "pointType": "waypoint", "cableType": "SA", "segmentLength": 250, "cumulativeLength": 1450, "slack": 2.5, "burialDepth": 1.0, "remarks": "" },
+          { "id": "rec-8", "sequence": 8, "kp": 1580, "longitude": 103.85, "latitude": 1.29, "depth": 20, "pointType": "landing", "cableType": "DA", "segmentLength": 130, "cumulativeLength": 1580, "slack": 0, "burialDepth": 2.0, "remarks": "新加坡登陆站" }
+        ],
+        "metadata": {
+          "totalLength": 1580,
+          "totalCableLength": 1620,
+          "landingStations": 2,
+          "repeaters": 4,
+          "branchingUnits": 1,
+          "joints": 0,
+          "averageDepth": 1404,
+          "maxDepth": 3200,
+          "minDepth": 15
+        },
+        "createdAt": "2025-12-30T07:00:00.000Z",
+        "updatedAt": "2025-12-30T09:15:00.000Z"
+      }
+    ],
     "planningConfig": {
       "planningMode": "hybrid",
       "avoidanceZones": [],
@@ -120,5 +149,36 @@
     "gsnr": 18.5,
     "capacity": 96000,
     "margin": 3.2
+  },
+  "connectorTables": [
+    {
+      "id": "conn-apac-001",
+      "name": "亚太海缆_接线元",
+      "routeId": "route-seg-a",
+      "elements": [
+        { "id": "elem-1", "name": "接头盒 J1", "type": "joint", "kp": 100, "longitude": 113.8, "latitude": 21.0, "depth": 500, "status": "active", "specifications": "UJ-2000", "remarks": "KP100处接头" },
+        { "id": "elem-2", "name": "光放大器 OLA-R1", "type": "ola", "kp": 200, "longitude": 113.5, "latitude": 20.0, "depth": 850, "status": "active", "specifications": "EDFA-C+L", "remarks": "对应R1中继器" },
+        { "id": "elem-3", "name": "光放大器 OLA-R2", "type": "ola", "kp": 450, "longitude": 112.0, "latitude": 16.0, "depth": 2500, "status": "active", "specifications": "EDFA-C+L", "remarks": "对应R2中继器" },
+        { "id": "elem-4", "name": "分支单元 BU1", "type": "bu", "kp": 1200, "longitude": 106.5, "latitude": 4.5, "depth": 1500, "status": "active", "specifications": "BU-R3", "remarks": "对应BU1分支器" }
+      ],
+      "createdAt": "2025-12-30T07:00:00.000Z",
+      "updatedAt": "2025-12-30T09:15:00.000Z"
+    }
+  ],
+  "monitorData": {
+    "devices": [
+      { "id": "mon-rep-01", "name": "中继器 R1", "type": "Repeater", "neType": "Repeater", "status": "normal", "location": "KP 200", "kp": 200, "sldEquipmentName": "REP-01", "longitude": 113.5, "latitude": 20.0, "depth": 850, "inputPower": -12.5, "outputPower": 2.8, "pumpCurrent": 285, "pfeVoltage": 48.2, "pfeCurrent": 1.25, "temperature": 4.2 },
+      { "id": "mon-rep-02", "name": "中继器 R2", "type": "Repeater", "neType": "Repeater", "status": "normal", "location": "KP 450", "kp": 450, "sldEquipmentName": "REP-02", "longitude": 112.0, "latitude": 16.0, "depth": 2500, "inputPower": -13.2, "outputPower": 2.5, "pumpCurrent": 295, "pfeVoltage": 47.8, "pfeCurrent": 1.28, "temperature": 5.1 },
+      { "id": "mon-rep-03", "name": "中继器 R3", "type": "Repeater", "neType": "Repeater", "status": "warning", "location": "KP 700", "kp": 700, "sldEquipmentName": "REP-03", "longitude": 110.5, "latitude": 12.0, "depth": 3200, "inputPower": -12.8, "outputPower": 2.6, "pumpCurrent": 280, "pfeVoltage": 48.1, "pfeCurrent": 1.22, "temperature": 5.5 },
+      { "id": "mon-rep-04", "name": "中继器 R4", "type": "Repeater", "neType": "Repeater", "status": "normal", "location": "KP 950", "kp": 950, "sldEquipmentName": "REP-04", "longitude": 108.5, "latitude": 8.0, "depth": 2800, "inputPower": -12.6, "outputPower": 2.7, "pumpCurrent": 282, "pfeVoltage": 48.0, "pfeCurrent": 1.24, "temperature": 4.0 },
+      { "id": "mon-bu-01", "name": "分支器 B1", "type": "BU", "neType": "BU", "status": "normal", "location": "KP 1200", "kp": 1200, "sldEquipmentName": "BU-01", "longitude": 106.5, "latitude": 4.5, "depth": 1500, "inputPower": -10.5, "outputPower": -11.2, "pumpCurrent": 0, "pfeVoltage": 48.0, "pfeCurrent": 0.85, "temperature": 3.8 },
+      { "id": "mon-te-hk", "name": "登陆站 香港", "type": "LandingStation", "neType": "SLTE", "status": "normal", "location": "香港", "kp": 0, "sldEquipmentName": "香港终端站", "longitude": 114.17, "latitude": 22.28, "depth": 0, "inputPower": -8.2, "outputPower": 4.0, "pumpCurrent": 0, "pfeVoltage": 47.5, "pfeCurrent": 15.2, "temperature": 22.5, "qValue": 12.5, "ber": 1.2e-9, "osnr": 28.5 },
+      { "id": "mon-te-sg", "name": "登陆站 新加坡", "type": "LandingStation", "neType": "SLTE", "status": "normal", "location": "新加坡", "kp": 1580, "sldEquipmentName": "新加坡终端站", "longitude": 103.85, "latitude": 1.29, "depth": 0, "inputPower": -9.0, "outputPower": 3.8, "pumpCurrent": 0, "pfeVoltage": 48.3, "pfeCurrent": 14.8, "temperature": 21.8, "qValue": 13.2, "ber": 5.5e-10, "osnr": 29.2 }
+    ],
+    "alarmHistory": [
+      { "id": 1, "time": "14:30", "device": "中继器 R3", "deviceId": "mon-rep-03", "neType": "Repeater", "message": "温度超过阈值", "level": "warning", "status": "active" },
+      { "id": 2, "time": "12:15", "device": "中继器 R1", "deviceId": "mon-rep-01", "neType": "Repeater", "message": "信号恢复正常", "level": "info", "status": "cleared" },
+      { "id": 3, "time": "08:00", "device": "系统", "deviceId": "", "neType": "", "message": "系统启动完成", "level": "info", "status": "cleared" }
+    ]
   }
 }

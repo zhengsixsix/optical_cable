@@ -2,6 +2,23 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType } from '@/types'
 import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes } from '@/types/settings'
+import type { 
+  SystemPlanningParams, 
+  SimulationModelConfig,
+  SpanScanConfig,
+  WDMPlanningParams 
+} from '@/types/systemPlanning'
+import { 
+  defaultSystemPlanningParams,
+  defaultSpanScanConfig,
+  defaultWDMPlanningParams
+} from '@/types/systemPlanning'
+import type {
+  ModelDefinition,
+  SimulationCache,
+  SystemPlanningCache,
+} from '@/types/useFile'
+import { createDefaultModels } from '@/types/useFile'
 
 const STORAGE_KEY = 'cable-planner-settings'
 
@@ -76,6 +93,13 @@ const defaultFiberSimulationConfig: FiberSimulationConfig = {
   description: 'GN Model适用于计算速度要求高的场景',
 }
 
+// 默认仿真模型配置
+const defaultSimulationModelConfig: SimulationModelConfig = {
+  fiberModel: 'GN',
+  edfaModel: 'EDFA_Simple',
+  buModel: 'BU_Fixed',
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   // 器件库状态
   const cableTypes = ref<CableType[]>([...defaultSettings.cableTypes])
@@ -83,17 +107,32 @@ export const useSettingsStore = defineStore('settings', () => {
   const branchingUnits = ref<BranchingUnit[]>([...defaultSettings.branchingUnits])
   const costFactors = ref<CostFactors>({ ...defaultSettings.costFactors })
   
-  // 新增器件类型
-  const fiberTypes = ref<FiberType[]>([...defaultFiberTypes])
-  const amplifierTypes = ref<AmplifierType[]>([...defaultAmplifierTypes])
-  const branchingUnitTypes = ref<BranchingUnitType[]>([...defaultBranchingUnitTypes])
-  const currentLibraryFile = ref('DefaultLibrary_v1.0.csv')
+  // 新增器件类型 - 初始为空，需要导入器件库
+  const fiberTypes = ref<FiberType[]>([])
+  const amplifierTypes = ref<AmplifierType[]>([])
+  const branchingUnitTypes = ref<BranchingUnitType[]>([])
+  const currentLibraryFile = ref('')
   
   // 新增配置状态
   const routePlanningConfig = ref<RoutePlanningConfig>({ ...defaultRoutePlanningConfig })
   const transmissionConfig = ref<TransmissionConfig>({ ...defaultTransmissionConfig })
   const monitoringConfig = ref<MonitoringConfig>({ ...defaultMonitoringConfig })
   const fiberSimulationConfig = ref<FiberSimulationConfig>({ ...defaultFiberSimulationConfig })
+  
+  // 系统规划参数配置 (Step 3)
+  const systemPlanningConfig = ref<SystemPlanningParams>({ ...defaultSystemPlanningParams })
+  // 仿真模型配置 (Step 4)
+  const simulationModelConfig = ref<SimulationModelConfig>({ ...defaultSimulationModelConfig })
+  // 仿真模板列表
+  const savedSimulationTemplates = ref<SimulationModelConfig[]>([])
+  
+  // ========== USE 文件规范所需字段 ==========
+  // 计算模型库 (libraries.models)
+  const models = ref<ModelDefinition[]>(createDefaultModels())
+  // 仿真缓存 (system_engineering.simulation_cache)
+  const simulationCache = ref<SimulationCache | null>(null)
+  // 系统规划缓存 (system_engineering.system_planning_cache)
+  const systemPlanningCache = ref<SystemPlanningCache | null>(null)
   
   // 汇总的settings对象，兼容旧代码
   const settings = ref({
@@ -283,6 +322,106 @@ export const useSettingsStore = defineStore('settings', () => {
     saveToLocalStorage()
   }
 
+  // 更新系统规划参数 (Step 3)
+  function updateSystemPlanningConfig(updates: Partial<SystemPlanningParams>) {
+    systemPlanningConfig.value = { ...systemPlanningConfig.value, ...updates }
+    saveToLocalStorage()
+  }
+
+  // 更新 WDM 规划参数
+  function updateWDMPlanningParams(updates: Partial<WDMPlanningParams>) {
+    systemPlanningConfig.value.wdmParams = { 
+      ...systemPlanningConfig.value.wdmParams, 
+      ...updates 
+    }
+    saveToLocalStorage()
+  }
+
+  // 更新 Span 扫描配置
+  function updateSpanScanConfig(updates: Partial<SpanScanConfig>) {
+    systemPlanningConfig.value.spanScanConfig = { 
+      ...systemPlanningConfig.value.spanScanConfig, 
+      ...updates 
+    }
+    saveToLocalStorage()
+  }
+
+  // 更新仿真模型配置 (Step 4)
+  function updateSimulationModelConfig(updates: Partial<SimulationModelConfig>) {
+    simulationModelConfig.value = { ...simulationModelConfig.value, ...updates }
+    saveToLocalStorage()
+  }
+
+  // 保存仿真模板
+  function saveSimulationTemplate(template: SimulationModelConfig) {
+    savedSimulationTemplates.value.push(template)
+    saveToLocalStorage()
+  }
+
+  // 删除仿真模板
+  function removeSimulationTemplate(templateName: string) {
+    savedSimulationTemplates.value = savedSimulationTemplates.value.filter(
+      t => t.templateName !== templateName
+    )
+    saveToLocalStorage()
+  }
+
+  // ========== USE 文件规范模型管理 ==========
+  
+  // 添加计算模型
+  function addModel(model: ModelDefinition) {
+    models.value.push(model)
+    saveToLocalStorage()
+  }
+
+  // 更新计算模型
+  function updateModel(modelId: string, updates: Partial<ModelDefinition>) {
+    const index = models.value.findIndex(m => m.model_id === modelId)
+    if (index >= 0) {
+      models.value[index] = { ...models.value[index], ...updates }
+      saveToLocalStorage()
+    }
+  }
+
+  // 删除计算模型
+  function removeModel(modelId: string) {
+    models.value = models.value.filter(m => m.model_id !== modelId)
+    saveToLocalStorage()
+  }
+
+  // 根据领域获取模型
+  function getModelsByDomain(domain: 'FIBER' | 'EDFA' | 'BU' | 'SYSTEM') {
+    return models.value.filter(m => m.domain === domain)
+  }
+
+  // 更新仿真缓存
+  function updateSimulationCache(cache: SimulationCache | null) {
+    simulationCache.value = cache
+    saveToLocalStorage()
+  }
+
+  // 更新系统规划缓存
+  function updateSystemPlanningCache(cache: SystemPlanningCache | null) {
+    systemPlanningCache.value = cache
+    saveToLocalStorage()
+  }
+
+  // 使仿真缓存失效
+  function invalidateSimulationCache() {
+    if (simulationCache.value) {
+      simulationCache.value.is_valid = false
+      saveToLocalStorage()
+    }
+  }
+
+  // 使系统规划缓存失效
+  function invalidateSystemPlanningCache() {
+    if (systemPlanningCache.value) {
+      systemPlanningCache.value.is_valid = false
+      saveToLocalStorage()
+    }
+  }
+
   // 初始化时加载
   loadFromLocalStorage()
 
@@ -329,5 +468,27 @@ export const useSettingsStore = defineStore('settings', () => {
     updateTransmissionConfig,
     updateMonitoringConfig,
     updateFiberSimulationConfig,
+    // 系统规划相关 (Step 3, 4)
+    systemPlanningConfig,
+    simulationModelConfig,
+    savedSimulationTemplates,
+    updateSystemPlanningConfig,
+    updateWDMPlanningParams,
+    updateSpanScanConfig,
+    updateSimulationModelConfig,
+    saveSimulationTemplate,
+    removeSimulationTemplate,
+    // USE 文件规范相关
+    models,
+    simulationCache,
+    systemPlanningCache,
+    addModel,
+    updateModel,
+    removeModel,
+    getModelsByDomain,
+    updateSimulationCache,
+    updateSystemPlanningCache,
+    invalidateSimulationCache,
+    invalidateSystemPlanningCache,
   }
 })

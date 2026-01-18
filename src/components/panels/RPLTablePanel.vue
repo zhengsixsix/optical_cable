@@ -300,17 +300,17 @@ const someSelected = computed(() =>
                   @change="handleSelectAll(($event.target as HTMLInputElement).checked)"
                 />
               </th>
-              <th class="px-2 py-2 text-center w-12 border-b font-medium text-gray-600">序号</th>
-              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600">KP(km)</th>
-              <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600">经度</th>
-              <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600">纬度</th>
-              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600">水深(m)</th>
-              <th class="px-2 py-2 text-center w-20 border-b font-medium text-gray-600">点类型</th>
-              <th class="px-2 py-2 text-center w-16 border-b font-medium text-gray-600">电缆</th>
-              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600">段长(km)</th>
-              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600">累计(km)</th>
-              <th class="px-2 py-2 text-right w-16 border-b font-medium text-gray-600">余缆%</th>
-              <th class="px-2 py-2 text-left border-b font-medium text-gray-600">备注</th>
+              <th class="px-2 py-2 text-center w-12 border-b font-medium text-gray-600" title="Pos No.">Pos</th>
+              <th class="px-2 py-2 text-center w-20 border-b font-medium text-gray-600" title="Event">事件</th>
+              <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Latitude">纬度</th>
+              <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Longitude">经度</th>
+              <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Distance (km) Between Positions">距离(km)</th>
+              <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Distance (km) Cumulative Total">累计(km)</th>
+              <th class="px-2 py-2 text-right w-16 border-b font-medium text-gray-600" title="Slack %">Slack%</th>
+              <th class="px-2 py-2 text-center w-16 border-b font-medium text-gray-600" title="Cable Type">电缆</th>
+              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600" title="Approx Depth (m)">水深(m)</th>
+              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600" title="Target Burial Depth (m)">埋深(m)</th>
+              <th class="px-2 py-2 text-left border-b font-medium text-gray-600" title="Planned Additional Route Features">附加特征</th>
               <th class="px-2 py-2 text-center w-16 border-b font-medium text-gray-600">操作</th>
             </tr>
           </thead>
@@ -333,19 +333,19 @@ const someSelected = computed(() =>
                 />
               </td>
               <td class="px-2 py-1.5 text-center border-b text-gray-500">{{ record.sequence }}</td>
-              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.kp.toFixed(3) }}</td>
-              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.longitude.toFixed(6) }}</td>
-              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.latitude.toFixed(6) }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.depth.toFixed(1) }}</td>
               <td class="px-2 py-1.5 text-center border-b">
                 <span :class="['text-xs px-1.5 py-0.5 rounded', getPointTypeClass(record.pointType)]">
                   {{ getPointTypeLabel(record.pointType) }}
                 </span>
               </td>
-              <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ record.cableType }}</td>
+              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.latitude.toFixed(6) }}</td>
+              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.longitude.toFixed(6) }}</td>
               <td class="px-2 py-1.5 text-right border-b">{{ record.segmentLength.toFixed(3) }}</td>
               <td class="px-2 py-1.5 text-right border-b font-medium">{{ record.cumulativeLength.toFixed(3) }}</td>
               <td class="px-2 py-1.5 text-right border-b">{{ record.slack.toFixed(1) }}</td>
+              <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ record.cableType }}</td>
+              <td class="px-2 py-1.5 text-right border-b">{{ record.depth.toFixed(1) }}</td>
+              <td class="px-2 py-1.5 text-right border-b">{{ record.burialDepth.toFixed(2) }}</td>
               <td class="px-2 py-1.5 text-left border-b text-gray-600 truncate max-w-[120px]" :title="record.remarks">
                 {{ record.remarks }}
               </td>

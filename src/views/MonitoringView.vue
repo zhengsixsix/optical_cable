@@ -6,92 +6,116 @@ import MonitorPanel from '@/components/panels/MonitorPanel.vue'
 import PerformanceChart from '@/components/charts/PerformanceChart.vue'
 import MonitoringMap from '@/components/map/MonitoringMap.vue'
 import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin } from 'lucide-vue-next'
-import { mockAlarmHistory } from '@/data/mockData'
-import { useConnectorStore } from '@/stores'
+import { useConnectorStore, useMonitorStore } from '@/stores'
 
 const connectorStore = useConnectorStore()
+const monitorStore = useMonitorStore()
 
 // 地图组件引用
 const monitoringMapRef = ref<InstanceType<typeof MonitoringMap> | null>(null)
 
-// 模拟运行时监控数据
-const runtimeData: Record<string, any> = {
-  'elem-0': { inputPower: -12.5, outputPower: 2.8, pumpCurrent: 285, pfeVoltage: 48.2, pfeCurrent: 1.25, temperature: 4.2, status: 'normal' },
-  'elem-1': { inputPower: -13.2, outputPower: 2.5, pumpCurrent: 295, pfeVoltage: 47.8, pfeCurrent: 1.28, temperature: 5.1, status: 'warning' },
-  'elem-2': { inputPower: -12.8, outputPower: 2.6, pumpCurrent: 280, pfeVoltage: 48.1, pfeCurrent: 1.22, temperature: 4.0, status: 'normal' },
-  'elem-3': { inputPower: -10.5, outputPower: -11.2, pumpCurrent: 0, pfeVoltage: 48.0, pfeCurrent: 0.85, temperature: 3.8, status: 'normal' },
-  'elem-4': { inputPower: 0, outputPower: 0, pumpCurrent: 0, pfeVoltage: 380, pfeCurrent: 25.5, temperature: 35.2, status: 'normal' },
-  'elem-5': { inputPower: 0, outputPower: 0, pumpCurrent: 0, pfeVoltage: 380, pfeCurrent: 24.8, temperature: 34.5, status: 'normal' },
-}
-
-// 设备列表数据 - 合并 connectorStore 位置数据和运行时监控数据
-const devices = computed(() =>
-  connectorStore.elements.map(elem => {
-    const runtime = runtimeData[elem.id] || { status: 'normal', inputPower: 0, outputPower: 0, temperature: 20 }
-    return {
-      ...elem,
-      neType: elem.type,
-      location: `KP ${elem.kp}`,
-      ...runtime
-    }
-  })
+// 设备列表数据 - 从 monitorStore 动态获取
+const devices = computed(() => 
+  monitorStore.devices.map(d => ({
+    ...d,
+    neType: d.type,
+    location: `KP ${d.kp}`,
+  }))
 )
 
-// 性能历史数据（模拟）
+// 是否有数据
+const hasData = computed(() => monitorStore.devices.length > 0)
+
+// 性能历史数据 - 基于选中设备的实时数据生成
 const performanceHistory = ref<{ time: string; value: number }[]>([])
 const temperatureHistory = ref<{ time: string; value: number }[]>([])
 
-// 生成模拟历史数据
+// 根据选中设备生成历史数据
 const generateHistoryData = () => {
+  if (!hasData.value) {
+    performanceHistory.value = []
+    temperatureHistory.value = []
+    return
+  }
+  
+  const device = selectedDevice.value 
+    ? devices.value.find(d => d.id === selectedDevice.value)
+    : devices.value[0]
+  
+  if (!device) {
+    performanceHistory.value = []
+    temperatureHistory.value = []
+    return
+  }
+  
   const now = new Date()
+  const baseOutputPower = device.outputPower || -10
+  const baseTemperature = device.temperature || 4
+  
   const data: { time: string; value: number }[] = []
   const tempData: { time: string; value: number }[] = []
 
   for (let i = 29; i >= 0; i--) {
     const time = new Date(now.getTime() - i * 60000)
     const timeStr = time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    data.push({ time: timeStr, value: -10 + Math.random() * 4 - 2 })
-    tempData.push({ time: timeStr, value: 3.5 + Math.random() * 1.5 })
+    data.push({ time: timeStr, value: baseOutputPower + (Math.random() - 0.5) * 2 })
+    tempData.push({ time: timeStr, value: baseTemperature + (Math.random() - 0.5) * 1 })
   }
 
   performanceHistory.value = data
   temperatureHistory.value = tempData
 }
 
-// 性能曲线图数据
-const powerChartSeries = computed(() => [{
-  name: '输出光功率',
-  data: performanceHistory.value,
-  color: '#3b82f6',
-  unit: 'dBm'
-}])
+// 性能曲线图数据 - 无数据时返回空
+const powerChartSeries = computed(() => {
+  if (!hasData.value || performanceHistory.value.length === 0) return []
+  return [{
+    name: '输出光功率',
+    data: performanceHistory.value,
+    color: '#3b82f6',
+    unit: 'dBm'
+  }]
+})
 
-const tempChartSeries = computed(() => [{
-  name: '设备温度',
-  data: temperatureHistory.value,
-  color: '#f97316',
-  unit: '°C'
-}])
+const tempChartSeries = computed(() => {
+  if (!hasData.value || temperatureHistory.value.length === 0) return []
+  return [{
+    name: '设备温度',
+    data: temperatureHistory.value,
+    color: '#f97316',
+    unit: '°C'
+  }]
+})
 
 // 自动刷新性能数据
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const refreshPerformanceData = () => {
+  if (!hasData.value) return
+  
+  const device = selectedDevice.value 
+    ? devices.value.find(d => d.id === selectedDevice.value)
+    : devices.value[0]
+  
+  if (!device) return
+  
   const now = new Date()
   const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  const baseOutputPower = device.outputPower || -10
+  const baseTemperature = device.temperature || 4
 
-  // 添加新数据点
-  performanceHistory.value.push({ time: timeStr, value: -10 + Math.random() * 4 - 2 })
-  temperatureHistory.value.push({ time: timeStr, value: 3.5 + Math.random() * 1.5 })
+  performanceHistory.value.push({ time: timeStr, value: baseOutputPower + (Math.random() - 0.5) * 2 })
+  temperatureHistory.value.push({ time: timeStr, value: baseTemperature + (Math.random() - 0.5) * 1 })
 
-  // 保持最近30个点
   if (performanceHistory.value.length > 30) performanceHistory.value.shift()
   if (temperatureHistory.value.length > 30) temperatureHistory.value.shift()
 }
 
 onMounted(() => {
-  generateHistoryData()
-  refreshTimer = setInterval(refreshPerformanceData, 10000)
+  if (hasData.value) {
+    generateHistoryData()
+    refreshTimer = setInterval(refreshPerformanceData, 10000)
+  }
 })
 
 onUnmounted(() => {
@@ -101,8 +125,8 @@ onUnmounted(() => {
 // 选中的设备
 const selectedDevice = ref<string | null>(null)
 
-// 告警历史 - 从集中数据文件导入
-const alarmHistory = ref([...mockAlarmHistory])
+// 告警历史 - 从 monitorStore 动态获取
+const alarmHistory = computed(() => monitorStore.alarmHistory)
 
 // 选中设备的详情
 const selectedDeviceInfo = computed(() => {
@@ -321,7 +345,10 @@ const handleMapDeviceClick = (deviceId: string) => {
           </span>
         </CardHeader>
         <CardContent class="flex-1 overflow-auto p-0">
-          <div class="divide-y">
+          <div v-if="alarmHistory.length === 0" class="h-full flex items-center justify-center text-gray-400 text-sm">
+            暂无告警记录
+          </div>
+          <div v-else class="divide-y">
             <div v-for="alarm in alarmHistory" :key="alarm.id" :class="['px-3 py-2', getAlarmClass(alarm.level)]">
               <div class="flex items-center justify-between">
                 <span class="text-xs font-medium">{{ alarm.device }}</span>
