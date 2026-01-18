@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { Card, CardHeader, CardContent } from '@/components/ui'
-import { TrendingUp, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-vue-next'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { AlertTriangle, CheckCircle, RefreshCw } from 'lucide-vue-next'
 
 // GSNR数据点
 interface GSNRDataPoint {
@@ -34,15 +33,17 @@ const emit = defineEmits<{
 // Canvas 引用
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const tooltipRef = ref<HTMLDivElement | null>(null)
+const containerRef = ref<HTMLDivElement | null>(null)
 
 // 状态
 const hoveredPoint = ref<GSNRDataPoint | null>(null)
 const tooltipPosition = ref({ x: 0, y: 0 })
+const containerWidth = ref(800)
 
 // 计算属性
 const chartConfig = computed(() => {
   const padding = { top: 40, right: 60, bottom: 50, left: 60 }
-  const width = 800
+  const width = containerWidth.value
   const height = props.height
   
   return {
@@ -113,11 +114,11 @@ const drawChart = () => {
   const { width, height, padding, chartWidth, chartHeight } = chartConfig.value
   const { minKp, maxKp, minGsnr, maxGsnr } = dataRange.value
   
-  // 设置画布尺寸
+  // 设置画布尺寸 - 使用容器宽度
   const dpr = window.devicePixelRatio || 1
   canvas.width = width * dpr
   canvas.height = height * dpr
-  canvas.style.width = `${width}px`
+  canvas.style.width = '100%'
   canvas.style.height = `${height}px`
   ctx.scale(dpr, dpr)
   
@@ -280,8 +281,12 @@ const handleMouseMove = (event: MouseEvent) => {
   if (!canvas || !props.data.length) return
   
   const rect = canvas.getBoundingClientRect()
-  const x = event.clientX - rect.left
-  const y = event.clientY - rect.top
+  const { width } = chartConfig.value
+  
+  // 缩放鼠标坐标以匹配内部绘制坐标
+  const scaleRatio = width / rect.width
+  const x = (event.clientX - rect.left) * scaleRatio
+  const y = (event.clientY - rect.top) * scaleRatio
   
   // 找到最近的数据点
   let closest: GSNRDataPoint | null = null
@@ -292,7 +297,7 @@ const handleMouseMove = (event: MouseEvent) => {
     const py = scaleY(point.gsnr)
     const dist = Math.sqrt((x - px) ** 2 + (y - py) ** 2)
     
-    if (dist < minDist && dist < 20) {
+    if (dist < minDist && dist < 30 * scaleRatio) {
       minDist = dist
       closest = point
     }
@@ -317,53 +322,66 @@ const handleMouseLeave = () => {
   hoveredPoint.value = null
 }
 
+// 更新容器宽度
+const updateContainerWidth = () => {
+  if (containerRef.value) {
+    containerWidth.value = containerRef.value.clientWidth || 800
+  }
+}
+
 // 监听数据变化重绘
 watch(() => props.data, () => {
   drawChart()
 }, { deep: true })
 
-onMounted(() => {
+watch(containerWidth, () => {
   drawChart()
-  window.addEventListener('resize', drawChart)
+})
+
+// resize 处理函数
+const handleResize = () => {
+  updateContainerWidth()
+  drawChart()
+}
+
+onMounted(async () => {
+  await nextTick()
+  updateContainerWidth()
+  drawChart()
+  window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', drawChart)
+  window.removeEventListener('resize', handleResize)
 })
 </script>
 
 <template>
-  <Card class="gsnr-margin-chart">
-    <CardHeader class="pb-2 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <TrendingUp class="w-4 h-4 text-blue-500" />
-        <span class="font-semibold text-sm">{{ title }}</span>
+  <div class="gsnr-margin-chart">
+    <!-- 顶部状态栏 -->
+    <div class="flex items-center justify-between mb-2">
+      <div v-if="statistics" class="flex items-center gap-1 text-xs">
+        <component 
+          :is="statistics.isFeasible ? CheckCircle : AlertTriangle"
+          :class="[
+            'w-4 h-4',
+            statistics.isFeasible ? 'text-green-500' : 'text-red-500'
+          ]"
+        />
+        <span :class="statistics.isFeasible ? 'text-green-600' : 'text-red-600'">
+          {{ statistics.isFeasible ? '满足要求' : '不满足要求' }}
+        </span>
       </div>
-      <div class="flex items-center gap-3">
-        <!-- 状态指示 -->
-        <div v-if="statistics" class="flex items-center gap-1 text-xs">
-          <component 
-            :is="statistics.isFeasible ? CheckCircle : AlertTriangle"
-            :class="[
-              'w-4 h-4',
-              statistics.isFeasible ? 'text-green-500' : 'text-red-500'
-            ]"
-          />
-          <span :class="statistics.isFeasible ? 'text-green-600' : 'text-red-600'">
-            {{ statistics.isFeasible ? '满足要求' : '不满足要求' }}
-          </span>
-        </div>
-        <button 
-          class="p-1 hover:bg-gray-100 rounded transition-colors"
-          @click="emit('refresh')"
-          title="刷新数据"
-        >
-          <RefreshCw class="w-4 h-4 text-gray-500" />
-        </button>
-      </div>
-    </CardHeader>
+      <button 
+        class="p-1 hover:bg-gray-100 rounded transition-colors"
+        @click="emit('refresh')"
+        title="刷新数据"
+      >
+        <RefreshCw class="w-4 h-4 text-gray-500" />
+      </button>
+    </div>
     
-    <CardContent class="pt-0">
+    <div>
       <!-- 统计信息 -->
       <div v-if="statistics" class="grid grid-cols-4 gap-2 mb-3 text-xs">
         <div class="bg-gray-50 rounded p-2 text-center">
@@ -396,11 +414,10 @@ onUnmounted(() => {
       </div>
       
       <!-- 图表容器 -->
-      <div class="relative">
+      <div ref="containerRef" class="relative w-full">
         <canvas
           ref="canvasRef"
           class="w-full cursor-crosshair"
-          :style="{ height: `${height}px` }"
           @mousemove="handleMouseMove"
           @mouseleave="handleMouseLeave"
           @click="handleClick"
@@ -454,8 +471,8 @@ onUnmounted(() => {
           <span>所需GSNR</span>
         </div>
       </div>
-    </CardContent>
-  </Card>
+    </div>
+  </div>
 </template>
 
 <style scoped>

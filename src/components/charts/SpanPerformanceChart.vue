@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { TrendingUp, Target, Check, AlertTriangle } from 'lucide-vue-next'
+import { Check, AlertTriangle } from 'lucide-vue-next'
 import type { SpanScanResult, SpanScanPoint } from '@/types/simulation'
 
 const props = defineProps<{
@@ -18,7 +18,7 @@ const emit = defineEmits<{
   (e: 'select-span', spanLength: number): void
 }>()
 
-const chartHeight = computed(() => props.height || 300)
+const chartHeight = computed(() => props.height || 220)
 
 // 图表容器引用
 const chartContainer = ref<HTMLDivElement | null>(null)
@@ -35,8 +35,8 @@ const chartData = computed(() => {
   if (!result || result.scanPoints.length === 0) return null
 
   const points = result.scanPoints
-  const padding = { top: 30, right: 60, bottom: 50, left: 60 }
-  const width = 600
+  const padding = { top: 25, right: 50, bottom: 40, left: 65 }  // 左侧留给 Y 轴标签
+  const width = 800  // 加宽以匹配容器比例
   const height = chartHeight.value
 
   // 数据范围
@@ -126,35 +126,34 @@ const handlePointHover = (point: SpanScanPoint | null) => {
 
 <template>
   <div class="span-performance-chart">
-    <!-- 标题栏 -->
-    <div class="flex items-center justify-between mb-3">
-      <h4 class="font-medium text-gray-700 flex items-center gap-2">
-        <TrendingUp class="w-4 h-4 text-blue-500" />
-        {{ title || 'Span 长度 - GSNR 性能曲线' }}
-      </h4>
-      <div class="flex items-center gap-4 text-xs">
-        <span class="flex items-center gap-1">
-          <span class="w-3 h-0.5 bg-blue-500"></span>
-          平均 GSNR
-        </span>
-        <span class="flex items-center gap-1">
-          <span class="w-3 h-0.5 bg-orange-500"></span>
-          最差 GSNR
-        </span>
-        <span v-if="showOsnr" class="flex items-center gap-1">
-          <span class="w-3 h-0.5 bg-green-500"></span>
-          平均 OSNR
-        </span>
-        <span class="flex items-center gap-1">
-          <span class="w-3 h-0.5 bg-red-500 border-dashed"></span>
-          目标 GSNR
-        </span>
-      </div>
+    <!-- 图例 -->
+    <div class="flex items-center justify-end gap-4 text-xs mb-2">
+      <span class="flex items-center gap-1">
+        <span class="w-3 h-0.5 bg-blue-500"></span>
+        平均 GSNR
+      </span>
+      <span class="flex items-center gap-1">
+        <span class="w-3 h-0.5 bg-orange-500"></span>
+        最差 GSNR
+      </span>
+      <span v-if="showOsnr" class="flex items-center gap-1">
+        <span class="w-3 h-0.5 bg-green-500"></span>
+        平均 OSNR
+      </span>
+      <span class="flex items-center gap-1">
+        <span class="w-3 h-0.5 bg-red-500 border-dashed"></span>
+        目标 GSNR
+      </span>
     </div>
 
     <!-- SVG 图表 -->
     <div ref="chartContainer" class="relative bg-gray-50 rounded-lg border">
-      <svg v-if="chartData" :width="chartData.width" :height="chartData.height" class="w-full">
+      <svg 
+        v-if="chartData" 
+        :viewBox="`0 0 ${chartData.width} ${chartData.height}`"
+        preserveAspectRatio="xMidYMid meet"
+        class="w-full h-auto"
+      >
         <!-- 可行区间背景 -->
         <rect
           v-if="chartData.feasibleArea"
@@ -327,11 +326,11 @@ const handlePointHover = (point: SpanScanPoint | null) => {
             </text>
           </g>
           <text
-            :x="15"
+            :x="18"
             :y="chartData.height / 2"
             class="text-xs fill-gray-600"
             text-anchor="middle"
-            transform="rotate(-90, 15, ${chartData.height / 2})"
+            :transform="`rotate(-90, 18, ${chartData.height / 2})`"
           >
             GSNR / OSNR (dB)
           </text>

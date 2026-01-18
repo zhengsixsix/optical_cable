@@ -74,14 +74,15 @@ export class OpticalSimulationService {
   }
 
   /**
-   * 计算NLI噪声功率 (GN模型)
-   * P_NLI = γ² * P³ * L_eff² * G_NLI * B_WDM
+   * 计算NLI噪声功率 (GN模型简化版)
+   * 使用经验公式估算 NLI 对 SNR 的影响
    * 
    * @param fiber - 光纤参数
    * @param launchPower - 发射功率 (mW)
    * @param spanLength - 跨段长度 (km)
    * @param channelCount - 波道数量
    * @param channelSpacing - 信道间隔 (GHz)
+   * @returns NLI 噪声功率 (dBm)
    */
   calculateNLIPower(
     fiber: FiberParams,
@@ -90,23 +91,28 @@ export class OpticalSimulationService {
     channelCount: number,
     channelSpacing: number
   ): number {
-    // 有效长度 L_eff = (1 - exp(-α*L)) / α
-    const alphaLinear = fiber.attenuation / (10 * Math.log10(Math.E)) // 转换为 1/km
+    // 使用简化的 GN 模型经验公式
+    // SNR_NLI ≈ 常数 - 3*P_ch(dBm) - 10*log10(N_ch) - 跨段相关项
+    
+    // 发射功率 (dBm)
+    const Pch_dBm = 10 * Math.log10(launchPower) // launchPower 是 mW
+    
+    // 有效长度 L_eff (km)
+    const alphaLinear = fiber.attenuation / 4.343 // 转换为 Neper/km
     const Leff = (1 - Math.exp(-alphaLinear * spanLength)) / alphaLinear
-
-    // WDM带宽 (Hz)
-    const Bwdm = channelCount * channelSpacing * 1e9
-
-    // GN模型简化计算
-    const gamma = fiber.nonlinearCoeff // 1/W/km
-    const Psig = launchPower * 1e-3 // W
-
-    // NLI系数 (简化公式)
-    const Gnli = (8 / 27) * Math.pow(gamma, 2) * Math.pow(Leff * 1e3, 2) * 
-                 Math.log(Math.PI * Math.PI * Math.abs(fiber.dispersion) * Bwdm * Bwdm / (2 * alphaLinear))
-
-    const Pnli = Gnli * Math.pow(Psig, 3) * Bwdm
-    return 10 * Math.log10(Pnli * 1e3) // dBm
+    
+    // 简化 NLI 功率估算 (dBm)
+    // 基于典型海底光纤参数的经验公式
+    const gamma_dB = 10 * Math.log10(fiber.nonlinearCoeff) // γ in dB(1/W/km)
+    const Leff_dB = 10 * Math.log10(Leff) // L_eff in dB(km)
+    const Nch_dB = 10 * Math.log10(channelCount)
+    
+    // NLI 功率 ≈ 3*Pch + 2*γ + 2*Leff + Nch + 常数偏移
+    // 常数基于典型 G.654.E 海底光纤系统校准
+    // 对于 1dBm 发射功率、96波道、80km 跨段，SNR_NLI 应约 25-30dB
+    const nliPower = 3 * Pch_dBm + 2 * gamma_dB + 2 * Leff_dB + Nch_dB - 73
+    
+    return nliPower
   }
 
   /**
@@ -406,7 +412,16 @@ export class OpticalSimulationService {
     noiseFigure: number = 5,
     attenuation: number = 0.16
   ): { gsnr: number; margin: number; feasible: boolean } {
-    const spanCount = Math.ceil(totalLength / spanLength)
+    // 处理边界情况：当 totalLength 为 0 或很小时，返回初始值
+    if (totalLength <= 0) {
+      return {
+        gsnr: 30, // 起始点 GSNR 假设为 30dB
+        margin: 18, // 起始余量
+        feasible: true,
+      }
+    }
+    
+    const spanCount = Math.max(1, Math.ceil(totalLength / spanLength))
     
     // 简化OSNR计算
     const osnr = 58 - noiseFigure - 10 * Math.log10(spanCount) - attenuation * spanLength
@@ -489,11 +504,12 @@ export class OpticalSimulationService {
         // 简化计算：假设各信道特性相似，添加边缘信道惩罚
         const edgePenalty = Math.abs(ch - channelCount / 2) / (channelCount / 2) * 0.5
         
-        // OSNR 计算
+        // OSNR 计算 - 注意 calculateOSNR 内部已经计算了 attenuation * spanLength
+        // 所以 totalLoss 只传额外损耗（连接器等），这里传 0
         const osnr = this.calculateOSNR(
           amplifierParams.noiseFigure,
           spanCount,
-          fiberParams.attenuation * spanLength,
+          0, // 额外损耗（非光纤衰减）
           fiberParams.attenuation,
           spanLength
         ) - edgePenalty
@@ -508,8 +524,9 @@ export class OpticalSimulationService {
           wdmParams?.channelSpacing || 50
         )
         
-        // GSNR 计算
-        const gsnr = this.calculateGSNR(osnr, nliPower * spanCount, launchPower) - edgePenalty
+        // GSNR 计算 - NLI 功率在多跨段累积时需要在 dB 域相加，不能直接乘以跨段数
+        const totalNliPower = nliPower + 10 * Math.log10(spanCount)
+        const gsnr = this.calculateGSNR(osnr, totalNliPower, launchPower) - edgePenalty
         
         channelGsnr.push(gsnr)
         channelOsnr.push(osnr)

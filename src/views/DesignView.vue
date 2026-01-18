@@ -149,14 +149,18 @@ const calculateGSNRData = () => {
   
   // 从settings获取WDM参数
   const wdmConfig = settingsStore.transmissionConfig
+  const launchPower = wdmConfig.launchPower ?? 0
   
   for (let i = 0; i <= spanCount; i++) {
     const kp = Math.min(i * repeaterSpacing.value, totalLength)
-    // 调用仿真服务进行计算
-    const result = opticalSimulationService.quickEstimateGSNR(kp, repeaterSpacing.value, {
-      channelCount: wdmConfig.channelCount,
-      requiredGSNR: 12
-    })
+    // 调用仿真服务进行计算 - 使用正确的参数格式
+    const result = opticalSimulationService.quickEstimateGSNR(
+      kp,
+      repeaterSpacing.value,
+      launchPower,
+      5,   // noiseFigure
+      0.16 // attenuation
+    )
     data.push({
       kp,
       gsnr: result.gsnr > 0 ? result.gsnr : 25 - i * 0.5,
@@ -540,7 +544,7 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
           <div class="flex items-center justify-between w-full">
             <span class="font-semibold text-sm flex items-center gap-2 text-gray-700">
               <Calculator class="w-4 h-4" />
-              {{ centerViewMode === 'map' ? '系统布局图' : 'GSNR余量曲线' }}
+              {{ centerViewMode === 'map' ? '系统布局图' : centerViewMode === 'span' ? 'Span 性能扫描' : 'GSNR沿路由演化' }}
             </span>
             <div class="flex gap-1">
               <button 
