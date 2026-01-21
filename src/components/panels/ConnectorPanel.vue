@@ -1,13 +1,35 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
-import { useConnectorStore, useAppStore } from '@/stores'
+import { useConnectorStore, useAppStore, useSettingsStore } from '@/stores'
 import { connectorTypeLabels, connectorStatusLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus } from '@/types'
 import { Plus, Trash2, Edit2, Link2 } from 'lucide-vue-next'
 
 const connectorStore = useConnectorStore()
 const appStore = useAppStore()
+const settingsStore = useSettingsStore()
+
+// 根据器件ID从器件库获取器件名称
+const getComponentName = (type: ConnectorType, refId?: string) => {
+  if (!refId) return null
+  if (type === 'amplifier_e' || type === 'amplifier_w') {
+    const amp = settingsStore.amplifierTypes.find(a => a.id === refId)
+    return amp?.name || null
+  }
+  if (type === 'bu') {
+    const bu = settingsStore.branchingUnitTypes.find(b => b.id === refId)
+    return bu?.name || null
+  }
+  return null
+}
+
+// 根据光纤ID从器件库获取光纤名称
+const getFiberName = (refId?: string) => {
+  if (!refId) return null
+  const fiber = settingsStore.fiberTypes.find(f => f.id === refId)
+  return fiber?.name || null
+}
 
 const emit = defineEmits<{
   (e: 'edit', id: string): void
@@ -28,14 +50,16 @@ const filteredElements = computed(() => {
 // 获取类型样式
 const getTypeClass = (type: ConnectorType) => {
   const classes: Record<ConnectorType, string> = {
-    joint: 'bg-gray-100 text-gray-700',
-    bu: 'bg-blue-100 text-blue-700',
-    pfe: 'bg-yellow-100 text-yellow-700',
+    landing: 'bg-blue-100 text-blue-700',
+    amplifier_e: 'bg-green-100 text-green-700',
+    amplifier_w: 'bg-green-100 text-green-700',
+    bu: 'bg-purple-100 text-purple-700',
+    underwater: 'bg-gray-100 text-gray-700',
+    fiber: 'bg-orange-100 text-orange-700',
     ola: 'bg-green-100 text-green-700',
-    equalizer: 'bg-purple-100 text-purple-700',
-    coupler: 'bg-orange-100 text-orange-700'
+    joint: 'bg-gray-100 text-gray-700'
   }
-  return classes[type]
+  return classes[type] || 'bg-gray-100 text-gray-700'
 }
 
 // 获取状态样式
@@ -126,21 +150,40 @@ const handleDelete = (id: string) => {
                   </span>
                 </div>
                 <div class="text-xs text-gray-500 space-y-0.5 pl-4">
-                  <div class="flex items-center gap-3">
+                  <div v-if="elem.type === 'fiber'" class="flex items-center gap-3">
+                    <span>KP: <span class="font-medium text-gray-700">{{ elem.kp }} - {{ elem.endKp }}</span> km</span>
+                    <span class="w-px h-3 bg-gray-300"></span>
+                    <span>长度: <span class="font-medium text-gray-700">{{ elem.length || (elem.endKp ? elem.endKp - elem.kp : 0) }}</span> km</span>
+                  </div>
+                  <div v-else class="flex items-center gap-3">
                     <span>KP: <span class="font-medium text-gray-700">{{ elem.kp }}</span> km</span>
                     <span class="w-px h-3 bg-gray-300"></span>
                     <span>水深: <span class="font-medium text-gray-700">{{ elem.depth }}</span> m</span>
                   </div>
+                  <div v-if="getComponentName(elem.type, elem.componentRefId)" class="text-blue-500">
+                    器件: {{ getComponentName(elem.type, elem.componentRefId) }}
+                  </div>
+                  <div v-if="getFiberName(elem.fiberRefId)" class="text-orange-500">
+                    光纤类型: {{ getFiberName(elem.fiberRefId) }}
+                  </div>
                   <div v-if="elem.specifications" class="text-gray-400">规格: {{ elem.specifications }}</div>
                 </div>
               </div>
-              <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button variant="ghost" size="sm" class="h-6 w-6 p-0" @click="emit('edit', elem.id)">
+              <div class="flex gap-1 flex-shrink-0">
+                <button 
+                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100" 
+                  @click="emit('edit', elem.id)"
+                  title="编辑"
+                >
                   <Edit2 class="w-3.5 h-3.5 text-gray-500 hover:text-blue-600" />
-                </Button>
-                <Button variant="ghost" size="sm" class="h-6 w-6 p-0" @click="handleDelete(elem.id)">
+                </button>
+                <button 
+                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100" 
+                  @click="handleDelete(elem.id)"
+                  title="删除"
+                >
                   <Trash2 class="w-3.5 h-3.5 text-gray-500 hover:text-red-600" />
-                </Button>
+                </button>
               </div>
             </div>
           </div>

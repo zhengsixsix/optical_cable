@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useSLDStore, useAppStore } from '@/stores'
-import { exportSLDFile, exportEquipmentsToCSV as exportSLDEquipmentsToCSV } from '@/services/SLDExportService'
+import { useSLDStore, useAppStore, useRouteStore } from '@/stores'
+import { exportSLDFile, exportSLDFileFromRoute, exportEquipmentsToCSV as exportSLDEquipmentsToCSV } from '@/services/SLDExportService'
 import { Card, CardHeader, CardContent, Button } from '@/components/ui'
 import { 
   Network, 
@@ -28,6 +28,7 @@ const emit = defineEmits<{
 
 const sldStore = useSLDStore()
 const appStore = useAppStore()
+const routeStore = useRouteStore()
 
 const activeTab = ref<'equipments' | 'segments' | 'params'>('equipments')
 
@@ -93,9 +94,21 @@ const handleExportEquipments = () => {
 }
 
 const handleExportXML = () => {
-  if (!currentTable.value) return
+  // 优先从当前选中的路由导出
+  const currentRoute = routeStore.currentRoute
+  if (currentRoute && currentRoute.points.length > 0) {
+    exportSLDFileFromRoute(currentRoute, currentRoute.name, 2)
+    appStore.showNotification({ type: 'success', message: '从路由导出 SLD XML 成功' })
+    return
+  }
+  
+  // 否则从 SLD 表格导出
+  if (!currentTable.value) {
+    appStore.showNotification({ type: 'warning', message: '请先选择路由或 SLD 表格' })
+    return
+  }
   exportSLDFile(currentTable.value)
-  appStore.showNotification({ type: 'success', message: '导出SLD XML成功' })
+  appStore.showNotification({ type: 'success', message: '导出 SLD XML 成功' })
 }
 
 </script>

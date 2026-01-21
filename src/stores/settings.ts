@@ -32,6 +32,7 @@ export interface RoutePlanningConfig {
     southeast: { lon: number; lat: number }
   }
   multiPointFile?: string
+  isConfigured?: boolean  // 用户是否主动配置过起点终点
 }
 
 // 传输系统配置接口
@@ -64,12 +65,13 @@ export interface FiberSimulationConfig {
 // 默认配置
 const defaultRoutePlanningConfig: RoutePlanningConfig = {
   mode: 'point-to-point',
-  startPoint: { lon: 121.4737, lat: 31.2304 },
-  endPoint: { lon: 139.6917, lat: 35.6895 },
+  startPoint: { lon: 0, lat: 0 },
+  endPoint: { lon: 0, lat: 0 },
   planningRange: {
     northwest: { lon: 100, lat: 50 },
     southeast: { lon: 150, lat: 10 },
   },
+  isConfigured: false,
 }
 
 const defaultTransmissionConfig: TransmissionConfig = {

@@ -11,17 +11,51 @@ import LinkAnalysisDialog from '@/components/dialogs/LinkAnalysisDialog.vue'
 import SystemDesignMap from '@/components/map/SystemDesignMap.vue'
 import GSNRMarginChart from '@/components/charts/GSNRMarginChart.vue'
 import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
-import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore } from '@/stores'
+import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore } from '@/stores'
+import { useRouter } from 'vue-router'
 import { opticalSimulationService, repeaterPlacementService } from '@/services'
-import type { SpanScanResult, SimulationModelConfig, OpticalLink, ModulationFormat } from '@/types/simulation'
+import type { SpanScanResult, OpticalLink, ModulationFormat, FiberSpan, LinkNode } from '@/types/simulation'
 import type { SpanScanConfig } from '@/types/systemPlanning'
 import { MODULATION_PARAMS } from '@/types/simulation'
+import { connectorTypeLabels } from '@/types/connector'
 import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 const connectorStore = useConnectorStore()
 const rplStore = useRPLStore()
+const monitorStore = useMonitorStore()
+const router = useRouter()
+
+// 项目类型检测
+const hasValidProject = computed(() => {
+  const projectType = appStore.currentProjectType
+  // 允许访问的情况：
+  // 1. 有 USE 项目
+  // 2. 没有项目（允许浏览，但显示提示）
+  return projectType === 'use' || projectType === null
+})
+
+const projectWarningMessage = computed(() => {
+  const projectType = appStore.currentProjectType
+  if (projectType === 'ucp') {
+    return '当前打开的是路由规划项目(.ucp)，不支持系统设计功能。请创建或打开系统设计项目(.use)。'
+  }
+  if (projectType === null) {
+    return '当前没有打开项目。请先创建或打开一个系统设计项目(.use)。'
+  }
+  return ''
+})
+
+// 跳转到路由规划页面
+const goToPlanning = () => {
+  router.push('/planning')
+}
+
+// 打开新建项目对话框
+const openNewProject = () => {
+  appStore.openDialog('new-project')
+}
 
 // 调试日志
 onMounted(() => {
@@ -60,7 +94,24 @@ const repeaterTypeOptions = computed(() =>
 const repeaterSpacing = ref(80)
 const targetCapacity = ref(100)
 
-// 计算结果 - 从 rplStore 动态获取总长度
+// 检测成本参数是否已配置
+const hasCostSettings = computed(() => {
+  const costSettings = settingsStore.costFactors
+  // 至少需要配置电缆成本和中继器成本
+  return costSettings && 
+    costSettings.cableCostPerKm !== undefined && 
+    costSettings.cableCostPerKm > 0 &&
+    costSettings.repeaterCost !== undefined && 
+    costSettings.repeaterCost > 0
+})
+
+// 跳转到工程设置页面
+const goToProjectSettings = () => {
+  router.push('/settings')
+}
+
+// 计算结果 - 从 rplStore 动态获取总长度，联动中继器配置
+// 使用工程设置中的成本参数
 const designResult = computed(() => {
   const cable = settingsStore.settings.cableTypes.find(c => c.id === selectedCableType.value)
   const repeater = settingsStore.settings.repeaterTypes.find(r => r.id === selectedRepeaterType.value)
@@ -71,33 +122,77 @@ const designResult = computed(() => {
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
   if (totalLength === 0) return null
   
-  const repeaterCount = Math.ceil(totalLength / repeaterSpacing.value)
-  const cableCost = totalLength * cable.costPerKm
-  const repeaterCost = repeaterCount * repeater.cost
+  // 优先使用保存的中继器配置数量
+  const repeaterCount = savedRepeaterConfigs.value.length > 0 
+    ? savedRepeaterConfigs.value.length 
+    : Math.ceil(totalLength / repeaterSpacing.value)
+  
+  // 必须使用工程设置中的成本参数
+  const costSettings = settingsStore.costFactors || {}
+  const cableCostPerKm = costSettings.cableCostPerKm || 0
+  const repeaterUnitCost = costSettings.repeaterCost || 0
+  const installationCostPerKm = costSettings.installationCostPerKm || 0
+  const landingStationCost = costSettings.landingStationCost || 0
+  
+  // 统计登陆站数量
+  const landingStationCount = rplStore.currentTable?.metadata?.landingStations || 2
+  
+  // 计算各项成本
+  const cableCost = totalLength * cableCostPerKm
+  const repeaterCost = repeaterCount * repeaterUnitCost
+  const installationCost = totalLength * installationCostPerKm
+  const stationCost = landingStationCount * landingStationCost
 
   return {
     totalLength,
     repeaterCount,
+    landingStationCount,
     cableCost,
     repeaterCost,
-    totalCost: cableCost + repeaterCost,
+    installationCost,
+    stationCost,
+    totalCost: cableCost + repeaterCost + installationCost + stationCost,
     maxCapacity: cable.fiberCount * 10 // Tbps
   }
 })
 
 // 显示用中继器列表（最多显示5个）
+// 使用保存的配置名称，否则使用器件库名称
 const displayRepeaters = computed(() => {
-  const count = designResult.value?.repeaterCount || 0
-  if (count <= 5) {
-    return Array.from({ length: count }, (_, i) => ({ id: i + 1, label: `R${i + 1}` }))
+  // 如果有保存的中继器配置，使用配置中的名称
+  if (savedRepeaterConfigs.value.length > 0) {
+    const configs = savedRepeaterConfigs.value
+    if (configs.length <= 5) {
+      return configs.map((cfg, i) => ({ id: i + 1, label: cfg.name }))
+    }
+    // 超过5个时显示前2个 + ... + 后2个
+    return [
+      { id: 1, label: configs[0].name },
+      { id: 2, label: configs[1].name },
+      { id: -1, label: '...' },
+      { id: configs.length - 1, label: configs[configs.length - 2].name },
+      { id: configs.length, label: configs[configs.length - 1].name }
+    ]
   }
-  // 超过5个时显示: R1, R2, ..., R19, R20
+  
+  // 没有配置时，使用器件库中继器类型名称
+  const repeaterType = settingsStore.settings.repeaterTypes.find(r => r.id === selectedRepeaterType.value)
+  const typeName = repeaterType?.name || '中继器'
+  const count = designResult.value?.repeaterCount || 0
+  
+  if (count <= 5) {
+    return Array.from({ length: count }, (_, i) => ({ 
+      id: i + 1, 
+      label: `${typeName}-${String(i + 1).padStart(2, '0')}` 
+    }))
+  }
+  // 超过5个时显示前2个 + ... + 后2个
   return [
-    { id: 1, label: 'R1' },
-    { id: 2, label: 'R2' },
+    { id: 1, label: `${typeName}-01` },
+    { id: 2, label: `${typeName}-02` },
     { id: -1, label: '...' },
-    { id: count - 1, label: `R${count - 1}` },
-    { id: count, label: `R${count}` }
+    { id: count - 1, label: `${typeName}-${String(count - 1).padStart(2, '0')}` },
+    { id: count, label: `${typeName}-${String(count).padStart(2, '0')}` }
   ]
 })
 
@@ -124,12 +219,38 @@ const editConnectorId = ref<string | null>(null)
 
 // Span 扫描结果 (Step 6/7)
 const spanScanResult = ref<SpanScanResult | null>(null)
-const recommendedSpan = ref<number | null>(null)
+const recommendedSpan = ref<number | null>(null)// 自动落位结果
 const autoPlacementResult = ref<any>(null)
+
+// 中继器配置数据（用于联动链路分析等）
+const savedRepeaterConfigs = ref<Array<{
+  id: string
+  kp: number
+  name: string
+  gain: number
+  noiseFigure?: number
+}>>([])
 
 // 设备编辑弹框
 const showDeviceEditDialog = ref(false)
 const editingDevice = ref<any>(null)
+
+// 设备类型选项（排除光纤段）
+const deviceTypeOptions = computed(() => 
+  Object.entries(connectorTypeLabels)
+    .filter(([value]) => value !== 'fiber')
+    .map(([value, label]) => ({ value, label }))
+)
+
+// 监听设备类型变化，自动更新名称
+watch(() => editingDevice.value?.type, (newType, oldType) => {
+  if (editingDevice.value && newType && oldType && newType !== oldType) {
+    const newLabel = connectorTypeLabels[newType as keyof typeof connectorTypeLabels]
+    if (newLabel) {
+      editingDevice.value.name = newLabel
+    }
+  }
+})
 
 // 视图切换状态
 const centerViewMode = ref<'map' | 'gsnr' | 'span'>('map')
@@ -149,7 +270,7 @@ const calculateGSNRData = () => {
   
   // 从settings获取WDM参数
   const wdmConfig = settingsStore.transmissionConfig
-  const launchPower = wdmConfig.launchPower ?? 0
+  const launchPower = 0
   
   for (let i = 0; i <= spanCount; i++) {
     const kp = Math.min(i * repeaterSpacing.value, totalLength)
@@ -243,7 +364,7 @@ const openModelSelectDialog = () => {
 }
 
 // Step 4 确认后: 执行 Span 扫描计算
-const handleModelConfirm = (config: SimulationModelConfig) => {
+const handleModelConfirm = (config: { fiberModel: string; [key: string]: any }) => {
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
   
   isCalculating.value = true
@@ -333,8 +454,210 @@ const handleSpanSelect = (spanLength: number) => {
   appStore.showNotification({ type: 'info', message: `已选择 Span 长度: ${spanLength}km` })
 }
 
+// 构建当前链路数据 (供链路分析使用)
+const currentOpticalLink = computed<OpticalLink | null>(() => {
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  if (totalLength === 0) return null
+
+  const wdmConfig = settingsStore.transmissionConfig
+
+  // 构建节点列表 - 优先使用保存的中继器配置
+  const nodes: LinkNode[] = []
+  nodes.push({ id: 'terminal-start', type: 'terminal', name: '起点站', kp: 0 })
+  
+  if (savedRepeaterConfigs.value.length > 0) {
+    // 使用保存的中继器配置
+    savedRepeaterConfigs.value.forEach(rep => {
+      nodes.push({
+        id: rep.id,
+        type: 'repeater',
+        name: rep.name,
+        kp: rep.kp,
+        amplifier: { type: 'EDFA', gain: rep.gain, noiseFigure: rep.noiseFigure || 5, maxOutputPower: 17, gainFlatness: 1, band: 'C' }
+      })
+    })
+  } else {
+    // 使用默认等间距配置
+    const spanLength = repeaterSpacing.value
+    const spanCount = Math.ceil(totalLength / spanLength)
+    for (let i = 1; i < spanCount; i++) {
+      nodes.push({
+        id: `repeater-${i}`,
+        type: 'repeater',
+        name: `R${i}`,
+        kp: i * spanLength,
+        amplifier: { type: 'EDFA', gain: 16, noiseFigure: 5, maxOutputPower: 17, gainFlatness: 1, band: 'C' }
+      })
+    }
+  }
+  nodes.push({ id: 'terminal-end', type: 'terminal', name: '终点站', kp: totalLength })
+
+  // 根据节点位置构建跨段列表
+  const spans: FiberSpan[] = []
+  const sortedNodes = [...nodes].sort((a, b) => a.kp - b.kp)
+  for (let i = 0; i < sortedNodes.length - 1; i++) {
+    const spanLen = sortedNodes[i + 1].kp - sortedNodes[i].kp
+    spans.push({
+      id: `span-${i + 1}`,
+      index: i,
+      length: spanLen,
+      fiber: { type: 'G.654.E', attenuation: 0.16, dispersion: 17, dispersionSlope: 0.06, effectiveArea: 80, nonlinearIndex: 1.3e-20, nonlinearCoeff: 0.8 },
+      spanLoss: spanLen * 0.16,
+      connectorLoss: 0.5,
+      margin: 1
+    })
+  }
+
+  return {
+    id: 'current-link',
+    name: '当前链路',
+    nodes,
+    spans,
+    wdmParams: {
+      channelCount: wdmConfig.channelCount || 96,
+      channelSpacing: wdmConfig.channelBandwidth || 50,
+      centerWavelength: 1550,
+      symbolRate: 64,
+      modulationFormat: 'DP-16QAM',
+      launchPowerPerChannel: 0,
+      fecType: 'SD-FEC',
+      fecOverhead: 15
+    },
+    totalLength
+  }
+})
+
+// 生成光纤段数据（连接相邻节点）
+const generateFiberSpans = (sortedRepeaters: any[]) => {
+  // 删除现有的光纤段
+  const existingFibers = connectorStore.elements.filter(e => e.type === 'fiber')
+  existingFibers.forEach(f => connectorStore.deleteElement(f.id))
+  
+  // 获取所有节点（岸站 + 中继器）按 KP 排序
+  const allNodes = connectorStore.elements
+    .filter(e => e.type !== 'fiber')
+    .sort((a, b) => a.kp - b.kp)
+  
+  // 在相邻节点之间创建光纤段
+  for (let i = 0; i < allNodes.length - 1; i++) {
+    const startNode = allNodes[i]
+    const endNode = allNodes[i + 1]
+    const length = endNode.kp - startNode.kp
+    
+    connectorStore.addElement({
+      type: 'fiber',
+      name: `光纤段 ${i + 1}`,
+      kp: startNode.kp,
+      endKp: endNode.kp,
+      longitude: (startNode.longitude + endNode.longitude) / 2,
+      latitude: (startNode.latitude + endNode.latitude) / 2,
+      depth: (startNode.depth + endNode.depth) / 2,
+      status: 'active',
+      specifications: `G.654.E ${length.toFixed(1)}km`,
+      remarks: `${startNode.name} → ${endNode.name}`
+    })
+  }
+}
+
+// 处理中继器配置保存
+const handleRepeatersSaved = (repeaters: any[]) => {
+  savedRepeaterConfigs.value = repeaters.map(r => ({
+    id: r.id,
+    kp: r.kp,
+    name: r.name,
+    gain: r.gain || 16,
+    noiseFigure: 5
+  }))
+  
+  // 同步到 monitorStore，使地图显示中继器位置
+  const newDevices = repeaters.map(rep => {
+    const existing = monitorStore.devices.find(d => d.id === rep.id)
+    if (existing) {
+      return {
+        ...existing,
+        kp: rep.kp,
+        longitude: rep.longitude,
+        latitude: rep.latitude
+      }
+    } else {
+      return {
+        id: rep.id,
+        name: rep.name,
+        type: 'amplifier_e',
+        neType: 'EDFA',
+        kp: rep.kp,
+        longitude: rep.longitude,
+        latitude: rep.latitude,
+        depth: rep.depth || 3000,
+        status: 'normal' as const,
+        location: `KP ${rep.kp}`,
+        sldEquipmentName: rep.name,
+        inputPower: -15,
+        outputPower: 1,
+        pumpCurrent: 200,
+        pfeVoltage: 48,
+        pfeCurrent: 1.5,
+        temperature: 25
+      }
+    }
+  })
+  
+  // 保留非中继器设备，替换中继器设备
+  const repIds = new Set(repeaters.map(r => r.id))
+  const otherDevices = monitorStore.devices.filter(d => !repIds.has(d.id) && d.type !== 'amplifier_e')
+  monitorStore.devices.splice(0, monitorStore.devices.length, ...otherDevices, ...newDevices)
+  
+  // 同步到 connectorStore，使接线元管理显示中继器
+  // 先按 KP 排序
+  const sortedRepeaters = [...repeaters].sort((a, b) => a.kp - b.kp)
+  
+  sortedRepeaters.forEach((rep) => {
+    // 使用配置中的类型，默认交替东/西
+    const ampType = rep.type || 'amplifier_e'
+    
+    const existing = connectorStore.elements.find(e => e.id === rep.id)
+    if (!existing) {
+      connectorStore.addElement({
+        type: ampType,
+        name: rep.name,
+        kp: rep.kp,
+        longitude: rep.longitude,
+        latitude: rep.latitude,
+        depth: rep.depth || 3000,
+        status: 'active',
+        specifications: rep.model || 'EREP-C+L',
+        remarks: rep.remarks || ''
+      })
+    } else {
+      connectorStore.updateElement(rep.id, {
+        type: ampType,
+        kp: rep.kp,
+        longitude: rep.longitude,
+        latitude: rep.latitude,
+        depth: rep.depth
+      })
+    }
+  })
+  
+  // 自动生成光纤段数据（连接相邻节点）
+  generateFiberSpans(sortedRepeaters)
+  
+  // 重新计算 GSNR 数据
+  if (gsnrData.value.length > 0) {
+    gsnrData.value = calculateGSNRData()
+  }
+  
+  showRepeaterDialog.value = false
+  appStore.showNotification({ type: 'success', message: `已保存 ${repeaters.length} 个中继器配置` })
+  appStore.addLog('INFO', `中继器配置已更新: ${repeaters.length} 个中继器`)
+}
+
 // 打开链路分析 (Step 9)
 const openLinkAnalysis = () => {
+  if (!currentOpticalLink.value) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据' })
+    return
+  }
   showLinkAnalysisDialog.value = true
 }
 
@@ -397,15 +720,48 @@ const handleLineClick = () => {
 }
 
 // 编辑操作
-const handleEdit = (type: 'point' | 'line', id: string | null) => {
+const handleEdit = (type: 'point' | 'line' | 'segment', id: string | null) => {
+  console.log('DesignView handleEdit:', type, id)
   if (type === 'point' && id) {
-    const point = routePoints.value.find(p => p.id === id)
+    // 优先从 connectorStore 查找
+    let point = routePoints.value.find(p => p.id === id)
+    
+    // 如果找不到，尝试从 monitorStore 查找并转换
+    if (!point) {
+      const device = monitorStore.devices.find(d => d.id === id)
+      if (device) {
+        point = {
+          id: device.id,
+          name: device.name,
+          type: device.type as any,
+          kp: device.kp,
+          longitude: device.longitude,
+          latitude: device.latitude,
+          depth: device.depth,
+          status: 'active' as any,
+          specifications: '',
+          remarks: ''
+        }
+      }
+    }
+    
     if (point) {
       editingDevice.value = { ...point }
       showDeviceEditDialog.value = true
+    } else {
+      appStore.showNotification({ type: 'warning', message: '未找到对应设备' })
     }
   } else if (type === 'line') {
     appStore.showNotification({ type: 'info', message: '编辑线路参数' })
+  } else if (type === 'segment' && id !== null) {
+    const segmentIndex = parseInt(id)
+    const fiberElements = connectorStore.elements.filter(e => e.type === 'fiber')
+    if (fiberElements[segmentIndex]) {
+      editConnectorId.value = fiberElements[segmentIndex].id
+      showConnectorDialog.value = true
+    } else {
+      appStore.showNotification({ type: 'warning', message: '未找到对应的光纤段数据' })
+    }
   }
 }
 
@@ -424,6 +780,27 @@ const saveDeviceEdit = () => {
     remarks: editingDevice.value.remarks
   })
 
+  // 同步更新 monitorStore 数据（地图使用 monitorStore 渲染）
+  // 使用 KP 匹配，因为 connectorStore 和 monitorStore 的 ID 可能不同
+  const originalKp = routePoints.value.find(p => p.id === editingDevice.value!.id)?.kp
+  const deviceIndex = monitorStore.devices.findIndex(d => Math.abs(d.kp - (originalKp ?? editingDevice.value!.kp)) < 0.01)
+  console.log('saveDeviceEdit: originalKp=', originalKp, 'deviceIndex=', deviceIndex, 'monitorStore.devices.length=', monitorStore.devices.length)
+  if (deviceIndex !== -1) {
+    const updatedDevice = {
+      ...monitorStore.devices[deviceIndex],
+      name: editingDevice.value.name,
+      type: editingDevice.value.type,
+      neType: editingDevice.value.type,
+      longitude: editingDevice.value.longitude,
+      latitude: editingDevice.value.latitude,
+      kp: editingDevice.value.kp,
+      depth: editingDevice.value.depth,
+    }
+    // 使用 splice 确保触发响应式更新
+    monitorStore.devices.splice(deviceIndex, 1, updatedDevice)
+    console.log('saveDeviceEdit: updated device=', updatedDevice)
+  }
+
   if (success) {
     appStore.showNotification({ type: 'success', message: `设备 ${editingDevice.value.name} 已更新` })
     appStore.addLog('INFO', `更新设备 ${editingDevice.value.name}`)
@@ -433,7 +810,8 @@ const saveDeviceEdit = () => {
 }
 
 // 删除操作
-const handleDelete = (type: 'point' | 'line', id: string | null) => {
+const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => {
+  console.log('DesignView handleDelete:', type, id, 'routePoints:', routePoints.value.map(p => p.id))
   if (type === 'point' && id) {
     const point = routePoints.value.find(p => p.id === id)
     if (point) {
@@ -443,12 +821,50 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
     }
   } else if (type === 'line') {
     appStore.showNotification({ type: 'warning', message: '线路不可删除' })
+  } else if (type === 'segment' && id) {
+    appStore.showNotification({ type: 'warning', message: '光纤段不可删除' })
   }
 }
 </script>
 
 <template>
   <MainLayout>
+    <!-- 项目类型警告覆盖层 -->
+    <div 
+      v-if="projectWarningMessage" 
+      class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-40 flex items-center justify-center"
+    >
+      <div class="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+        <div class="bg-amber-50 px-6 py-4 border-b border-amber-100">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+              <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h3 class="text-lg font-semibold text-amber-800">项目类型不匹配</h3>
+          </div>
+        </div>
+        <div class="px-6 py-5">
+          <p class="text-gray-600 mb-6">{{ projectWarningMessage }}</p>
+          <div class="flex gap-3">
+            <Button class="flex-1" @click="openNewProject">
+              <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              新建项目
+            </Button>
+            <Button variant="outline" class="flex-1" @click="goToPlanning">
+              <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              返回路由规划
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 传输系统规划工具栏 -->
     <template #toolbar>
       <div class="flex items-center justify-between px-4 py-2 bg-white border-b">
@@ -629,7 +1045,8 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
               <div class="text-[10px] text-gray-500">容量 (Tbps)</div>
             </div>
             <div class="p-3 text-center bg-gray-50/30">
-              <div class="text-sm font-semibold text-gray-800">{{ formatCost(designResult.totalCost) }}</div>
+              <div v-if="hasCostSettings" class="text-sm font-semibold text-gray-800">{{ formatCost(designResult.totalCost) }}</div>
+              <div v-else class="text-sm text-amber-600 cursor-pointer hover:text-amber-700" @click="goToProjectSettings">未配置</div>
               <div class="text-[10px] text-gray-500">总成本</div>
             </div>
           </div>
@@ -666,7 +1083,20 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
                 <span class="w-1 h-3 bg-gray-500 rounded-sm"></span>
                 成本估算
               </h4>
-              <div class="space-y-2 text-xs">
+              <!-- 未配置成本参数时显示提示 -->
+              <div v-if="!hasCostSettings" class="text-center py-3">
+                <div class="text-amber-600 text-xs mb-2">
+                  ⚠️ 成本参数未配置
+                </div>
+                <div class="text-gray-500 text-[10px] mb-3">
+                  请在工程设置中配置成本参数后查看成本估算
+                </div>
+                <Button size="sm" variant="outline" class="text-xs" @click="goToProjectSettings">
+                  去配置
+                </Button>
+              </div>
+              <!-- 已配置时显示成本明细 -->
+              <div v-else class="space-y-2 text-xs">
                 <div class="flex justify-between items-center">
                   <span class="text-gray-600">电缆成本</span>
                   <span class="font-mono">{{ formatCost(designResult.cableCost) }}</span>
@@ -736,7 +1166,7 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
 
   <!-- 弹框组件 -->
   <RepeaterConfigDialog :visible="showRepeaterDialog" @close="showRepeaterDialog = false"
-    @saved="showRepeaterDialog = false" />
+    @saved="handleRepeatersSaved" />
   <ConnectorDialog :visible="showConnectorDialog" :edit-id="editConnectorId" @close="showConnectorDialog = false"
     @saved="showConnectorDialog = false" />
   <WDMConfigDialog 
@@ -752,6 +1182,7 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
   />
   <LinkAnalysisDialog
     :visible="showLinkAnalysisDialog"
+    :link="currentOpticalLink ?? undefined"
     @close="showLinkAnalysisDialog = false"
   />
 
@@ -798,14 +1229,10 @@ const handleDelete = (type: 'point' | 'line', id: string | null) => {
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">设备类型</label>
-          <select v-model="editingDevice.type"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-            <option value="joint">接头盒</option>
-            <option value="ola">光放大器</option>
-            <option value="bu">分支单元</option>
-            <option value="pfe">馈电设备</option>
-            <option value="equalizer">均衡器</option>
-          </select>
+          <Select 
+            v-model="editingDevice.type"
+            :options="deviceTypeOptions"
+          />
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">规格型号</label>

@@ -40,11 +40,12 @@ const emit = defineEmits<{
 }>()
 
 const selectedValue = computed({
-  get: () => props.modelValue ?? '',
+  get: () => props.modelValue || '',
   set: (value) => emit('update:modelValue', value)
 })
 
 const selectedLabel = computed(() => {
+  if (!selectedValue.value) return undefined
   const option = props.options.find(o => o.value === selectedValue.value)
   return option?.label
 })

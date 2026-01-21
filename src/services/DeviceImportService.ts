@@ -340,6 +340,8 @@ export class DeviceImportService {
       id: data.id || `bu-${Date.now()}-${row}`,
       name: data.name || data.id,
       portCount: this.parseNumber(data.portCount, 3),
+      trunkInsertionLoss: this.parseNumber(data.trunkInsertionLoss, 0.5),
+      branchInsertionLoss: this.parseNumber(data.branchInsertionLoss, 3.0),
       insertionLoss: this.parseNumber(data.insertionLoss, 0.5),
       wavelengthRange: this.parseNumber(data.wavelengthRange, 1550)
     }
@@ -405,6 +407,8 @@ export class DeviceImportService {
       id: row['id'] || `bu-${Date.now()}-${rowNum}`,
       name,
       portCount: this.parseNumber(row['portCount'] || row['端口数'], 3),
+      trunkInsertionLoss: this.parseNumber(row['trunkInsertionLoss'] || row['主干插损'], 0.5),
+      branchInsertionLoss: this.parseNumber(row['branchInsertionLoss'] || row['分支插损'], 3.0),
       insertionLoss: this.parseNumber(row['insertionLoss'] || row['插损'], 0.5),
       wavelengthRange: this.parseNumber(row['wavelengthRange'] || row['波长范围'], 1550)
     }

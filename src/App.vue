@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouteStore, useLayerStore, useAppStore, useUserStore } from '@/stores'
-import { initAppearance, useProjectManager } from '@/composables'
+import { initAppearance, useProjectManager, type CreateProjectParams } from '@/composables'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
@@ -30,6 +30,16 @@ onMounted(async () => {
   await routeStore.loadRoutes()
   appStore.addLog('INFO', '应用初始化完成')
 })
+
+// 处理新建项目成功
+const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
+  const dialogType = appStore.activeDialog
+  appStore.closeDialog()
+  
+  if (dialogType === 'new-project') {
+    await projectManager.createProject(data)
+  }
+}
 </script>
 
 <template>
@@ -76,7 +86,7 @@ onMounted(async () => {
     :visible="['new-project', 'open-project', 'save-project', 'save-as-project'].includes(appStore.activeDialog || '')"
     :mode="appStore.activeDialog?.replace('-project', '') as any"
     @close="appStore.closeDialog()"
-    @success="appStore.closeDialog()"
+    @success="handleProjectDialogSuccess"
   />
 
   <UserManageDialog
@@ -137,7 +147,7 @@ onMounted(async () => {
   <SaveAsDialog
     :visible="projectManager.showSaveAsDialog.value"
     :current-project-name="projectManager.currentProjectName.value"
-    :current-project-type="projectManager.currentProjectType.value"
+    :current-project-type="projectManager.currentProjectType.value ?? undefined"
     @close="projectManager.showSaveAsDialog.value = false"
     @save="({ projectName, savePath }) => projectManager.saveProjectAs(projectName, savePath)"
   />

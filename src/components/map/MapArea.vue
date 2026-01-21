@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, toRef } from 'vue'
-import { useMapStore, useLayerStore, useAppStore, useRouteStore, useSettingsStore } from '@/stores'
+import { useMapStore, useLayerStore, useAppStore, useRouteStore, useSettingsStore, useMonitorStore, useRPLStore, useConnectorStore } from '@/stores'
 import { Button, Tooltip } from '@/components/ui'
 import {
   MousePointer, Move, Plus, Trash2, Square, Edit3,
@@ -44,6 +44,9 @@ const mapStore = useMapStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
 const routeStore = useRouteStore()
+const monitorStore = useMonitorStore()
+const rplStore = useRPLStore()
+const connectorStore = useConnectorStore()
 
 // 监听投影变化
 const currentProjection = toRef(mapStore, 'projection')
@@ -65,6 +68,9 @@ const isDraggingPoint = ref(false)
 const showParetoFrontierDialog = ref(false)
 const showSegmentDetailDialog = ref(false)
 const currentSegment = ref<{ id: string; length: number; depth: number } | null>(null)
+
+// 选中的光纤线
+const selectedCableId = ref<string | null>(null)
 
 let map: Map | null = null
 let dragBox: DragBox | null = null
@@ -100,12 +106,23 @@ const disableBoxSelect = () => {
 }
 
 const toggleBoxSelect = () => {
-  if (mapStore.isBoxSelecting) {
+  if (mapStore.hasSelection) {
+    // 已有选区，清除选择
+    clearSelection()
+  } else if (mapStore.isBoxSelecting) {
     disableBoxSelect()
     appStore.showNotification({ type: 'info', message: '框选模式已关闭' })
   } else {
     enableBoxSelect()
   }
+}
+
+const clearSelection = () => {
+  mapStore.clearSelection()
+  if (selectionSource) {
+    selectionSource.clear()
+  }
+  appStore.showNotification({ type: 'info', message: '已清除区域选择' })
 }
 
 // 切换地图投影
@@ -305,12 +322,6 @@ const updateRouteLineFromPoints = () => {
   })
 }
 
-// 打开分段参数面板
-const openSegmentPanel = () => {
-  appStore.setPanelVisible('segmentConfigPanel', true)
-  appStore.showNotification({ type: 'info', message: '分段参数配置面板已打开' })
-}
-
 // 查看Pareto前沿图
 const handleViewParetoChart = () => {
   showParetoFrontierDialog.value = true
@@ -400,6 +411,39 @@ const initMap = () => {
         message: `已选择坐标: ${coordStr}` 
       })
       evt.preventDefault()
+    }
+  })
+
+  // 单击事件 - 选中光纤线或设备
+  map.on('singleclick', (evt) => {
+    if (!routeLayer) return
+    
+    // 检查是否点击了路径线
+    const features = map!.getFeaturesAtPixel(evt.pixel, {
+      layerFilter: layer => layer === routeLayer
+    })
+    
+    if (features && features.length > 0) {
+      const lineFeature = features.find(f => f.getGeometry()?.getType() === 'LineString')
+      if (lineFeature) {
+        const routeId = lineFeature.get('routeId')
+        selectedCableId.value = routeId
+        routeStore.selectRoute(routeId)
+        drawParetoRoutes()
+        return
+      }
+      
+      // 检查是否点击了设备点
+      const pointFeature = features.find(f => f.getGeometry()?.getType() === 'Point')
+      if (pointFeature) {
+        const deviceId = pointFeature.get('deviceId')
+        if (deviceId) {
+          monitorStore.selectDevice(deviceId)
+          drawParetoRoutes()
+        }
+      }
+    } else {
+      selectedCableId.value = null
     }
   })
 
@@ -769,12 +813,21 @@ const initMap = () => {
   }, 8000)
 
   appStore.addLog('INFO', '地图初始化完成')
+  
+  // 检查是否已有导入的路线数据，如有则绘制
+  if (routeStore.paretoRoutes.length > 0) {
+    console.log('Map initialized, drawing existing paretoRoutes:', routeStore.paretoRoutes.length)
+    setTimeout(() => {
+      drawParetoRoutes()
+      isPlanning.value = true
+    }, 500)
+  }
 }
 
 // 路径颜色配置
 const routeColors = ['#3b82f6', '#10b981', '#f59e0b'] // 蓝、绿、橙
 
-// 绑制 Pareto 路径到地图
+// 绑制路径到地图 - 优先使用 monitorStore 设备数据（与实时监控一致）
 const drawParetoRoutes = () => {
   if (!map) return
 
@@ -791,22 +844,123 @@ const drawParetoRoutes = () => {
     map.addLayer(routeLayer)
   }
 
-  const routes = routeStore.paretoRoutes
+  // 优先使用 monitorStore 设备数据（与实时监控页面一致）
+  if (monitorStore.devices.length > 0) {
+    const devices = [...monitorStore.devices].sort((a, b) => (a.kp || 0) - (b.kp || 0))
+    
+    // 分段绘制光纤线（每段可独立选中）
+    for (let i = 0; i < devices.length - 1; i++) {
+      const startDevice = devices[i]
+      const endDevice = devices[i + 1]
+      const isSelected = selectedCableId.value === `segment-${i}`
+      
+      const segmentFeature = new Feature({
+        geometry: new LineString([
+          [startDevice.longitude, startDevice.latitude],
+          [endDevice.longitude, endDevice.latitude]
+        ]),
+        routeId: `segment-${i}`,
+        segmentIndex: i,
+        fromId: startDevice.id,
+        toId: endDevice.id,
+      })
+      segmentFeature.setStyle(new Style({
+        stroke: new Stroke({
+          color: isSelected ? '#f59e0b' : '#3b82f6',
+          width: isSelected ? 5 : 3,
+          lineDash: isSelected ? undefined : [8, 4],
+        }),
+      }))
+      routeSource!.addFeature(segmentFeature)
+    }
 
+    // 添加设备点 - 使用不同颜色的圆点区分设备类型
+    // 设备类型颜色映射
+    const deviceColorMap: Record<string, string> = {
+      'landing': '#22c55e',       // 登陆站 - 绿色
+      'LandingStation': '#22c55e',
+      'repeater': '#3b82f6',      // 中继器 - 蓝色
+      'Repeater': '#3b82f6',
+      'amplifier_e': '#3b82f6',
+      'amplifier_w': '#3b82f6',
+      'bu': '#a855f7',            // 分支器 - 紫色
+      'BU': '#a855f7',
+      'branching': '#a855f7',
+      'joint': '#f97316',         // 接头 - 橙色
+      'Joint': '#f97316',
+      'underwater': '#06b6d4',    // 水下站点 - 青色
+      'PFE': '#06b6d4',
+      'waypoint': '#6b7280',      // 航路点 - 灰色
+    }
+    
+    // 设备类型大小映射
+    const deviceSizeMap: Record<string, number> = {
+      'landing': 12,
+      'LandingStation': 12,
+      'repeater': 8,
+      'Repeater': 8,
+      'amplifier_e': 8,
+      'amplifier_w': 8,
+      'bu': 10,
+      'BU': 10,
+      'branching': 10,
+      'joint': 6,
+      'Joint': 6,
+      'underwater': 8,
+      'PFE': 8,
+      'waypoint': 5,
+    }
+
+    devices.forEach((device) => {
+      const pointFeature = new Feature({
+        geometry: new Point([device.longitude, device.latitude]),
+        deviceId: device.id,
+        deviceType: device.type,
+        deviceName: device.name,
+      })
+
+      // 根据设备类型设置颜色和大小
+      const color = deviceColorMap[device.type] || '#6b7280'
+      const radius = deviceSizeMap[device.type] || 6
+
+      pointFeature.setStyle(new Style({
+        image: new CircleStyle({
+          radius: radius,
+          fill: new Fill({ color: color }),
+          stroke: new Stroke({ color: '#fff', width: 2 }),
+        }),
+        text: new Text({
+          text: device.name,
+          offsetY: -(radius + 8),
+          font: '11px sans-serif',
+          fill: new Fill({ color: '#333' }),
+          stroke: new Stroke({ color: '#fff', width: 3 }),
+        }),
+      }))
+
+      routeSource!.addFeature(pointFeature)
+    })
+
+    // 缩放到路径范围
+    if (routeSource.getFeatures().length > 0) {
+      const extent = routeSource.getExtent()
+      map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
+    }
+    return
+  }
+
+  // 备用：使用 paretoRoutes 数据
+  const routes = routeStore.paretoRoutes
   routes.forEach((route, index) => {
     const color = routeColors[index % routeColors.length]
     const isSelected = routeStore.selectedRoute?.id === route.id
 
-    // 提取路径坐标
     const coords = route.points.map(p => p.coordinates)
-
-    // 创建路径线
     const lineFeature = new Feature({
       geometry: new LineString(coords),
       routeId: route.id,
       routeName: route.name,
     })
-
     lineFeature.setStyle(new Style({
       stroke: new Stroke({
         color: color,
@@ -814,10 +968,8 @@ const drawParetoRoutes = () => {
         lineDash: isSelected ? undefined : [8, 4],
       }),
     }))
-
     routeSource!.addFeature(lineFeature)
 
-    // 添加路径点
     route.points.forEach((point, pointIndex) => {
       const pointFeature = new Feature({
         geometry: new Point(point.coordinates),
@@ -827,7 +979,6 @@ const drawParetoRoutes = () => {
         pointName: point.name,
       })
 
-      // 根据点类型设置样式
       let pointColor = color
       let radius = 6
       if (point.type === 'landing') {
@@ -855,7 +1006,6 @@ const drawParetoRoutes = () => {
     })
   })
 
-  // 缩放到路径范围
   if (routes.length > 0 && routeSource.getFeatures().length > 0) {
     const extent = routeSource.getExtent()
     map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
@@ -869,28 +1019,266 @@ watch(() => routeStore.selectedRoute, () => {
   }
 })
 
-// 监听 paretoRoutes 变化（用于导入项目时自动显示路线）
-watch(() => routeStore.paretoRoutes.length, (newLen) => {
+// 监听 monitorStore 设备数据变化（与实时监控一致）
+watch(() => monitorStore.devices.length, (newLen) => {
   if (newLen > 0) {
-    // 新导入的路线，绘制并缩放
-    console.log('paretoRoutes changed, drawing routes:', newLen)
-    // 延迟执行确保 map 已初始化
+    console.log('monitorStore.devices changed, drawing routes:', newLen)
     if (map) {
       drawParetoRoutes()
+      isPlanning.value = true
     } else {
-      // 等待 map 初始化后再绘制
       const checkMap = setInterval(() => {
         if (map) {
           clearInterval(checkMap)
           drawParetoRoutes()
+          isPlanning.value = true
         }
       }, 100)
-      // 5秒后超时停止检查
       setTimeout(() => clearInterval(checkMap), 5000)
     }
-    isPlanning.value = true
   }
 }, { immediate: true })
+
+// 监听 paretoRoutes 变化（USE文件导入时触发）
+watch(() => routeStore.paretoRoutes.length, (newLen) => {
+  if (newLen > 0) {
+    console.log('paretoRoutes changed, drawing routes:', newLen)
+    if (map) {
+      drawParetoRoutes()
+      isPlanning.value = true
+    } else {
+      const checkMap = setInterval(() => {
+        if (map) {
+          clearInterval(checkMap)
+          drawParetoRoutes()
+          isPlanning.value = true
+        }
+      }, 100)
+      setTimeout(() => clearInterval(checkMap), 5000)
+    }
+  }
+}, { immediate: true })
+
+// 同步路由数据到 rplStore（供系统规划使用）
+const syncRouteToRPL = () => {
+  // 获取当前选中的路由（默认选中均衡路线）
+  const selectedRoute = routeStore.selectedRoute || routeStore.paretoRoutes[1] || routeStore.paretoRoutes[0]
+  if (!selectedRoute) return
+  
+  // 从器件库获取默认设备（使用放大器类型）
+  const defaultAmplifier = settingsStore.amplifierTypes[0]
+  const defaultFiber = settingsStore.fiberTypes[0]
+  
+  // 将路由点转换为 RPL 记录
+  const records: any[] = []
+  let cumulativeLength = 0
+  let repeaterIndex = 0
+  
+  selectedRoute.points.forEach((point, index) => {
+    // 计算段长度
+    let segmentLength = 0
+    if (index > 0) {
+      const prevPoint = selectedRoute.points[index - 1]
+      segmentLength = calculateDistanceFromCoords(
+        prevPoint.coordinates,
+        point.coordinates
+      )
+    }
+    cumulativeLength += segmentLength
+    
+    // 映射点类型
+    let pointType: 'landing' | 'repeater' | 'waypoint' | 'branching' | 'joint' = 'waypoint'
+    let pointName = point.name || ''
+    
+    // 从路由点获取设备信息（如果有）
+    const deviceInfo = point.device
+    
+    if (point.type === 'landing') {
+      pointType = 'landing'
+    } else if (point.type === 'repeater') {
+      pointType = 'repeater'
+      repeaterIndex++
+      // 使用设备信息中的名称，否则使用器件库放大器名称
+      pointName = deviceInfo?.deviceName || (defaultAmplifier 
+        ? `${defaultAmplifier.name}-${String(repeaterIndex).padStart(2, '0')}`
+        : `放大器-${String(repeaterIndex).padStart(2, '0')}`)
+    }
+    
+    records.push({
+      id: `rec-${Date.now()}-${index}`,
+      sequence: index + 1,
+      pointType,
+      pointName,
+      longitude: point.coordinates[0],
+      latitude: point.coordinates[1],
+      depth: 2000 + Math.random() * 2000, // 模拟水深
+      segmentLength,
+      cumulativeLength,
+      slack: 2,
+      cableType: 'LW',
+      kp: cumulativeLength,
+      // 携带完整的器件库设备信息
+      device: deviceInfo ? {
+        deviceId: deviceInfo.deviceId,
+        deviceType: deviceInfo.deviceType,
+        deviceName: deviceInfo.deviceName,
+        cost: deviceInfo.cost,
+        maxSpan: deviceInfo.maxSpan,
+        powerConsumption: deviceInfo.powerConsumption,
+        gain: deviceInfo.gain,
+        noiseFigure: deviceInfo.noiseFigure,
+        outputPower: deviceInfo.outputPower,
+      } : undefined,
+    })
+  })
+  
+  // 创建或更新 RPL 表格
+  const tableName = `${selectedRoute.name}-RPL`
+  const existingTable = rplStore.tables.find(t => t.name === tableName)
+  
+  if (existingTable) {
+    // 更新现有表格
+    rplStore.selectTable(existingTable.id)
+    existingTable.records = records
+    existingTable.metadata = {
+      totalLength: cumulativeLength,
+      totalCableLength: cumulativeLength * 1.02,
+      landingStations: records.filter(r => r.pointType === 'landing').length,
+      repeaters: records.filter(r => r.pointType === 'repeater').length,
+      branchingUnits: 0,
+      joints: 0,
+      averageDepth: 3000,
+      maxDepth: 4000,
+      minDepth: 2000,
+    }
+    existingTable.updatedAt = new Date()
+  } else {
+    // 创建新表格
+    const newTable = rplStore.createTable(tableName, selectedRoute.id)
+    newTable.records = records
+    newTable.metadata = {
+      totalLength: cumulativeLength,
+      totalCableLength: cumulativeLength * 1.02,
+      landingStations: records.filter(r => r.pointType === 'landing').length,
+      repeaters: records.filter(r => r.pointType === 'repeater').length,
+      branchingUnits: 0,
+      joints: 0,
+      averageDepth: 3000,
+      maxDepth: 4000,
+      minDepth: 2000,
+    }
+  }
+  
+  console.log('Route synced to RPL:', tableName, 'totalLength:', cumulativeLength)
+  
+  // 同步到 connectorStore（接线元管理）
+  syncRouteToConnector(records, selectedRoute.name)
+}
+
+// 同步路由数据到接线元管理
+const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
+  try {
+    // 映射点类型到接线元类型
+    const mapPointTypeToConnectorType = (pointType: string): string => {
+      const map: Record<string, string> = {
+        'landing': 'landing',
+        'repeater': 'amplifier_e',
+        'branching': 'bu',
+      }
+      return map[pointType] || 'underwater'
+    }
+    
+    // 获取设备类型中文名称
+    const getDeviceTypeChinese = (deviceType: string): string => {
+      const map: Record<string, string> = {
+        'landing': '岸上站点',
+        'amplifier_e': '放大器',
+        'bu': '水下分支器',
+        'underwater': '水下站点',
+      }
+      return map[deviceType] || deviceType
+    }
+    
+    // 构建设备列表
+    const devices: any[] = []
+    let deviceIndex = 0
+    
+    rplRecords.forEach((record) => {
+      if (record.pointType !== 'waypoint') {
+        const connectorType = mapPointTypeToConnectorType(record.pointType)
+        devices.push({
+          id: `device-${Date.now()}-${deviceIndex}`,
+          name: record.pointName || `${getDeviceTypeChinese(connectorType)}-${deviceIndex + 1}`,
+          type: connectorType,
+          longitude: record.longitude,
+          latitude: record.latitude,
+          depth: record.depth,
+          kp: record.kp || record.cumulativeLength,
+          status: 'active',
+          specifications: '',
+          remarks: record.pointName || '',
+        })
+        deviceIndex++
+      }
+    })
+    
+    // 生成光纤段
+    const fibers: any[] = []
+    for (let i = 0; i < devices.length - 1; i++) {
+      const fromElem = devices[i]
+      const toElem = devices[i + 1]
+      fibers.push({
+        id: `fiber-${Date.now()}-${i}`,
+        name: `光纤段 F${i + 1}`,
+        type: 'fiber',
+        kp: fromElem.kp,
+        endKp: toElem.kp,
+        longitude: 0,
+        latitude: 0,
+        depth: 0,
+        status: 'active',
+        specifications: '',
+        remarks: `${fromElem.name} → ${toElem.name}`,
+        fromDeviceId: fromElem.id,
+        toDeviceId: toElem.id,
+        length: Math.abs(toElem.kp - fromElem.kp),
+      })
+    }
+    
+    const allElements = [...devices, ...fibers]
+    
+    // 确保有表格
+    if (connectorStore.tables.length === 0) {
+      connectorStore.createTable(`${routeName}-接线元`, 'route-main')
+    }
+    
+    // 直接设置当前表格的 elements
+    if (connectorStore.tables.length > 0) {
+      connectorStore.tables[0].elements = allElements
+      connectorStore.currentTableId = connectorStore.tables[0].id
+    }
+    
+    console.log('Route synced to Connector:', allElements.length, 'elements')
+  } catch (err) {
+    console.error('syncRouteToConnector error:', err)
+  }
+}
+
+// 计算两点之间的距离 (km)
+const calculateDistanceFromCoords = (coord1: [number, number], coord2: [number, number]): number => {
+  const R = 6371 // 地球半径 (km)
+  const lat1 = coord1[1] * Math.PI / 180
+  const lat2 = coord2[1] * Math.PI / 180
+  const dLat = (coord2[1] - coord1[1]) * Math.PI / 180
+  const dLon = (coord2[0] - coord1[0]) * Math.PI / 180
+  
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1) * Math.cos(lat2) *
+            Math.sin(dLon/2) * Math.sin(dLon/2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  
+  return R * c
+}
 
 // 清除地图上的路径
 const clearRoutes = () => {
@@ -927,6 +1315,29 @@ const togglePlanning = () => {
 }
 
 const handleRunPlanning = () => {
+  // 检查器件库是否已导入
+  if (settingsStore.amplifierTypes.length === 0) {
+    appStore.showNotification({ 
+      type: 'warning', 
+      message: '请先在工程设置 > 器件库管理 中导入器件库' 
+    })
+    appStore.addLog('WARN', '运行规划失败：未导入器件库（放大器类型为空）')
+    return
+  }
+  
+  // 检查是否已配置起点和终点
+  const config = settingsStore.routePlanningConfig
+  if (!config.isConfigured || 
+      (config.startPoint.lon === 0 && config.startPoint.lat === 0) ||
+      (config.endPoint.lon === 0 && config.endPoint.lat === 0)) {
+    appStore.showNotification({ 
+      type: 'warning', 
+      message: '请先在工程设置中配置起点和终点坐标' 
+    })
+    appStore.addLog('WARN', '运行规划失败：未配置起点和终点')
+    return
+  }
+
   let hasHeatmapData = false
   const enabledLayers: string[] = []
 
@@ -945,22 +1356,28 @@ const handleRunPlanning = () => {
     enabledLayers.push('地震')
   }
 
-  // 生成三条 Pareto 路径（新ParetoPanel会自动显示）
-  routeStore.generateMockParetoRoutes()
-  // appStore.setPanelVisible('paretoAnalysisPanel', true)  // 已用新组件替代
+  // 根据工程设置生成 Pareto 路径
+  routeStore.generateParetoRoutesFromSettings()
 
   // 在地图上绘制路径
   drawParetoRoutes()
+  
+  // 同步选中的路由数据到 rplStore（供系统规划使用）
+  syncRouteToRPL()
 
   // 更新状态
   isPlanning.value = true
 
+  // 获取起点终点信息用于日志
+  const startInfo = `${config.startPoint.lon.toFixed(2)},${config.startPoint.lat.toFixed(2)}`
+  const endInfo = `${config.endPoint.lon.toFixed(2)},${config.endPoint.lat.toFixed(2)}`
+
   if (hasHeatmapData) {
     appStore.showNotification({ type: 'success', message: `规划运行完成，已生成 ${enabledLayers.join('、')} 热力图和 3 条 Pareto 路径` })
-    appStore.addLog('INFO', `规划运行完成: ${enabledLayers.join(', ')}，生成 3 条 Pareto 路径`)
+    appStore.addLog('INFO', `规划运行完成: 起点(${startInfo}) → 终点(${endInfo})，生成 3 条 Pareto 路径`)
   } else {
     appStore.showNotification({ type: 'success', message: '规划运行完成，已生成 3 条 Pareto 最优路径' })
-    appStore.addLog('INFO', '规划运行完成，生成 3 条 Pareto 路径')
+    appStore.addLog('INFO', `规划运行完成: 起点(${startInfo}) → 终点(${endInfo})，生成 3 条 Pareto 路径`)
   }
 }
 
@@ -1012,20 +1429,15 @@ onUnmounted(() => {
         <div class="w-px h-5" style="background-color: var(--app-border-color);" />
 
         <div class="flex gap-1">
-          <Tooltip content="框选区域">
-            <Button :variant="mapStore.isBoxSelecting ? 'default' : 'outline'" size="sm" @click="toggleBoxSelect">
-              <Square class="w-4 h-4 mr-1" /> 区域选择
+          <Tooltip :content="mapStore.hasSelection ? '清除已选区域' : '框选区域'">
+            <Button :variant="mapStore.isBoxSelecting || mapStore.hasSelection ? 'default' : 'outline'" size="sm" @click="toggleBoxSelect">
+              <Square class="w-4 h-4 mr-1" /> {{ mapStore.hasSelection ? '清除选择' : '区域选择' }}
             </Button>
           </Tooltip>
           <Tooltip content="路径调整">
             <Button :variant="isEditingRoute ? 'default' : 'outline'" size="sm" :disabled="!isPlanning"
               @click="toggleRouteEditing">
               <Edit3 class="w-4 h-4 mr-1" /> 路径调整
-            </Button>
-          </Tooltip>
-          <Tooltip content="分段参数">
-            <Button variant="outline" size="sm" @click="openSegmentPanel">
-              <Settings class="w-4 h-4 mr-1" /> 分段参数
             </Button>
           </Tooltip>
         </div>
@@ -1039,9 +1451,9 @@ onUnmounted(() => {
             {{ isPlanning ? '停止' : '运行规划' }}
           </Button>
         </Tooltip>
-        <Tooltip content="导出RPL表格">
+        <Tooltip content="导出Excel表格">
           <Button variant="outline" size="sm" :disabled="!isPlanning" @click="appStore.openDialog('rpl-manage')">
-            <FileSpreadsheet class="w-4 h-4 mr-1" /> 导出RPL
+            <FileSpreadsheet class="w-4 h-4 mr-1" /> 导出Excel
           </Button>
         </Tooltip>
       </div>
@@ -1074,7 +1486,7 @@ onUnmounted(() => {
 
       <!-- Pareto路径列表面板 -->
       <ParetoPanel
-        v-if="isPlanning"
+        v-if="isPlanning || routeStore.paretoRoutes.length > 0"
         @view-pareto-chart="handleViewParetoChart"
         @select-route="handleSelectRoute"
       />

@@ -107,10 +107,23 @@ export interface BranchingUnit {
 
 // 成本因子
 export interface CostFactors {
-  laborCostPerKm: number
-  vesselCostPerDay: number
-  surveyingCostPerKm: number
-  contingencyPercent: number
+  // 原有字段（向后兼容）
+  laborCostPerKm: number         // 人工成本/每公里
+  vesselCostPerDay: number       // 船舶成本/每天
+  surveyingCostPerKm: number     // 勘测成本/每公里
+  contingencyPercent: number     // 应急百分比
+  // 新增字段 - 用于系统规划成本计算
+  cableCostPerKm?: number        // 电缆每公里成本
+  installationCostPerKm?: number // 安装每公里成本
+  repeaterCost?: number          // 中继器单价
+  branchingUnitCost?: number     // 分支器单价
+  landingStationCost?: number    // 登陆站成本
+  currency?: string              // 货币类型
+  // 路径规划成本参数
+  lightCableCost?: number        // 轻型海缆单价 (千元/公里)
+  heavyCableCost?: number        // 重型海缆单价 (千元/公里)
+  maxConstructionCost?: number   // 施工成本极大值 (千元/公里)
+  depthThreshold?: number        // 深浅分界值 (米)
 }
 
 // 应用设置
@@ -162,6 +175,8 @@ export const defaultBranchingUnitTypes: BranchingUnitType[] = [
     id: 'bu-1',
     name: 'BU-1',
     portCount: 3,
+    trunkInsertionLoss: 0.5,
+    branchInsertionLoss: 3.0,
     insertionLoss: 0.8,
     wavelengthRange: 1550,
   },
@@ -187,6 +202,13 @@ export const defaultSettings: AppSettings = {
     vesselCostPerDay: 50000,
     surveyingCostPerKm: 2000,
     contingencyPercent: 15,
+    // 新增默认值
+    cableCostPerKm: 35000,
+    installationCostPerKm: 15000,
+    repeaterCost: 250000,
+    branchingUnitCost: 180000,
+    landingStationCost: 5000000,
+    currency: 'USD',
   },
   fiberTypes: defaultFiberTypes,
   amplifierTypes: defaultAmplifierTypes,

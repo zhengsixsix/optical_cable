@@ -284,7 +284,7 @@ export const useSLDStore = defineStore('sld', () => {
       if (['landing', 'repeater', 'branching', 'joint'].includes(record.pointType)) {
         const equipmentType = mapPointTypeToEquipment(record.pointType)
         const equipment = addEquipment({
-          name: record.remarks || `${equipmentType}-${index + 1}`,
+          name: record.remarks || `${getEquipmentTypeChinese(equipmentType)}-${index + 1}`,
           type: equipmentType,
           location: `KP ${record.kp.toFixed(1)}`,
           kp: record.kp,
@@ -332,6 +332,18 @@ export const useSLDStore = defineStore('sld', () => {
       joint: 'JOINT',
     }
     return map[pointType] || 'JOINT'
+  }
+
+  function getEquipmentTypeChinese(equipmentType: SLDEquipmentType): string {
+    const map: Record<string, string> = {
+      'TE': '岸上站点',
+      'PFE': '水下站点',
+      'REP': '放大器东',
+      'BU': '水下分支器',
+      'JOINT': '水下站点',
+      'OADM': '水下站点',
+    }
+    return map[equipmentType] || equipmentType
   }
 
   // 初始化加载mock数据

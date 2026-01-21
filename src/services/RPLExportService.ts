@@ -1,11 +1,12 @@
 /**
  * RPL文件导出服务
  * 按行业标准格式导出Route Position List文件
- * 支持CSV格式
+ * 支持Excel格式（带边框）
  * 包含墨卡托投影、度分秒转换、航向距离计算等完整功能
  */
 
 import type { RPLRecord, RPLTable } from '@/types'
+import ExcelJS from 'exceljs'
 
 // ========== 常量定义 ==========
 const DEG_TO_RAD = Math.PI / 180
@@ -396,12 +397,166 @@ export function downloadFile(content: string, filename: string, mimeType: string
   URL.revokeObjectURL(url)
 }
 
+// 下载 Blob 文件
+export function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+// 导出为 Excel 格式（带边框和二级表头）
+export async function exportToExcel(table: RPLTable): Promise<Blob> {
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = 'Submarine Cable Planner'
+  workbook.created = new Date()
+  
+  const worksheet = workbook.addWorksheet('RPL', {
+    views: [{ state: 'frozen', ySplit: 9 }] // 冻结前9行（文件头+二级表头）
+  })
+  
+  // 边框样式
+  const thinBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin' },
+    left: { style: 'thin' },
+    bottom: { style: 'thin' },
+    right: { style: 'thin' }
+  }
+  
+  // 表头样式 - 第一级（分组标题）
+  const groupHeaderFill: ExcelJS.Fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF4472C4' } // 蓝色背景
+  }
+  
+  // 表头样式 - 第二级（列名称）
+  const columnHeaderFill: ExcelJS.Fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFD9E2F3' } // 浅蓝色背景
+  }
+  
+  const headerFont: Partial<ExcelJS.Font> = {
+    bold: true,
+    size: 10
+  }
+  
+  const groupHeaderFont: Partial<ExcelJS.Font> = {
+    bold: true,
+    size: 10,
+    color: { argb: 'FFFFFFFF' } // 白色字体
+  }
+  
+  // 添加文件头信息
+  worksheet.addRow(['Route Position List (RPL)'])
+  worksheet.addRow([`Project: ${table.name}`])
+  worksheet.addRow([`Route ID: ${table.routeId || 'N/A'}`])
+  worksheet.addRow([`Generated: ${new Date().toISOString()}`])
+  worksheet.addRow([`Total Points: ${table.records.length}`])
+  worksheet.addRow([`Total Length: ${table.metadata.totalLength.toFixed(3)} km`])
+  worksheet.addRow([]) // 空行
+  
+  const headerStartRow = 8 // 第一级表头起始行
+  
+  // 添加二级表头 - 第一行(分组名称)
+  const groupRowData: string[] = []
+  RPL_HEADER_GROUPS.forEach(g => {
+    g.columns.forEach((_, i) => {
+      groupRowData.push(i === 0 ? g.title : '')
+    })
+  })
+  const groupRowRef = worksheet.addRow(groupRowData)
+  
+  // 添加表头 - 第二行(列名称)
+  const headerRowRef = worksheet.addRow(RPL_STANDARD_HEADERS)
+  
+  // 合并单元格并设置样式
+  let colIndex = 1
+  RPL_HEADER_GROUPS.forEach(group => {
+    const startCol = colIndex
+    const endCol = colIndex + group.columns.length - 1
+    
+    // 如果分组有标题且跨多列，合并第一行的单元格
+    if (group.title && group.columns.length > 1) {
+      worksheet.mergeCells(headerStartRow, startCol, headerStartRow, endCol)
+    }
+    
+    // 设置第一级表头样式
+    for (let c = startCol; c <= endCol; c++) {
+      const cell = worksheet.getCell(headerStartRow, c)
+      cell.fill = groupHeaderFill
+      cell.font = groupHeaderFont
+      cell.border = thinBorder
+      cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    }
+    
+    // 设置第二级表头样式
+    for (let c = startCol; c <= endCol; c++) {
+      const cell = worksheet.getCell(headerStartRow + 1, c)
+      cell.fill = columnHeaderFill
+      cell.font = headerFont
+      cell.border = thinBorder
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+    }
+    
+    colIndex = endCol + 1
+  })
+  
+  // 计算完整字段
+  const calculatedRecords = calculateAllRecords(table.records)
+  
+  // 计算每种电缆类型的总长度
+  const cableTotalsByType = new Map<string, number>()
+  calculatedRecords.forEach(record => {
+    const currentTotal = cableTotalsByType.get(record.cableType) || 0
+    cableTotalsByType.set(record.cableType, currentTotal + record.cableDistanceBetween)
+  })
+  
+  // 添加数据行
+  calculatedRecords.forEach((record, index) => {
+    const rowData = recordToStandardRow(record, index, cableTotalsByType)
+    const dataRow = worksheet.addRow(rowData)
+    dataRow.eachCell((cell) => {
+      cell.border = thinBorder
+      cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    })
+  })
+  
+  // 设置列宽
+  worksheet.columns.forEach((column, index) => {
+    const header = RPL_STANDARD_HEADERS[index] || ''
+    // 根据表头长度设置列宽，最小12，最大22
+    column.width = Math.min(Math.max(header.length + 4, 12), 22)
+  })
+  
+  // 设置表头行高
+  worksheet.getRow(headerStartRow).height = 25
+  worksheet.getRow(headerStartRow + 1).height = 30
+  
+  // 生成 Blob
+  const buffer = await workbook.xlsx.writeBuffer()
+  return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+}
+
 // 导出RPL文件主函数
-export function exportRPLFile(table: RPLTable, format: 'csv' = 'csv') {
+export async function exportRPLFile(table: RPLTable, format: 'xlsx' | 'csv' = 'xlsx') {
   const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   const baseName = `RPL_${table.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${timestamp}`
-  const content = exportToCSV(table)
-  downloadFile(content, `${baseName}.csv`, 'text/csv;charset=utf-8')
+  
+  if (format === 'xlsx') {
+    // 导出 Excel 格式（带边框）
+    const blob = await exportToExcel(table)
+    downloadBlob(blob, `${baseName}.xlsx`)
+  } else {
+    // 导出 CSV 格式
+    const content = exportToCSV(table)
+    downloadFile(content, `${baseName}.csv`, 'text/csv;charset=utf-8')
+  }
 }
 
 // Vue composable

@@ -347,8 +347,8 @@ const handlePointHover = (point: SpanScanPoint | null) => {
         v-if="hoveredPoint"
         class="absolute bg-white shadow-lg rounded-lg p-3 text-sm border z-10 pointer-events-none"
         :style="{
-          left: `${(chartData?.points.find(p => p.spanLengthKm === hoveredPoint.spanLengthKm)?.x || 0) + 10}px`,
-          top: `${(chartData?.points.find(p => p.spanLengthKm === hoveredPoint.spanLengthKm)?.avgY || 0) - 60}px`,
+          left: `${(chartData?.points.find(p => p.spanLengthKm === hoveredPoint!.spanLengthKm)?.x || 0) + 10}px`,
+          top: `${(chartData?.points.find(p => p.spanLengthKm === hoveredPoint!.spanLengthKm)?.avgY || 0) - 60}px`,
         }"
       >
         <div class="font-medium text-gray-800 mb-2 flex items-center gap-1">

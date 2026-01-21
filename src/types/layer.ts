@@ -1,3 +1,5 @@
+import type { GeoJSON } from './map'
+
 // 图层类型
 export type LayerType = 'point' | 'heatmap' | 'raster' | 'vector' | 'both'
 

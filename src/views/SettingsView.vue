@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useSettingsStore, useAppStore } from '@/stores'
 import { Card, CardContent, Button, Select } from '@/components/ui'
 import MapSelectDialog from '@/components/dialogs/MapSelectDialog.vue'
-import { Save, RotateCcw, MapPin, Radio, Activity, Database, Cable, Zap, GitBranch, Waves, Server, AlertTriangle, Plus, Trash2, Upload, Download, X, Edit } from 'lucide-vue-next'
+import { Save, RotateCcw, MapPin, Radio, Activity, Database, Cable, Zap, GitBranch, Waves, Server, AlertTriangle, Plus, Trash2, Upload, Download, X, Edit, FolderOpen, FilePlus } from 'lucide-vue-next'
 import type { FiberType, AmplifierType, BranchingUnitType } from '@/types'
 import {
   fiberModelOptions,
@@ -15,6 +15,19 @@ import {
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 const activeTab = ref('equipment')
+
+// 检查是否已打开项目
+const hasOpenProject = computed(() => appStore.hasOpenProject)
+
+// 打开新建项目对话框
+const handleNewProject = () => {
+  appStore.openDialog('new-project')
+}
+
+// 打开导入项目对话框
+const handleOpenProject = () => {
+  appStore.openDialog('open-project')
+}
 const deviceTypeTab = ref('fiber')
 
 const tabs = [
@@ -60,6 +73,8 @@ const newAmplifier = reactive<Omit<AmplifierType, 'id'>>({
 const newBranching = reactive<Omit<BranchingUnitType, 'id'>>({
   name: '',
   portCount: 0,
+  trunkInsertionLoss: 0,
+  branchInsertionLoss: 0,
   insertionLoss: 0,
   wavelengthRange: 0,
 })
@@ -246,22 +261,65 @@ const handleExportLibrary = () => {
   appStore.showNotification({ type: 'success', message: '器件库已导出' })
 }
 
+// 将坐标对象转换为字符串格式
+const formatCoord = (point: { lon: number; lat: number }): string => {
+  if (point.lon === 0 && point.lat === 0) return ''
+  return `${point.lon.toFixed(6)},${point.lat.toFixed(6)}`
+}
+
 const routeConfig = reactive({
   mode: settingsStore.routePlanningConfig.mode,
-  // 点对点模式坐标
-  startCoord: '',
-  endCoord: '',
+  // 点对点模式坐标 - 从 settingsStore 获取已有配置
+  startCoord: formatCoord(settingsStore.routePlanningConfig.startPoint),
+  endCoord: formatCoord(settingsStore.routePlanningConfig.endPoint),
   // 多点模式文件
-  multiPointFile: '',
+  multiPointFile: settingsStore.routePlanningConfig.multiPointFile || '',
   // GIS设置
   planningRange: '',
   gridSize: '',
-  // 成本参数
-  lightCableCost: '',
-  heavyCableCost: '',
-  maxConstructionCost: '',
-  depthThreshold: '',
+  // 路径规划成本参数
+  lightCableCost: settingsStore.costFactors.lightCableCost?.toString() || '',
+  heavyCableCost: settingsStore.costFactors.heavyCableCost?.toString() || '',
+  maxConstructionCost: settingsStore.costFactors.maxConstructionCost?.toString() || '',
+  depthThreshold: settingsStore.costFactors.depthThreshold?.toString() || '',
+  // 系统规划成本参数
+  cableCostPerKm: settingsStore.costFactors.cableCostPerKm?.toString() || '',
+  installationCostPerKm: settingsStore.costFactors.installationCostPerKm?.toString() || '',
+  repeaterCost: settingsStore.costFactors.repeaterCost?.toString() || '',
+  branchingUnitCost: settingsStore.costFactors.branchingUnitCost?.toString() || '',
+  landingStationCost: settingsStore.costFactors.landingStationCost?.toString() || '',
 })
+
+// 监听 settingsStore 的变化，同步更新 routeConfig（当导入项目后自动更新）
+watch(
+  () => settingsStore.routePlanningConfig,
+  (newConfig) => {
+    routeConfig.mode = newConfig.mode
+    routeConfig.startCoord = formatCoord(newConfig.startPoint)
+    routeConfig.endCoord = formatCoord(newConfig.endPoint)
+    routeConfig.multiPointFile = newConfig.multiPointFile || ''
+  },
+  { deep: true }
+)
+
+// 监听 costFactors 变化，同步更新成本参数
+watch(
+  () => settingsStore.costFactors,
+  (newCostFactors) => {
+    // 路径规划成本
+    routeConfig.lightCableCost = newCostFactors.lightCableCost?.toString() || ''
+    routeConfig.heavyCableCost = newCostFactors.heavyCableCost?.toString() || ''
+    routeConfig.maxConstructionCost = newCostFactors.maxConstructionCost?.toString() || ''
+    routeConfig.depthThreshold = newCostFactors.depthThreshold?.toString() || ''
+    // 系统规划成本
+    routeConfig.cableCostPerKm = newCostFactors.cableCostPerKm?.toString() || ''
+    routeConfig.installationCostPerKm = newCostFactors.installationCostPerKm?.toString() || ''
+    routeConfig.repeaterCost = newCostFactors.repeaterCost?.toString() || ''
+    routeConfig.branchingUnitCost = newCostFactors.branchingUnitCost?.toString() || ''
+    routeConfig.landingStationCost = newCostFactors.landingStationCost?.toString() || ''
+  },
+  { deep: true }
+)
 
 // 地图选点功能
 const handleMapSelect = (type: string) => {
@@ -334,16 +392,36 @@ const toggleModel = (modelId: string) => {
   }
 }
 
+// 解析坐标字符串 "经度,纬度" 格式
+const parseCoordString = (coordStr: string): { lon: number; lat: number } => {
+  const parts = coordStr.split(',').map(s => parseFloat(s.trim()))
+  if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+    return { lon: parts[0], lat: parts[1] }
+  }
+  return { lon: 0, lat: 0 }
+}
+
 const handleSave = () => {
-  // 路径规划配置保存逻辑（简化版，使用字符串格式）
+  // 解析用户输入的起点终点坐标
+  const startPoint = parseCoordString(routeConfig.startCoord)
+  const endPoint = parseCoordString(routeConfig.endCoord)
+  
+  // 检查起点终点是否有效配置
+  const isStartValid = startPoint.lon !== 0 || startPoint.lat !== 0
+  const isEndValid = endPoint.lon !== 0 || endPoint.lat !== 0
+  const isConfigured = isStartValid && isEndValid
+  
+  // 路径规划配置保存
   settingsStore.updateRoutePlanningConfig({
     mode: routeConfig.mode as 'point-to-point' | 'multi-point',
-    startPoint: { lon: 0, lat: 0 },
-    endPoint: { lon: 0, lat: 0 },
+    startPoint,
+    endPoint,
     planningRange: {
       northwest: { lon: 0, lat: 0 },
       southeast: { lon: 0, lat: 0 },
     },
+    multiPointFile: routeConfig.multiPointFile,
+    isConfigured,
   })
 
   settingsStore.updateTransmissionConfig({
@@ -364,6 +442,21 @@ const handleSave = () => {
 
   settingsStore.updateFiberSimulationConfig({
     model: fiberConfig.model as 'GN' | 'EGN',
+  })
+
+  // 保存成本参数
+  settingsStore.updateCostFactors({
+    // 路径规划成本
+    lightCableCost: routeConfig.lightCableCost ? parseFloat(routeConfig.lightCableCost) : undefined,
+    heavyCableCost: routeConfig.heavyCableCost ? parseFloat(routeConfig.heavyCableCost) : undefined,
+    maxConstructionCost: routeConfig.maxConstructionCost ? parseFloat(routeConfig.maxConstructionCost) : undefined,
+    depthThreshold: routeConfig.depthThreshold ? parseFloat(routeConfig.depthThreshold) : undefined,
+    // 系统规划成本
+    cableCostPerKm: routeConfig.cableCostPerKm ? parseFloat(routeConfig.cableCostPerKm) : undefined,
+    installationCostPerKm: routeConfig.installationCostPerKm ? parseFloat(routeConfig.installationCostPerKm) : undefined,
+    repeaterCost: routeConfig.repeaterCost ? parseFloat(routeConfig.repeaterCost) : undefined,
+    branchingUnitCost: routeConfig.branchingUnitCost ? parseFloat(routeConfig.branchingUnitCost) : undefined,
+    landingStationCost: routeConfig.landingStationCost ? parseFloat(routeConfig.landingStationCost) : undefined,
   })
 
   settingsStore.saveToLocalStorage()
@@ -389,7 +482,33 @@ const handleReset = () => {
 
 <template>
   <div class="h-full flex flex-col overflow-hidden p-4">
-    <Card class="flex-1 flex overflow-hidden">
+    <!-- 未打开项目时显示提示 -->
+    <div v-if="!hasOpenProject" class="h-full flex items-center justify-center">
+      <Card class="w-[500px] p-8">
+        <div class="text-center space-y-6">
+          <div class="w-20 h-20 mx-auto rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+            <AlertTriangle class="w-10 h-10 text-amber-500" />
+          </div>
+          <div>
+            <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">工程设置</h2>
+            <p class="text-gray-500 dark:text-gray-400">请先创建或导入项目后，再进行工程设置</p>
+          </div>
+          <div class="flex justify-center gap-4">
+            <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="handleNewProject">
+              <FilePlus class="w-4 h-4 mr-2" />
+              新建项目
+            </Button>
+            <Button variant="outline" class="px-6" @click="handleOpenProject">
+              <FolderOpen class="w-4 h-4 mr-2" />
+              导入项目
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+
+    <!-- 已打开项目时显示设置内容 -->
+    <Card v-else class="flex-1 flex overflow-hidden">
       <!-- 左侧菜单 -->
       <div class="w-56 bg-gray-50 border-r flex-shrink-0 flex flex-col">
         <div class="p-4 border-b bg-white">
@@ -488,30 +607,78 @@ const handleReset = () => {
           <Card>
             <CardContent class="p-5">
               <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">成本参数</h3>
-              <div class="space-y-4">
-                <div class="flex items-center gap-4">
-                  <label class="w-28 text-sm text-gray-600 text-right shrink-0">轻型海缆单价：</label>
-                  <input v-model="routeConfig.lightCableCost" type="text"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
-                  <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
+              
+              <!-- 路径规划成本 -->
+              <div class="mb-4">
+                <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <span class="w-1 h-4 bg-blue-500 rounded"></span>
+                  路径规划成本
+                </h4>
+                <div class="space-y-3 pl-3">
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">轻型海缆单价：</label>
+                    <input v-model="routeConfig.lightCableCost" type="text" placeholder="如：15"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">重型海缆单价：</label>
+                    <input v-model="routeConfig.heavyCableCost" type="text" placeholder="如：25"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">施工成本极大值：</label>
+                    <input v-model="routeConfig.maxConstructionCost" type="text" placeholder="如：100"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">深浅分界值：</label>
+                    <input v-model="routeConfig.depthThreshold" type="text" placeholder="如：1000"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">米</span>
+                  </div>
                 </div>
-                <div class="flex items-center gap-4">
-                  <label class="w-28 text-sm text-gray-600 text-right shrink-0">重型海缆单价：</label>
-                  <input v-model="routeConfig.heavyCableCost" type="text"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
-                  <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
-                </div>
-                <div class="flex items-center gap-4">
-                  <label class="w-28 text-sm text-gray-600 text-right shrink-0">施工成本极大值：</label>
-                  <input v-model="routeConfig.maxConstructionCost" type="text"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
-                  <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
-                </div>
-                <div class="flex items-center gap-4">
-                  <label class="w-28 text-sm text-gray-600 text-right shrink-0">深浅分界值：</label>
-                  <input v-model="routeConfig.depthThreshold" type="text"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
-                  <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
+              </div>
+              
+              <!-- 系统规划成本 -->
+              <div class="pt-4 border-t border-gray-200">
+                <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <span class="w-1 h-4 bg-green-500 rounded"></span>
+                  系统规划成本
+                </h4>
+                <div class="space-y-3 pl-3">
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">电缆单价：</label>
+                    <input v-model="routeConfig.cableCostPerKm" type="text" placeholder="如：35000"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">元/公里</span>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">安装单价：</label>
+                    <input v-model="routeConfig.installationCostPerKm" type="text" placeholder="如：15000"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">元/公里</span>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">中继器单价：</label>
+                    <input v-model="routeConfig.repeaterCost" type="text" placeholder="如：250000"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">分支器单价：</label>
+                    <input v-model="routeConfig.branchingUnitCost" type="text" placeholder="如：180000"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">登陆站成本：</label>
+                    <input v-model="routeConfig.landingStationCost" type="text" placeholder="如：5000000"
+                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
+                  </div>
                 </div>
               </div>
             </CardContent>

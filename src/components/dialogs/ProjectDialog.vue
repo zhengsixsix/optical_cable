@@ -26,14 +26,13 @@ const projectTypeOptions = [
 const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'success', data: { projectType: ProjectType; projectName: string; savePath: string; allowOtherUsers: boolean; rplFile?: string; layers: LayerItem[] }): void
+  (e: 'success', data: { projectType: ProjectType; projectName: string; savePath: string; allowOtherUsers: boolean; layers: LayerItem[] }): void
 }>()
 
 const appStore = useAppStore()
 const projectType = ref<ProjectType>('ucp')
 const projectName = ref('')
 const savePath = ref('')
-const rplFile = ref('')
 const allowOtherUsers = ref(false)
 const fileName = ref('')
 const isProcessing = ref(false)
@@ -52,7 +51,6 @@ const resetForm = () => {
   projectType.value = 'ucp'
   projectName.value = ''
   savePath.value = ''
-  rplFile.value = ''
   allowOtherUsers.value = false
   layerList.value.forEach(item => {
     item.checked = item.key === 'fishery' || item.key === 'shipping'
@@ -96,28 +94,13 @@ const dialogWidth = computed(() => {
 })
 
 // 文件选择器引用
-const rplInputRef = ref<HTMLInputElement | null>(null)
 const layerInputRef = ref<HTMLInputElement | null>(null)
 const currentBrowseItem = ref<LayerItem | null>(null)
-
-// 浏览RPL文件
-const handleBrowseRpl = () => {
-  rplInputRef.value?.click()
-}
 
 // 浏览图层文件
 const handleBrowseLayer = (item: LayerItem) => {
   currentBrowseItem.value = item
   layerInputRef.value?.click()
-}
-
-// RPL文件选择回调
-const handleRplSelected = (e: Event) => {
-  const target = e.target as HTMLInputElement
-  if (target.files && target.files.length > 0) {
-    rplFile.value = target.files[0].name
-  }
-  target.value = ''
 }
 
 // 图层文件选择回调
@@ -126,6 +109,22 @@ const handleLayerSelected = (e: Event) => {
   if (target.files && target.files.length > 0 && currentBrowseItem.value) {
     currentBrowseItem.value.value = target.files[0].name
     currentBrowseItem.value.checked = true
+  }
+  target.value = ''
+}
+
+// 通用浏览文件（用于打开/另存为模式）
+const projectFileInputRef = ref<HTMLInputElement | null>(null)
+const handleBrowse = () => {
+  projectFileInputRef.value?.click()
+}
+const handleProjectFileSelected = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  if (target.files && target.files.length > 0) {
+    fileName.value = target.files[0].name
+    if (props.mode === 'save-as') {
+      savePath.value = target.files[0].name
+    }
   }
   target.value = ''
 }
@@ -149,7 +148,6 @@ const handleSubmit = async () => {
     projectName: projectName.value,
     savePath: savePath.value,
     allowOtherUsers: allowOtherUsers.value,
-    rplFile: projectType.value === 'use' ? rplFile.value : undefined,
     layers: layerList.value.filter(l => l.checked)
   })
   emit('close')
@@ -158,14 +156,6 @@ const handleSubmit = async () => {
 
 <template>
   <Teleport to="body">
-    <!-- RPL文件选择器 -->
-    <input
-      ref="rplInputRef"
-      type="file"
-      class="hidden"
-      accept=".rpl"
-      @change="handleRplSelected"
-    >
     <!-- 图层文件选择器 -->
     <input
       ref="layerInputRef"
@@ -173,6 +163,14 @@ const handleSubmit = async () => {
       class="hidden"
       accept=".tif,.tiff,.geojson,.json"
       @change="handleLayerSelected"
+    >
+    <!-- 项目文件选择器 (用于打开/另存为) -->
+    <input
+      ref="projectFileInputRef"
+      type="file"
+      class="hidden"
+      accept=".ucp,.use"
+      @change="handleProjectFileSelected"
     >
     <div
       v-if="visible"
@@ -220,23 +218,6 @@ const handleSubmit = async () => {
                   placeholder="请输入项目名称"
                   class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                 >
-              </div>
-              <!-- 项目匹配的RPL文件 - 仅.use类型显示 -->
-              <div v-if="projectType === 'use'" class="flex items-center gap-3">
-                <label class="w-[110px] text-sm text-gray-600 shrink-0">项目匹配的RPL文件：</label>
-                <input 
-                  v-model="rplFile"
-                  type="text" 
-                  readonly
-                  placeholder="请选择匹配的路由文件"
-                  class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm bg-gray-50 cursor-default"
-                >
-                <button 
-                  class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded transition-colors whitespace-nowrap"
-                  @click="handleBrowseRpl"
-                >
-                  浏览
-                </button>
               </div>
               <!-- 允许其他用户打开 -->
               <div class="flex items-center gap-3">

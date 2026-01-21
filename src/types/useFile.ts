@@ -31,6 +31,62 @@ export interface USEMetadata {
   display_settings: DisplaySettings
 }
 
+// ==================== 1.5 工程设置模块 (project_settings) ====================
+
+/** 规划模式 */
+export type PlanningMode = 'point-to-point' | 'multi-point'
+
+/** 坐标点 */
+export interface CoordPoint {
+  lon: number                    // 经度
+  lat: number                    // 纬度
+}
+
+/** 规划范围 */
+export interface PlanningRange {
+  northwest: CoordPoint          // 西北角坐标
+  southeast: CoordPoint          // 东南角坐标
+}
+
+/** 路径规划配置 */
+export interface RoutePlanningSettings {
+  mode: PlanningMode             // 规划模式
+  start_point: CoordPoint        // 起点坐标
+  end_point: CoordPoint          // 终点坐标
+  planning_range: PlanningRange  // 规划范围
+  multi_point_file?: string      // 多点文件路径
+}
+
+/** 成本参数 */
+export interface CostSettings {
+  // 系统规划成本参数
+  cable_cost_per_km: number      // 电缆每公里成本
+  installation_cost_per_km: number  // 安装每公里成本
+  repeater_cost: number          // 中继器单价
+  branching_unit_cost: number    // 分支器单价
+  landing_station_cost: number   // 登陆站成本
+  currency: string               // 货币类型
+  // 路径规划成本参数
+  light_cable_cost?: number      // 轻型海缆单价 (千元/公里)
+  heavy_cable_cost?: number      // 重型海缆单价 (千元/公里)
+  max_construction_cost?: number // 施工成本极大值 (千元/公里)
+  depth_threshold?: number       // 深浅分界值 (米)
+}
+
+/** 仿真模型配置 */
+export interface SimulationSettings {
+  fiber_model: 'GN' | 'EGN'      // 光纤仿真模型
+  edfa_model: string             // EDFA 模型
+  calculation_models: string[]   // 启用的计算模型
+}
+
+/** 工程设置模块 */
+export interface USEProjectSettings {
+  route_planning: RoutePlanningSettings
+  cost_settings: CostSettings
+  simulation_settings: SimulationSettings
+}
+
 // ==================== 2. 环境上下文模块 (environment_context) ====================
 
 /** 数据完整性校验 */
@@ -449,6 +505,7 @@ export interface USEHealthMonitoring {
 /** USE 项目数据 (project_data.json 内容) */
 export interface USEProjectData {
   metadata: USEMetadata
+  project_settings: USEProjectSettings  // 工程设置模块
   environment_context: USEEnvironmentContext
   libraries: USELibraries
   route_engineering: USERouteEngineering
@@ -536,6 +593,30 @@ export function createDefaultUSEProjectData(
       display_settings: {
         crs: 'EPSG:4326',
         units: { length: 'km', depth: 'm' }
+      }
+    },
+    project_settings: {
+      route_planning: {
+        mode: 'point-to-point',
+        start_point: { lon: 0, lat: 0 },
+        end_point: { lon: 0, lat: 0 },
+        planning_range: {
+          northwest: { lon: 100, lat: 50 },
+          southeast: { lon: 150, lat: 10 }
+        }
+      },
+      cost_settings: {
+        cable_cost_per_km: 35000,
+        installation_cost_per_km: 15000,
+        repeater_cost: 250000,
+        branching_unit_cost: 180000,
+        landing_station_cost: 5000000,
+        currency: 'USD'
+      },
+      simulation_settings: {
+        fiber_model: 'GN',
+        edfa_model: 'EDFA_Simple',
+        calculation_models: ['power', 'ase', 'nli']
       }
     },
     environment_context: {

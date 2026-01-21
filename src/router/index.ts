@@ -1,5 +1,5 @@
 import {createRouter, createWebHistory, type RouteRecordRaw} from 'vue-router'
-import {useUserStore} from '@/stores'
+import {useUserStore, useAppStore} from '@/stores'
 
 const routes: RouteRecordRaw[] = [
     {
@@ -16,13 +16,13 @@ const routes: RouteRecordRaw[] = [
         path: '/design',
         name: 'design',
         component: () => import('@/views/DesignView.vue'),
-        meta: {title: '系统设计', requiresAuth: true},
+        meta: {title: '系统设计', requiresAuth: true, requiresUSE: true},
     },
     {
         path: '/monitoring',
         name: 'monitoring',
         component: () => import('@/views/MonitoringView.vue'),
-        meta: {title: '监控', requiresAuth: true},
+        meta: {title: '监控', requiresAuth: true, requiresUSE: true},
     },
     {
         path: '/performance',
@@ -69,6 +69,7 @@ router.beforeEach((to, from, next) => {
     }
 
     const userStore = useUserStore()
+    const appStore = useAppStore()
 
     if (to.meta.requiresAuth && !userStore.isLoggedIn) {
         next({name: 'login'})
@@ -78,6 +79,20 @@ router.beforeEach((to, from, next) => {
     if (to.meta.requiresAdmin && !userStore.isAdmin) {
         next({name: 'planning'})
         return
+    }
+
+    // USE 项目限制：系统设计和监控页面需要 USE 项目
+    if (to.meta.requiresUSE) {
+        const projectType = appStore.currentProjectType
+        // 如果是 UCP 项目，重定向到路由规划页面
+        if (projectType === 'ucp') {
+            appStore.showNotification({
+                type: 'warning',
+                message: '路由规划项目(.ucp)不支持系统设计功能，请创建系统设计项目(.use)',
+            })
+            next({name: 'planning'})
+            return
+        }
     }
 
     if (to.name === 'login' && userStore.isLoggedIn) {

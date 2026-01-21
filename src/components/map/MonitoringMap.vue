@@ -12,6 +12,7 @@ import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
 import { Style, Stroke, Icon, Text, Fill } from 'ol/style'
+import Overlay from 'ol/Overlay'
 import 'ol/ol.css'
 
 interface MonitorDevice {
@@ -34,12 +35,37 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'device-click', deviceId: string): void
+  (e: 'cable-click'): void
+  (e: 'segment-click', segmentIndex: number): void
 }>()
 
 const mapContainer = ref<HTMLElement | null>(null)
+const popupContainer = ref<HTMLElement | null>(null)
 const coordinates = ref({ lon: 0, lat: 0 })
 
+// 气泡框状态
+const popupVisible = ref(false)
+const popupDevice = ref<MonitorDevice | null>(null)
+
+// 更新光纤线样式（根据选中的线段索引更新样式）
+const updateCableStyle = () => {
+  if (!cableSource) return
+  
+  cableSource.getFeatures().forEach(feature => {
+    const segmentIndex = feature.get('segmentIndex')
+    const isSelected = segmentIndex === selectedSegmentIndex.value
+    feature.setStyle(new Style({
+      stroke: new Stroke({
+        color: isSelected ? '#f59e0b' : '#3b82f6',
+        width: isSelected ? 5 : 3,
+        lineDash: isSelected ? undefined : [8, 4]
+      })
+    }))
+  })
+}
+
 let map: Map | null = null
+let popup: Overlay | null = null
 let deviceSource: VectorSource | null = null
 let deviceLayer: VectorLayer<VectorSource> | null = null
 let cableSource: VectorSource | null = null
@@ -51,15 +77,19 @@ const getDeviceIcon = (device: MonitorDevice) => {
   const suffix = hasAlarm ? 'select' : ''
   
   switch (device.type) {
+    case 'landing':
     case 'LandingStation':
       return `/image/岸上站点${suffix}.png`
+    case 'amplifier_e':
+      return `/image/放大器东${suffix}.png`
+    case 'amplifier_w':
+      return `/image/放大器西${suffix}.png`
     case 'Repeater':
-      // 根据经度判断东西方向
-      return device.longitude > 127 
-        ? `/image/放大器东${suffix}.png` 
-        : `/image/放大器西${suffix}.png`
+      return `/image/放大器东${suffix}.png`
+    case 'bu':
     case 'BU':
       return `/image/水下分支器${suffix}.png`
+    case 'underwater':
     case 'PFE':
       return `/image/水下站点${suffix}.png`
     default:
@@ -72,29 +102,42 @@ const sortedDevices = computed(() => {
   return [...props.devices].sort((a, b) => (a.kp || 0) - (b.kp || 0))
 })
 
-// 绘制光缆线路
+// 选中的线段索引
+const selectedSegmentIndex = ref<number>(-1)
+
+// 绘制光缆线路（分段绘制，每段可独立选中）
 const drawCableLine = () => {
   if (!cableSource) return
   cableSource.clear()
   
   if (sortedDevices.value.length < 2) return
   
-  // 创建线路坐标
-  const coords = sortedDevices.value.map(d => [d.longitude, d.latitude])
-  
-  const lineFeature = new Feature({
-    geometry: new LineString(coords)
-  })
-  
-  lineFeature.setStyle(new Style({
-    stroke: new Stroke({
-      color: '#3b82f6',
-      width: 3,
-      lineDash: [8, 4]
+  // 分段绘制光纤线
+  for (let i = 0; i < sortedDevices.value.length - 1; i++) {
+    const startDevice = sortedDevices.value[i]
+    const endDevice = sortedDevices.value[i + 1]
+    const isSelected = selectedSegmentIndex.value === i
+    
+    const segmentFeature = new Feature({
+      geometry: new LineString([
+        [startDevice.longitude, startDevice.latitude],
+        [endDevice.longitude, endDevice.latitude]
+      ]),
+      segmentIndex: i,
+      fromId: startDevice.id,
+      toId: endDevice.id
     })
-  }))
-  
-  cableSource.addFeature(lineFeature)
+    
+    segmentFeature.setStyle(new Style({
+      stroke: new Stroke({
+        color: isSelected ? '#f59e0b' : '#3b82f6',
+        width: isSelected ? 5 : 3,
+        lineDash: isSelected ? undefined : [8, 4]
+      })
+    }))
+    
+    cableSource.addFeature(segmentFeature)
+  }
 }
 
 // 绘制设备节点
@@ -222,17 +265,59 @@ const initMap = () => {
     }
   })
   
-  // 点击设备
+  // 创建气泡框Overlay
+  popup = new Overlay({
+    element: popupContainer.value!,
+    positioning: 'bottom-center',
+    offset: [0, -15],
+    autoPan: {
+      animation: {
+        duration: 250
+      }
+    }
+  })
+  map.addOverlay(popup)
+  
+  // 点击设备或光纤线
   map.on('click', (evt) => {
-    const features = map!.getFeaturesAtPixel(evt.pixel, {
+    // 先检查是否点击了设备
+    const deviceFeatures = map!.getFeaturesAtPixel(evt.pixel, {
       layerFilter: layer => layer === deviceLayer
     })
     
-    if (features && features.length > 0) {
-      const deviceId = features[0].get('deviceId')
+    if (deviceFeatures && deviceFeatures.length > 0) {
+      const deviceId = deviceFeatures[0].get('deviceId')
       if (deviceId) {
-        emit('device-click', deviceId)
+        const device = props.devices.find(d => d.id === deviceId)
+        if (device) {
+          popupDevice.value = device
+          popupVisible.value = true
+          popup?.setPosition([device.longitude, device.latitude])
+          emit('device-click', deviceId)
+          selectedSegmentIndex.value = -1
+          updateCableStyle()
+        }
       }
+      return
+    }
+    
+    // 检查是否点击了光纤线段
+    const cableFeatures = map!.getFeaturesAtPixel(evt.pixel, {
+      layerFilter: layer => layer === cableLayer
+    })
+    
+    if (cableFeatures && cableFeatures.length > 0) {
+      const segmentIndex = cableFeatures[0].get('segmentIndex')
+      if (segmentIndex !== undefined) {
+        selectedSegmentIndex.value = segmentIndex
+        updateCableStyle()
+        closePopup()
+        emit('segment-click', segmentIndex)
+      }
+    } else {
+      selectedSegmentIndex.value = -1
+      updateCableStyle()
+      closePopup()
     }
   })
   
@@ -264,9 +349,31 @@ watch(() => props.selectedDeviceId, (newId) => {
   }
 })
 
+// 关闭气泡框
+const closePopup = () => {
+  popupVisible.value = false
+  popupDevice.value = null
+  popup?.setPosition(undefined)
+}
+
+// 获取健康度颜色
+const getHealthColor = (status: string) => {
+  if (status === 'normal') return 'text-green-600'
+  if (status === 'warning') return 'text-yellow-600'
+  return 'text-red-600'
+}
+
+// 获取状态文本
+const getStatusText = (status: string) => {
+  if (status === 'normal') return '正常'
+  if (status === 'warning') return '告警'
+  return '故障'
+}
+
 // 暴露方法供父组件调用
 defineExpose({
-  flyToDevice
+  flyToDevice,
+  closePopup
 })
 
 onMounted(() => initMap())
@@ -282,6 +389,78 @@ onUnmounted(() => {
 <template>
   <div class="w-full h-full relative">
     <div ref="mapContainer" class="w-full h-full" />
+    
+    <!-- 设备详情气泡框 -->
+    <div ref="popupContainer" class="popup-container" v-show="popupVisible && popupDevice">
+      <div class="bg-white rounded-lg shadow-xl border border-gray-200 min-w-[280px] max-w-[320px]">
+        <!-- 气泡框头部 -->
+        <div class="px-4 py-3 border-b flex items-center justify-between bg-gray-50 rounded-t-lg">
+          <div class="flex items-center gap-2">
+            <span :class="['w-2.5 h-2.5 rounded-full', popupDevice?.status === 'normal' ? 'bg-green-500' : popupDevice?.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500']"></span>
+            <span class="font-semibold text-gray-800">{{ popupDevice?.name }}</span>
+          </div>
+          <button @click="closePopup" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+        </div>
+        
+        <!-- 气泡框内容 -->
+        <div class="px-4 py-3 space-y-3">
+          <!-- 状态和健康度 -->
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-gray-500">设备状态</span>
+            <span :class="['text-sm font-medium', getHealthColor(popupDevice?.status || '')]">
+              {{ getStatusText(popupDevice?.status || '') }}
+            </span>
+          </div>
+          
+          <!-- 设备类型 -->
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-gray-500">设备类型</span>
+            <span class="text-sm text-gray-700">{{ popupDevice?.type }}</span>
+          </div>
+          
+          <!-- 位置信息 -->
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-gray-500">位置</span>
+            <span class="text-sm text-gray-700">{{ popupDevice?.location }}</span>
+          </div>
+          
+          <!-- 坐标 -->
+          <div class="grid grid-cols-2 gap-2 pt-2 border-t">
+            <div>
+              <div class="text-xs text-gray-400">经度</div>
+              <div class="text-sm font-medium">{{ popupDevice?.longitude?.toFixed(4) }}°</div>
+            </div>
+            <div>
+              <div class="text-xs text-gray-400">纬度</div>
+              <div class="text-sm font-medium">{{ popupDevice?.latitude?.toFixed(4) }}°</div>
+            </div>
+          </div>
+          
+          <!-- 性能参数 -->
+          <div v-if="popupDevice?.inputPower !== undefined" class="grid grid-cols-2 gap-2 pt-2 border-t">
+            <div>
+              <div class="text-xs text-gray-400">输入光功率</div>
+              <div class="text-sm font-medium text-blue-600">{{ popupDevice?.inputPower?.toFixed(1) }} dBm</div>
+            </div>
+            <div>
+              <div class="text-xs text-gray-400">输出光功率</div>
+              <div class="text-sm font-medium text-blue-600">{{ popupDevice?.outputPower?.toFixed(1) }} dBm</div>
+            </div>
+            <div>
+              <div class="text-xs text-gray-400">温度</div>
+              <div class="text-sm font-medium text-orange-600">{{ popupDevice?.temperature?.toFixed(1) }} °C</div>
+            </div>
+            <div>
+              <div class="text-xs text-gray-400">泵浦电流</div>
+              <div class="text-sm font-medium text-purple-600">{{ popupDevice?.pumpCurrent }} mA</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 气泡框箭头 -->
+        <div class="popup-arrow"></div>
+      </div>
+    </div>
     
     <!-- 坐标显示 -->
     <div class="absolute bottom-3 left-3 bg-white/90 px-3 py-1.5 rounded text-xs text-gray-600 shadow z-10">
@@ -319,3 +498,22 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.popup-container {
+  position: relative;
+}
+
+.popup-arrow {
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid white;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.1));
+}
+</style>

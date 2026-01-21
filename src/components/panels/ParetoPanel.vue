@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouteStore } from '@/stores'
 import { cn } from '@/lib/utils'
 
@@ -14,8 +15,8 @@ const emit = defineEmits<{
 
 const routeStore = useRouteStore()
 
-// 从 routeStore 获取 Pareto 路径
-const paretoRoutes = computed(() => routeStore.paretoRoutes)
+// 使用 storeToRefs 确保响应式正确工作
+const { paretoRoutes } = storeToRefs(routeStore)
 
 // 当前选中的路径ID
 const selectedRouteId = computed(() => routeStore.selectedRoute?.id)

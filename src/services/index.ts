@@ -3,7 +3,8 @@ export { GeoService, useGeoService } from './GeoService'
 export { dataLinkService, useDataLink } from './DataLinkService'
 export type { DeviceLink, DataChangeEvent } from './DataLinkService'
 export { 
-  exportRPLFile, 
+  exportRPLFile,
+  exportToExcel,
   useRPLExport, 
   RPL_STANDARD_HEADERS,
   RPL_HEADER_GROUPS,
@@ -18,7 +19,9 @@ export {
   useSLDExport, 
   exportToXML as exportSLDToXML,
   parseFromXML as parseSLDFromXML,
-  escapeXml
+  escapeXml,
+  exportSLDFromRoute,
+  exportSLDFileFromRoute
 } from './SLDExportService'
 export { alarmWebSocketService, useAlarmWebSocket } from './AlarmWebSocketService'
 export type { AlarmCallback, ConnectionCallback } from './AlarmWebSocketService'

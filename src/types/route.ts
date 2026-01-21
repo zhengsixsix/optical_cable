@@ -4,12 +4,32 @@ export type RoutePointType = 'landing' | 'branching' | 'repeater' | 'waypoint'
 // 风险等级
 export type RiskLevel = 'low' | 'medium' | 'high'
 
+// 路由点设备信息（从器件库获取）
+export interface RoutePointDevice {
+  deviceId: string           // 器件库中的设备ID
+  deviceType: string         // 设备类型（repeater/branching/cable等）
+  deviceName: string         // 设备名称
+  // 中继器参数
+  cost?: number              // 成本
+  maxSpan?: number           // 最大跨距
+  powerConsumption?: number  // 功耗
+  // 放大器参数
+  gain?: number              // 增益
+  noiseFigure?: number       // 噪声系数
+  outputPower?: number       // 输出功率
+  // 分支器参数
+  portCount?: number         // 端口数
+  insertionLoss?: number     // 插损
+}
+
 // 路由点
 export interface RoutePoint {
   id: string
   coordinates: [number, number]
   type: RoutePointType
   name?: string
+  // 器件库设备信息
+  device?: RoutePointDevice
 }
 
 // 路由分段

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { useRouteStore, useRPLStore, useMonitorStore } from '@/stores'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
@@ -31,22 +32,27 @@ const props = defineProps<{
   editable?: boolean
 }>()
 
+const routeStore = useRouteStore()
+const rplStore = useRPLStore()
+const monitorStore = useMonitorStore()
+
 const emit = defineEmits<{
   (e: 'point-click', pointId: string): void
   (e: 'point-moved', pointId: string, longitude: number, latitude: number): void
   (e: 'line-click'): void
-  (e: 'context-menu', type: 'point' | 'line', id: string | null, x: number, y: number): void
-  (e: 'edit', type: 'point' | 'line', id: string | null): void
-  (e: 'delete', type: 'point' | 'line', id: string | null): void
+  (e: 'segment-click', segmentIndex: number): void
+  (e: 'context-menu', type: 'point' | 'line' | 'segment', id: string | null, x: number, y: number): void
+  (e: 'edit', type: 'point' | 'line' | 'segment', id: string | null): void
+  (e: 'delete', type: 'point' | 'line' | 'segment', id: string | null): void
 }>()
 
 // 右键菜单状态
-const contextMenu = ref<{ visible: boolean; x: number; y: number; type: 'point' | 'line'; id: string | null }>({
+const contextMenu = ref<{ visible: boolean; x: number; y: number; type: 'point' | 'line' | 'segment'; id: string | null }>({
   visible: false, x: 0, y: 0, type: 'point', id: null
 })
 
-// 选中的线路
-const selectedLine = ref(false)
+// 选中的线段索引（-1表示未选中）
+const selectedSegmentIndex = ref<number>(-1)
 
 const mapContainer = ref<HTMLElement | null>(null)
 const coordinates = ref({ lon: 0, lat: 0 })
@@ -65,81 +71,132 @@ let dragPanInteraction: DragPan | null = null
 const getPointIcon = (type: string, isSelected: boolean) => {
   const suffix = isSelected ? 'select' : ''
   switch (type) {
-    case 'LandingStation':
     case 'landing':
       return `/image/岸上站点${suffix}.png`
-    case 'Repeater':
-    case 'repeater':
-    case 'ola':
+    case 'amplifier_e':
       return `/image/放大器东${suffix}.png`
-    case 'BU':
-    case 'branching':
+    case 'amplifier_w':
+      return `/image/放大器西${suffix}.png`
     case 'bu':
       return `/image/水下分支器${suffix}.png`
-    case 'PFE':
-    case 'pfe':
-      return `/image/水下站点${suffix}.png`
-    case 'joint':
-    case 'equalizer':
+    case 'underwater':
       return `/image/水下站点${suffix}.png`
     default:
       return `/image/水下站点${suffix}.png`
   }
 }
 
-// 按 KP 排序的点列表
+// 按 KP 排序的点列表 - 优先使用 monitorStore 数据，然后是 Pareto 选中路线
 const sortedPoints = computed(() => {
-  return [...props.routePoints].sort((a, b) => (a.kp || 0) - (b.kp || 0))
+  // 优先使用 monitorStore 的设备数据（与实时监控页面一致）
+  if (monitorStore.devices.length > 0) {
+    return [...monitorStore.devices]
+      .sort((a, b) => (a.kp || 0) - (b.kp || 0))
+      .map(d => ({
+        id: d.id,
+        name: d.name,
+        type: d.type,
+        longitude: d.longitude,
+        latitude: d.latitude,
+        kp: d.kp
+      }))
+  }
+  
+  // 其次使用 Pareto 选中的路线
+  const selectedRoute = routeStore.selectedRoute
+  if (selectedRoute && selectedRoute.points.length > 0) {
+    let cumulativeKp = 0
+    return selectedRoute.points.map((point, index) => {
+      // 计算 KP
+      if (index > 0) {
+        const prevPoint = selectedRoute.points[index - 1]
+        const dist = Math.sqrt(
+          Math.pow(point.coordinates[0] - prevPoint.coordinates[0], 2) +
+          Math.pow(point.coordinates[1] - prevPoint.coordinates[1], 2)
+        ) * 111 // 粗略转换为 km
+        cumulativeKp += dist
+      }
+      return {
+        id: point.id,
+        name: point.name || (point.type === 'landing' ? '登陆站' : '节点'),
+        type: point.type === 'landing' ? 'landing' : 
+              point.type === 'repeater' ? 'amplifier_e' : 'waypoint',
+        longitude: point.coordinates[0],
+        latitude: point.coordinates[1],
+        kp: cumulativeKp
+      }
+    })
+  }
+  
+  // 最后使用 props
+  if (props.routePoints.length > 0) {
+    return [...props.routePoints].sort((a, b) => (a.kp || 0) - (b.kp || 0))
+  }
+  return []
 })
 
-// 更新线路样式
+// 更新线路样式（根据选中的线段索引更新样式）
 const updateLineStyle = () => {
   if (!routeSource) return
   
   routeSource.getFeatures().forEach(feature => {
+    const segmentIndex = feature.get('segmentIndex')
+    const isSelected = segmentIndex === selectedSegmentIndex.value
     feature.setStyle(new Style({
       stroke: new Stroke({
-        color: selectedLine.value ? '#f59e0b' : '#3b82f6',
-        width: selectedLine.value ? 5 : 3,
-        lineDash: selectedLine.value ? undefined : [8, 4]
+        color: isSelected ? '#f59e0b' : '#3b82f6',
+        width: isSelected ? 5 : 3,
+        lineDash: isSelected ? undefined : [8, 4]
       })
     }))
   })
 }
 
-// 绘制路径线
+// 绘制路径线（分段绘制，每段可独立选中）
 const drawRouteLine = () => {
   if (!routeSource) return
   routeSource.clear()
   
   if (sortedPoints.value.length < 2) return
   
-  const coords = sortedPoints.value.map(p => [p.longitude, p.latitude])
-  
-  const lineFeature = new Feature({
-    geometry: new LineString(coords),
-    featureType: 'route'
-  })
-  
-  lineFeature.setStyle(new Style({
-    stroke: new Stroke({
-      color: selectedLine.value ? '#f59e0b' : '#3b82f6',
-      width: selectedLine.value ? 5 : 3,
-      lineDash: selectedLine.value ? undefined : [8, 4]
+  // 分段绘制光纤线
+  for (let i = 0; i < sortedPoints.value.length - 1; i++) {
+    const startPoint = sortedPoints.value[i]
+    const endPoint = sortedPoints.value[i + 1]
+    const isSelected = selectedSegmentIndex.value === i
+    
+    const segmentFeature = new Feature({
+      geometry: new LineString([
+        [startPoint.longitude, startPoint.latitude],
+        [endPoint.longitude, endPoint.latitude]
+      ]),
+      featureType: 'segment',
+      segmentIndex: i,
+      fromId: startPoint.id,
+      toId: endPoint.id
     })
-  }))
-  
-  routeSource.addFeature(lineFeature)
+    
+    segmentFeature.setStyle(new Style({
+      stroke: new Stroke({
+        color: isSelected ? '#f59e0b' : '#3b82f6',
+        width: isSelected ? 5 : 3,
+        lineDash: isSelected ? undefined : [8, 4]
+      })
+    }))
+    
+    routeSource.addFeature(segmentFeature)
+  }
 }
 
-// 绘制设备节点
+// 绘制设备节点 - 使用 sortedPoints（从monitorStore获取）
 const drawPoints = () => {
   if (!pointSource) return
   pointSource.clear()
   
   const source = pointSource
   
-  props.routePoints.forEach(point => {
+  // 使用 sortedPoints 而不是 props.routePoints
+  sortedPoints.value.forEach(point => {
     const feature = new Feature({
       geometry: new Point([point.longitude, point.latitude]),
       pointId: point.id,
@@ -361,23 +418,27 @@ const initMap = () => {
     if (pointFeatures && pointFeatures.length > 0) {
       const pointId = pointFeatures[0].get('pointId')
       if (pointId) {
-        selectedLine.value = false
+        selectedSegmentIndex.value = -1
+        updateLineStyle()
         emit('point-click', pointId)
         return
       }
     }
     
-    // 检查是否点击了线路
+    // 检查是否点击了线段
     const lineFeatures = map!.getFeaturesAtPixel(evt.pixel, {
       layerFilter: layer => layer === routeLayer
     })
     
     if (lineFeatures && lineFeatures.length > 0) {
-      selectedLine.value = true
-      updateLineStyle()
-      emit('line-click')
+      const segmentIndex = lineFeatures[0].get('segmentIndex')
+      if (segmentIndex !== undefined) {
+        selectedSegmentIndex.value = segmentIndex
+        updateLineStyle()
+        emit('segment-click', segmentIndex)
+      }
     } else {
-      selectedLine.value = false
+      selectedSegmentIndex.value = -1
       updateLineStyle()
     }
   })
@@ -411,12 +472,13 @@ const initMap = () => {
     })
     
     if (lineFeatures && lineFeatures.length > 0) {
+      const segmentIndex = lineFeatures[0].get('segmentIndex')
       contextMenu.value = {
         visible: true,
         x: evt.clientX,
         y: evt.clientY,
-        type: 'line',
-        id: null
+        type: 'segment',
+        id: segmentIndex !== undefined ? String(segmentIndex) : null
       }
     }
   })
@@ -429,8 +491,8 @@ const initMap = () => {
   drawRouteLine()
   drawPoints()
   
-  // 自适应显示
-  if (props.routePoints.length > 0 && pointSource && pointSource.getFeatures().length > 0) {
+  // 自适应显示 - 使用 sortedPoints（从monitorStore获取）
+  if (sortedPoints.value.length > 0 && pointSource && pointSource.getFeatures().length > 0) {
     const extent = pointSource.getExtent()
     map.getView().fit(extent, { 
       padding: [80, 80, 80, 80],
@@ -449,16 +511,46 @@ watch(() => props.selectedPointId, () => {
   drawPoints()
 })
 
+// 监听 monitorStore 设备数据变化（与实时监控一致）
+watch(() => monitorStore.devices, () => {
+  if (monitorStore.devices.length > 0) {
+    drawRouteLine()
+    drawPoints()
+  }
+}, { deep: true })
+
+// 监听 Pareto 选中路线变化
+watch(() => routeStore.selectedRoute, (newRoute) => {
+  if (newRoute && newRoute.points.length > 0) {
+    drawRouteLine()
+    drawPoints()
+    // 自适应显示路线
+    if (map && pointSource && pointSource.getFeatures().length > 0) {
+      const extent = pointSource.getExtent()
+      map.getView().fit(extent, { 
+        padding: [80, 80, 80, 80],
+        duration: 500
+      })
+    }
+  }
+}, { deep: true, immediate: true })
+
 // editable 属性不再控制拖动，选中即可拖动
 
 // 处理右键菜单操作
 const handleEdit = () => {
-  emit('edit', contextMenu.value.type, contextMenu.value.id)
+  console.log('Map handleEdit:', contextMenu.value.type, contextMenu.value.id)
+  if (contextMenu.value.id) {
+    emit('edit', contextMenu.value.type, contextMenu.value.id)
+  }
   contextMenu.value.visible = false
 }
 
 const handleDelete = () => {
-  emit('delete', contextMenu.value.type, contextMenu.value.id)
+  console.log('Map handleDelete:', contextMenu.value.type, contextMenu.value.id)
+  if (contextMenu.value.id) {
+    emit('delete', contextMenu.value.type, contextMenu.value.id)
+  }
   contextMenu.value.visible = false
 }
 
@@ -490,7 +582,7 @@ onUnmounted(() => {
       @click.stop
     >
       <div class="px-3 py-1.5 text-xs text-gray-500 border-b">
-        {{ contextMenu.type === 'point' ? '设备操作' : '线路操作' }}
+        {{ contextMenu.type === 'point' ? '设备操作' : contextMenu.type === 'segment' ? '光纤段操作' : '线路操作' }}
       </div>
       <button 
         class="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
@@ -529,19 +621,23 @@ onUnmounted(() => {
       <div class="space-y-1.5 text-xs">
         <div class="flex items-center gap-2">
           <img src="/image/岸上站点.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">登陆站</span>
+          <span class="text-gray-600">岸上站点</span>
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/放大器东.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">中继器</span>
+          <span class="text-gray-600">放大器东</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <img src="/image/放大器西.png" class="w-4 h-4 object-contain" />
+          <span class="text-gray-600">放大器西</span>
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/水下分支器.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">分支器</span>
+          <span class="text-gray-600">水下分支器</span>
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/水下站点.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">供电设备</span>
+          <span class="text-gray-600">水下站点</span>
         </div>
       </div>
     </div>

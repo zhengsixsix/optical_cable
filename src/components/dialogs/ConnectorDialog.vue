@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { Button, Select } from '@/components/ui'
-import { useConnectorStore, useAppStore } from '@/stores'
+import { useConnectorStore, useAppStore, useSettingsStore } from '@/stores'
 import { connectorTypeLabels, connectorStatusLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus, ConnectorElement } from '@/types'
 import { X, Save } from 'lucide-vue-next'
@@ -18,14 +18,16 @@ const emit = defineEmits<{
 
 const connectorStore = useConnectorStore()
 const appStore = useAppStore()
+const settingsStore = useSettingsStore()
 
 const isEdit = computed(() => !!props.editId)
 
 // 表单数据
 const formData = ref({
   name: '',
-  type: 'joint' as ConnectorType,
+  type: 'landing' as ConnectorType,
   kp: 0,
+  endKp: 0,
   longitude: 0,
   latitude: 0,
   depth: 0,
@@ -33,12 +35,48 @@ const formData = ref({
   specifications: '',
   manufacturer: '',
   installDate: '',
-  remarks: ''
+  remarks: '',
+  componentRefId: '__none__',
+  fiberRefId: '__none__',
+  length: 0
 })
 
-// 类型选项
+// 是否为光纤段类型
+const isFiberType = computed(() => formData.value.type === 'fiber')
+
+// 器件库选项（根据类型动态生成）
+const componentOptions = computed(() => {
+  const type = formData.value.type
+  if (type === 'amplifier_e' || type === 'amplifier_w') {
+    return settingsStore.amplifierTypes.map(a => ({ value: a.id, label: a.name }))
+  }
+  if (type === 'bu') {
+    return settingsStore.branchingUnitTypes.map(b => ({ value: b.id, label: b.name }))
+  }
+  return []
+})
+
+// 光纤类型选项
+const fiberOptions = computed(() => {
+  return settingsStore.fiberTypes.map(f => ({ value: f.id, label: f.name }))
+})
+
+// 是否显示器件选择
+const showComponentSelect = computed(() => {
+  const type = formData.value.type
+  return type === 'amplifier_e' || type === 'amplifier_w' || type === 'bu'
+})
+
+// 是否显示光纤选择（光纤段必须选择光纤类型）
+const showFiberSelect = computed(() => {
+  return formData.value.type === 'fiber'
+})
+
+// 类型选项（排除光纤段，光纤段不能手动创建）
 const typeOptions = computed(() => 
-  Object.entries(connectorTypeLabels).map(([value, label]) => ({ value, label }))
+  Object.entries(connectorTypeLabels)
+    .filter(([value]) => value !== 'fiber')
+    .map(([value, label]) => ({ value, label }))
 )
 
 // 状态选项
@@ -50,8 +88,9 @@ const statusOptions = computed(() =>
 const resetForm = () => {
   formData.value = {
     name: '',
-    type: 'joint',
+    type: 'landing',
     kp: 0,
+    endKp: 0,
     longitude: 0,
     latitude: 0,
     depth: 0,
@@ -59,7 +98,10 @@ const resetForm = () => {
     specifications: '',
     manufacturer: '',
     installDate: '',
-    remarks: ''
+    remarks: '',
+    componentRefId: '__none__',
+    fiberRefId: '__none__',
+    length: 0
   }
 }
 
@@ -72,6 +114,7 @@ watch(() => [props.visible, props.editId], () => {
         name: elem.name,
         type: elem.type,
         kp: elem.kp,
+        endKp: elem.endKp || 0,
         longitude: elem.longitude,
         latitude: elem.latitude,
         depth: elem.depth,
@@ -79,7 +122,10 @@ watch(() => [props.visible, props.editId], () => {
         specifications: elem.specifications || '',
         manufacturer: elem.manufacturer || '',
         installDate: elem.installDate || '',
-        remarks: elem.remarks || ''
+        remarks: elem.remarks || '',
+        componentRefId: elem.componentRefId || '__none__',
+        fiberRefId: elem.fiberRefId || '__none__',
+        length: elem.length || 0
       }
     }
   } else if (props.visible && !props.editId) {
@@ -97,11 +143,18 @@ const handleSave = () => {
     return
   }
 
+  // 处理占位符值
+  const saveData = {
+    ...formData.value,
+    componentRefId: formData.value.componentRefId === '__none__' ? '' : formData.value.componentRefId,
+    fiberRefId: formData.value.fiberRefId === '__none__' ? '' : formData.value.fiberRefId,
+  }
+
   if (isEdit.value && props.editId) {
-    connectorStore.updateElement(props.editId, formData.value)
+    connectorStore.updateElement(props.editId, saveData)
     appStore.showNotification({ type: 'success', message: '接线元已更新' })
   } else {
-    connectorStore.addElement(formData.value)
+    connectorStore.addElement(saveData)
     appStore.showNotification({ type: 'success', message: '接线元已添加' })
   }
   
@@ -122,7 +175,7 @@ const handleClose = () => {
       <div class="absolute inset-0 bg-black/50" @click="handleClose" />
       
       <!-- 弹框 -->
-      <div class="relative bg-white rounded-lg shadow-xl w-[480px] max-h-[90vh] flex flex-col">
+      <div class="relative bg-white rounded-lg shadow-xl w-[480px] max-h-[90vh] flex flex-col" @click.stop>
         <!-- 头部 -->
         <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
           <h3 class="text-sm font-bold text-gray-800">
@@ -161,10 +214,10 @@ const handleClose = () => {
 
             <!-- 位置信息 -->
             <div class="border-t pt-4">
-              <h4 class="text-xs font-bold text-gray-700 mb-3">位置信息</h4>
+              <h4 class="text-xs font-bold text-gray-700 mb-3">{{ isFiberType ? '光纤段信息' : '位置信息' }}</h4>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-xs font-medium text-gray-600 mb-1">KP (km)</label>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">{{ isFiberType ? '起始KP (km)' : 'KP (km)' }}</label>
                   <input 
                     v-model.number="formData.kp" 
                     type="number" 
@@ -172,7 +225,25 @@ const handleClose = () => {
                     class="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
-                <div>
+                <div v-if="isFiberType">
+                  <label class="block text-xs font-medium text-gray-600 mb-1">结束KP (km)</label>
+                  <input 
+                    v-model.number="formData.endKp" 
+                    type="number" 
+                    step="0.1"
+                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div v-if="isFiberType">
+                  <label class="block text-xs font-medium text-gray-600 mb-1">长度 (km)</label>
+                  <input 
+                    v-model.number="formData.length" 
+                    type="number" 
+                    step="0.1"
+                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div v-if="!isFiberType">
                   <label class="block text-xs font-medium text-gray-600 mb-1">水深 (m)</label>
                   <input 
                     v-model.number="formData.depth" 
@@ -196,6 +267,33 @@ const handleClose = () => {
                     type="number" 
                     step="0.0001"
                     class="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- 器件库选择 -->
+            <div v-if="showComponentSelect || showFiberSelect || fiberOptions.length > 0" class="border-t pt-4">
+              <h4 class="text-xs font-bold text-gray-700 mb-3">器件库关联</h4>
+              <div class="grid grid-cols-2 gap-3">
+                <div v-if="showComponentSelect">
+                  <label class="block text-xs font-medium text-gray-600 mb-1">
+                    {{ formData.type === 'bu' ? '分支器型号' : '放大器型号' }}
+                  </label>
+                  <Select 
+                    v-model="formData.componentRefId" 
+                    :options="[{ value: '__none__', label: '-- 请选择 --' }, ...componentOptions]" 
+                    placeholder="请选择"
+                  />
+                </div>
+                <div v-if="showFiberSelect || fiberOptions.length > 0" :class="showFiberSelect ? 'col-span-2' : ''">
+                  <label class="block text-xs font-medium text-gray-600 mb-1">
+                    光纤类型 {{ showFiberSelect ? '*' : '' }}
+                  </label>
+                  <Select 
+                    v-model="formData.fiberRefId" 
+                    :options="[{ value: '__none__', label: '-- 请选择 --' }, ...fiberOptions]" 
+                    placeholder="请选择"
                   />
                 </div>
               </div>

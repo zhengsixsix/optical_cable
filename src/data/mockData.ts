@@ -51,17 +51,20 @@ export const mockSLDFiberSegments: Omit<SLDFiberSegment, 'id' | 'sequence'>[] = 
 
 // 接线元数据 - 与SLD设备对应
 export const mockConnectorElements: Omit<ConnectorElement, 'id'>[] = [
-  { name: '接头盒 J1', type: 'joint', kp: 50, longitude: 122.5, latitude: 30.5, depth: 60, status: 'active', specifications: 'UJ-2000', remarks: 'KP50处接头' },
-  { name: '接头盒 J2', type: 'joint', kp: 200, longitude: 126.0, latitude: 27.0, depth: 1000, status: 'active', specifications: 'UJ-2000', remarks: 'KP200处接头' },
-  { name: '接头盒 J3', type: 'joint', kp: 360, longitude: 129.0, latitude: 24.5, depth: 2800, status: 'active', specifications: 'UJ-3000', remarks: 'KP360处接头' },
-  { name: '分支单元 BU1', type: 'bu', kp: 520, longitude: 131.0, latitude: 22.5, depth: 1500, status: 'active', specifications: 'BU-R3', manufacturer: 'SubCom', remarks: '对应SLD BU-01' },
-  { name: '馈电设备 PFE-SH', type: 'pfe', kp: 0.5, longitude: 121.48, latitude: 31.22, depth: 15, status: 'active', specifications: 'PFE-15kV', remarks: '上海馈电设备' },
-  { name: '馈电设备 PFE-OK', type: 'pfe', kp: 649, longitude: 132.7, latitude: 21.55, depth: 20, status: 'active', specifications: 'PFE-15kV', remarks: '冲绳馈电设备' },
-  { name: '光放大器 OLA-R1', type: 'ola', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, status: 'active', specifications: 'EDFA-C+L', remarks: '对应SLD REP-01' },
-  { name: '光放大器 OLA-R2', type: 'ola', kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, status: 'active', specifications: 'EDFA-C+L', remarks: '对应SLD REP-02' },
-  { name: '光放大器 OLA-R3', type: 'ola', kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, status: 'active', specifications: 'EDFA-C+L', remarks: '对应SLD REP-03' },
-  { name: '均衡器 EQ1', type: 'equalizer', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, status: 'active', specifications: 'GEQ-C', remarks: 'REP-01内置' },
-  { name: '均衡器 EQ2', type: 'equalizer', kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, status: 'active', specifications: 'GEQ-C', remarks: 'REP-02内置' },
+  // 设备
+  { name: '上海岸站', type: 'landing', kp: 0, longitude: 121.4737, latitude: 31.2304, depth: 0, status: 'active', specifications: 'SLTE-400G', remarks: '上海登陆站', componentRefId: '', fiberRefId: '' },
+  { name: '放大器 R1', type: 'amplifier_e', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, status: 'active', specifications: 'EDFA-C+L', remarks: '对应SLD REP-01', componentRefId: 'edfa_standard', fiberRefId: '' },
+  { name: '放大器 R2', type: 'amplifier_e', kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, status: 'active', specifications: 'EDFA-C+L', remarks: '对应SLD REP-02', componentRefId: 'edfa_standard', fiberRefId: '' },
+  { name: '放大器 R3', type: 'amplifier_w', kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, status: 'active', specifications: 'EDFA-C+L', remarks: '对应SLD REP-03', componentRefId: 'edfa_standard', fiberRefId: '' },
+  { name: '分支器 BU1', type: 'bu', kp: 520, longitude: 131.0, latitude: 22.5, depth: 1500, status: 'active', specifications: 'BU-R3', manufacturer: 'SubCom', remarks: '对应SLD BU-01', componentRefId: 'bu_3_port_std', fiberRefId: '' },
+  { name: '水下站点 U1', type: 'underwater', kp: 50, longitude: 122.5, latitude: 30.5, depth: 60, status: 'active', specifications: 'UJ-2000', remarks: 'KP50处水下站点', componentRefId: '', fiberRefId: '' },
+  { name: '冲绑岸站', type: 'landing', kp: 650, longitude: 132.8, latitude: 21.5, depth: 0, status: 'active', specifications: 'SLTE-400G', remarks: '冲绳登陆站', componentRefId: '', fiberRefId: '' },
+  // 光纤段
+  { name: '光纤段 F1', type: 'fiber', kp: 0, endKp: 160, longitude: 0, latitude: 0, depth: 0, status: 'active', specifications: 'G.654.E', remarks: '上海岸站 → 放大器R1', fiberRefId: 'fiber_g654_standard', length: 160 },
+  { name: '光纤段 F2', type: 'fiber', kp: 160, endKp: 320, longitude: 0, latitude: 0, depth: 0, status: 'active', specifications: 'G.654.E', remarks: '放大器R1 → 放大器R2', fiberRefId: 'fiber_g654_standard', length: 160 },
+  { name: '光纤段 F3', type: 'fiber', kp: 320, endKp: 480, longitude: 0, latitude: 0, depth: 0, status: 'active', specifications: 'G.654.E', remarks: '放大器R2 → 放大器R3', fiberRefId: 'fiber_g654_standard', length: 160 },
+  { name: '光纤段 F4', type: 'fiber', kp: 480, endKp: 520, longitude: 0, latitude: 0, depth: 0, status: 'active', specifications: 'G.654.E', remarks: '放大器R3 → 分支器BU1', fiberRefId: 'fiber_g654_standard', length: 40 },
+  { name: '光纤段 F5', type: 'fiber', kp: 520, endKp: 650, longitude: 0, latitude: 0, depth: 0, status: 'active', specifications: 'G.654.E', remarks: '分支器BU1 → 冲绳岸站', fiberRefId: 'fiber_g654_standard', length: 130 },
 ]
 
 // 分段配置数据 - 与RPL的KP范围对应
@@ -79,6 +82,7 @@ export interface SegmentConfigData {
   avgDepth: number
   maxDepth: number
   expanded: boolean
+  fiberRefId?: string  // 光纤类型器件库引用
 }
 
 export const mockSegmentConfigs: SegmentConfigData[] = [

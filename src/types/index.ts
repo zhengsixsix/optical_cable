@@ -6,7 +6,32 @@ export * from './settings'
 export * from './rpl'
 export * from './sld'
 export * from './connector'
-export * from './project'
+// project.ts 中的 Coordinate 与 map.ts 冲突，显式排除
+export { 
+  type ProjectFileType,
+  type LayerSettings,
+  defaultLayerSettings,
+  type DeviceLibraryConfig,
+  type PathPlanningMode,
+  type PathPlanningConfig,
+  type CalculationModel,
+  type TransmissionSystemConfig,
+  defaultTransmissionConfig,
+  type DataSourceType,
+  type MonitoringSystemConfig,
+  defaultMonitoringConfig,
+  type RplFileRef,
+  type SldFileRef,
+  type RplFileRefWithSld,
+  type ProjectInfo,
+  type UCPProject,
+  type USEProject,
+  type ProjectFile,
+  createDefaultUCPProject,
+  createDefaultUSEProject,
+  isUCPProject,
+  isUSEProject,
+} from './project'
 export * from './simulation'
 export * from './systemPlanning'
 

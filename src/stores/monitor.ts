@@ -25,6 +25,8 @@ export interface MonitorDevice {
   qValue?: number
   ber?: number
   osnr?: number
+  componentRefId?: string
+  fiberRefId?: string
 }
 
 // 告警记录类型
@@ -182,8 +184,11 @@ export const useMonitorStore = defineStore('monitor', () => {
       const device = getDeviceByKp(event.kp || 0)
       
       if (event.action === 'update' && device) {
-        // 同步更新坐标和深度
+        // 同步更新设备信息（包括类型、名称、坐标、深度）
         updateDevice(device.id, {
+          name: event.data.name ?? device.name,
+          type: event.data.type ?? device.type,
+          neType: event.data.type ?? device.neType,
           longitude: event.data.longitude ?? device.longitude,
           latitude: event.data.latitude ?? device.latitude,
           depth: event.data.depth ?? device.depth,

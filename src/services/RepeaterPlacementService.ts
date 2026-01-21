@@ -10,6 +10,7 @@ import type { SpanScanResult } from '@/types/simulation'
 export interface RepeaterLocation {
   id: string
   index: number                // 序号
+  name?: string                // 名称（从器件库获取）
   kp: number                   // KP位置 (km)
   longitude: number            // 经度
   latitude: number             // 纬度
@@ -158,8 +159,9 @@ export class RepeaterPlacementService {
     for (let i = 1; i < count; i++) {
       const kp = i * actualSpacing
       locations.push({
-        id: `rep-${i}`,
+        id: `repeater-${i}`,
         index: i,
+        name: `中继器-${String(i).padStart(2, '0')}`,
         kp,
         longitude: 0,
         latitude: 0,
@@ -444,10 +446,10 @@ export class RepeaterPlacementService {
     let total = 0
     for (let i = 1; i < routePoints.length; i++) {
       total += this.calculateDistance(
-        routePoints[i - 1].longitude,
-        routePoints[i - 1].latitude,
-        routePoints[i].longitude,
-        routePoints[i].latitude
+        routePoints[i - 1].coordinates[0],
+        routePoints[i - 1].coordinates[1],
+        routePoints[i].coordinates[0],
+        routePoints[i].coordinates[1]
       )
     }
     return total
@@ -463,25 +465,33 @@ export class RepeaterPlacementService {
     for (let i = 0; i < routePoints.length; i++) {
       const point = routePoints[i]
       let slope = 0
+      // RoutePoint 使用 coordinates: [lon, lat]
+      const pointLon = point.coordinates[0]
+      const pointLat = point.coordinates[1]
+      // 没有 depth 属性，使用默认值 3000
+      const pointDepth = 3000
       
       if (i > 0) {
         const prev = routePoints[i - 1]
+        const prevLon = prev.coordinates[0]
+        const prevLat = prev.coordinates[1]
+        const prevDepth = 3000
         const distance = this.calculateDistance(
-          prev.longitude, prev.latitude,
-          point.longitude, point.latitude
+          prevLon, prevLat,
+          pointLon, pointLat
         )
         kp += distance
         
         // 估算坡度
-        const depthDiff = Math.abs((point.depth || 0) - (prev.depth || 0))
+        const depthDiff = Math.abs(pointDepth - prevDepth)
         slope = Math.atan(depthDiff / (distance * 1000)) * (180 / Math.PI)
       }
 
       terrain.push({
         kp,
-        longitude: point.longitude,
-        latitude: point.latitude,
-        depth: point.depth || 3000,
+        longitude: pointLon,
+        latitude: pointLat,
+        depth: pointDepth,
         slope,
       })
     }

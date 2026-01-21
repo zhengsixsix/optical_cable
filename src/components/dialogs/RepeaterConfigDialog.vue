@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { Button } from '@/components/ui'
-import { useAppStore, useRPLStore } from '@/stores'
+import { useAppStore, useRPLStore, useSettingsStore } from '@/stores'
 import { mockRepeaterConfigs, repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
-import { repeaterPlacementService, type PlacementConfig } from '@/services/RepeaterPlacementService'
 import { 
-  X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio, Zap, Map, Settings 
+  X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio 
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -19,23 +18,36 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const rplStore = useRPLStore()
+const settingsStore = useSettingsStore()
 
-// 智能落位配置
-const placementConfig = ref<Partial<PlacementConfig>>({
-  targetSpacing: 80,
-  minSpacing: 60,
-  maxSpacing: 100,
-  maxSlope: 15,
-  searchRadius: 5
-})
+// 从器件库获取中继器类型选项
+const repeaterTypeOptions = computed(() =>
+  settingsStore.settings.repeaterTypes.map(r => ({
+    value: r.id,
+    label: r.name
+  }))
+)
 
-// 显示智能落位面板
-const showPlacementPanel = ref(false)
+// 当前选中的中继器类型
+const selectedRepeaterTypeId = ref('std')
+
+// 获取当前选中的中继器类型信息
+const currentRepeaterType = computed(() => 
+  settingsStore.settings.repeaterTypes.find(r => r.id === selectedRepeaterTypeId.value) ||
+  settingsStore.settings.repeaterTypes[0]
+)
+
+// 生成中继器名称（器件库名称 + 序号）
+function generateRepeaterName(index: number): string {
+  const typeName = currentRepeaterType.value?.name || '中继器'
+  return `${typeName}-${String(index + 1).padStart(2, '0')}`
+}
 
 interface RepeaterConfig {
   id: string
   index: number
   name: string
+  type: 'amplifier_e' | 'amplifier_w'
   kp: number
   longitude: number
   latitude: number
@@ -46,6 +58,11 @@ interface RepeaterConfig {
   powerConsumption: number
   remarks: string
 }
+
+const typeOptions = [
+  { value: 'amplifier_e', label: '放大器东' },
+  { value: 'amplifier_w', label: '放大器西' }
+]
 
 const repeaters = ref<RepeaterConfig[]>([])
 const selectedRepeaterId = ref<string | null>(null)
@@ -63,6 +80,7 @@ function generateMockRepeaters() {
       id: `rep-${i}`,
       index: i,
       name: cfg.name,
+      type: (i % 2 === 0 ? 'amplifier_e' : 'amplifier_w') as 'amplifier_e' | 'amplifier_w',
       kp: cfg.kp,
       longitude: cfg.longitude,
       latitude: cfg.latitude,
@@ -90,18 +108,28 @@ function addRepeater() {
   const lastRep = repeaters.value[repeaters.value.length - 1]
   const newKP = lastRep ? lastRep.kp + recommendedSpacing : recommendedSpacing
   
+  // 尝试从路由数据获取对应位置
+  const routeData = rplStore.currentTable?.records
+  let position = { longitude: 125, latitude: 28, depth: 2000 }
+  
+  if (routeData && routeData.length >= 2) {
+    position = interpolateRoutePosition(routeData, newKP)
+  }
+  
+  const repType = currentRepeaterType.value
   repeaters.value.push({
     id: `rep-${Date.now()}`,
     index: repeaters.value.length,
-    name: `REP-${String(repeaters.value.length + 1).padStart(2, '0')}`,
+    name: generateRepeaterName(repeaters.value.length),
+    type: repeaters.value.length % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
     kp: newKP,
-    longitude: 125,
-    latitude: 28,
-    depth: 2000,
-    spacing: recommendedSpacing,
-    model: 'EREP-C+L',
+    longitude: Math.round(position.longitude * 10000) / 10000,
+    latitude: Math.round(position.latitude * 10000) / 10000,
+    depth: Math.round(position.depth),
+    spacing: repType?.maxSpan || recommendedSpacing,
+    model: repType?.name || '标准中继器',
     gain: 15,
-    powerConsumption: 45,
+    powerConsumption: repType?.powerConsumption || 45,
     remarks: '',
   })
   recalculateSpacing()
@@ -113,98 +141,75 @@ function deleteRepeater(repId: string) {
 }
 
 function autoOptimize() {
-  if (repeaters.value.length === 0) {
-    generateMockRepeaters()
-    appStore.showNotification({ type: 'success', message: '已生成默认中继器配置' })
-    return
-  }
-  
-  const firstKP = repeaters.value[0].kp - repeaters.value[0].spacing
-  const lastRep = repeaters.value[repeaters.value.length - 1]
-  const totalLength = lastRep.kp + recommendedSpacing - firstKP
-  
-  const optimalCount = Math.round(totalLength / recommendedSpacing) - 1
-  const optimalSpacing = totalLength / (optimalCount + 1)
-  
-  repeaters.value = []
-  for (let i = 0; i < optimalCount; i++) {
-    const kp = firstKP + (i + 1) * optimalSpacing
-    repeaters.value.push({
-      id: `rep-${i}`,
-      index: i,
-      name: `REP-${String(i + 1).padStart(2, '0')}`,
-      kp: Math.round(kp * 10) / 10,
-      longitude: 121.5 + i * 1.5,
-      latitude: 31.2 - i * 1.2,
-      depth: 2000,
-      spacing: optimalSpacing,
-      model: 'EREP-C+L',
-      gain: 15,
-      powerConsumption: 45,
-      remarks: '',
-    })
-  }
-  recalculateSpacing()
-  appStore.showNotification({ type: 'success', message: `已优化为 ${optimalCount} 个中继器` })
-}
-
-// 智能落位算法
-function smartPlacement() {
+  // 从 RPL 获取路由数据
   const routeData = rplStore.currentTable?.records
-  if (!routeData || routeData.length === 0) {
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  
+  if (!routeData || routeData.length < 2 || totalLength === 0) {
     appStore.showNotification({ type: 'warning', message: '请先导入路由数据（RPL）' })
     return
   }
   
-  // 配置落位服务
-  repeaterPlacementService.setConfig({
-    targetSpacing: placementConfig.value.targetSpacing || 80,
-    minSpacing: placementConfig.value.minSpacing || 60,
-    maxSpacing: placementConfig.value.maxSpacing || 100,
-    maxSlope: placementConfig.value.maxSlope || 15,
-    searchRadius: placementConfig.value.searchRadius || 5,
-    preferredDepthRange: { min: 1000, max: 5000 },
-    avoidanceZones: []
-  })
+  // 计算最优中继器数量和间距
+  const optimalCount = Math.max(1, Math.round(totalLength / recommendedSpacing) - 1)
+  const optimalSpacing = totalLength / (optimalCount + 1)
   
-  // 转换路由数据格式
-  const routePoints = routeData.map(r => ({
-    id: r.id,
-    longitude: r.longitude,
-    latitude: r.latitude,
-    depth: r.depth || 3000
-  }))
-  
-  // 计算落位
-  const result = repeaterPlacementService.calculatePlacements(routePoints)
-  
-  // 转换结果
-  repeaters.value = result.locations.map((loc, i) => ({
-    id: loc.id,
-    index: loc.index,
-    name: `REP-${String(i + 1).padStart(2, '0')}`,
-    kp: loc.kp,
-    longitude: loc.longitude,
-    latitude: loc.latitude,
-    depth: loc.depth,
-    spacing: i === 0 ? loc.kp : loc.kp - result.locations[i - 1].kp,
-    model: 'EREP-C+L',
-    gain: 15,
-    powerConsumption: 45,
-    remarks: loc.adjustmentReason || '',
-  }))
-  
+  // 根据路由数据插值计算中继器位置
+  repeaters.value = []
+  for (let i = 0; i < optimalCount; i++) {
+    const targetKp = (i + 1) * optimalSpacing
+    
+    // 在路由数据中找到对应 KP 的位置（插值）
+    const position = interpolateRoutePosition(routeData, targetKp)
+    
+    const repType = currentRepeaterType.value
+    repeaters.value.push({
+      id: `rep-${i}`,
+      index: i,
+      name: generateRepeaterName(i),
+      type: i % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
+      kp: Math.round(targetKp * 10) / 10,
+      longitude: position.longitude,
+      latitude: position.latitude,
+      depth: position.depth,
+      spacing: optimalSpacing,
+      model: repType?.name || '标准中继器',
+      gain: 15,
+      powerConsumption: repType?.powerConsumption || 45,
+      remarks: '',
+    })
+  }
   recalculateSpacing()
+  appStore.showNotification({ type: 'success', message: `已优化为 ${optimalCount} 个中继器，平均间距 ${optimalSpacing.toFixed(1)}km` })
+}
+
+// 根据 KP 插值计算路由位置
+function interpolateRoutePosition(routeData: any[], targetKp: number): { longitude: number; latitude: number; depth: number } {
+  // 按 KP 排序
+  const sorted = [...routeData].sort((a, b) => (a.kp || 0) - (b.kp || 0))
   
-  // 显示结果统计
-  const message = `智能落位完成: ${result.totalCount}个中继器, 平均间距${result.averageSpacing.toFixed(1)}km`
-  if (result.feasibility.warnings.length > 0) {
-    appStore.showNotification({ type: 'warning', message: message + ` (有${result.feasibility.warnings.length}个警告)` })
-  } else {
-    appStore.showNotification({ type: 'success', message })
+  // 找到目标 KP 前后的点
+  let before = sorted[0]
+  let after = sorted[sorted.length - 1]
+  
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if ((sorted[i].kp || 0) <= targetKp && (sorted[i + 1].kp || 0) >= targetKp) {
+      before = sorted[i]
+      after = sorted[i + 1]
+      break
+    }
   }
   
-  appStore.addLog('INFO', `智能落位: 最优化比例${(result.statistics.optimalRatio * 100).toFixed(0)}%, 平均评分${result.statistics.averageScore.toFixed(0)}`)
+  // 线性插值
+  const beforeKp = before.kp || 0
+  const afterKp = after.kp || beforeKp + 1
+  const ratio = afterKp === beforeKp ? 0 : (targetKp - beforeKp) / (afterKp - beforeKp)
+  
+  return {
+    longitude: before.longitude + (after.longitude - before.longitude) * ratio,
+    latitude: before.latitude + (after.latitude - before.latitude) * ratio,
+    depth: (before.depth || 3000) + ((after.depth || 3000) - (before.depth || 3000)) * ratio
+  }
 }
 
 function moveRepeater(repId: string, delta: number) {
@@ -259,14 +264,18 @@ function handleClose() {
             <h3 class="text-sm font-bold text-gray-800">中继器位置配置</h3>
           </div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" @click="smartPlacement" class="border-green-300 text-green-700 hover:bg-green-50">
-              <Zap class="w-4 h-4 mr-1" />
-              智能落位
-            </Button>
-            <Button variant="outline" size="sm" @click="showPlacementPanel = !showPlacementPanel">
-              <Settings class="w-4 h-4 mr-1" />
-              配置
-            </Button>
+            <!-- 器件类型选择 -->
+            <div class="flex items-center gap-1">
+              <span class="text-xs text-gray-500">器件类型:</span>
+              <select 
+                v-model="selectedRepeaterTypeId"
+                class="px-2 py-1 text-xs border border-gray-300 rounded bg-white"
+              >
+                <option v-for="opt in repeaterTypeOptions" :key="opt.value" :value="opt.value">
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
             <Button variant="outline" size="sm" @click="autoOptimize">
               <RotateCcw class="w-4 h-4 mr-1" />
               简单优化
@@ -303,44 +312,6 @@ function handleClose() {
           </div>
         </div>
 
-        <!-- 智能落位配置面板 -->
-        <div v-if="showPlacementPanel" class="px-4 py-3 bg-green-50 border-b space-y-3">
-          <div class="text-xs font-medium text-green-700 flex items-center gap-1">
-            <Map class="w-3.5 h-3.5" />
-            智能落位配置
-          </div>
-          <div class="grid grid-cols-5 gap-3 text-xs">
-            <div>
-              <label class="block text-gray-600 mb-1">目标间距(km)</label>
-              <input v-model.number="placementConfig.targetSpacing" type="number" min="40" max="120" step="5"
-                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
-            </div>
-            <div>
-              <label class="block text-gray-600 mb-1">最小间距(km)</label>
-              <input v-model.number="placementConfig.minSpacing" type="number" min="30" max="100" step="5"
-                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
-            </div>
-            <div>
-              <label class="block text-gray-600 mb-1">最大间距(km)</label>
-              <input v-model.number="placementConfig.maxSpacing" type="number" min="60" max="150" step="5"
-                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
-            </div>
-            <div>
-              <label class="block text-gray-600 mb-1">最大坡度(°)</label>
-              <input v-model.number="placementConfig.maxSlope" type="number" min="5" max="30" step="1"
-                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
-            </div>
-            <div>
-              <label class="block text-gray-600 mb-1">搜索半径(km)</label>
-              <input v-model.number="placementConfig.searchRadius" type="number" min="1" max="20" step="1"
-                class="w-full px-2 py-1 border border-gray-300 rounded text-center" />
-            </div>
-          </div>
-          <div class="text-xs text-gray-500">
-            提示: 智能落位会自动规避陡坡和不良地形，确保中继器布置在平坦区域
-          </div>
-        </div>
-
         <!-- 推荐提示 -->
         <div class="px-4 py-2 bg-blue-50 border-b text-xs text-blue-700 flex items-center gap-2">
           <AlertTriangle class="w-4 h-4" />
@@ -353,6 +324,7 @@ function handleClose() {
             <thead class="bg-gray-100 sticky top-0 z-10">
               <tr>
                 <th class="px-3 py-2 text-left border-b font-medium text-gray-600">名称</th>
+                <th class="px-3 py-2 text-center w-24 border-b font-medium text-gray-600">类型</th>
                 <th class="px-3 py-2 text-right w-24 border-b font-medium text-gray-600">KP(km)</th>
                 <th class="px-3 py-2 text-right w-24 border-b font-medium text-gray-600">间距(km)</th>
                 <th class="px-3 py-2 text-right w-20 border-b font-medium text-gray-600">水深(m)</th>
@@ -371,7 +343,23 @@ function handleClose() {
                 ]"
                 @click="selectedRepeaterId = rep.id"
               >
-                <td class="px-3 py-2 border-b font-medium">{{ rep.name }}</td>
+                <td class="px-3 py-2 border-b">
+                  <input
+                    v-model="rep.name"
+                    type="text"
+                    class="w-24 px-2 py-1 border border-gray-300 rounded text-sm font-medium"
+                  />
+                </td>
+                <td class="px-3 py-2 text-center border-b">
+                  <select 
+                    v-model="rep.type"
+                    class="px-2 py-1 text-xs border border-gray-300 rounded"
+                  >
+                    <option v-for="opt in typeOptions" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </td>
                 <td class="px-3 py-2 text-right border-b font-mono">
                   <input
                     v-model.number="rep.kp"

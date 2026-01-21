@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useRouteStore, useAppStore, useRPLStore } from '@/stores'
+import { useRouteStore, useAppStore, useRPLStore, useSettingsStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button, Select } from '@/components/ui'
 import { 
   cableTypeOptions,
@@ -23,6 +23,7 @@ interface SegmentConfigData {
   avgDepth: number
   maxDepth: number
   expanded: boolean
+  fiberRefId?: string
 }
 import { 
   Settings, 
@@ -46,6 +47,15 @@ const emit = defineEmits<{
 const routeStore = useRouteStore()
 const appStore = useAppStore()
 const rplStore = useRPLStore()
+const settingsStore = useSettingsStore()
+
+// 光纤类型选项（从器件库获取）
+const fiberOptions = computed(() => {
+  return [
+    { value: '', label: '-- 请选择光纤类型 --' },
+    ...settingsStore.fiberTypes.map(f => ({ value: f.id, label: f.name }))
+  ]
+})
 
 const segments = ref<SegmentConfigData[]>([])
 const selectedSegmentId = ref<string | null>(null)
@@ -285,7 +295,11 @@ watch(() => props.routeId, () => {
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-3 gap-4">
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">光纤类型</label>
+                  <Select v-model="seg.fiberRefId" :options="fiberOptions" />
+                </div>
                 <div>
                   <label class="block text-xs font-medium text-gray-600 mb-1">埋设方式</label>
                   <Select v-model="seg.burialMethod" :options="burialMethodOptions" />

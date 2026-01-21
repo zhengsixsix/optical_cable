@@ -114,7 +114,7 @@ const recentFiles = computed(() => [
       </div>
 
       <!-- 清除按钮 -->
-      <Button size="sm" variant="destructive" class="w-full" @click="routeStore.clearDrawing">
+      <Button size="sm" variant="destructive" class="w-full" @click="routeStore.clearParetoRoutes">
         <Trash2 class="w-4 h-4 mr-1" />
         清除绘制
       </Button>

@@ -33,7 +33,7 @@ const selectedRouteInfo = computed(() => {
     name: route.name,
     cost: (route.cost.total / 1000000).toFixed(2),
     risk: (route.risk.overall * 100).toFixed(1),
-    length: route.length?.toFixed(1) || '-'
+    length: route.totalLength?.toFixed(1) || '-'
   }
 })
 </script>

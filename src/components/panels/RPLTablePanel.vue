@@ -112,10 +112,14 @@ const handleValidate = () => {
   }
 }
 
-const handleExportCSV = () => {
+const handleExportRPL = async () => {
   if (!currentTable.value) return
-  exportRPLFile(currentTable.value, 'csv')
-  appStore.showNotification({ type: 'success', message: '导出CSV成功' })
+  try {
+    await exportRPLFile(currentTable.value, 'xlsx')
+    appStore.showNotification({ type: 'success', message: '导出 Excel 文件成功' })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: '导出失败' })
+  }
 }
 
 
@@ -229,9 +233,9 @@ const someSelected = computed(() =>
             验证
           </Button>
         </div>
-        <Button variant="outline" size="sm" @click="handleExportCSV">
+        <Button variant="outline" size="sm" @click="handleExportRPL">
           <Download class="w-4 h-4 mr-1" />
-          导出 CSV
+          导出 RPL
         </Button>
       </div>
 

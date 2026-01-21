@@ -134,6 +134,8 @@ const addNewItem = () => {
       id: `bu-${timestamp}`,
       name: '新分支器类型',
       portCount: 3,
+      trunkInsertionLoss: 0.5,
+      branchInsertionLoss: 3.0,
       insertionLoss: 0.5,
       wavelengthRange: 1550
     }

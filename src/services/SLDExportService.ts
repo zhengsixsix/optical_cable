@@ -657,6 +657,205 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
   }
 }
 
+// ========== 从路由数据生成 SLD XML ==========
+
+import type { Route, RoutePoint, RouteSegment } from '@/types'
+
+/**
+ * 点类型到 SLD Element_Type 的映射
+ */
+const POINT_TYPE_TO_ELEMENT: Record<string, string> = {
+  'landing': 'LandingStation',
+  'repeater': 'Repeater',
+  'branching': 'BU',
+  'bu': 'BU',
+  'joint': 'Joint',
+  'waypoint': 'CableSpan',  // 航路点作为光缆段的一部分
+}
+
+/**
+ * 电缆类型映射
+ */
+const CABLE_TYPE_MAP: Record<string, string> = {
+  'lw': 'LW',
+  'lws': 'LWS', 
+  'sa': 'SA',
+  'da': 'DA',
+  'sas': 'SAS',
+}
+
+/**
+ * 计算系统KM（包含余量）
+ * @param routeKM 路由KM
+ * @param slackPercent 余量百分比，默认2%
+ */
+function calculateSystemKM(routeKM: number, slackPercent: number = 2): number {
+  return routeKM * (1 + slackPercent / 100)
+}
+
+/**
+ * 从路由数据生成 SLD XML (9.2标准格式)
+ * @param route 路由数据
+ * @param projectName 项目名称
+ * @param slackPercent 余量百分比
+ */
+export function exportSLDFromRoute(
+  route: Route,
+  projectName: string = 'Submarine Cable Project',
+  slackPercent: number = 2
+): string {
+  const dateStr = new Date().toISOString().slice(0, 10)
+  const totalLength = route.segments.reduce((sum, s) => sum + s.length, 0)
+  const totalSystemLength = calculateSystemKM(totalLength, slackPercent)
+  
+  // 找出登陆站
+  const landingPoints = route.points.filter(p => p.type === 'landing')
+  const startStation = landingPoints[0]?.name || '起始站'
+  const endStation = landingPoints[landingPoints.length - 1]?.name || '终止站'
+  
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
+  xml += `<!-- 海缆系统 SLD (System Line Diagram) 数据交换格式标准 9.2 -->\n`
+  xml += `<SystemLineDiagram project="${escapeXml(projectName)}" version="1.0" date="${dateStr}">\n\n`
+  
+  // 全局链路基础信息
+  xml += `${indent(1)}<!-- 全局链路基础信息 -->\n`
+  xml += `${indent(1)}<GlobalInfo>\n`
+  xml += `${indent(2)}<SystemName>${escapeXml(route.name || projectName)}</SystemName>\n`
+  xml += `${indent(2)}<TotalSystemLengthKM>${totalSystemLength.toFixed(3)}</TotalSystemLengthKM>\n`
+  xml += `${indent(2)}<StartStation>${escapeXml(startStation)}</StartStation>\n`
+  xml += `${indent(2)}<EndStation>${escapeXml(endStation)}</EndStation>\n`
+  xml += `${indent(1)}</GlobalInfo>\n\n`
+  
+  // 网元设备列表
+  xml += `${indent(1)}<!-- 网元设备列表 (按物理连接顺序排列) -->\n`
+  xml += `${indent(1)}<Elements>\n`
+  
+  let sequenceId = 1
+  let cumulativeRouteKM = 0
+  
+  // 按顺序处理每个点和段
+  for (let i = 0; i < route.points.length; i++) {
+    const point = route.points[i]
+    const segment = i < route.segments.length ? route.segments[i] : null
+    const prevSegment = i > 0 ? route.segments[i - 1] : null
+    
+    // 计算当前点的路由KM
+    if (prevSegment) {
+      cumulativeRouteKM += prevSegment.length
+    }
+    const systemKM = calculateSystemKM(cumulativeRouteKM, slackPercent)
+    
+    const elementType = POINT_TYPE_TO_ELEMENT[point.type] || 'Joint'
+    const upstreamId = sequenceId === 1 ? null : sequenceId - 1
+    const hasNext = i < route.points.length - 1
+    
+    // 如果是航路点，跳过（会作为CableSpan的一部分）
+    if (point.type === 'waypoint') {
+      continue
+    }
+    
+    // 构建配置参数
+    const configParams: Record<string, any> = {}
+    
+    if (point.type === 'landing') {
+      configParams['StationName'] = point.name || `登陆站-${sequenceId}`
+      configParams['Longitude'] = point.coordinates[0].toFixed(6)
+      configParams['Latitude'] = point.coordinates[1].toFixed(6)
+    } else if (point.type === 'repeater') {
+      configParams['Model'] = 'RPT-16G'
+      configParams['Gain'] = '16.5'  // dB
+      configParams['OutputPower'] = '21'  // dBm
+      configParams['NoiseFigure'] = '4.5'
+    } else if (point.type === 'branching') {
+      configParams['Model'] = 'OADM-BU-01'
+      configParams['InsertionLoss'] = '3.5'  // dB
+    }
+    
+    // 生成设备 Element
+    const downstreamId = hasNext ? sequenceId + 1 : null
+    const branchId = point.type === 'branching' ? `branch-${sequenceId}` : null
+    
+    xml += `${indent(2)}<!-- ${sequenceId}. ${point.name || elementType} -->\n`
+    xml += generateElementXML(
+      sequenceId,
+      elementType,
+      cumulativeRouteKM,
+      systemKM,
+      upstreamId,
+      downstreamId,
+      branchId,
+      configParams,
+      2
+    )
+    
+    const currentSequence = sequenceId
+    sequenceId++
+    
+    // 如果有出向光缆段，添加 CableSpan
+    if (segment && hasNext) {
+      const nextPoint = route.points[i + 1]
+      // 找到下一个非航路点的设备
+      let nextDeviceIndex = i + 1
+      while (nextDeviceIndex < route.points.length && route.points[nextDeviceIndex].type === 'waypoint') {
+        nextDeviceIndex++
+      }
+      
+      // 计算这段光缆的总长度
+      let cableLength = segment.length
+      for (let j = i + 1; j < nextDeviceIndex && j < route.segments.length; j++) {
+        cableLength += route.segments[j].length
+      }
+      
+      const cableRouteKM = cumulativeRouteKM + cableLength
+      const cableSystemKM = calculateSystemKM(cableRouteKM, slackPercent)
+      const cableType = CABLE_TYPE_MAP[segment.cableType?.toLowerCase()] || 'LW'
+      
+      const cableConfigParams: Record<string, any> = {
+        'CableType': cableType,
+        'FiberType': 'G.654.D',
+        'LossCoeff': '0.165',  // dB/km
+        'Length': cableLength.toFixed(3),
+        'Depth': segment.depth?.toFixed(1) || '0',
+      }
+      
+      xml += `${indent(2)}<!-- ${sequenceId}. 海缆段 -->\n`
+      xml += generateElementXML(
+        sequenceId,
+        'CableSpan',
+        cableRouteKM,
+        cableSystemKM,
+        currentSequence,
+        sequenceId + 1,
+        null,
+        cableConfigParams,
+        2
+      )
+      sequenceId++
+    }
+  }
+  
+  xml += `${indent(1)}</Elements>\n`
+  xml += `</SystemLineDiagram>\n`
+  
+  return xml
+}
+
+/**
+ * 从路由数据导出 SLD 文件
+ */
+export function exportSLDFileFromRoute(
+  route: Route,
+  projectName?: string,
+  slackPercent: number = 2
+) {
+  const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  const name = projectName || route.name || 'SLD'
+  const baseName = `SLD_${name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${timestamp}`
+  
+  const content = exportSLDFromRoute(route, projectName, slackPercent)
+  downloadFile(content, `${baseName}.xml`, 'application/xml;charset=utf-8')
+}
+
 // Vue composable
 export function useSLDExport() {
   return {
@@ -666,5 +865,8 @@ export function useSLDExport() {
     parseFromXML,
     downloadFile,
     escapeXml,
+    // 新增: 从路由导出
+    exportSLDFromRoute,
+    exportSLDFileFromRoute,
   }
 }
