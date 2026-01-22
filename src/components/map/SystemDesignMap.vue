@@ -69,20 +69,20 @@ let dragPanInteraction: DragPan | null = null
 
 // 根据点类型和选中状态获取图标路径
 const getPointIcon = (type: string, isSelected: boolean) => {
-  const suffix = isSelected ? 'select' : ''
+  const suffix = isSelected ? '-select' : ''
   switch (type) {
     case 'landing':
-      return `/image/岸上站点${suffix}.png`
+      return `/image/landing${suffix}.png`
     case 'amplifier_e':
-      return `/image/放大器东${suffix}.png`
+      return `/image/amplifier-e${suffix}.png`
     case 'amplifier_w':
-      return `/image/放大器西${suffix}.png`
+      return `/image/amplifier-w${suffix}.png`
     case 'bu':
-      return `/image/水下分支器${suffix}.png`
+      return `/image/bu${suffix}.png`
     case 'underwater':
-      return `/image/水下站点${suffix}.png`
+      return `/image/underwater${suffix}.png`
     default:
-      return `/image/水下站点${suffix}.png`
+      return `/image/underwater${suffix}.png`
   }
 }
 
@@ -620,23 +620,23 @@ onUnmounted(() => {
       <div class="text-xs font-semibold text-gray-700 mb-2">设备图例</div>
       <div class="space-y-1.5 text-xs">
         <div class="flex items-center gap-2">
-          <img src="/image/岸上站点.png" class="w-4 h-4 object-contain" />
+          <img src="/image/landing.png" class="w-4 h-4 object-contain" />
           <span class="text-gray-600">岸上站点</span>
         </div>
         <div class="flex items-center gap-2">
-          <img src="/image/放大器东.png" class="w-4 h-4 object-contain" />
+          <img src="/image/amplifier-e.png" class="w-4 h-4 object-contain" />
           <span class="text-gray-600">放大器东</span>
         </div>
         <div class="flex items-center gap-2">
-          <img src="/image/放大器西.png" class="w-4 h-4 object-contain" />
+          <img src="/image/amplifier-w.png" class="w-4 h-4 object-contain" />
           <span class="text-gray-600">放大器西</span>
         </div>
         <div class="flex items-center gap-2">
-          <img src="/image/水下分支器.png" class="w-4 h-4 object-contain" />
+          <img src="/image/bu.png" class="w-4 h-4 object-contain" />
           <span class="text-gray-600">水下分支器</span>
         </div>
         <div class="flex items-center gap-2">
-          <img src="/image/水下站点.png" class="w-4 h-4 object-contain" />
+          <img src="/image/underwater.png" class="w-4 h-4 object-contain" />
           <span class="text-gray-600">水下站点</span>
         </div>
       </div>

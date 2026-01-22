@@ -74,26 +74,26 @@ let cableLayer: VectorLayer<VectorSource> | null = null
 // 根据设备类型和状态获取图标路径
 const getDeviceIcon = (device: MonitorDevice) => {
   const hasAlarm = device.status === 'warning' || device.status === 'error'
-  const suffix = hasAlarm ? 'select' : ''
+  const suffix = hasAlarm ? '-select' : ''
   
   switch (device.type) {
     case 'landing':
     case 'LandingStation':
-      return `/image/岸上站点${suffix}.png`
+      return `/image/landing${suffix}.png`
     case 'amplifier_e':
-      return `/image/放大器东${suffix}.png`
+      return `/image/amplifier-e${suffix}.png`
     case 'amplifier_w':
-      return `/image/放大器西${suffix}.png`
+      return `/image/amplifier-w${suffix}.png`
     case 'Repeater':
-      return `/image/放大器东${suffix}.png`
+      return `/image/amplifier-e${suffix}.png`
     case 'bu':
     case 'BU':
-      return `/image/水下分支器${suffix}.png`
+      return `/image/bu${suffix}.png`
     case 'underwater':
     case 'PFE':
-      return `/image/水下站点${suffix}.png`
+      return `/image/underwater${suffix}.png`
     default:
-      return `/image/水下站点${suffix}.png`
+      return `/image/underwater${suffix}.png`
   }
 }
 
@@ -473,24 +473,24 @@ onUnmounted(() => {
       <div class="text-xs font-semibold text-gray-700 mb-2">设备图例</div>
       <div class="space-y-1.5 text-xs">
         <div class="flex items-center gap-2">
-          <img src="/image/岸上站点.png" class="w-5 h-5 object-contain" />
+          <img src="/image/landing.png" class="w-5 h-5 object-contain" />
           <span class="text-gray-600">岸上站点</span>
         </div>
         <div class="flex items-center gap-2">
-          <img src="/image/放大器东.png" class="w-5 h-5 object-contain" />
+          <img src="/image/amplifier-e.png" class="w-5 h-5 object-contain" />
           <span class="text-gray-600">中继器/放大器</span>
         </div>
         <div class="flex items-center gap-2">
-          <img src="/image/水下分支器.png" class="w-5 h-5 object-contain" />
+          <img src="/image/bu.png" class="w-5 h-5 object-contain" />
           <span class="text-gray-600">水下分支器</span>
         </div>
         <div class="flex items-center gap-2">
-          <img src="/image/水下站点.png" class="w-5 h-5 object-contain" />
+          <img src="/image/underwater.png" class="w-5 h-5 object-contain" />
           <span class="text-gray-600">水下站点</span>
         </div>
         <div class="border-t pt-1.5 mt-1.5">
           <div class="flex items-center gap-2">
-            <img src="/image/岸上站点select.png" class="w-5 h-5 object-contain" />
+            <img src="/image/landing-select.png" class="w-5 h-5 object-contain" />
             <span class="text-orange-600">告警状态</span>
           </div>
         </div>

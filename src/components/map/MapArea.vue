@@ -1451,9 +1451,9 @@ onUnmounted(() => {
             {{ isPlanning ? '停止' : '运行规划' }}
           </Button>
         </Tooltip>
-        <Tooltip content="导出Excel表格">
+        <Tooltip content="导出RPL表格">
           <Button variant="outline" size="sm" :disabled="!isPlanning" @click="appStore.openDialog('rpl-manage')">
-            <FileSpreadsheet class="w-4 h-4 mr-1" /> 导出Excel
+            <FileSpreadsheet class="w-4 h-4 mr-1" /> 导出RPL
           </Button>
         </Tooltip>
       </div>
