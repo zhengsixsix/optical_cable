@@ -5,7 +5,7 @@ import { Printer, X, Maximize2 } from 'lucide-vue-next'
 import MonitorPanel from './MonitorPanel.vue'
 import DepthProfile from '@/components/visualization/DepthProfile.vue'
 import Terrain3D from '@/components/visualization/Terrain3D.vue'
-import { useAppStore } from '@/stores'
+import { useAppStore, useRouteStore } from '@/stores'
 
 interface Props {
   selectedExtent?: [number, number, number, number]
@@ -13,6 +13,7 @@ interface Props {
 
 const props = defineProps<Props>()
 const appStore = useAppStore()
+const routeStore = useRouteStore()
 
 const panelVisibility = computed(() => appStore.panelVisibility)
 

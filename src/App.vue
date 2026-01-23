@@ -16,6 +16,8 @@ import AppearanceDialog from '@/components/dialogs/AppearanceDialog.vue'
 import AlarmNotification from '@/components/notifications/AlarmNotification.vue'
 import SavePromptDialog from '@/components/dialogs/SavePromptDialog.vue'
 import SaveAsDialog from '@/components/dialogs/SaveAsDialog.vue'
+import ImportFileDialog from '@/components/dialogs/ImportFileDialog.vue'
+import ImportGisDialog from '@/components/dialogs/ImportGisDialog.vue'
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()
@@ -145,11 +147,34 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
 
   <!-- 另存为对话框 -->
   <SaveAsDialog
-    :visible="projectManager.showSaveAsDialog.value"
+    :visible="appStore.activeDialog === 'save-as'"
     :current-project-name="projectManager.currentProjectName.value"
     :current-project-type="projectManager.currentProjectType.value ?? undefined"
-    @close="projectManager.showSaveAsDialog.value = false"
-    @save="({ projectName, savePath }) => projectManager.saveProjectAs(projectName, savePath)"
+    @close="appStore.closeDialog()"
+    @save="({ projectName, savePath }) => { projectManager.saveProjectAs(projectName, savePath); appStore.closeDialog() }"
+  />
+
+  <!-- 导入工程对话框 -->
+  <ImportFileDialog
+    :visible="appStore.activeDialog === 'import-project'"
+    import-type="project"
+    @close="appStore.closeDialog()"
+    @success="appStore.closeDialog()"
+  />
+
+  <!-- 导入 RPL 文件对话框 -->
+  <ImportFileDialog
+    :visible="appStore.activeDialog === 'import-rpl'"
+    import-type="rpl"
+    @close="appStore.closeDialog()"
+    @success="appStore.closeDialog()"
+  />
+
+  <!-- 导入 GIS 数据对话框 -->
+  <ImportGisDialog
+    :visible="appStore.activeDialog === 'import-gis'"
+    @close="appStore.closeDialog()"
+    @success="appStore.closeDialog()"
   />
 
 </template>

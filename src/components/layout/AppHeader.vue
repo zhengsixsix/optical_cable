@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAppStore, useUserStore, useMapStore } from '@/stores'
+import { useAppStore, useUserStore, useMapStore, useRPLStore, useSLDStore, useRouteStore } from '@/stores'
 import { useProjectManager } from '@/composables'
+import { useRPLExport } from '@/services/RPLExportService'
+import { exportSLDFromRoute } from '@/services/SLDExportService'
 import type { Projection } from '@/types'
 import {
   FileText, FolderOpen, Save, FilePlus, LogOut,
@@ -16,7 +18,11 @@ const route = useRoute()
 const appStore = useAppStore()
 const userStore = useUserStore()
 const mapStore = useMapStore()
+const rplStore = useRPLStore()
+const sldStore = useSLDStore()
+const routeStore = useRouteStore()
 const projectManager = useProjectManager()
+const { exportRPLFile } = useRPLExport()
 
 // 暴露给 App.vue 使用
 defineExpose({ projectManager })
@@ -86,8 +92,65 @@ const handleSaveAsProject = () => {
   projectManager.openSaveAsDialog()
 }
 
+// 导出 RPL 文件
+const handleExportRPL = async () => {
+  const currentTable = rplStore.currentTable
+  if (!currentTable) {
+    appStore.showNotification({ type: 'warning', message: '没有可导出的 RPL 数据' })
+    return
+  }
+  
+  try {
+    await exportRPLFile(currentTable, 'xlsx')
+    appStore.showNotification({ type: 'success', message: 'RPL 文件导出成功' })
+    appStore.addLog('INFO', `导出 RPL 文件: ${currentTable.name}`)
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: 'RPL 文件导出失败' })
+  }
+}
+
+// 导出 SLD 文件
+const handleExportSLD = async () => {
+  const currentRoute = routeStore.currentRoute
+  if (!currentRoute) {
+    appStore.showNotification({ type: 'warning', message: '没有可导出的路由数据' })
+    return
+  }
+  
+  try {
+    const projectName = projectManager.currentProjectName.value || 'SubmarineCable'
+    const xmlContent = exportSLDFromRoute(currentRoute, projectName)
+    
+    // 下载 XML 文件
+    const blob = new Blob([xmlContent], { type: 'application/xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `SLD_${projectName}_${new Date().toISOString().slice(0, 10)}.xml`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    appStore.showNotification({ type: 'success', message: 'SLD 文件导出成功' })
+    appStore.addLog('INFO', `导出 SLD 文件: ${projectName}`)
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: 'SLD 文件导出失败' })
+  }
+}
+
 const showModal = (key: string) => {
   console.log(`Menu Action: ${key}`)
+  
+  // 特殊处理导出操作
+  if (key === 'export-rpl') {
+    handleExportRPL()
+    return
+  }
+  if (key === 'export-sld') {
+    handleExportSLD()
+    return
+  }
 
   const map: Record<string, string> = {
     '新建工程': 'new-project',
@@ -206,23 +269,28 @@ const togglePanel = (panel: string) => {
                 <div
                   class="absolute left-full top-0 pl-1 hidden group-hover/sub:block z-50 animate-in fade-in slide-in-from-left-2 duration-200">
                   <div
-                    class="min-w-[200px] bg-white/95 backdrop-blur-md border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-lg py-2 -mt-2">
-                    <a href="#" @click.prevent="showModal('import')"
+                    class="min-w-[220px] bg-white/95 backdrop-blur-md border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-lg py-2 -mt-2">
+                    <a href="#" @click.prevent="showModal('import-project')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileInput class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">从本地文件导入...</span>
+                      <span class="text-sm">导入工程 (.ucp)</span>
                     </a>
-                    <a href="#" @click.prevent="showModal('importGis')"
+                    <a href="#" @click.prevent="showModal('import-rpl')"
+                      class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
+                      <FileSpreadsheet class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
+                      <span class="text-sm">导入 RPL 文件 (.rpl)</span>
+                    </a>
+                    <a href="#" @click.prevent="showModal('import-gis')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <Globe class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导入 GIS 数据...</span>
+                      <span class="text-sm">导入 GIS 数据 (.tif, .shp)</span>
                     </a>
                   </div>
                 </div>
               </div>
 
-              <!-- Export Submenu -->
-              <div class="relative group/sub">
+              <!-- Export Submenu - 只有打开项目后才显示 -->
+              <div v-if="projectManager.hasOpenProject.value" class="relative group/sub">
                 <a href="#"
                   class="group/item flex items-center justify-between px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                   <div class="flex items-center gap-3">
@@ -236,35 +304,51 @@ const togglePanel = (panel: string) => {
                 <div
                   class="absolute left-full top-0 pl-1 hidden group-hover/sub:block z-50 animate-in fade-in slide-in-from-left-2 duration-200">
                   <div
-                    class="min-w-[200px] bg-white/95 backdrop-blur-md border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-lg py-2 -mt-2">
-                    <a href="#" @click.prevent="showModal('export_pdf')"
+                    class="min-w-[220px] bg-white/95 backdrop-blur-md border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-lg py-2 -mt-2">
+                    <!-- 导出工程文件 - 根据项目类型显示不同后缀 -->
+                    <a href="#" @click.prevent="handleSaveProject"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
-                      <FileType class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导出为 PDF</span>
+                      <FileText class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
+                      <span class="text-sm">导出工程文件 ({{ projectManager.currentProjectType.value === 'ucp' ? '.ucp' : '.use' }})</span>
                     </a>
-                    <a href="#" @click.prevent="showModal('export_png')"
-                      class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
-                      <ImageIcon class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导出为 PNG (高清)</span>
-                    </a>
-                    <a href="#" @click.prevent="showModal('export_excel')"
+                    <!-- 导出 RPL 文件 -->
+                    <a href="#" @click.prevent="showModal('export-rpl')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileSpreadsheet class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导出报表数据</span>
+                      <span class="text-sm">导出 RPL 文件</span>
+                    </a>
+                    <!-- USE 项目才显示: 导出 SLD 文件 -->
+                    <a v-if="projectManager.currentProjectType.value === 'use'" href="#" @click.prevent="showModal('export-sld')"
+                      class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
+                      <FileSpreadsheet class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
+                      <span class="text-sm">导出 SLD 文件</span>
                     </a>
                     <div class="h-px bg-gray-100 my-1 mx-2"></div>
+                    <!-- 导出成本分析报告 -->
                     <a href="#" @click.prevent="showModal('export_cost_report')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileText class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导出成本报告</span>
+                      <span class="text-sm">导出成本分析报告</span>
                     </a>
-                    <a href="#" @click.prevent="showModal('export_perf_report')"
+                    <!-- USE 项目才显示: 导出性能分析报告 -->
+                    <a v-if="projectManager.currentProjectType.value === 'use'" href="#" @click.prevent="showModal('export_perf_report')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileText class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导出性能报告</span>
+                      <span class="text-sm">导出性能分析报告</span>
                     </a>
                   </div>
                 </div>
+              </div>
+              <!-- 没有打开项目时显示禁用的导出菜单 -->
+              <div v-else class="relative">
+                <a href="#"
+                  class="group/item flex items-center justify-between px-4 py-2.5 text-gray-400 cursor-not-allowed">
+                  <div class="flex items-center gap-3">
+                    <Download class="w-4 h-4" />
+                    <span class="text-sm">导出</span>
+                  </div>
+                  <ChevronRight class="w-3.5 h-3.5" />
+                </a>
               </div>
 
               <div class="h-px bg-gray-100 my-1 mx-2"></div>

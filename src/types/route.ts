@@ -22,6 +22,12 @@ export interface RoutePointDevice {
   insertionLoss?: number     // 插损
 }
 
+// 分支目标信息
+export interface BranchToInfo {
+  coord: [number, number]
+  name: string
+}
+
 // 路由点
 export interface RoutePoint {
   id: string
@@ -30,6 +36,8 @@ export interface RoutePoint {
   name?: string
   // 器件库设备信息
   device?: RoutePointDevice
+  // 分支目标（多点规划时使用）
+  branchTo?: BranchToInfo
 }
 
 // 路由分段

@@ -169,9 +169,9 @@ export function useProjectManager() {
     isProcessing.value = true
     
     try {
-      const success = await projectFileService.saveProject()
+      const result = await projectFileService.saveProject()
       
-      if (success) {
+      if (result.success) {
         appStore.markProjectSaved()
         appStore.showNotification({
           type: 'success',
@@ -180,11 +180,11 @@ export function useProjectManager() {
       } else {
         appStore.showNotification({
           type: 'error',
-          message: '保存项目失败',
+          message: result.error || '保存项目失败',
         })
       }
       
-      return success
+      return result.success
     } finally {
       isProcessing.value = false
     }
@@ -194,7 +194,7 @@ export function useProjectManager() {
    * 另存为
    */
   function openSaveAsDialog(): void {
-    showSaveAsDialog.value = true
+    appStore.openDialog('save-as')
   }
   
   /**

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button, Select, Tooltip } from '@/components/ui'
 import ConnectorPanel from '@/components/panels/ConnectorPanel.vue'
@@ -216,6 +216,23 @@ const showWDMConfigDialog = ref(false)
 const showModelSelectDialog = ref(false)
 const showLinkAnalysisDialog = ref(false)
 const editConnectorId = ref<string | null>(null)
+
+// 数据管理下拉菜单
+const showDataMenu = ref(false)
+const dataMenuRef = ref<HTMLElement | null>(null)
+
+// 点击外部关闭下拉菜单
+const handleClickOutside = (e: MouseEvent) => {
+  if (dataMenuRef.value && !dataMenuRef.value.contains(e.target as Node)) {
+    showDataMenu.value = false
+  }
+}
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 
 // Span 扫描结果 (Step 6/7)
 const spanScanResult = ref<SpanScanResult | null>(null)
@@ -700,17 +717,31 @@ const handlePointClick = (pointId: string) => {
   selectedPointId.value = pointId
 }
 
-// 节点移动
+// 节点移动 - 同时更新 connectorStore 和 monitorStore
 const handlePointMoved = (pointId: string, longitude: number, latitude: number) => {
+  // 优先从 monitorStore 查找（地图使用 monitorStore 渲染）
+  const device = monitorStore.devices.find(d => d.id === pointId)
   const point = routePoints.value.find(p => p.id === pointId)
+  
+  const deviceName = device?.name || point?.name || pointId
+  
+  // 更新 monitorStore.devices
+  if (device) {
+    device.longitude = longitude
+    device.latitude = latitude
+    console.log(`monitorStore 设备 ${device.name} 位置已更新: [${longitude.toFixed(4)}, ${latitude.toFixed(4)}]`)
+  }
+  
+  // 更新 connectorStore
   if (point) {
     connectorStore.updateElement(pointId, { longitude, latitude })
-    appStore.showNotification({
-      type: 'success',
-      message: `${point.name} 已移动到 ${longitude.toFixed(4)}°, ${latitude.toFixed(4)}°`
-    })
-    appStore.addLog('INFO', `设备 ${point.name} 位置已更新`)
   }
+  
+  appStore.showNotification({
+    type: 'success',
+    message: `${deviceName} 已移动到 ${longitude.toFixed(4)}°, ${latitude.toFixed(4)}°`
+  })
+  appStore.addLog('INFO', `设备 ${deviceName} 位置已更新`)
 }
 
 // 线路点击
@@ -869,51 +900,57 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
     <template #toolbar>
       <div class="flex items-center justify-between px-4 py-2 bg-white border-b">
         <div class="flex items-center gap-2">
-          <span class="text-sm font-medium text-gray-700">3. 传输系统规划</span>
-          <span class="text-xs text-gray-400">| 参数配置 → 接线元 → 中继器 → 提交 → 结果</span>
+          <span class="text-sm font-medium text-gray-700">传输系统规划</span>
+          <span class="text-xs text-gray-400">| 配置 → 仿真 → 分析</span>
         </div>
         <div class="flex items-center gap-2">
-          <Tooltip content="3.1.3 中继器位置手动调整">
+          <!-- 配置类按钮 -->
+          <Tooltip content="中继器位置与参数配置">
             <Button variant="outline" size="sm" @click="openRepeaterPanel">
-              <Radio class="w-4 h-4 mr-1" /> 中继器配置
+              <Radio class="w-4 h-4 mr-1" /> 中继器
             </Button>
           </Tooltip>
-          <Tooltip content="WDM参数配置">
+          <Tooltip content="WDM传输参数配置">
             <Button variant="outline" size="sm" @click="showWDMConfigDialog = true">
-              <Waves class="w-4 h-4 mr-1" /> WDM配置
+              <Waves class="w-4 h-4 mr-1" /> WDM参数
             </Button>
           </Tooltip>
-          <Tooltip content="5.2.2 中继器手动调整">
-            <Button :variant="isEditMode ? 'default' : 'outline'" size="sm" @click="toggleEditMode">
-              <Edit3 class="w-4 h-4 mr-1" /> {{ isEditMode ? '退出编辑' : '位置调整' }}
-            </Button>
-          </Tooltip>
-          <Tooltip content="Step 4: 选择仿真模型并计算">
+          <div class="w-px h-5 bg-gray-300" />
+          <!-- 计算分析类按钮 -->
+          <Tooltip content="执行Span扫描仿真计算">
             <Button size="sm" @click="handleSubmit">
-              <Cpu class="w-4 h-4 mr-1" /> 提交计算
+              <Cpu class="w-4 h-4 mr-1" /> Span扫描
             </Button>
           </Tooltip>
-          <Tooltip content="Step 9: 链路分析 - 精细仿真">
+          <Tooltip content="链路精细仿真分析">
             <Button variant="outline" size="sm" @click="openLinkAnalysis">
               <BarChart2 class="w-4 h-4 mr-1" /> 链路分析
             </Button>
           </Tooltip>
           <div class="w-px h-5 bg-gray-300" />
-          <Tooltip content="3.1.6 RPL表格管理">
-            <Button variant="outline" size="sm" @click="openRPL">
-              <FileSpreadsheet class="w-4 h-4 mr-1" /> RPL
-            </Button>
-          </Tooltip>
-          <Tooltip content="3.1.7 SLD表格管理">
-            <Button variant="outline" size="sm" @click="openSLD">
-              <FileSpreadsheet class="w-4 h-4 mr-1" /> SLD
-            </Button>
-          </Tooltip>
-          <Tooltip content="器件库管理">
-            <Button variant="outline" size="sm" @click="$router.push('/device-library')">
-              <Database class="w-4 h-4 mr-1" /> 器件库
-            </Button>
-          </Tooltip>
+          <!-- 数据管理下拉菜单 -->
+          <div class="relative" ref="dataMenuRef">
+            <Tooltip content="数据与资源管理">
+              <Button variant="outline" size="sm" @click="showDataMenu = !showDataMenu">
+                <Database class="w-4 h-4 mr-1" /> 数据管理
+                <svg class="w-3 h-3 ml-1" :class="{ 'rotate-180': showDataMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </Button>
+            </Tooltip>
+            <div v-if="showDataMenu" class="absolute right-0 top-full mt-1 bg-white border rounded-lg shadow-lg py-1 z-50 min-w-[140px]">
+              <button class="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2" @click="openRPL(); showDataMenu = false">
+                <FileSpreadsheet class="w-4 h-4 text-gray-500" /> RPL路由表
+              </button>
+              <button class="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2" @click="openSLD(); showDataMenu = false">
+                <FileSpreadsheet class="w-4 h-4 text-gray-500" /> SLD系统图
+              </button>
+              <div class="border-t my-1"></div>
+              <button class="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2" @click="$router.push('/device-library'); showDataMenu = false">
+                <Database class="w-4 h-4 text-gray-500" /> 器件库
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </template>
@@ -1009,7 +1046,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
             <div v-else class="flex items-center justify-center h-full text-gray-400">
               <div class="text-center">
                 <Target class="w-12 h-12 mx-auto mb-2 text-gray-300" />
-                <div>请点击“提交计算”执行 Span 扫描</div>
+                <div>请点击“Span扫描”执行仿真计算</div>
               </div>
             </div>
           </div>
@@ -1145,19 +1182,6 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                 @click="handleReset">
                 <RotateCcw class="w-4 h-4 mr-2" /> 重置参数
               </Button>
-
-              <!-- 报告导出按钮 -->
-              <div class="pt-2 border-t border-gray-100 space-y-2">
-                <div class="text-xs text-gray-500 mb-1">报告导出</div>
-                <Button variant="outline" class="w-full border-green-300 hover:bg-green-50 text-green-700" size="sm"
-                  @click="appStore.openDialog('cost-report')">
-                  <FileText class="w-4 h-4 mr-2" /> 导出成本报告
-                </Button>
-                <Button variant="outline" class="w-full border-purple-300 hover:bg-purple-50 text-purple-700" size="sm"
-                  @click="appStore.openDialog('perf-report')">
-                  <FileText class="w-4 h-4 mr-2" /> 导出性能报告
-                </Button>
-              </div>
             </div>
         </CardContent>
       </Card>

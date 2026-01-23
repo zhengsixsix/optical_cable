@@ -14,8 +14,21 @@ interface ProfilePoint {
   depth: number
 }
 
+// 悬停线段信息类型
+interface HoveredSegmentInfo {
+  id: string
+  routeId: string
+  startPoint: { lon: number; lat: number }
+  endPoint: { lon: number; lat: number }
+  length: number
+  depth: number
+  cableType: string
+  riskLevel: string
+}
+
 interface Props {
   extent?: [number, number, number, number]
+  hoveredSegment?: HoveredSegmentInfo | null
 }
 
 const props = defineProps<Props>()

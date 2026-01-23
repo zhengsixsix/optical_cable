@@ -12,6 +12,18 @@ export interface PlanningParams {
   waypoints?: Array<{ lon: number; lat: number; name?: string }>
 }
 
+// 悬停线段信息
+export interface HoveredSegmentInfo {
+  id: string
+  routeId: string
+  startPoint: { lon: number; lat: number; name?: string }
+  endPoint: { lon: number; lat: number; name?: string }
+  length: number
+  depth: number
+  cableType: string
+  riskLevel: string
+}
+
 export const useRouteStore = defineStore('route', () => {
   const repository = createRouteRepository()
 
@@ -21,6 +33,10 @@ export const useRouteStore = defineStore('route', () => {
   const selectedSegmentId = ref<string | null>(null)
   const paretoRoutes = ref<Route[]>([])
   const selectedRouteIds = ref<string[]>([])  // 多选路径ID数组
+  
+  // 悬停线段状态
+  const hoveredSegmentId = ref<string | null>(null)
+  const hoveredSegmentInfo = ref<HoveredSegmentInfo | null>(null)
 
   // Getters
   const currentRoute = computed(() =>
@@ -87,6 +103,27 @@ export const useRouteStore = defineStore('route', () => {
 
   function selectSegment(segmentId: string | null) {
     selectedSegmentId.value = segmentId
+  }
+
+  /**
+   * 设置悬停线段
+   */
+  function setHoveredSegment(segmentInfo: HoveredSegmentInfo | null) {
+    if (segmentInfo) {
+      hoveredSegmentId.value = segmentInfo.id
+      hoveredSegmentInfo.value = segmentInfo
+    } else {
+      hoveredSegmentId.value = null
+      hoveredSegmentInfo.value = null
+    }
+  }
+
+  /**
+   * 清除悬停线段
+   */
+  function clearHoveredSegment() {
+    hoveredSegmentId.value = null
+    hoveredSegmentInfo.value = null
   }
 
   /**
@@ -201,20 +238,253 @@ export const useRouteStore = defineStore('route', () => {
 
   /**
    * 根据工程设置生成 Pareto 路径
-   * 从 settingsStore 获取用户配置的起点终点坐标
+   * 支持点对点和多点规划模式
    */
   function generateParetoRoutesFromSettings(): Route[] {
     const settingsStore = useSettingsStore()
     const config = settingsStore.routePlanningConfig
     
+    // 多点规划模式
+    if (config.mode === 'multi-point' && config.waypoints && config.waypoints.length >= 3) {
+      return generateMultiPointRoutes(config.waypoints)
+    }
+    
+    // 点对点模式
     const startCoord: [number, number] = [config.startPoint.lon, config.startPoint.lat]
     const endCoord: [number, number] = [config.endPoint.lon, config.endPoint.lat]
     
-    // 根据起点终点坐标生成路径
     return generateParetoRoutesWithCoords({
       startPoint: { lon: startCoord[0], lat: startCoord[1], name: '起点登陆站' },
       endPoint: { lon: endCoord[0], lat: endCoord[1], name: '终点登陆站' }
     })
+  }
+
+  /**
+   * 多点规划路线生成
+   * 链式+分支拓扑：第一个点是起点，最后一个点是终点，中间点通过分支器连接
+   */
+  function generateMultiPointRoutes(waypoints: Array<{ id: string; name: string; lon: number; lat: number }>): Route[] {
+    const settingsStore = useSettingsStore()
+    const now = new Date()
+    
+    // 从器件库获取设备
+    const amplifierTypes = settingsStore.amplifierTypes
+    const branchingUnitTypes = settingsStore.branchingUnitTypes
+    const defaultAmplifier = amplifierTypes.length > 0 ? amplifierTypes[0] : null
+    const defaultBU = branchingUnitTypes.length > 0 ? branchingUnitTypes[0] : null
+    
+    // 设备生成函数
+    const createAmplifierDevice = (index: number) => ({
+      deviceId: defaultAmplifier?.id || 'amp-default',
+      deviceType: 'amplifier',
+      deviceName: defaultAmplifier 
+        ? `${defaultAmplifier.name}-${String(index).padStart(2, '0')}`
+        : `放大器-${String(index).padStart(2, '0')}`,
+      gain: defaultAmplifier?.gain || 20,
+      noiseFigure: defaultAmplifier?.noiseFigure || 5,
+      outputPower: defaultAmplifier?.outputPower || 10,
+    })
+    
+    const createBranchingDevice = (index: number) => ({
+      deviceId: defaultBU?.id || 'bu-default',
+      deviceType: 'branching_unit',
+      deviceName: defaultBU 
+        ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
+        : `分支器-${String(index).padStart(2, '0')}`,
+      portCount: defaultBU?.portCount || 3,
+      insertionLoss: defaultBU?.insertionLoss || 0.5,
+    })
+    
+    const getAmpName = (index: number) => defaultAmplifier 
+      ? `${defaultAmplifier.name}-${String(index).padStart(2, '0')}`
+      : `放大器-${String(index).padStart(2, '0')}`
+    
+    const getBUName = (index: number) => defaultBU 
+      ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
+      : `分支器-${String(index).padStart(2, '0')}`
+
+    // 第一个和最后一个是主干线的起点和终点，中间的是分支点
+    const startStation = waypoints[0]
+    const endStation = waypoints[waypoints.length - 1]
+    const branchStations = waypoints.slice(1, -1) // 中间的分支站点
+    
+    const startCoord: [number, number] = [startStation.lon, startStation.lat]
+    const endCoord: [number, number] = [endStation.lon, endStation.lat]
+    
+    // 构建主干线上的中间点（分支器位置）
+    // 每个分支站点对应一个分支器，分支器位于主干线上离该分支站点最近的位置
+    const intermediatePoints: Array<{ coord: [number, number]; type: 'repeater' | 'branching'; name: string; device: any; branchTo?: { coord: [number, number]; name: string } }> = []
+    
+    let ampIndex = 1
+    let buIndex = 1
+    
+    // 为每个分支站点创建分支器
+    branchStations.forEach((station, i) => {
+      // 计算分支器在主干线上的位置（投影到主干线上）
+      const t = (i + 1) / (branchStations.length + 1)
+      const buCoord: [number, number] = [
+        startCoord[0] + (endCoord[0] - startCoord[0]) * t,
+        startCoord[1] + (endCoord[1] - startCoord[1]) * t
+      ]
+      
+      // 分支器前添加放大器
+      if (i === 0 || intermediatePoints.length === 0) {
+        const ampCoord: [number, number] = [
+          startCoord[0] + (buCoord[0] - startCoord[0]) * 0.5,
+          startCoord[1] + (buCoord[1] - startCoord[1]) * 0.5
+        ]
+        intermediatePoints.push({
+          coord: ampCoord,
+          type: 'repeater',
+          name: getAmpName(ampIndex++),
+          device: createAmplifierDevice(ampIndex - 1)
+        })
+      }
+      
+      // 添加分支器，并记录分支到哪个站点
+      intermediatePoints.push({
+        coord: buCoord,
+        type: 'branching',
+        name: getBUName(buIndex++),
+        device: createBranchingDevice(buIndex - 1),
+        branchTo: {
+          coord: [station.lon, station.lat],
+          name: station.name
+        }
+      })
+      
+      // 分支器后添加放大器
+      const nextT = (i + 2) / (branchStations.length + 1)
+      const nextPoint = i === branchStations.length - 1 ? endCoord : [
+        startCoord[0] + (endCoord[0] - startCoord[0]) * nextT,
+        startCoord[1] + (endCoord[1] - startCoord[1]) * nextT
+      ] as [number, number]
+      
+      const ampCoord2: [number, number] = [
+        buCoord[0] + (nextPoint[0] - buCoord[0]) * 0.5,
+        buCoord[1] + (nextPoint[1] - buCoord[1]) * 0.5
+      ]
+      intermediatePoints.push({
+        coord: ampCoord2,
+        type: 'repeater',
+        name: getAmpName(ampIndex++),
+        device: createAmplifierDevice(ampIndex - 1)
+      })
+    })
+    
+    // 创建多点规划路线
+    const multiPointRoute = createMultiPointRoute({
+      id: 'multi-point-route',
+      name: '多点规划路线',
+      startCoord,
+      endCoord,
+      startName: startStation.name,
+      endName: endStation.name,
+      intermediatePoints,
+      now
+    })
+    
+    routes.value = [multiPointRoute]
+    paretoRoutes.value = [multiPointRoute]
+    currentRouteId.value = 'multi-point-route'
+    
+    return [multiPointRoute]
+  }
+
+  /**
+   * 创建多点规划路线（包含分支）
+   */
+  function createMultiPointRoute(params: {
+    id: string
+    name: string
+    startCoord: [number, number]
+    endCoord: [number, number]
+    startName: string
+    endName: string
+    intermediatePoints: Array<{ coord: [number, number]; type: 'repeater' | 'branching'; name: string; device: any; branchTo?: { coord: [number, number]; name: string } }>
+    now: Date
+  }): Route {
+    const { id, name, startCoord, endCoord, startName, endName, intermediatePoints, now } = params
+    
+    // 构建主干线上的所有点
+    const points: RoutePoint[] = [
+      { id: `${id}-p1`, coordinates: startCoord, type: 'landing', name: startName }
+    ]
+    
+    intermediatePoints.forEach((p, i) => {
+      points.push({
+        id: `${id}-p${i + 2}`,
+        coordinates: p.coord,
+        type: p.type,
+        name: p.name,
+        device: p.device,
+        branchTo: p.branchTo // 分支目标信息
+      })
+    })
+    
+    points.push({
+      id: `${id}-p${points.length + 1}`,
+      coordinates: endCoord,
+      type: 'landing',
+      name: endName
+    })
+
+    // 构建分段
+    const segments: RouteSegment[] = []
+    let totalLength = 0
+    
+    for (let i = 0; i < points.length - 1; i++) {
+      const segLength = calculateDistance(points[i].coordinates, points[i + 1].coordinates)
+      totalLength += segLength
+      const depth = 1000 + Math.random() * 3000
+      
+      segments.push({
+        id: `${id}-s${i + 1}`,
+        startPointId: points[i].id,
+        endPointId: points[i + 1].id,
+        length: Math.round(segLength),
+        depth: Math.round(depth),
+        cableType: depth > 2000 ? 'lw' : depth > 1000 ? 'sa' : 'da',
+        riskLevel: 'medium',
+        cost: Math.round(segLength * 30000)
+      })
+    }
+    
+    // 计算分支线长度
+    let branchLength = 0
+    intermediatePoints.forEach(p => {
+      if (p.branchTo) {
+        branchLength += calculateDistance(p.coord, p.branchTo.coord as [number, number])
+      }
+    })
+    totalLength += branchLength
+
+    const totalCost = Math.round(totalLength * 35000)
+
+    return {
+      id,
+      name,
+      points,
+      segments,
+      totalLength: Math.round(totalLength),
+      totalCost,
+      riskScore: 0.5,
+      cost: {
+        cable: Math.round(totalCost * 0.6),
+        installation: Math.round(totalCost * 0.25),
+        equipment: Math.round(totalCost * 0.15),
+        total: totalCost
+      },
+      risk: {
+        seismic: 0.4,
+        volcanic: 0.3,
+        depth: 0.5,
+        overall: 0.5
+      },
+      distance: Math.round(totalLength),
+      createdAt: now,
+      updatedAt: now
+    }
   }
 
   /**
@@ -227,13 +497,15 @@ export const useRouteStore = defineStore('route', () => {
     const startCoord: [number, number] = [startPoint.lon, startPoint.lat]
     const endCoord: [number, number] = [endPoint.lon, endPoint.lat]
     
-    // 从器件库获取设备（优先使用放大器类型）
+    // 从器件库获取设备（放大器和分支器）
     const amplifierTypes = settingsStore.amplifierTypes
     const fiberTypes = settingsStore.fiberTypes
     const branchingUnitTypes = settingsStore.branchingUnitTypes
     
     // 获取默认放大器类型
     const defaultAmplifier = amplifierTypes.length > 0 ? amplifierTypes[0] : null
+    // 获取默认分支器类型
+    const defaultBU = branchingUnitTypes.length > 0 ? branchingUnitTypes[0] : null
     
     // 生成放大器设备信息的辅助函数
     const createAmplifierDevice = (index: number) => ({
@@ -251,10 +523,28 @@ export const useRouteStore = defineStore('route', () => {
       pumpPower: defaultAmplifier?.pumpPower,
     })
     
-    // 生成设备名称（使用放大器名称）
+    // 生成分支器设备信息的辅助函数
+    const createBranchingDevice = (index: number) => ({
+      deviceId: defaultBU?.id || 'bu-default',
+      deviceType: 'branching_unit',
+      deviceName: defaultBU 
+        ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
+        : `分支器-${String(index).padStart(2, '0')}`,
+      // 分支器参数
+      portCount: defaultBU?.portCount || 3,
+      insertionLoss: defaultBU?.insertionLoss || 0.5,
+      wavelengthRange: defaultBU?.wavelengthRange || 1550,
+    })
+    
+    // 生成放大器设备名称
     const getDeviceName = (index: number) => defaultAmplifier 
       ? `${defaultAmplifier.name}-${String(index).padStart(2, '0')}`
       : `放大器-${String(index).padStart(2, '0')}`
+    
+    // 生成分支器设备名称
+    const getBUName = (index: number) => defaultBU 
+      ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
+      : `分支器-${String(index).padStart(2, '0')}`
     
     // 计算中间点（用于生成不同的路径方案）
     const midLon = (startCoord[0] + endCoord[0]) / 2
@@ -263,7 +553,7 @@ export const useRouteStore = defineStore('route', () => {
     
     // 生成三条不同策略的路径
     const paretoData: Route[] = [
-      // 经济路线 - 直线距离最短
+      // 经济路线 - 直线距离最短，只有中继器，没有航路点
       createRoute({
         id: 'pareto-route-1',
         name: '经济路线',
@@ -272,7 +562,7 @@ export const useRouteStore = defineStore('route', () => {
         startName: startPoint.name || '起点登陆站',
         endName: endPoint.name || '终点登陆站',
         intermediatePoints: [
-          { coord: [midLon, midLat] as [number, number], type: 'waypoint' as const }
+          { coord: [midLon, midLat] as [number, number], type: 'repeater' as const, name: getDeviceName(1), device: createAmplifierDevice(1) }
         ],
         riskMultiplier: 1.2,
         costMultiplier: 0.85,
@@ -287,8 +577,8 @@ export const useRouteStore = defineStore('route', () => {
         startName: startPoint.name || '起点登陆站',
         endName: endPoint.name || '终点登陆站',
         intermediatePoints: [
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.3, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.3] as [number, number], type: 'repeater' as const, name: getDeviceName(1), device: createAmplifierDevice(1) },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.7, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.7] as [number, number], type: 'repeater' as const, name: getDeviceName(2), device: createAmplifierDevice(2) }
+          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.33, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.33] as [number, number], type: 'repeater' as const, name: getDeviceName(1), device: createAmplifierDevice(1) },
+          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.66, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.66] as [number, number], type: 'repeater' as const, name: getDeviceName(2), device: createAmplifierDevice(2) }
         ],
         riskMultiplier: 0.7,
         costMultiplier: 1.0,
@@ -304,9 +594,9 @@ export const useRouteStore = defineStore('route', () => {
         endName: endPoint.name || '终点登陆站',
         intermediatePoints: [
           { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.2, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.15] as [number, number], type: 'repeater' as const, name: getDeviceName(1), device: createAmplifierDevice(1) },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.4, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.5] as [number, number], type: 'waypoint' as const },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.6, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.6] as [number, number], type: 'repeater' as const, name: getDeviceName(2), device: createAmplifierDevice(2) },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.85, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.8] as [number, number], type: 'repeater' as const, name: getDeviceName(3), device: createAmplifierDevice(3) }
+          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.4, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.5] as [number, number], type: 'repeater' as const, name: getDeviceName(2), device: createAmplifierDevice(2) },
+          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.6, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.6] as [number, number], type: 'repeater' as const, name: getDeviceName(3), device: createAmplifierDevice(3) },
+          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.85, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.8] as [number, number], type: 'repeater' as const, name: getDeviceName(4), device: createAmplifierDevice(4) }
         ],
         riskMultiplier: 0.3,
         costMultiplier: 1.5,
@@ -331,7 +621,7 @@ export const useRouteStore = defineStore('route', () => {
     endCoord: [number, number]
     startName: string
     endName: string
-    intermediatePoints: Array<{ coord: [number, number]; type: 'waypoint' | 'repeater'; name?: string; device?: any }>
+    intermediatePoints: Array<{ coord: [number, number]; type: 'waypoint' | 'repeater' | 'branching'; name?: string; device?: any }>
     riskMultiplier: number
     costMultiplier: number
     now: Date
@@ -417,12 +707,16 @@ export const useRouteStore = defineStore('route', () => {
     selectedSegmentId,
     paretoRoutes,
     selectedRouteIds,
+    hoveredSegmentId,
+    hoveredSegmentInfo,
     currentRoute,
     selectedRoute,
     selectedSegment,
     loadRoutes,
     selectRoute,
     selectSegment,
+    setHoveredSegment,
+    clearHoveredSegment,
     toggleRouteSelection,
     selectAllRoutes,
     isRouteSelected,

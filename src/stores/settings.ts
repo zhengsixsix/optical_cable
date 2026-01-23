@@ -22,6 +22,14 @@ import { createDefaultModels } from '@/types/useFile'
 
 const STORAGE_KEY = 'cable-planner-settings'
 
+// 多点坐标接口
+export interface WaypointConfig {
+  id: string
+  name: string
+  lon: number
+  lat: number
+}
+
 // 路径规划配置接口
 export interface RoutePlanningConfig {
   mode: 'point-to-point' | 'multi-point'
@@ -32,6 +40,7 @@ export interface RoutePlanningConfig {
     southeast: { lon: number; lat: number }
   }
   multiPointFile?: string
+  waypoints?: WaypointConfig[]  // 多点规划的坐标点列表
   isConfigured?: boolean  // 用户是否主动配置过起点终点
 }
 
@@ -71,6 +80,7 @@ const defaultRoutePlanningConfig: RoutePlanningConfig = {
     northwest: { lon: 100, lat: 50 },
     southeast: { lon: 150, lat: 10 },
   },
+  waypoints: [],
   isConfigured: false,
 }
 
@@ -145,15 +155,17 @@ export const useSettingsStore = defineStore('settings', () => {
   })
 
   // 从 localStorage 加载
+  // 注意：成本参数和项目配置不存储在 localStorage，只存储在项目文件中
   function loadFromLocalStorage() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
         const data: AppSettings = JSON.parse(saved)
+        // 只加载器件库基础数据，不加载成本参数
         cableTypes.value = data.cableTypes || defaultSettings.cableTypes
         repeaterTypes.value = data.repeaterTypes || defaultSettings.repeaterTypes
         branchingUnits.value = data.branchingUnits || defaultSettings.branchingUnits
-        costFactors.value = data.costFactors || defaultSettings.costFactors
+        // costFactors 不从 localStorage 加载，使用默认值，由项目文件恢复
       }
     } catch (error) {
       console.error('加载设置失败:', error)
@@ -161,17 +173,15 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // 保存到 localStorage
+  // 注意：成本参数和项目配置不存储在 localStorage，只存储在项目文件中
   function saveToLocalStorage() {
     try {
-      const data: AppSettings = {
+      // 只保存器件库基础数据，不保存成本参数和项目配置
+      const data = {
         cableTypes: cableTypes.value,
         repeaterTypes: repeaterTypes.value,
         branchingUnits: branchingUnits.value,
-        costFactors: costFactors.value,
-        fiberTypes: fiberTypes.value,
-        amplifierTypes: amplifierTypes.value,
-        branchingUnitTypes: branchingUnitTypes.value,
-        currentLibraryFile: currentLibraryFile.value,
+        // 不保存 costFactors，它应该只存储在项目文件 (.ucp/.use) 中
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch (error) {
@@ -283,11 +293,13 @@ export const useSettingsStore = defineStore('settings', () => {
     saveToLocalStorage()
   }
 
+  // 更新成本参数 (不保存到 localStorage，只存储在项目文件中)
   function updateCostFactors(updates: Partial<CostFactors>) {
     costFactors.value = { ...costFactors.value, ...updates }
-    saveToLocalStorage()
+    // 不调用 saveToLocalStorage，成本参数只存储在项目文件中
   }
 
+  // 重置器件库为默认值
   function resetToDefaults() {
     cableTypes.value = [...defaultSettings.cableTypes]
     repeaterTypes.value = [...defaultSettings.repeaterTypes]
@@ -300,34 +312,40 @@ export const useSettingsStore = defineStore('settings', () => {
     saveToLocalStorage()
   }
 
-  // 更新路径规划配置
+  // 重置项目配置为默认值 (关闭项目时调用)
+  function resetProjectSettings() {
+    costFactors.value = { ...defaultSettings.costFactors }
+    routePlanningConfig.value = { ...defaultRoutePlanningConfig }
+    transmissionConfig.value = { ...defaultTransmissionConfig }
+    monitoringConfig.value = { ...defaultMonitoringConfig }
+    fiberSimulationConfig.value = { ...defaultFiberSimulationConfig }
+    systemPlanningConfig.value = { ...defaultSystemPlanningParams }
+    simulationModelConfig.value = { ...defaultSimulationModelConfig }
+  }
+
+  // 更新路径规划配置 (不保存到 localStorage，只存储在项目文件中)
   function updateRoutePlanningConfig(updates: Partial<RoutePlanningConfig>) {
     routePlanningConfig.value = { ...routePlanningConfig.value, ...updates }
-    saveToLocalStorage()
   }
 
-  // 更新传输系统配置
+  // 更新传输系统配置 (不保存到 localStorage，只存储在项目文件中)
   function updateTransmissionConfig(updates: Partial<TransmissionConfig>) {
     transmissionConfig.value = { ...transmissionConfig.value, ...updates }
-    saveToLocalStorage()
   }
 
-  // 更新监控系统配置
+  // 更新监控系统配置 (不保存到 localStorage，只存储在项目文件中)
   function updateMonitoringConfig(updates: Partial<MonitoringConfig>) {
     monitoringConfig.value = { ...monitoringConfig.value, ...updates }
-    saveToLocalStorage()
   }
 
-  // 更新光纤仿真配置
+  // 更新光纤仿真配置 (不保存到 localStorage，只存储在项目文件中)
   function updateFiberSimulationConfig(updates: Partial<FiberSimulationConfig>) {
     fiberSimulationConfig.value = { ...fiberSimulationConfig.value, ...updates }
-    saveToLocalStorage()
   }
 
   // 更新系统规划参数 (Step 3)
   function updateSystemPlanningConfig(updates: Partial<SystemPlanningParams>) {
     systemPlanningConfig.value = { ...systemPlanningConfig.value, ...updates }
-    saveToLocalStorage()
   }
 
   // 更新 WDM 规划参数
@@ -336,7 +354,6 @@ export const useSettingsStore = defineStore('settings', () => {
       ...systemPlanningConfig.value.wdmParams, 
       ...updates 
     }
-    saveToLocalStorage()
   }
 
   // 更新 Span 扫描配置
@@ -345,13 +362,11 @@ export const useSettingsStore = defineStore('settings', () => {
       ...systemPlanningConfig.value.spanScanConfig, 
       ...updates 
     }
-    saveToLocalStorage()
   }
 
   // 更新仿真模型配置 (Step 4)
   function updateSimulationModelConfig(updates: Partial<SimulationModelConfig>) {
     simulationModelConfig.value = { ...simulationModelConfig.value, ...updates }
-    saveToLocalStorage()
   }
 
   // 保存仿真模板
@@ -466,6 +481,7 @@ export const useSettingsStore = defineStore('settings', () => {
     removeBranchingUnitType,
     updateCostFactors,
     resetToDefaults,
+    resetProjectSettings,
     updateRoutePlanningConfig,
     updateTransmissionConfig,
     updateMonitoringConfig,

@@ -781,8 +781,21 @@ class ProjectFileService {
    * - UCP: 只保存 route_engineering 模块
    * - USE: 保存所有模块
    */
-  async saveProject(): Promise<boolean> {
-    if (!this.currentProject || !this.currentProjectData) return false
+  async saveProject(): Promise<{ success: boolean; error?: string }> {
+    if (!this.currentProject) {
+      return { success: false, error: '当前没有打开的项目，请先新建或打开项目' }
+    }
+    
+    // 如果 currentProjectData 为空，从 stores 收集数据创建
+    if (!this.currentProjectData) {
+      this.currentProjectData = this.createUSEProjectData(
+        this.currentProject.name,
+        this.currentProject.allowOtherUsers
+      )
+      // 同步项目元数据
+      this.currentProjectData.metadata.project_uuid = this.currentProject.uuid
+      this.currentProjectData.metadata.creator_user_id = this.currentProject.creatorId
+    }
     
     const projectType = this.currentProject.type
     
@@ -832,7 +845,7 @@ class ProjectFileService {
     this.downloadBlob(blob, `${this.currentProject.name}.${fileExtension}`)
     
     this.isDirty = false
-    return true
+    return { success: true }
   }
 
   /**
@@ -1679,6 +1692,10 @@ class ProjectFileService {
    * 关闭当前项目
    */
   closeProject(): void {
+    // 重置项目配置为默认值
+    const settingsStore = useSettingsStore()
+    settingsStore.resetProjectSettings()
+    
     this.currentProject = null
     this.currentProjectData = null
     this.isDirty = false

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { Card, CardHeader, CardContent } from '@/components/ui'
-import { Printer, Settings, X } from 'lucide-vue-next'
-import { useRPLStore, useAppStore } from '@/stores'
+import { Printer, Settings, X, MapPin } from 'lucide-vue-next'
+import { useRPLStore, useAppStore, useRouteStore } from '@/stores'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -10,6 +10,10 @@ const emit = defineEmits<{
 
 const rplStore = useRPLStore()
 const appStore = useAppStore()
+const routeStore = useRouteStore()
+
+// 当前悬停的线段信息
+const hoveredSegment = computed(() => routeStore.hoveredSegmentInfo)
 
 // 从 RPL store 计算路由统计数据
 const stats = computed(() => {
@@ -97,6 +101,47 @@ const stats = computed(() => {
       <div v-else class="text-center text-gray-400 py-8">
         <p>暂无路由数据</p>
         <p class="text-xs mt-1">请打开项目或创建新路由</p>
+      </div>
+      
+      <!-- 悬停线段信息 -->
+      <div 
+        v-if="hoveredSegment" 
+        class="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-lg"
+      >
+        <div class="flex items-center gap-2 text-orange-700 font-medium text-sm mb-2">
+          <MapPin class="w-4 h-4" />
+          <span>当前线段</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs text-gray-600">
+          <div>
+            <span class="text-gray-500">线段ID:</span>
+            <span class="ml-1 font-medium">{{ hoveredSegment.id }}</span>
+          </div>
+          <div>
+            <span class="text-gray-500">长度:</span>
+            <span class="ml-1 font-medium">{{ hoveredSegment.length.toFixed(1) }} km</span>
+          </div>
+          <div>
+            <span class="text-gray-500">水深:</span>
+            <span class="ml-1 font-medium">{{ hoveredSegment.depth.toFixed(0) }} m</span>
+          </div>
+          <div>
+            <span class="text-gray-500">海缆类型:</span>
+            <span class="ml-1 font-medium">{{ hoveredSegment.cableType }}</span>
+          </div>
+          <div class="col-span-2">
+            <span class="text-gray-500">起点:</span>
+            <span class="ml-1 font-mono text-[10px]">
+              {{ hoveredSegment.startPoint.lon.toFixed(4) }}°, {{ hoveredSegment.startPoint.lat.toFixed(4) }}°
+            </span>
+          </div>
+          <div class="col-span-2">
+            <span class="text-gray-500">终点:</span>
+            <span class="ml-1 font-mono text-[10px]">
+              {{ hoveredSegment.endPoint.lon.toFixed(4) }}°, {{ hoveredSegment.endPoint.lat.toFixed(4) }}°
+            </span>
+          </div>
+        </div>
       </div>
     </CardContent>
   </Card>

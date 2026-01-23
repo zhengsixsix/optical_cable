@@ -10,7 +10,7 @@ const monitorStore = useMonitorStore()
 // 设备列表 - 从 monitorStore 动态获取
 const deviceOptions = computed(() => 
   monitorStore.devices
-    .filter(d => d.type === 'Repeater' || d.type === 'BU')
+    .filter(d => d.type !== 'landing') // 排除登陆站，显示放大器、分支器等
     .map(d => ({ value: d.id, label: d.name }))
 )
 

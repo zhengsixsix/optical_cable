@@ -106,7 +106,7 @@ const sortedPoints = computed(() => {
   const selectedRoute = routeStore.selectedRoute
   if (selectedRoute && selectedRoute.points.length > 0) {
     let cumulativeKp = 0
-    return selectedRoute.points.map((point, index) => {
+    const mainPoints = selectedRoute.points.map((point, index) => {
       // 计算 KP
       if (index > 0) {
         const prevPoint = selectedRoute.points[index - 1]
@@ -116,16 +116,49 @@ const sortedPoints = computed(() => {
         ) * 111 // 粗略转换为 km
         cumulativeKp += dist
       }
+      
+      // 映射点类型
+      let mappedType = 'waypoint'
+      if (point.type === 'landing') {
+        mappedType = 'landing'
+      } else if (point.type === 'repeater') {
+        mappedType = 'amplifier_e'
+      } else if (point.type === 'branching') {
+        mappedType = 'bu'
+      }
+      
       return {
         id: point.id,
-        name: point.name || (point.type === 'landing' ? '登陆站' : '节点'),
-        type: point.type === 'landing' ? 'landing' : 
-              point.type === 'repeater' ? 'amplifier_e' : 'waypoint',
+        name: point.name || (point.type === 'landing' ? '登陆站' : point.type === 'branching' ? '分支器' : '节点'),
+        type: mappedType,
         longitude: point.coordinates[0],
         latitude: point.coordinates[1],
-        kp: cumulativeKp
+        kp: cumulativeKp,
+        branchTo: point.branchTo // 保留分支目标信息
       }
     })
+    
+    // 添加分支登陆站
+    selectedRoute.points.forEach((point) => {
+      if (point.branchTo) {
+        cumulativeKp += Math.sqrt(
+          Math.pow(point.branchTo.coord[0] - point.coordinates[0], 2) +
+          Math.pow(point.branchTo.coord[1] - point.coordinates[1], 2)
+        ) * 111
+        mainPoints.push({
+          id: `branch-${point.id}`,
+          name: point.branchTo.name,
+          type: 'landing',
+          longitude: point.branchTo.coord[0],
+          latitude: point.branchTo.coord[1],
+          kp: cumulativeKp,
+          isBranchStation: true,
+          branchFrom: point.id
+        } as any)
+      }
+    })
+    
+    return mainPoints
   }
   
   // 最后使用 props
@@ -159,10 +192,14 @@ const drawRouteLine = () => {
   
   if (sortedPoints.value.length < 2) return
   
-  // 分段绘制光纤线
-  for (let i = 0; i < sortedPoints.value.length - 1; i++) {
-    const startPoint = sortedPoints.value[i]
-    const endPoint = sortedPoints.value[i + 1]
+  // 分离主干点和分支登陆站
+  const mainTrunkPoints = sortedPoints.value.filter((p: any) => !p.isBranchStation)
+  const branchStations = sortedPoints.value.filter((p: any) => p.isBranchStation)
+  
+  // 分段绘制主干线
+  for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
+    const startPoint = mainTrunkPoints[i]
+    const endPoint = mainTrunkPoints[i + 1]
     const isSelected = selectedSegmentIndex.value === i
     
     const segmentFeature = new Feature({
@@ -186,6 +223,36 @@ const drawRouteLine = () => {
     
     routeSource.addFeature(segmentFeature)
   }
+  
+  // 绘制分支线（从分支器到分支登陆站）
+  branchStations.forEach((branchStation: any) => {
+    // 找到分支来源（分支器）
+    const branchFromId = branchStation.branchFrom
+    const branchingUnit = mainTrunkPoints.find((p: any) => p.id === branchFromId)
+    
+    if (branchingUnit) {
+      const branchFeature = new Feature({
+        geometry: new LineString([
+          [branchingUnit.longitude, branchingUnit.latitude],
+          [branchStation.longitude, branchStation.latitude]
+        ]),
+        featureType: 'branch',
+        fromId: branchingUnit.id,
+        toId: branchStation.id
+      })
+      
+      // 分支线使用紫色虚线
+      branchFeature.setStyle(new Style({
+        stroke: new Stroke({
+          color: '#a855f7', // 紫色
+          width: 3,
+          lineDash: [6, 4]
+        })
+      }))
+      
+      routeSource!.addFeature(branchFeature)
+    }
+  })
 }
 
 // 绘制设备节点 - 使用 sortedPoints（从monitorStore获取）
@@ -501,14 +568,45 @@ const initMap = () => {
   }
 }
 
+// 更新点样式（不重新创建，只更新选中状态）
+const updatePointStyles = () => {
+  if (!pointSource) return
+  
+  pointSource.getFeatures().forEach(feature => {
+    const pointId = feature.get('pointId')
+    const pointType = feature.get('pointType')
+    const pointName = feature.get('pointName')
+    const isSelected = pointId === props.selectedPointId
+    const iconUrl = getPointIcon(pointType, isSelected)
+    
+    feature.setStyle(new Style({
+      image: new Icon({
+        src: iconUrl,
+        scale: isSelected ? 0.22 : 0.18,
+        anchor: [0.5, 0.5]
+      }),
+      text: new Text({
+        text: pointName,
+        offsetY: 16,
+        font: isSelected ? 'bold 10px sans-serif' : '9px sans-serif',
+        fill: new Fill({ color: '#374151' }),
+        stroke: new Stroke({ color: '#fff', width: 3 }),
+        backgroundFill: isSelected ? new Fill({ color: 'rgba(59, 130, 246, 0.1)' }) : undefined,
+        padding: isSelected ? [2, 4, 2, 4] : undefined
+      })
+    }))
+  })
+}
+
 // 监听数据变化
 watch(() => props.routePoints, () => {
   drawRouteLine()
   drawPoints()
 }, { deep: true })
 
+// 选中节点变化时只更新样式，不重新绘制（避免覆盖拖拽修改）
 watch(() => props.selectedPointId, () => {
-  drawPoints()
+  updatePointStyles()
 })
 
 // 监听 monitorStore 设备数据变化（与实时监控一致）

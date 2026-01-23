@@ -19,10 +19,24 @@ interface Props {
   segmentId: string
   routeLength: number  // 路径长度 (km)
   depth?: number       // 水深 (m)，用于推荐海缆类型
+  startLon?: number    // 起点经度
+  startLat?: number    // 起点纬度
+  endLon?: number      // 终点经度
+  endLat?: number      // 终点纬度
+  segmentIndex?: number // 线段索引
+  cableType?: string   // 当前海缆类型
+  riskLevel?: string   // 风险等级
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  depth: 1000
+  depth: 1000,
+  startLon: 0,
+  startLat: 0,
+  endLon: 0,
+  endLat: 0,
+  segmentIndex: 0,
+  cableType: '',
+  riskLevel: 'low'
 })
 
 const emit = defineEmits<{
@@ -171,10 +185,37 @@ watch(() => props.visible, (val) => {
             </div>
             <div class="grid grid-cols-2 gap-4 pl-6">
               <div>
-                <label class="block text-sm text-gray-500 mb-1">段落ID:</label>
+                <label class="block text-sm text-gray-500 mb-1">起点经度:</label>
                 <input
                   type="text"
-                  :value="segmentId"
+                  :value="startLon.toFixed(4)"
+                  disabled
+                  class="w-full px-3 py-2 bg-gray-100 border rounded-lg text-sm text-gray-600"
+                />
+              </div>
+              <div>
+                <label class="block text-sm text-gray-500 mb-1">起点纬度:</label>
+                <input
+                  type="text"
+                  :value="startLat.toFixed(4)"
+                  disabled
+                  class="w-full px-3 py-2 bg-gray-100 border rounded-lg text-sm text-gray-600"
+                />
+              </div>
+              <div>
+                <label class="block text-sm text-gray-500 mb-1">终点经度:</label>
+                <input
+                  type="text"
+                  :value="endLon.toFixed(4)"
+                  disabled
+                  class="w-full px-3 py-2 bg-gray-100 border rounded-lg text-sm text-gray-600"
+                />
+              </div>
+              <div>
+                <label class="block text-sm text-gray-500 mb-1">终点纬度:</label>
+                <input
+                  type="text"
+                  :value="endLat.toFixed(4)"
                   disabled
                   class="w-full px-3 py-2 bg-gray-100 border rounded-lg text-sm text-gray-600"
                 />
@@ -189,6 +230,18 @@ watch(() => props.visible, (val) => {
                     class="flex-1 px-3 py-2 bg-gray-100 border rounded-l-lg text-sm text-gray-600"
                   />
                   <span class="px-3 py-2 bg-gray-50 border border-l-0 rounded-r-lg text-sm text-gray-500">km</span>
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm text-gray-500 mb-1">水深:</label>
+                <div class="flex items-center">
+                  <input
+                    type="text"
+                    :value="depth.toFixed(0)"
+                    disabled
+                    class="flex-1 px-3 py-2 bg-gray-100 border rounded-l-lg text-sm text-gray-600"
+                  />
+                  <span class="px-3 py-2 bg-gray-50 border border-l-0 rounded-r-lg text-sm text-gray-500">m</span>
                 </div>
               </div>
             </div>

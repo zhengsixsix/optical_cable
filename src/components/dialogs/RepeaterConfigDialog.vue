@@ -2,7 +2,6 @@
 import { ref, watch, computed } from 'vue'
 import { Button } from '@/components/ui'
 import { useAppStore, useRPLStore, useSettingsStore } from '@/stores'
-import { mockRepeaterConfigs, repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
 import { 
   X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio 
 } from 'lucide-vue-next'
@@ -67,31 +66,34 @@ const typeOptions = [
 const repeaters = ref<RepeaterConfig[]>([])
 const selectedRepeaterId = ref<string | null>(null)
 
-const modelOptions = repeaterModelOptions
-const recommendedSpacing = repeaterSpacingConfig.recommended
-const maxSpacing = repeaterSpacingConfig.max
+// 从器件库获取中继器型号选项
+const modelOptions = computed(() => 
+  settingsStore.settings.repeaterTypes.map(r => ({
+    value: r.name,
+    label: `${r.name} (${r.maxSpan}km)`
+  }))
+)
 
-function generateMockRepeaters() {
-  let prevKP = 0
-  repeaters.value = mockRepeaterConfigs.map((cfg, i) => {
-    const spacing = cfg.kp - prevKP
-    prevKP = cfg.kp
-    return {
-      id: `rep-${i}`,
-      index: i,
-      name: cfg.name,
-      type: (i % 2 === 0 ? 'amplifier_e' : 'amplifier_w') as 'amplifier_e' | 'amplifier_w',
-      kp: cfg.kp,
-      longitude: cfg.longitude,
-      latitude: cfg.latitude,
-      depth: cfg.depth,
-      spacing,
-      model: cfg.model,
-      gain: cfg.gain,
-      powerConsumption: cfg.powerConsumption,
-      remarks: '',
-    }
-  })
+// 从器件库获取间距配置
+const recommendedSpacing = computed(() => currentRepeaterType.value?.maxSpan || 80)
+const maxSpacing = computed(() => {
+  // 最大间距为推荐间距的1.5倍
+  return Math.round((currentRepeaterType.value?.maxSpan || 80) * 1.5)
+})
+
+// 初始化时基于路由数据生成中继器（如果有路由数据）
+function initRepeatersFromRoute() {
+  const routeData = rplStore.currentTable?.records
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  
+  if (!routeData || routeData.length < 2 || totalLength === 0) {
+    // 没有路由数据，显示空列表
+    repeaters.value = []
+    return
+  }
+  
+  // 基于路由自动生成中继器
+  autoOptimize()
 }
 
 function recalculateSpacing() {
@@ -105,16 +107,24 @@ function recalculateSpacing() {
 }
 
 function addRepeater() {
-  const lastRep = repeaters.value[repeaters.value.length - 1]
-  const newKP = lastRep ? lastRep.kp + recommendedSpacing : recommendedSpacing
-  
-  // 尝试从路由数据获取对应位置
   const routeData = rplStore.currentTable?.records
-  let position = { longitude: 125, latitude: 28, depth: 2000 }
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
   
-  if (routeData && routeData.length >= 2) {
-    position = interpolateRoutePosition(routeData, newKP)
+  if (!routeData || routeData.length < 2 || totalLength === 0) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据（RPL）' })
+    return
   }
+  
+  const lastRep = repeaters.value[repeaters.value.length - 1]
+  const newKP = lastRep ? lastRep.kp + recommendedSpacing.value : recommendedSpacing.value
+  
+  // 检查是否超出总长度
+  if (newKP >= totalLength) {
+    appStore.showNotification({ type: 'warning', message: `KP ${newKP.toFixed(1)}km 已超过路由总长 ${totalLength.toFixed(1)}km` })
+    return
+  }
+  
+  const position = interpolateRoutePosition(routeData, newKP)
   
   const repType = currentRepeaterType.value
   repeaters.value.push({
@@ -122,13 +132,13 @@ function addRepeater() {
     index: repeaters.value.length,
     name: generateRepeaterName(repeaters.value.length),
     type: repeaters.value.length % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
-    kp: newKP,
+    kp: Math.round(newKP * 10) / 10,
     longitude: Math.round(position.longitude * 10000) / 10000,
     latitude: Math.round(position.latitude * 10000) / 10000,
     depth: Math.round(position.depth),
-    spacing: repType?.maxSpan || recommendedSpacing,
+    spacing: repType?.maxSpan || recommendedSpacing.value,
     model: repType?.name || '标准中继器',
-    gain: 15,
+    gain: repType?.gain || 15,
     powerConsumption: repType?.powerConsumption || 45,
     remarks: '',
   })
@@ -150,8 +160,9 @@ function autoOptimize() {
     return
   }
   
-  // 计算最优中继器数量和间距
-  const optimalCount = Math.max(1, Math.round(totalLength / recommendedSpacing) - 1)
+  // 计算最优中继器数量和间距（基于器件库参数）
+  const spacing = recommendedSpacing.value
+  const optimalCount = Math.max(1, Math.round(totalLength / spacing) - 1)
   const optimalSpacing = totalLength / (optimalCount + 1)
   
   // 根据路由数据插值计算中继器位置
@@ -169,12 +180,12 @@ function autoOptimize() {
       name: generateRepeaterName(i),
       type: i % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
       kp: Math.round(targetKp * 10) / 10,
-      longitude: position.longitude,
-      latitude: position.latitude,
-      depth: position.depth,
+      longitude: Math.round(position.longitude * 10000) / 10000,
+      latitude: Math.round(position.latitude * 10000) / 10000,
+      depth: Math.round(position.depth),
       spacing: optimalSpacing,
       model: repType?.name || '标准中继器',
-      gain: 15,
+      gain: repType?.gain || 15,
       powerConsumption: repType?.powerConsumption || 45,
       remarks: '',
     })
@@ -220,8 +231,8 @@ function moveRepeater(repId: string, delta: number) {
   }
 }
 
-const hasSpacingWarning = (spacing: number) => spacing > maxSpacing
-const hasSpacingError = (spacing: number) => spacing > maxSpacing * 1.2
+const hasSpacingWarning = (spacing: number) => spacing > maxSpacing.value
+const hasSpacingError = (spacing: number) => spacing > maxSpacing.value * 1.2
 
 const totalRepeaters = computed(() => repeaters.value.length)
 const avgSpacing = computed(() => {
@@ -234,7 +245,8 @@ const totalPower = computed(() => repeaters.value.reduce((sum, r) => sum + r.pow
 
 watch(() => props.visible, (val) => {
   if (val && repeaters.value.length === 0) {
-    generateMockRepeaters()
+    // 基于路由数据初始化，不使用写死数据
+    initRepeatersFromRoute()
   }
 }, { immediate: true })
 
@@ -430,8 +442,14 @@ function handleClose() {
                 </td>
               </tr>
               <tr v-if="repeaters.length === 0">
-                <td colspan="7" class="px-4 py-8 text-center text-gray-400">
-                  暂无中继器，点击"添加"按钮添加
+                <td colspan="8" class="px-4 py-8 text-center text-gray-400">
+                  <div v-if="!rplStore.currentTable?.records?.length" class="space-y-2">
+                    <div>请先导入路由数据（RPL）</div>
+                    <div class="text-xs">中继器位置将基于路由数据自动计算</div>
+                  </div>
+                  <div v-else>
+                    点击"简单优化"自动生成，或点击"添加"手动添加
+                  </div>
                 </td>
               </tr>
             </tbody>

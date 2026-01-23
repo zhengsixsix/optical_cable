@@ -71,7 +71,7 @@ const selectedLabel = computed(() => {
     <SelectPortal>
       <SelectContent
         :class="cn(
-          'relative z-[200] min-w-[160px] overflow-hidden',
+          'relative z-[9999] min-w-[160px] overflow-hidden',
           'rounded-md border shadow-lg',
           'data-[state=open]:animate-in data-[state=closed]:animate-out',
           'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',

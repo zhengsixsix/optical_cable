@@ -267,6 +267,43 @@ const formatCoord = (point: { lon: number; lat: number }): string => {
   return `${point.lon.toFixed(6)},${point.lat.toFixed(6)}`
 }
 
+// 多点坐标列表
+const waypoints = ref<Array<{ id: string; name: string; coord: string }>>([])
+
+// 初始化多点坐标
+const initWaypoints = () => {
+  const stored = settingsStore.routePlanningConfig.waypoints || []
+  waypoints.value = stored.map(wp => ({
+    id: wp.id,
+    name: wp.name,
+    coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : ''
+  }))
+}
+initWaypoints()
+
+// 添加多点坐标
+const handleAddWaypoint = () => {
+  waypoints.value.push({
+    id: `wp-${Date.now()}`,
+    name: `登陆站${waypoints.value.length + 1}`,
+    coord: ''
+  })
+}
+
+// 删除多点坐标
+const handleRemoveWaypoint = (id: string) => {
+  waypoints.value = waypoints.value.filter(wp => wp.id !== id)
+}
+
+// 多点地图选点
+const currentWaypointId = ref<string | null>(null)
+const handleWaypointMapSelect = (id: string) => {
+  currentWaypointId.value = id
+  mapSelectType.value = 'start' // 复用 start 类型
+  mapSelectTitle.value = '选择登陆站坐标'
+  showMapSelectDialog.value = true
+}
+
 const routeConfig = reactive({
   mode: settingsStore.routePlanningConfig.mode,
   // 点对点模式坐标 - 从 settingsStore 获取已有配置
@@ -298,6 +335,14 @@ watch(
     routeConfig.startCoord = formatCoord(newConfig.startPoint)
     routeConfig.endCoord = formatCoord(newConfig.endPoint)
     routeConfig.multiPointFile = newConfig.multiPointFile || ''
+    // 同步多点坐标
+    if (newConfig.waypoints) {
+      waypoints.value = newConfig.waypoints.map(wp => ({
+        id: wp.id,
+        name: wp.name,
+        coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : ''
+      }))
+    }
   },
   { deep: true }
 )
@@ -338,6 +383,17 @@ const handleMapSelect = (type: string) => {
 
 // 地图选点确认
 const handleMapSelectConfirm = (coord: string) => {
+  // 多点规划模式下，如果有当前选中的多点ID
+  if (currentWaypointId.value) {
+    const wp = waypoints.value.find(w => w.id === currentWaypointId.value)
+    if (wp) {
+      wp.coord = coord
+    }
+    currentWaypointId.value = null
+    appStore.showNotification({ type: 'success', message: `坐标已选择: ${coord}` })
+    return
+  }
+  
   if (mapSelectType.value === 'start') {
     routeConfig.startCoord = coord
   } else if (mapSelectType.value === 'end') {
@@ -409,7 +465,21 @@ const handleSave = () => {
   // 检查起点终点是否有效配置
   const isStartValid = startPoint.lon !== 0 || startPoint.lat !== 0
   const isEndValid = endPoint.lon !== 0 || endPoint.lat !== 0
-  const isConfigured = isStartValid && isEndValid
+  
+  // 解析多点坐标
+  const parsedWaypoints = waypoints.value.map(wp => {
+    const coord = parseCoordString(wp.coord)
+    return {
+      id: wp.id,
+      name: wp.name,
+      lon: coord.lon,
+      lat: coord.lat
+    }
+  }).filter(wp => wp.lon !== 0 || wp.lat !== 0) // 过滤无效坐标
+  
+  // 多点模式下检查是否配置了足够的点
+  const isMultiPointConfigured = routeConfig.mode === 'multi-point' && parsedWaypoints.length >= 3
+  const isConfigured = routeConfig.mode === 'point-to-point' ? (isStartValid && isEndValid) : isMultiPointConfigured
   
   // 路径规划配置保存
   settingsStore.updateRoutePlanningConfig({
@@ -421,6 +491,7 @@ const handleSave = () => {
       southeast: { lon: 0, lat: 0 },
     },
     multiPointFile: routeConfig.multiPointFile,
+    waypoints: parsedWaypoints,
     isConfigured,
   })
 
@@ -571,11 +642,32 @@ const handleReset = () => {
 
                 <!-- 多点规划模式 -->
                 <template v-if="routeConfig.mode === 'multi-point'">
-                  <div class="flex items-center gap-4">
-                    <label class="w-20 text-sm text-gray-600 text-right shrink-0">多点文件：</label>
-                    <input v-model="routeConfig.multiPointFile" type="text" readonly placeholder="请选择多点文件"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md bg-gray-50 outline-none" />
-                    <Button size="sm" variant="outline" @click="handleBrowseMultiPointFile">浏览</Button>
+                  <div class="space-y-3">
+                    <!-- 多点列表 -->
+                    <div v-for="(wp, index) in waypoints" :key="wp.id" class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                      <span class="w-6 h-6 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center shrink-0">{{ index + 1 }}</span>
+                      <input v-model="wp.name" type="text" placeholder="站点名称"
+                        class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none" />
+                      <input v-model="wp.coord" type="text" placeholder="经度,纬度"
+                        class="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none" />
+                      <Button size="sm" variant="outline" @click="handleWaypointMapSelect(wp.id)">
+                        <MapPin class="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="sm" variant="outline" class="text-red-500 hover:bg-red-50" @click="handleRemoveWaypoint(wp.id)">
+                        <Trash2 class="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                    
+                    <!-- 添加按钮 -->
+                    <Button size="sm" variant="outline" class="w-full border-dashed" @click="handleAddWaypoint">
+                      <Plus class="w-4 h-4 mr-1" />
+                      添加登陆站
+                    </Button>
+                    
+                    <!-- 提示 -->
+                    <p v-if="waypoints.length < 3" class="text-xs text-amber-600 bg-amber-50 p-2 rounded">
+                      提示：多点规划至少需要3个登陆站，系统将自动在分支点添加分支器连接各站点
+                    </p>
                   </div>
                 </template>
               </div>

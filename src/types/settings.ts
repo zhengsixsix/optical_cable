@@ -95,6 +95,7 @@ export interface RepeaterType {
   cost: number
   maxSpan: number
   powerConsumption: number
+  gain?: number  // 增益 (dB)
 }
 
 // 分支单元（保留兼容）

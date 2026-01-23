@@ -379,113 +379,148 @@ const updateRouteLine = () => {
   routeGroup = new THREE.Group()
   const [extMinX, extMinY, extMaxX, extMaxY] = currentExtentLonLat
 
-  // 筛选在范围内的路径点，并计算贴地高度
-  const pointsIn3D: THREE.Vector3[] = []
-  const routePointsData: { x: number; z: number; type: string }[] = []
+  // 辅助函数：经纬度转3D坐标
+  const lonLatTo3D = (lon: number, lat: number) => {
+    const x = ((lon - extMinX) / (extMaxX - extMinX) - 0.5) * 100
+    const z = ((lat - extMinY) / (extMaxY - extMinY) - 0.5) * 100
+    const terrainY = getTerrainHeight(x, z)
+    return { x, z, y: terrainY + 1.5 }
+  }
+  
+  // 检查点是否在范围内
+  const isInExtent = (lon: number, lat: number) => {
+    const margin = (extMaxX - extMinX) * 0.1
+    return lon >= extMinX - margin && lon <= extMaxX + margin &&
+           lat >= extMinY - margin && lat <= extMaxY + margin
+  }
+
+  // 分离主干点和分支信息
+  const mainTrunkPoints: Array<{ point: any; pos3D: { x: number; z: number; y: number } }> = []
+  const branchInfos: Array<{ fromPos: { x: number; z: number; y: number }; toPos: { x: number; z: number; y: number }; toName: string }> = []
 
   for (const point of route.points) {
     const [lon, lat] = point.coordinates
     
-    // 检查点是否在框选范围内
-    const margin = (extMaxX - extMinX) * 0.1
-    if (lon >= extMinX - margin && lon <= extMaxX + margin &&
-        lat >= extMinY - margin && lat <= extMaxY + margin) {
+    if (isInExtent(lon, lat)) {
+      const pos3D = lonLatTo3D(lon, lat)
+      mainTrunkPoints.push({ point, pos3D })
       
-      // 转换为 3D 坐标 (-50 到 50)
-      // x: 经度从西到东
-      const x = ((lon - extMinX) / (extMaxX - extMinX) - 0.5) * 100
-      // z: 纬度从南到北（已在地形创建时统一处理）
-      const z = ((lat - extMinY) / (extMaxY - extMinY) - 0.5) * 100
-      
-      // 获取地形高度，贴地偏移 1.5
-      const terrainY = getTerrainHeight(x, z)
-      const y = terrainY + 1.5
-      
-      pointsIn3D.push(new THREE.Vector3(x, y, z))
-      routePointsData.push({ x, z, type: point.type || 'waypoint' })
+      // 检查是否有分支
+      if (point.branchTo) {
+        const [branchLon, branchLat] = point.branchTo.coord
+        if (isInExtent(branchLon, branchLat)) {
+          const branchPos = lonLatTo3D(branchLon, branchLat)
+          branchInfos.push({
+            fromPos: pos3D,
+            toPos: branchPos,
+            toName: point.branchTo.name
+          })
+        }
+      }
     }
   }
 
-  if (pointsIn3D.length < 2) return
-
-  // 创建平滑曲线
-  const curve = new THREE.CatmullRomCurve3(pointsIn3D)
-  
-  // 沿曲线重新采样，让路径贴地
-  const sampledPoints: THREE.Vector3[] = []
-  const segments = 200
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments
-    const point = curve.getPoint(t)
-    // 重新计算贴地高度
-    const terrainY = getTerrainHeight(point.x, point.z)
-    point.y = terrainY + 1.5
-    sampledPoints.push(point)
-  }
-  
-  // 创建贴地曲线
-  const groundCurve = new THREE.CatmullRomCurve3(sampledPoints)
-  
-  // 创建圆柱形管道
-  const tubeGeometry = new THREE.TubeGeometry(groundCurve, 200, 1.2, 8, false)
-  const tubeMaterial = new THREE.MeshPhongMaterial({
-    color: 0xff3333,
-    shininess: 80,
-    emissive: 0x330000,
-  })
-  const tubeMesh = new THREE.Mesh(tubeGeometry, tubeMaterial)
-  routeGroup.add(tubeMesh)
-
-  // 添加路径点标记（不同类型用不同颜色）
-  for (const pd of routePointsData) {
-    const terrainY = getTerrainHeight(pd.x, pd.z)
-    const y = terrainY + 2.5
+  // 绘制主干线
+  if (mainTrunkPoints.length >= 2) {
+    const pointsIn3D = mainTrunkPoints.map(p => new THREE.Vector3(p.pos3D.x, p.pos3D.y, p.pos3D.z))
+    const curve = new THREE.CatmullRomCurve3(pointsIn3D)
     
-    // 根据节点类型设置颜色和大小
+    const sampledPoints: THREE.Vector3[] = []
+    const segments = 200
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments
+      const point = curve.getPoint(t)
+      const terrainY = getTerrainHeight(point.x, point.z)
+      point.y = terrainY + 1.5
+      sampledPoints.push(point)
+    }
+    
+    const groundCurve = new THREE.CatmullRomCurve3(sampledPoints)
+    const tubeGeometry = new THREE.TubeGeometry(groundCurve, 200, 1.2, 8, false)
+    const tubeMaterial = new THREE.MeshPhongMaterial({
+      color: 0xff3333,
+      shininess: 80,
+      emissive: 0x330000,
+    })
+    const tubeMesh = new THREE.Mesh(tubeGeometry, tubeMaterial)
+    routeGroup.add(tubeMesh)
+  }
+
+  // 绘制分支线（紫色，贴地）
+  for (const branch of branchInfos) {
+    // 沿分支线采样，让分支线贴地
+    const branchSampledPoints: THREE.Vector3[] = []
+    const branchSegments = 50
+    for (let i = 0; i <= branchSegments; i++) {
+      const t = i / branchSegments
+      const x = branch.fromPos.x + (branch.toPos.x - branch.fromPos.x) * t
+      const z = branch.fromPos.z + (branch.toPos.z - branch.fromPos.z) * t
+      const terrainY = getTerrainHeight(x, z)
+      branchSampledPoints.push(new THREE.Vector3(x, terrainY + 1.5, z))
+    }
+    
+    const branchCurve = new THREE.CatmullRomCurve3(branchSampledPoints)
+    const branchTubeGeometry = new THREE.TubeGeometry(branchCurve, 50, 1.0, 8, false)
+    const branchTubeMaterial = new THREE.MeshPhongMaterial({
+      color: 0xaa55ff, // 紫色
+      shininess: 80,
+      emissive: 0x220033,
+    })
+    const branchTubeMesh = new THREE.Mesh(branchTubeGeometry, branchTubeMaterial)
+    routeGroup.add(branchTubeMesh)
+    
+    // 添加分支登陆站标记（绿色）
+    const toTerrainY = getTerrainHeight(branch.toPos.x, branch.toPos.z)
+    const sphereGeom = new THREE.SphereGeometry(4, 16, 16)
+    const sphereMat = new THREE.MeshPhongMaterial({
+      color: 0x00ff88,
+      emissive: 0x004422,
+      shininess: 100,
+    })
+    const sphere = new THREE.Mesh(sphereGeom, sphereMat)
+    sphere.position.set(branch.toPos.x, toTerrainY + 2.5, branch.toPos.z)
+    routeGroup.add(sphere)
+  }
+
+  // 添加主干路径点标记
+  for (const { point, pos3D } of mainTrunkPoints) {
+    const y = pos3D.y + 1
+    
     let color = 0xcccccc
     let emissive = 0x222222
     let size = 2.5
     
-    switch (pd.type) {
+    switch (point.type) {
       case 'landing':
-        // 登陆站 - 绿色
         color = 0x00ff88
         emissive = 0x004422
         size = 4
         break
       case 'repeater':
-        // 中继器 - 红色
         color = 0xff4444
         emissive = 0x441111
         size = 3
         break
       case 'branching':
-        // 分支器 - 青色
         color = 0x00ddff
         emissive = 0x003344
         size = 3.5
         break
       case 'joint':
-        // 接头 - 黄色
         color = 0xffcc00
         emissive = 0x332200
         size = 2
         break
       default:
-        // 航路点 - 白色
         color = 0xffffff
         emissive = 0x333333
         size = 2
     }
     
     const sphereGeom = new THREE.SphereGeometry(size, 16, 16)
-    const sphereMat = new THREE.MeshPhongMaterial({
-      color,
-      emissive,
-      shininess: 100,
-    })
+    const sphereMat = new THREE.MeshPhongMaterial({ color, emissive, shininess: 100 })
     const sphere = new THREE.Mesh(sphereGeom, sphereMat)
-    sphere.position.set(pd.x, y, pd.z)
+    sphere.position.set(pos3D.x, y, pos3D.z)
     routeGroup.add(sphere)
   }
 
