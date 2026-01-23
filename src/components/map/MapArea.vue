@@ -600,44 +600,134 @@ const updateRouteLineFromPoints = () => {
   // 获取当前拖拽点的信息
   const draggedPointIndex = selectedPointFeature.value.get('pointIndex')
   const draggedCoords = (selectedPointFeature.value.getGeometry() as Point).getCoordinates()
+  const draggedPointType = selectedPointFeature.value.get('pointType')
+  const draggedIsBranchStation = selectedPointFeature.value.get('isBranchStation')
+  const draggedDeviceId = selectedPointFeature.value.get('deviceId')
   
   // 分段线模式（monitorStore）：更新相邻的两条线段
   if (monitorStore.devices.length > 0) {
-    // 找到与当前点相连的线段并更新
+    // 找到与当前点相连的主干线段并更新
     lineFeatures.forEach(lf => {
       const segmentIndex = lf.get('segmentIndex')
+      const isBranchLine = lf.get('isBranchLine')
       const geom = lf.getGeometry() as LineString
       const coords = geom.getCoordinates()
       
-      // 如果这条线段的结束点是当前拖拽的点（segmentIndex + 1 === pointIndex）
-      if (segmentIndex === draggedPointIndex - 1 && coords.length >= 2) {
-        coords[1] = draggedCoords
-        geom.setCoordinates(coords)
+      // 处理分支线
+      if (isBranchLine) {
+        const fromDeviceId = lf.get('fromDeviceId')
+        const toDeviceId = lf.get('toDeviceId')
+        let updated = false
+        // 如果拖拽的是分支器（分支线起点）或分支登陆站（终点），优先按设备ID匹配
+        if (draggedDeviceId) {
+          if (fromDeviceId === draggedDeviceId && coords.length >= 2) {
+            coords[0] = draggedCoords
+            updated = true
+          }
+          if (toDeviceId === draggedDeviceId && coords.length >= 2) {
+            coords[1] = draggedCoords
+            updated = true
+          }
+        }
+        // 回退：按分支器索引匹配
+        if (!updated) {
+          const branchFromPointIdx = lf.get('branchFromPointIndex')
+          const draggedBranchFromIdx = selectedPointFeature.value?.get('branchFromPointIndex')
+          if ((draggedPointType === 'branching' || draggedPointType === 'bu') && branchFromPointIdx === draggedPointIndex) {
+            coords[0] = draggedCoords
+            updated = true
+          }
+          if (draggedIsBranchStation && branchFromPointIdx === draggedBranchFromIdx) {
+            coords[1] = draggedCoords
+            updated = true
+          }
+        }
+        if (updated) {
+          geom.setCoordinates(coords)
+        }
+        return
       }
-      // 如果这条线段的起始点是当前拖拽的点（segmentIndex === pointIndex）
-      if (segmentIndex === draggedPointIndex && coords.length >= 2) {
-        coords[0] = draggedCoords
+      
+      // 处理主干线段
+      let updated = false
+      const fromId = lf.get('fromId')
+      const toId = lf.get('toId')
+      // 优先用设备ID精确匹配
+      if (draggedDeviceId) {
+        if (fromId === draggedDeviceId && coords.length >= 2) {
+          coords[0] = draggedCoords
+          updated = true
+        }
+        if (toId === draggedDeviceId && coords.length >= 2) {
+          coords[1] = draggedCoords
+          updated = true
+        }
+      }
+      // 回退：仅当拖拽的不是分支登陆站时，才按索引更新相邻线段
+      if (!updated && !draggedIsBranchStation) {
+        if (segmentIndex === draggedPointIndex - 1 && coords.length >= 2) {
+          coords[1] = draggedCoords
+          updated = true
+        }
+        if (segmentIndex === draggedPointIndex && coords.length >= 2) {
+          coords[0] = draggedCoords
+          updated = true
+        }
+      }
+      if (updated) {
         geom.setCoordinates(coords)
       }
     })
     return
   }
 
-  // 单条线模式（paretoRoutes）：按路由ID分组
-  const routeGroups: Record<string, Feature[]> = {}
-  pointFeatures.forEach(pf => {
-    const routeId = pf.get('routeId')
-    if (!routeGroups[routeId]) routeGroups[routeId] = []
-    routeGroups[routeId].push(pf)
-  })
-
+  // 单条线模式（paretoRoutes）：处理分支线
   lineFeatures.forEach(lf => {
-    const routeId = lf.get('routeId')
-    const points = routeGroups[routeId]
-    if (points && points.length > 1) {
-      points.sort((a, b) => (a.get('pointIndex') || 0) - (b.get('pointIndex') || 0))
-      const coords = points.map(p => (p.getGeometry() as Point).getCoordinates())
-      ;(lf.getGeometry() as LineString).setCoordinates(coords)
+    const isBranchLine = lf.get('isBranchLine')
+    const geom = lf.getGeometry() as LineString
+    const coords = geom.getCoordinates()
+    
+    // 处理分支线
+    if (isBranchLine) {
+      const branchFromPointIdx = lf.get('branchFromPointIndex')
+      
+      // 如果拖拽的是分支器（分支线起点），且匹配分支器索引
+      if ((draggedPointType === 'branching' || draggedPointType === 'bu') && 
+          branchFromPointIdx === draggedPointIndex) {
+        coords[0] = draggedCoords
+        geom.setCoordinates(coords)
+      }
+      // 如果拖拽的是分支登陆站（分支线终点），通过 branchFromPointIndex 匹配
+      const draggedBranchFromIdx = selectedPointFeature.value?.get('branchFromPointIndex')
+      if (draggedIsBranchStation && branchFromPointIdx === draggedBranchFromIdx) {
+        coords[1] = draggedCoords
+        geom.setCoordinates(coords)
+      }
+      return
+    }
+    
+    // 处理主幹线段：找到相关的线段并更新
+    const fromPointId = lf.get('fromPointId')
+    const toPointId = lf.get('toPointId')
+    
+    // 找到起点和终点的 Feature
+    const fromPointFeature = pointFeatures.find(pf => pf.get('pointId') === fromPointId || pf.getId() === fromPointId)
+    const toPointFeature = pointFeatures.find(pf => pf.get('pointId') === toPointId || pf.getId() === toPointId)
+    
+    let updated = false
+    // 如果拖拽的是线段的起点，更新起点
+    if (fromPointFeature === selectedPointFeature.value) {
+      coords[0] = draggedCoords
+      updated = true
+    }
+    // 如果拖拽的是线段的终点，更新终点
+    if (toPointFeature === selectedPointFeature.value) {
+      coords[1] = draggedCoords
+      updated = true
+    }
+    
+    if (updated) {
+      geom.setCoordinates(coords)
     }
   })
 }
@@ -1422,6 +1512,7 @@ const drawParetoRoutes = () => {
           pointIndex: pointIndex,
           pointType: point.type,
           pointName: point.name,
+          pointId: point.id,
         })
 
         // 选中路线的节点更大
@@ -1459,6 +1550,9 @@ const drawParetoRoutes = () => {
             ]),
             routeId: route.id,
             isBranchLine: true,
+            branchFromPointIndex: pointIndex, // 分支器的点索引
+            branchToName: branchTo.name, // 分支登陆站名称
+            fromPointId: point.id,
           })
           branchLineFeature.setStyle(new Style({
             stroke: new Stroke({
@@ -1476,6 +1570,9 @@ const drawParetoRoutes = () => {
             pointType: 'landing',
             pointName: branchTo.name,
             isBranchStation: true,
+            branchFromPointIndex: pointIndex, // 分支来源的分支器点索引
+            // 生成一个临时 pointId 以便在拖拽时通过 id 匹配
+            pointId: `branch-${point.id}`,
           })
           branchStationFeature.setStyle(new Style({
             image: new CircleStyle({
@@ -1507,10 +1604,14 @@ const drawParetoRoutes = () => {
   if (monitorStore.devices.length > 0) {
     const devices = [...monitorStore.devices].sort((a, b) => (a.kp || 0) - (b.kp || 0))
     
-    // 分段绘制光纤线（每段可独立选中）
-    for (let i = 0; i < devices.length - 1; i++) {
-      const startDevice = devices[i]
-      const endDevice = devices[i + 1]
+    // 分离主干设备和分支登陆站
+    const mainTrunkDevices = devices.filter((d: any) => !d.isBranchStation)
+    const branchStations = devices.filter((d: any) => d.isBranchStation)
+    
+    // 分段绘制主干光纤线（每段可独立选中）
+    for (let i = 0; i < mainTrunkDevices.length - 1; i++) {
+      const startDevice = mainTrunkDevices[i]
+      const endDevice = mainTrunkDevices[i + 1]
       const isSelected = selectedCableId.value === `segment-${i}`
       
       const segmentFeature = new Feature({
@@ -1532,6 +1633,37 @@ const drawParetoRoutes = () => {
       }))
       routeSource!.addFeature(segmentFeature)
     }
+    
+    // 绘制分支线（从分支器到分支登陆站）
+    branchStations.forEach((branchStation: any, bsIndex: number) => {
+      // 通过 branchFrom 找到分支器
+      const branchFromName = branchStation.branchFrom
+      const branchingUnit = mainTrunkDevices.find((d: any) => d.name === branchFromName)
+      
+      if (branchingUnit) {
+        const branchFromIdx = mainTrunkDevices.indexOf(branchingUnit)
+        const branchLineFeature = new Feature({
+          geometry: new LineString([
+            [branchingUnit.longitude, branchingUnit.latitude],
+            [branchStation.longitude, branchStation.latitude]
+          ]),
+          routeId: 'monitor-route',
+          isBranchLine: true,
+          branchFromPointIndex: branchFromIdx,
+          branchToName: branchStation.name,
+          fromDeviceId: branchingUnit.id,
+          toDeviceId: branchStation.id,
+        })
+        branchLineFeature.setStyle(new Style({
+          stroke: new Stroke({
+            color: '#a855f7', // 紫色
+            width: 2,
+            lineDash: [6, 4],
+          }),
+        }))
+        routeSource!.addFeature(branchLineFeature)
+      }
+    })
 
     // 添加设备点 - 使用不同颜色的圆点区分设备类型
     // 设备类型颜色映射
@@ -1571,13 +1703,25 @@ const drawParetoRoutes = () => {
     }
 
     devices.forEach((device, index) => {
+      // 查找分支来源的分支器索引（如果是分支登陆站）
+      let branchFromIdx = -1
+      if ((device as any).isBranchStation && (device as any).branchFrom) {
+        const branchingUnit = mainTrunkDevices.find((d: any) => d.name === (device as any).branchFrom)
+        if (branchingUnit) {
+          branchFromIdx = mainTrunkDevices.indexOf(branchingUnit)
+        }
+      }
+      
       const pointFeature = new Feature({
         geometry: new Point([device.longitude, device.latitude]),
         deviceId: device.id,
         deviceType: device.type,
         deviceName: device.name,
-        pointIndex: index,  // 添加 pointIndex 以支持拖拽编辑
+        pointIndex: index,  // 添加 pointIndex 以支持拖抽编辑
+        pointType: device.type,  // 添加 pointType
         routeId: 'monitor-route',  // 添加 routeId 以支持编辑模式检测
+        isBranchStation: (device as any).isBranchStation || false,
+        branchFromPointIndex: branchFromIdx >= 0 ? branchFromIdx : undefined,
       })
 
       // 根据设备类型设置颜色和大小
@@ -1859,6 +2003,10 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
           status: 'active',
           specifications: '',
           remarks: record.pointName || '',
+          // 保留分支站点信息
+          isBranchStation: record.isBranchStation || false,
+          branchFrom: record.branchFrom || null,
+          branchTo: record.branchTo || null,
         })
         deviceIndex++
       }
@@ -1919,6 +2067,10 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
       pfeVoltage: 12000 + Math.random() * 500,
       pfeCurrent: 1.5 + Math.random() * 0.2,
       temperature: 25 + Math.random() * 5,
+      // 保留分支站点信息
+      isBranchStation: d.isBranchStation || false,
+      branchFrom: d.branchFrom || null,
+      branchTo: d.branchTo || null,
     }))
     monitorStore.devices = monitorDevices
     

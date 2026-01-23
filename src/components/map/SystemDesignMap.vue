@@ -98,7 +98,13 @@ const sortedPoints = computed(() => {
         type: d.type,
         longitude: d.longitude,
         latitude: d.latitude,
-        kp: d.kp
+        kp: d.kp,
+        // 保留分支站点信息
+        isBranchStation: (d as any).isBranchStation || false,
+        isBranchRepeater: (d as any).isBranchRepeater || false,
+        branchFrom: (d as any).branchFrom || null,
+        branchTo: (d as any).branchTo || null,
+        branchInfo: (d as any).branchInfo || null,
       }))
   }
   
@@ -153,7 +159,7 @@ const sortedPoints = computed(() => {
           latitude: point.branchTo.coord[1],
           kp: cumulativeKp,
           isBranchStation: true,
-          branchFrom: point.id
+          branchFrom: point.name // 使用分支器名称
         } as any)
       }
     })
@@ -192,11 +198,14 @@ const drawRouteLine = () => {
   
   if (sortedPoints.value.length < 2) return
   
-  // 分离主干点和分支登陆站
-  const mainTrunkPoints = sortedPoints.value.filter((p: any) => !p.isBranchStation)
+  // 分离主干点、分支登陆站和分支线中继器
+  const mainTrunkPoints = sortedPoints.value.filter((p: any) => 
+    !p.isBranchStation && !p.isBranchRepeater
+  )
   const branchStations = sortedPoints.value.filter((p: any) => p.isBranchStation)
+  const branchRepeaters = sortedPoints.value.filter((p: any) => p.isBranchRepeater)
   
-  // 分段绘制主干线
+  // 分段绘制主干线（只连接主干线上的设备）
   for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
     const startPoint = mainTrunkPoints[i]
     const endPoint = mainTrunkPoints[i + 1]
@@ -226,9 +235,9 @@ const drawRouteLine = () => {
   
   // 绘制分支线（从分支器到分支登陆站）
   branchStations.forEach((branchStation: any) => {
-    // 找到分支来源（分支器）
-    const branchFromId = branchStation.branchFrom
-    const branchingUnit = mainTrunkPoints.find((p: any) => p.id === branchFromId)
+    // 找到分支来源（分支器）- branchFrom 存储的是分支器名称
+    const branchFromName = branchStation.branchFrom
+    const branchingUnit = mainTrunkPoints.find((p: any) => p.name === branchFromName)
     
     if (branchingUnit) {
       const branchFeature = new Feature({
@@ -253,6 +262,9 @@ const drawRouteLine = () => {
       routeSource!.addFeature(branchFeature)
     }
   })
+  
+  // 注意：分支线中继器不需要绘制连线，它们已经在分支器到分支登陆站的线上
+  // 分支线中继器只作为节点显示，不参与连线
 }
 
 // 绘制设备节点 - 使用 sortedPoints（从monitorStore获取）
@@ -378,7 +390,7 @@ const handlePointerUp = () => {
   }
 }
 
-// 更新路径线
+// 更新路径线（分离主幹和分支）
 const updateRouteLineFromPoints = () => {
   if (!routeSource || !pointSource) return
   
@@ -387,27 +399,76 @@ const updateRouteLineFromPoints = () => {
   const pointFeatures = pointSource.getFeatures()
   if (pointFeatures.length < 2) return
   
-  const coords = sortedPoints.value.map(p => {
-    const feature = pointFeatures.find(f => f.get('pointId') === p.id)
-    if (feature) {
-      return (feature.getGeometry() as Point).getCoordinates()
-    }
-    return [p.longitude, p.latitude]
-  })
+  // 分离主干点和分支登陆站
+  const mainTrunkPoints = sortedPoints.value.filter((p: any) => !p.isBranchStation)
+  const branchStations = sortedPoints.value.filter((p: any) => p.isBranchStation)
   
-  const lineFeature = new Feature({
-    geometry: new LineString(coords)
-  })
-  
-  lineFeature.setStyle(new Style({
-    stroke: new Stroke({
-      color: '#3b82f6',
-      width: 3,
-      lineDash: [8, 4]
+  // 绘制主幹线（分段）
+  for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
+    const startPoint = mainTrunkPoints[i]
+    const endPoint = mainTrunkPoints[i + 1]
+    
+    // 从 pointFeatures 中获取当前坐标（如果正在拖拽）
+    const startFeature = pointFeatures.find(f => f.get('pointId') === startPoint.id)
+    const endFeature = pointFeatures.find(f => f.get('pointId') === endPoint.id)
+    
+    const startCoords = startFeature 
+      ? (startFeature.getGeometry() as Point).getCoordinates() 
+      : [startPoint.longitude, startPoint.latitude]
+    const endCoords = endFeature 
+      ? (endFeature.getGeometry() as Point).getCoordinates() 
+      : [endPoint.longitude, endPoint.latitude]
+    
+    const segmentFeature = new Feature({
+      geometry: new LineString([startCoords, endCoords]),
+      segmentIndex: i,
     })
-  }))
+    
+    const isSelected = selectedSegmentIndex.value === i
+    segmentFeature.setStyle(new Style({
+      stroke: new Stroke({
+        color: isSelected ? '#f59e0b' : '#3b82f6',
+        width: isSelected ? 5 : 3,
+        lineDash: isSelected ? undefined : [8, 4]
+      })
+    }))
+    
+    routeSource.addFeature(segmentFeature)
+  }
   
-  routeSource.addFeature(lineFeature)
+  // 绘制分支线（从分支器到分支登陆站）
+  branchStations.forEach((branchStation: any) => {
+    const branchFromName = branchStation.branchFrom
+    const branchingUnit = mainTrunkPoints.find((p: any) => p.name === branchFromName)
+    
+    if (branchingUnit) {
+      // 从 pointFeatures 中获取当前坐标
+      const branchingFeature = pointFeatures.find(f => f.get('pointId') === branchingUnit.id)
+      const branchStationFeature = pointFeatures.find(f => f.get('pointId') === branchStation.id)
+      
+      const branchingCoords = branchingFeature 
+        ? (branchingFeature.getGeometry() as Point).getCoordinates() 
+        : [branchingUnit.longitude, branchingUnit.latitude]
+      const branchStationCoords = branchStationFeature 
+        ? (branchStationFeature.getGeometry() as Point).getCoordinates() 
+        : [branchStation.longitude, branchStation.latitude]
+      
+      const branchFeature = new Feature({
+        geometry: new LineString([branchingCoords, branchStationCoords]),
+        featureType: 'branch',
+      })
+      
+      branchFeature.setStyle(new Style({
+        stroke: new Stroke({
+          color: '#a855f7', // 紫色
+          width: 3,
+          lineDash: [6, 4]
+        })
+      }))
+      
+      routeSource!.addFeature(branchFeature)
+    }
+  })
 }
 
 // 初始化地图

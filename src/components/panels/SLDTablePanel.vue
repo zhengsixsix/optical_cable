@@ -130,7 +130,7 @@ const handleExportXML = () => {
       <div v-if="metadata" class="px-4 py-3 bg-gray-50 border-b">
         <div class="grid grid-cols-6 gap-4 text-sm">
           <div class="text-center">
-            <div class="font-semibold text-blue-600">{{ metadata.totalLength.toFixed(1) }}</div>
+            <div class="font-semibold text-blue-600">{{ metadata.totalLength?.toFixed(1) ?? '-' }}</div>
             <div class="text-xs text-gray-500">总长度(km)</div>
           </div>
           <div class="text-center">
@@ -227,8 +227,8 @@ const handleExportXML = () => {
                     {{ equipmentTypeLabels[eq.type] }}
                   </span>
                 </td>
-                <td class="px-2 py-1.5 text-right border-b font-mono">{{ eq.kp.toFixed(1) }}</td>
-                <td class="px-2 py-1.5 text-right border-b">{{ eq.depth.toFixed(0) }}</td>
+                <td class="px-2 py-1.5 text-right border-b font-mono">{{ eq.kp?.toFixed(1) ?? '-' }}</td>
+                <td class="px-2 py-1.5 text-right border-b">{{ eq.depth?.toFixed(0) ?? '-' }}</td>
                 <td class="px-2 py-1.5 border-b text-gray-600 text-xs">{{ eq.specifications }}</td>
                 <td class="px-2 py-1.5 text-center border-b">
                   <div class="flex items-center justify-center gap-1">
@@ -283,10 +283,10 @@ const handleExportXML = () => {
                 <td class="px-2 py-1.5 text-center border-b text-gray-500">{{ seg.sequence }}</td>
                 <td class="px-2 py-1.5 border-b">{{ seg.fromName }}</td>
                 <td class="px-2 py-1.5 border-b">{{ seg.toName }}</td>
-                <td class="px-2 py-1.5 text-right border-b font-mono">{{ seg.length.toFixed(1) }}</td>
-                <td class="px-2 py-1.5 text-center border-b">{{ seg.fiberPairs }}</td>
-                <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ seg.cableType }}</td>
-                <td class="px-2 py-1.5 text-right border-b">{{ seg.totalLoss.toFixed(1) }}</td>
+                <td class="px-2 py-1.5 text-right border-b font-mono">{{ seg.length?.toFixed(1) ?? '-' }}</td>
+                <td class="px-2 py-1.5 text-center border-b">{{ seg.fiberPairs ?? '-' }}</td>
+                <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ seg.cableType ?? '-' }}</td>
+                <td class="px-2 py-1.5 text-right border-b">{{ seg.totalLoss?.toFixed(1) ?? '-' }}</td>
                 <td class="px-2 py-1.5 text-center border-b">
                   <div class="flex items-center justify-center gap-1">
                     <button class="p-1 hover:bg-gray-200 rounded" @click="emit('edit-segment', seg.id)">

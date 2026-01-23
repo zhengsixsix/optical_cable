@@ -719,30 +719,139 @@ export class RepeaterPlacementService {
     spanLength: number,
     routePoints?: RoutePoint[]
   ): {
-    positions: Array<{ kp: number; longitude: number; latitude: number }>
+    positions: Array<{ kp: number; longitude: number; latitude: number; isBranch?: boolean; branchId?: string }>
     count: number
   } {
-    const count = Math.ceil(totalLength / spanLength) - 1
-    const positions: Array<{ kp: number; longitude: number; latitude: number }> = []
-    
-    for (let i = 1; i <= count; i++) {
-      const kp = i * spanLength
+    if (!routePoints || routePoints.length === 0) {
+      // 没有路由点，使用简单等间距
+      const count = Math.ceil(totalLength / spanLength) - 1
+      const positions: Array<{ kp: number; longitude: number; latitude: number }> = []
       
-      // 如果有路由点，插值获取坐标
-      let longitude = 0
-      let latitude = 0
-      
-      if (routePoints && routePoints.length > 0) {
-        const terrain = this.generateTerrainFromRoute(routePoints)
-        const interpolated = this.interpolateTerrain(terrain, kp)
-        longitude = interpolated.longitude
-        latitude = interpolated.latitude
+      for (let i = 1; i <= count; i++) {
+        positions.push({ kp: i * spanLength, longitude: 0, latitude: 0 })
       }
-      
-      positions.push({ kp, longitude, latitude })
+      return { positions, count }
     }
     
-    return { positions, count }
+    const positions: Array<{ kp: number; longitude: number; latitude: number; isBranch?: boolean; branchId?: string }> = []
+    
+    // 1. 识别主干线点（排除分支登陆站）
+    const mainTrunkPoints = routePoints.filter(p => !this.isBranchStation(p, routePoints))
+    
+    // 2. 构建主干线的地形数据
+    const mainTerrain = this.generateTerrainFromRoute(mainTrunkPoints)
+    const mainTrunkLength = mainTerrain.length > 0 ? mainTerrain[mainTerrain.length - 1].kp : totalLength
+    
+    // 3. 在主干线上按 Span 间距落位
+    const mainCount = Math.ceil(mainTrunkLength / spanLength) - 1
+    for (let i = 1; i <= mainCount; i++) {
+      const kp = i * spanLength
+      if (kp >= mainTrunkLength) break
+      
+      // 检查该位置是否在分支器附近（避免与分支器重叠）
+      const nearBranchingUnit = mainTrunkPoints.some(p => 
+        p.type === 'branching' && Math.abs(this.getPointKP(p, mainTrunkPoints) - kp) < spanLength * 0.1
+      )
+      
+      if (nearBranchingUnit) continue
+      
+      const interpolated = this.interpolateTerrain(mainTerrain, kp)
+      positions.push({ 
+        kp, 
+        longitude: interpolated.longitude, 
+        latitude: interpolated.latitude,
+        isBranch: false
+      })
+    }
+    
+    // 4. 在每条分支线上也落位中继器
+    const branchingUnits = routePoints.filter(p => p.type === 'branching' && p.branchTo)
+    branchingUnits.forEach((bu) => {
+      if (!bu.branchTo) return
+      
+      // 分支线起点：分支器位置
+      const buCoord = bu.coordinates
+      // 分支线终点：分支登陆站位置
+      const branchEndCoord = bu.branchTo.coord
+      
+      // 计算分支线长度
+      const branchLength = this.calculateDistance(
+        buCoord[0], buCoord[1],
+        branchEndCoord[0], branchEndCoord[1]
+      )
+      
+      // 如果分支线长度小于一个 span，不需要落位中继器
+      if (branchLength < spanLength) return
+      
+      // 获取分支器在主干线上的 KP
+      const buKP = this.getPointKP(bu, mainTrunkPoints)
+      
+      // 分支线上需要的中继器数量（按实际间距计算）
+      const branchRepeaterCount = Math.floor(branchLength / spanLength)
+      
+      // 在分支线上按间距落位
+      for (let j = 1; j <= branchRepeaterCount; j++) {
+        // 按实际距离计算比例（从分支器开始，每隔 spanLength 落一个中继器）
+        const distanceFromBU = j * spanLength
+        const ratio = distanceFromBU / branchLength
+        
+        // 如果超过分支线长度，停止
+        if (ratio >= 1) break
+        
+        // 分支线上的 KP：从分支器 KP 开始累加
+        const branchKp = buKP + distanceFromBU
+        
+        // 插值计算分支线上的坐标（在分支器到分支登陆站的连线上）
+        const lon = buCoord[0] + (branchEndCoord[0] - buCoord[0]) * ratio
+        const lat = buCoord[1] + (branchEndCoord[1] - buCoord[1]) * ratio
+        
+        positions.push({
+          kp: branchKp,
+          longitude: lon,
+          latitude: lat,
+          isBranch: true,
+          branchId: bu.id
+        })
+      }
+    })
+    
+    // 按 KP 排序
+    positions.sort((a, b) => a.kp - b.kp)
+    
+    return { positions, count: positions.length }
+  }
+  
+  /**
+   * 判断是否为分支登陆站
+   */
+  private isBranchStation(point: RoutePoint, allPoints: RoutePoint[]): boolean {
+    // 检查是否有其他点的 branchTo 指向这个点
+    return allPoints.some(p => 
+      p.branchTo && 
+      Math.abs(p.branchTo.coord[0] - point.coordinates[0]) < 0.001 && 
+      Math.abs(p.branchTo.coord[1] - point.coordinates[1]) < 0.001
+    )
+  }
+  
+  /**
+   * 获取点在路由上的 KP 位置
+   */
+  private getPointKP(point: RoutePoint, routePoints: RoutePoint[]): number {
+    let kp = 0
+    for (let i = 0; i < routePoints.length; i++) {
+      if (i > 0) {
+        kp += this.calculateDistance(
+          routePoints[i - 1].coordinates[0],
+          routePoints[i - 1].coordinates[1],
+          routePoints[i].coordinates[0],
+          routePoints[i].coordinates[1]
+        )
+      }
+      if (routePoints[i].id === point.id) {
+        return kp
+      }
+    }
+    return kp
   }
 
   /**

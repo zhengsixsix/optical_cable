@@ -137,7 +137,7 @@ function handleClose() {
   <Teleport to="body">
     <div
       v-if="visible"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] backdrop-blur-sm"
       @click.self="handleClose"
     >
       <Card class="w-[500px] max-w-[90vw] max-h-[90vh] overflow-hidden flex flex-col bg-white shadow-2xl">

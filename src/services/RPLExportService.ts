@@ -234,7 +234,9 @@ export function calculateFullRecord(
   
   // 更新分类型累计
   const prevCumByType = cumulativeByTypeMap.get(record.cableType) || 0
-  const cableDistBetween = record.segmentLength * (1 + record.slack / 100)
+  const slack = record.slack ?? 0
+  const segmentLength = record.segmentLength ?? 0
+  const cableDistBetween = segmentLength * (1 + slack / 100)
   const newCumByType = prevCumByType + cableDistBetween
   cumulativeByTypeMap.set(record.cableType, newCumByType)
   
@@ -258,10 +260,10 @@ export function calculateFullRecord(
     routeDistanceBetween: routeDistBetween,
     routeDistanceCumulative: record.cumulativeLength,
     cableDistanceBetween: cableDistBetween,
-    cableDistanceCumulative: record.cumulativeLength * (1 + record.slack / 100),
+    cableDistanceCumulative: (record.cumulativeLength ?? 0) * (1 + slack / 100),
     cumulativeByType: newCumByType,
-    approxDepth: record.depth,
-    plannedBurialDepth: record.burialDepth,
+    approxDepth: record.depth ?? 0,
+    plannedBurialDepth: record.burialDepth ?? 0,
     additionalFeatures: record.remarks || ''
   }
 }

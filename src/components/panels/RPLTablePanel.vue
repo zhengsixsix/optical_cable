@@ -342,14 +342,14 @@ const someSelected = computed(() =>
                   {{ getPointTypeLabel(record.pointType) }}
                 </span>
               </td>
-              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.latitude.toFixed(6) }}</td>
-              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.longitude.toFixed(6) }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.segmentLength.toFixed(3) }}</td>
-              <td class="px-2 py-1.5 text-right border-b font-medium">{{ record.cumulativeLength.toFixed(3) }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.slack.toFixed(1) }}</td>
-              <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ record.cableType }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.depth.toFixed(1) }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.burialDepth.toFixed(2) }}</td>
+              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.latitude?.toFixed(6) ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.longitude?.toFixed(6) ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-right border-b">{{ record.segmentLength?.toFixed(3) ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-right border-b font-medium">{{ record.cumulativeLength?.toFixed(3) ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-right border-b">{{ record.slack?.toFixed(1) ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ record.cableType ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-right border-b">{{ record.depth?.toFixed(1) ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-right border-b">{{ record.burialDepth?.toFixed(2) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-left border-b text-gray-600 truncate max-w-[120px]" :title="record.remarks">
                 {{ record.remarks }}
               </td>

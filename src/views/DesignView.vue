@@ -11,7 +11,7 @@ import LinkAnalysisDialog from '@/components/dialogs/LinkAnalysisDialog.vue'
 import SystemDesignMap from '@/components/map/SystemDesignMap.vue'
 import GSNRMarginChart from '@/components/charts/GSNRMarginChart.vue'
 import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
-import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore } from '@/stores'
+import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore, useRouteStore } from '@/stores'
 import { useRouter } from 'vue-router'
 import { opticalSimulationService, repeaterPlacementService } from '@/services'
 import type { SpanScanResult, OpticalLink, ModulationFormat, FiberSpan, LinkNode } from '@/types/simulation'
@@ -25,6 +25,7 @@ const appStore = useAppStore()
 const connectorStore = useConnectorStore()
 const rplStore = useRPLStore()
 const monitorStore = useMonitorStore()
+const routeStore = useRouteStore()
 const router = useRouter()
 
 // 项目类型检测
@@ -434,10 +435,13 @@ const handleModelConfirm = (config: { fiberModel: string; [key: string]: any }) 
     )
     recommendedSpan.value = recommendation.recommendedSpanKm
     
-    // 生成 EDFA 放置方案
+    // 生成 EDFA 放置方案 - 传入路由点以支持分支结构
+    const currentRoute = routeStore.selectedRoute
+    const routePoints = currentRoute?.points || []
     autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
       totalLength,
-      recommendation.recommendedSpanKm
+      recommendation.recommendedSpanKm,
+      routePoints
     )
     
     // 更新中继器间距
@@ -463,9 +467,13 @@ const handleSpanSelect = (spanLength: number) => {
   gsnrData.value = calculateGSNRData()
   
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  // 传入路由点以支持分支结构
+  const currentRoute = routeStore.selectedRoute
+  const routePoints = currentRoute?.points || []
   autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
     totalLength,
-    spanLength
+    spanLength,
+    routePoints
   )
   
   appStore.showNotification({ type: 'info', message: `已选择 Span 长度: ${spanLength}km` })
@@ -550,15 +558,15 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
   const existingFibers = connectorStore.elements.filter(e => e.type === 'fiber')
   existingFibers.forEach(f => connectorStore.deleteElement(f.id))
   
-  // 获取所有节点（岸站 + 中继器）按 KP 排序
-  const allNodes = connectorStore.elements
-    .filter(e => e.type !== 'fiber')
+  // 获取主干线节点（排除分支登陆站）按 KP 排序
+  const mainTrunkNodes = connectorStore.elements
+    .filter(e => e.type !== 'fiber' && !(e as any).isBranchStation)
     .sort((a, b) => a.kp - b.kp)
   
-  // 在相邻节点之间创建光纤段
-  for (let i = 0; i < allNodes.length - 1; i++) {
-    const startNode = allNodes[i]
-    const endNode = allNodes[i + 1]
+  // 在主干线相邻节点之间创建光纤段
+  for (let i = 0; i < mainTrunkNodes.length - 1; i++) {
+    const startNode = mainTrunkNodes[i]
+    const endNode = mainTrunkNodes[i + 1]
     const length = endNode.kp - startNode.kp
     
     connectorStore.addElement({
@@ -574,6 +582,32 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
       remarks: `${startNode.name} → ${endNode.name}`
     })
   }
+  
+  // 为分支登陆站创建分支光纤段（从分支器到分支登陆站）
+  const branchStations = connectorStore.elements.filter(e => (e as any).isBranchStation)
+  branchStations.forEach(branchStation => {
+    const branchFromName = (branchStation as any).branchFrom
+    // 找到对应的分支器
+    const branchingUnit = mainTrunkNodes.find(n => n.name === branchFromName && n.type === 'bu')
+    if (branchingUnit) {
+      const length = Math.sqrt(
+        Math.pow((branchStation.longitude - branchingUnit.longitude) * 111, 2) +
+        Math.pow((branchStation.latitude - branchingUnit.latitude) * 111, 2)
+      )
+      connectorStore.addElement({
+        type: 'fiber',
+        name: `分支光纤段`,
+        kp: branchingUnit.kp,
+        endKp: branchingUnit.kp + length,
+        longitude: (branchingUnit.longitude + branchStation.longitude) / 2,
+        latitude: (branchingUnit.latitude + branchStation.latitude) / 2,
+        depth: (branchingUnit.depth + branchStation.depth) / 2,
+        status: 'active',
+        specifications: `G.654.E ${length.toFixed(1)}km`,
+        remarks: `[Branch] ${branchingUnit.name} → ${branchStation.name}`
+      })
+    }
+  })
 }
 
 // 处理中继器配置保存
@@ -586,15 +620,22 @@ const handleRepeatersSaved = (repeaters: any[]) => {
     noiseFigure: 5
   }))
   
+  // 区分主干线和分支线上的中继器
+  const mainTrunkRepeaters = repeaters.filter(r => !r.remarks?.includes('分支线'))
+  const branchRepeaters = repeaters.filter(r => r.remarks?.includes('分支线'))
+  
   // 同步到 monitorStore，使地图显示中继器位置
   const newDevices = repeaters.map(rep => {
+    const isBranchRepeater = rep.remarks?.includes('分支线')
     const existing = monitorStore.devices.find(d => d.id === rep.id)
     if (existing) {
       return {
         ...existing,
         kp: rep.kp,
         longitude: rep.longitude,
-        latitude: rep.latitude
+        latitude: rep.latitude,
+        isBranchRepeater,
+        branchInfo: isBranchRepeater ? rep.remarks : undefined
       }
     } else {
       return {
@@ -614,15 +655,37 @@ const handleRepeatersSaved = (repeaters: any[]) => {
         pumpCurrent: 200,
         pfeVoltage: 48,
         pfeCurrent: 1.5,
-        temperature: 25
+        temperature: 25,
+        isBranchRepeater,
+        branchInfo: isBranchRepeater ? rep.remarks : undefined
       }
     }
   })
   
-  // 保留非中继器设备，替换中继器设备
+  // 保留非中继器设备（包括登陆站、分支器、分支登陆站等），替换中继器设备
   const repIds = new Set(repeaters.map(r => r.id))
-  const otherDevices = monitorStore.devices.filter(d => !repIds.has(d.id) && d.type !== 'amplifier_e')
-  monitorStore.devices.splice(0, monitorStore.devices.length, ...otherDevices, ...newDevices)
+  const otherDevices = monitorStore.devices.filter(d => {
+    // 保留不在替换列表中的设备
+    if (repIds.has(d.id)) return false
+    // 保留登陆站、分支器、分支登陆站
+    if (d.type === 'landing' || d.type === 'bu' || d.type === 'branching' || (d as any).isBranchStation) {
+      return true
+    }
+    // 移除旧的中继器（会被新的替换）
+    if (d.type === 'amplifier_e' || d.type === 'amplifier_w') {
+      return false
+    }
+    return true
+  })
+  // 合并后按 KP 排序，分支线中继器和分支登陆站放在最后
+  const allDevices = [...otherDevices, ...newDevices]
+  const mainTrunkDevices = allDevices.filter(d => 
+    !(d as any).isBranchStation && !(d as any).isBranchRepeater
+  ).sort((a, b) => (a.kp || 0) - (b.kp || 0))
+  const branchDevices = allDevices.filter(d => 
+    (d as any).isBranchStation || (d as any).isBranchRepeater
+  )
+  monitorStore.devices.splice(0, monitorStore.devices.length, ...mainTrunkDevices, ...branchDevices)
   
   // 同步到 connectorStore，使接线元管理显示中继器
   // 先按 KP 排序

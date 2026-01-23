@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { Button } from '@/components/ui'
-import { useAppStore, useRPLStore, useSettingsStore } from '@/stores'
+import { useAppStore, useRPLStore, useSettingsStore, useRouteStore } from '@/stores'
 import { 
   X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio 
 } from 'lucide-vue-next'
@@ -18,6 +18,7 @@ const emit = defineEmits<{
 const appStore = useAppStore()
 const rplStore = useRPLStore()
 const settingsStore = useSettingsStore()
+const routeStore = useRouteStore()
 
 // 从器件库获取中继器类型选项
 const repeaterTypeOptions = computed(() =>
@@ -160,17 +161,115 @@ function autoOptimize() {
     return
   }
   
-  // 计算最优中继器数量和间距（基于器件库参数）
+  const currentRoute = routeStore.selectedRoute
   const spacing = recommendedSpacing.value
+  repeaters.value = []
+  let repeaterIndex = 0
+  
+  // 检查是否有分支结构
+  if (currentRoute && currentRoute.points) {
+    // 计算主干线长度
+    let mainTrunkLength = 0
+    for (let i = 1; i < currentRoute.points.length; i++) {
+      mainTrunkLength += calculateDistance(
+        currentRoute.points[i - 1].coordinates,
+        currentRoute.points[i].coordinates
+      )
+    }
+    
+    // 主干线上的中继器
+    const mainCount = Math.max(1, Math.round(mainTrunkLength / spacing) - 1)
+    const mainSpacing = mainTrunkLength / (mainCount + 1)
+    
+    for (let i = 0; i < mainCount; i++) {
+      const targetKp = (i + 1) * mainSpacing
+      const position = interpolateOnMainTrunk(buildFullRouteData(currentRoute.points), targetKp)
+      
+      const repType = currentRepeaterType.value
+      repeaters.value.push({
+        id: `rep-${repeaterIndex}`,
+        index: repeaterIndex,
+        name: generateRepeaterName(repeaterIndex),
+        type: repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
+        kp: Math.round(targetKp * 10) / 10,
+        longitude: Math.round(position.longitude * 10000) / 10000,
+        latitude: Math.round(position.latitude * 10000) / 10000,
+        depth: Math.round(position.depth),
+        spacing: mainSpacing,
+        model: repType?.name || '标准中继器',
+        gain: repType?.gain || 15,
+        powerConsumption: repType?.powerConsumption || 45,
+        remarks: '',
+      })
+      repeaterIndex++
+    }
+    
+    // 每条分支线上的中继器
+    let buKp = 0
+    for (let i = 0; i < currentRoute.points.length; i++) {
+      const point = currentRoute.points[i]
+      if (i > 0) {
+        buKp += calculateDistance(
+          currentRoute.points[i - 1].coordinates,
+          point.coordinates
+        )
+      }
+      
+      if (point.type === 'branching' && point.branchTo) {
+        const buCoord = point.coordinates
+        const branchEndCoord = point.branchTo.coord
+        const branchLength = calculateDistance(buCoord, branchEndCoord)
+        
+        // 分支线上需要的中继器数量
+        const branchCount = Math.floor(branchLength / spacing)
+        
+        for (let j = 1; j <= branchCount; j++) {
+          const distanceFromBU = j * spacing
+          if (distanceFromBU >= branchLength) break
+          
+          const ratio = distanceFromBU / branchLength
+          const lon = buCoord[0] + (branchEndCoord[0] - buCoord[0]) * ratio
+          const lat = buCoord[1] + (branchEndCoord[1] - buCoord[1]) * ratio
+          
+          // 分支线上的 KP = 分支器 KP + 分支线上的距离
+          const branchKp = buKp + distanceFromBU
+          
+          const repType = currentRepeaterType.value
+          repeaters.value.push({
+            id: `rep-branch-${point.id}-${j}`,
+            index: repeaterIndex,
+            name: `${generateRepeaterName(repeaterIndex)}[分支]`,
+            type: repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
+            kp: Math.round(branchKp * 10) / 10,
+            longitude: Math.round(lon * 10000) / 10000,
+            latitude: Math.round(lat * 10000) / 10000,
+            depth: 3000,
+            spacing: spacing,
+            model: repType?.name || '标准中继器',
+            gain: repType?.gain || 15,
+            powerConsumption: repType?.powerConsumption || 45,
+            remarks: `分支线: ${point.name} → ${point.branchTo.name}`,
+          })
+          repeaterIndex++
+        }
+      }
+    }
+    
+    recalculateSpacing()
+    const branchRepeaterCount = repeaterIndex - mainCount
+    appStore.showNotification({ 
+      type: 'success', 
+      message: `已优化: 主干线 ${mainCount} 个, 分支线 ${branchRepeaterCount} 个中继器` 
+    })
+    return
+  }
+  
+  // 无分支结构，使用原来的逻辑
   const optimalCount = Math.max(1, Math.round(totalLength / spacing) - 1)
   const optimalSpacing = totalLength / (optimalCount + 1)
   
-  // 根据路由数据插值计算中继器位置
-  repeaters.value = []
   for (let i = 0; i < optimalCount; i++) {
     const targetKp = (i + 1) * optimalSpacing
-    
-    // 在路由数据中找到对应 KP 的位置（插值）
     const position = interpolateRoutePosition(routeData, targetKp)
     
     const repType = currentRepeaterType.value
@@ -195,11 +294,28 @@ function autoOptimize() {
 }
 
 // 根据 KP 插值计算路由位置
-function interpolateRoutePosition(routeData: any[], targetKp: number): { longitude: number; latitude: number; depth: number } {
-  // 按 KP 排序
+function interpolateRoutePosition(routeData: any[], targetKp: number): { longitude: number; latitude: number; depth: number; isBranch?: boolean; branchId?: string } {
+  // 获取当前路由（包含分支信息）
+  const currentRoute = routeStore.selectedRoute
+  
+  // 检查是否有分支结构
+  if (currentRoute && currentRoute.points) {
+    // 构建包含分支线的完整路由数据
+    const fullRouteData = buildFullRouteData(currentRoute.points)
+    
+    // 先尝试在分支线上查找
+    const branchResult = interpolateOnBranchLine(currentRoute.points, targetKp)
+    if (branchResult) {
+      return branchResult
+    }
+    
+    // 否则在主干线上插值
+    return interpolateOnMainTrunk(fullRouteData, targetKp)
+  }
+  
+  // 回退到原来的逻辑（用 RPL 数据）
   const sorted = [...routeData].sort((a, b) => (a.kp || 0) - (b.kp || 0))
   
-  // 找到目标 KP 前后的点
   let before = sorted[0]
   let after = sorted[sorted.length - 1]
   
@@ -211,7 +327,6 @@ function interpolateRoutePosition(routeData: any[], targetKp: number): { longitu
     }
   }
   
-  // 线性插值
   const beforeKp = before.kp || 0
   const afterKp = after.kp || beforeKp + 1
   const ratio = afterKp === beforeKp ? 0 : (targetKp - beforeKp) / (afterKp - beforeKp)
@@ -221,6 +336,113 @@ function interpolateRoutePosition(routeData: any[], targetKp: number): { longitu
     latitude: before.latitude + (after.latitude - before.latitude) * ratio,
     depth: (before.depth || 3000) + ((after.depth || 3000) - (before.depth || 3000)) * ratio
   }
+}
+
+// 构建包含分支线的完整路由数据
+function buildFullRouteData(routePoints: any[]) {
+  const result: Array<{ kp: number; longitude: number; latitude: number; depth: number; isBranch?: boolean }> = []
+  let kp = 0
+  
+  // 主干线点
+  for (let i = 0; i < routePoints.length; i++) {
+    const point = routePoints[i]
+    if (i > 0) {
+      const prev = routePoints[i - 1]
+      kp += calculateDistance(prev.coordinates, point.coordinates)
+    }
+    result.push({
+      kp,
+      longitude: point.coordinates[0],
+      latitude: point.coordinates[1],
+      depth: 3000,
+      isBranch: false
+    })
+  }
+  
+  return result
+}
+
+// 在分支线上插值
+function interpolateOnBranchLine(routePoints: any[], targetKp: number): { longitude: number; latitude: number; depth: number; isBranch: boolean; branchId: string } | null {
+  // 计算每个分支器的 KP
+  let kp = 0
+  const branchingUnits: Array<{ point: any; kp: number }> = []
+  
+  for (let i = 0; i < routePoints.length; i++) {
+    const point = routePoints[i]
+    if (i > 0) {
+      const prev = routePoints[i - 1]
+      kp += calculateDistance(prev.coordinates, point.coordinates)
+    }
+    if (point.type === 'branching' && point.branchTo) {
+      branchingUnits.push({ point, kp })
+    }
+  }
+  
+  // 检查 targetKp 是否落在某条分支线上
+  for (const bu of branchingUnits) {
+    const buCoord = bu.point.coordinates
+    const branchEndCoord = bu.point.branchTo.coord
+    const branchLength = calculateDistance(buCoord, branchEndCoord)
+    
+    // 分支线 KP 范围：从分支器 KP 到 分支器 KP + 分支线长度
+    const branchStartKp = bu.kp
+    const branchEndKp = bu.kp + branchLength
+    
+    if (targetKp > branchStartKp && targetKp < branchEndKp) {
+      // 在这条分支线上
+      const distanceFromBU = targetKp - branchStartKp
+      const ratio = distanceFromBU / branchLength
+      
+      return {
+        longitude: buCoord[0] + (branchEndCoord[0] - buCoord[0]) * ratio,
+        latitude: buCoord[1] + (branchEndCoord[1] - buCoord[1]) * ratio,
+        depth: 3000,
+        isBranch: true,
+        branchId: bu.point.id
+      }
+    }
+  }
+  
+  return null
+}
+
+// 在主干线上插值
+function interpolateOnMainTrunk(routeData: any[], targetKp: number): { longitude: number; latitude: number; depth: number } {
+  const sorted = [...routeData].sort((a, b) => (a.kp || 0) - (b.kp || 0))
+  
+  let before = sorted[0]
+  let after = sorted[sorted.length - 1]
+  
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if ((sorted[i].kp || 0) <= targetKp && (sorted[i + 1].kp || 0) >= targetKp) {
+      before = sorted[i]
+      after = sorted[i + 1]
+      break
+    }
+  }
+  
+  const beforeKp = before.kp || 0
+  const afterKp = after.kp || beforeKp + 1
+  const ratio = afterKp === beforeKp ? 0 : (targetKp - beforeKp) / (afterKp - beforeKp)
+  
+  return {
+    longitude: before.longitude + (after.longitude - before.longitude) * ratio,
+    latitude: before.latitude + (after.latitude - before.latitude) * ratio,
+    depth: (before.depth || 3000) + ((after.depth || 3000) - (before.depth || 3000)) * ratio
+  }
+}
+
+// 计算两点间距离 (km)
+function calculateDistance(coord1: [number, number], coord2: [number, number]): number {
+  const R = 6371 // 地球半径 (km)
+  const dLat = (coord2[1] - coord1[1]) * Math.PI / 180
+  const dLon = (coord2[0] - coord1[0]) * Math.PI / 180
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(coord1[1] * Math.PI / 180) * Math.cos(coord2[1] * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
 }
 
 function moveRepeater(repId: string, delta: number) {
