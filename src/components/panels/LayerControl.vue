@@ -40,13 +40,33 @@ const layerTypeName: Record<string, string> = {
 
 // 图层列表
 const layers = computed(() => {
-  const allLayers = layerStore.layers.map(layer => ({
-    ...layer,
-    type: layerTypeMap[layer.id] || 'base',
-    typeName: layerTypeName[layerTypeMap[layer.id] || 'base'],
-    status: layer.loading ? '加载中' : (layer.loaded ? '已加载' : (layer.error ? '加载失败' : '未加载')),
-    statusClass: layer.loading ? 'loading' : (layer.loaded ? 'success' : (layer.error ? 'error' : 'info')),
-  }))
+  const allLayers = layerStore.layers.map(layer => {
+    // 状态优先级：加载中 > 加载失败 > 已加载(可见) > 未加载(不可见)
+    let status = '未加载'
+    let statusClass = 'info'
+    
+    if (layer.loading) {
+      status = '加载中'
+      statusClass = 'loading'
+    } else if (layer.error) {
+      status = '加载失败'
+      statusClass = 'error'
+    } else if (layer.visible && layer.loaded) {
+      status = '已加载'
+      statusClass = 'success'
+    } else {
+      status = '未加载'
+      statusClass = 'info'
+    }
+    
+    return {
+      ...layer,
+      type: layerTypeMap[layer.id] || 'base',
+      typeName: layerTypeName[layerTypeMap[layer.id] || 'base'],
+      status,
+      statusClass,
+    }
+  })
   
   if (layerType.value === 'all') return allLayers
   return allLayers.filter(l => l.type === layerType.value)

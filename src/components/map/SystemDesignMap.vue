@@ -26,11 +26,11 @@ interface RoutePoint {
   [key: string]: any
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   routePoints: RoutePoint[]
   selectedPointId?: string | null
   editable?: boolean
-}>()
+}>(), {})
 
 const routeStore = useRouteStore()
 const rplStore = useRPLStore()
@@ -191,69 +191,106 @@ const updateLineStyle = () => {
   })
 }
 
-// 绘制路径线（分段绘制，每段可独立选中）
+// 获取路线所有点（包括 waypoint）用于绘制弯曲路径
+const getAllRoutePoints = computed(() => {
+  const selectedRoute = routeStore.selectedRoute
+  if (selectedRoute && selectedRoute.points.length > 0) {
+    return selectedRoute.points.map((point) => ({
+      id: point.id,
+      longitude: point.coordinates[0],
+      latitude: point.coordinates[1],
+      type: point.type,
+      name: point.name,
+      branchTo: point.branchTo
+    }))
+  }
+  return []
+})
+
+// 绘制路径线（使用所有点保持弯曲形状）
 const drawRouteLine = () => {
   if (!routeSource) return
   routeSource.clear()
   
-  if (sortedPoints.value.length < 2) return
-  
-  // 分离主干点、分支登陆站和分支线中继器
-  const mainTrunkPoints = sortedPoints.value.filter((p: any) => 
-    !p.isBranchStation && !p.isBranchRepeater
-  )
-  const branchStations = sortedPoints.value.filter((p: any) => p.isBranchStation)
-  const branchRepeaters = sortedPoints.value.filter((p: any) => p.isBranchRepeater)
-  
-  // 分段绘制主干线（只连接主干线上的设备）
-  for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
-    const startPoint = mainTrunkPoints[i]
-    const endPoint = mainTrunkPoints[i + 1]
-    const isSelected = selectedSegmentIndex.value === i
+  // 优先使用路由规划的所有点（保持弯曲）
+  const allPoints = getAllRoutePoints.value
+  if (allPoints.length < 2) {
+    // 如果没有路由数据，尝试使用 sortedPoints
+    if (sortedPoints.value.length < 2) return
     
-    const segmentFeature = new Feature({
-      geometry: new LineString([
-        [startPoint.longitude, startPoint.latitude],
-        [endPoint.longitude, endPoint.latitude]
-      ]),
-      featureType: 'segment',
-      segmentIndex: i,
-      fromId: startPoint.id,
-      toId: endPoint.id
+    const mainTrunkPoints = sortedPoints.value.filter((p: any) => 
+      !p.isBranchStation && !p.isBranchRepeater
+    )
+    
+    for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
+      const startPoint = mainTrunkPoints[i]
+      const endPoint = mainTrunkPoints[i + 1]
+      const isSelected = selectedSegmentIndex.value === i
+      
+      const segmentFeature = new Feature({
+        geometry: new LineString([
+          [startPoint.longitude, startPoint.latitude],
+          [endPoint.longitude, endPoint.latitude]
+        ]),
+        featureType: 'segment',
+        segmentIndex: i,
+        fromId: startPoint.id,
+        toId: endPoint.id
+      })
+      
+      segmentFeature.setStyle(new Style({
+        stroke: new Stroke({
+          color: isSelected ? '#f59e0b' : '#3b82f6',
+          width: isSelected ? 5 : 3,
+          lineDash: isSelected ? undefined : [8, 4]
+        })
+      }))
+      
+      routeSource.addFeature(segmentFeature)
+    }
+    return
+  }
+  
+  // 主干线包含所有点（包括 waypoint、landing、branching）
+  // 分支线仅从分支器到分支登陆站
+  const mainTrunkPoints = allPoints  // 所有点都在主干线上
+  const branchingPoints = allPoints.filter((p: any) => p.type === 'branching' && p.branchTo)
+  
+  // 绘制主干线（连接所有主干点，包括 waypoint，保持弯曲）
+  if (mainTrunkPoints.length >= 2) {
+    const coords = mainTrunkPoints.map(p => [p.longitude, p.latitude])
+    
+    const lineFeature = new Feature({
+      geometry: new LineString(coords),
+      featureType: 'mainTrunk'
     })
     
-    segmentFeature.setStyle(new Style({
+    lineFeature.setStyle(new Style({
       stroke: new Stroke({
-        color: isSelected ? '#f59e0b' : '#3b82f6',
-        width: isSelected ? 5 : 3,
-        lineDash: isSelected ? undefined : [8, 4]
+        color: '#3b82f6',
+        width: 3,
+        lineDash: [8, 4]
       })
     }))
     
-    routeSource.addFeature(segmentFeature)
+    routeSource.addFeature(lineFeature)
   }
   
   // 绘制分支线（从分支器到分支登陆站）
-  branchStations.forEach((branchStation: any) => {
-    // 找到分支来源（分支器）- branchFrom 存储的是分支器名称
-    const branchFromName = branchStation.branchFrom
-    const branchingUnit = mainTrunkPoints.find((p: any) => p.name === branchFromName)
-    
-    if (branchingUnit) {
+  branchingPoints.forEach((branchPoint: any) => {
+    if (branchPoint.branchTo) {
       const branchFeature = new Feature({
         geometry: new LineString([
-          [branchingUnit.longitude, branchingUnit.latitude],
-          [branchStation.longitude, branchStation.latitude]
+          [branchPoint.longitude, branchPoint.latitude],
+          branchPoint.branchTo.coord
         ]),
         featureType: 'branch',
-        fromId: branchingUnit.id,
-        toId: branchStation.id
+        fromId: branchPoint.id
       })
       
-      // 分支线使用紫色虚线
       branchFeature.setStyle(new Style({
         stroke: new Stroke({
-          color: '#a855f7', // 紫色
+          color: '#a855f7',
           width: 3,
           lineDash: [6, 4]
         })
@@ -262,20 +299,24 @@ const drawRouteLine = () => {
       routeSource!.addFeature(branchFeature)
     }
   })
-  
-  // 注意：分支线中继器不需要绘制连线，它们已经在分支器到分支登陆站的线上
-  // 分支线中继器只作为节点显示，不参与连线
 }
 
-// 绘制设备节点 - 使用 sortedPoints（从monitorStore获取）
+// 绘制设备节点 - 只显示系统设备（登陆站、中继器、分支器），不显示 waypoint
 const drawPoints = () => {
   if (!pointSource) return
   pointSource.clear()
   
   const source = pointSource
   
-  // 使用 sortedPoints 而不是 props.routePoints
-  sortedPoints.value.forEach(point => {
+  // 系统设备类型（需要显示的）
+  const systemDeviceTypes = ['landing', 'amplifier_e', 'amplifier_w', 'bu', 'branching', 'underwater']
+  
+  // 过滤只显示系统设备，排除 waypoint
+  const systemDevices = sortedPoints.value.filter(point => 
+    systemDeviceTypes.includes(point.type) || (point as any).isBranchStation
+  )
+  
+  systemDevices.forEach(point => {
     const feature = new Feature({
       geometry: new Point([point.longitude, point.latitude]),
       pointId: point.id,
@@ -619,13 +660,22 @@ const initMap = () => {
   drawRouteLine()
   drawPoints()
   
-  // 自适应显示 - 使用 sortedPoints（从monitorStore获取）
-  if (sortedPoints.value.length > 0 && pointSource && pointSource.getFeatures().length > 0) {
-    const extent = pointSource.getExtent()
-    map.getView().fit(extent, { 
-      padding: [80, 80, 80, 80],
-      duration: 500
-    })
+  // 自适应显示 - 优先使用路线 extent，其次使用点位
+  if (sortedPoints.value.length > 0) {
+    let extent: number[] | undefined
+    
+    if (routeSource && routeSource.getFeatures().length > 0) {
+      extent = routeSource.getExtent()
+    } else if (pointSource && pointSource.getFeatures().length > 0) {
+      extent = pointSource.getExtent()
+    }
+    
+    if (extent && extent[0] !== Infinity) {
+      map.getView().fit(extent, { 
+        padding: [80, 80, 80, 80],
+        duration: 500
+      })
+    }
   }
 }
 
@@ -670,7 +720,24 @@ watch(() => props.selectedPointId, () => {
   updatePointStyles()
 })
 
-// 监听 monitorStore 设备数据变化（与实时监控一致）
+// 监听 monitorStore 设备数据变化（包括长度和内容）
+watch(() => monitorStore.devices.length, () => {
+  console.log('monitorStore.devices.length changed:', monitorStore.devices.length)
+  drawRouteLine()
+  drawPoints()
+  
+  // 自适应显示
+  if (map && routeSource && routeSource.getFeatures().length > 0) {
+    const extent = routeSource.getExtent()
+    if (extent[0] !== Infinity) {
+      map.getView().fit(extent, { 
+        padding: [80, 80, 80, 80],
+        duration: 500
+      })
+    }
+  }
+}, { immediate: true })
+
 watch(() => monitorStore.devices, () => {
   if (monitorStore.devices.length > 0) {
     drawRouteLine()
@@ -684,12 +751,14 @@ watch(() => routeStore.selectedRoute, (newRoute) => {
     drawRouteLine()
     drawPoints()
     // 自适应显示路线
-    if (map && pointSource && pointSource.getFeatures().length > 0) {
-      const extent = pointSource.getExtent()
-      map.getView().fit(extent, { 
-        padding: [80, 80, 80, 80],
-        duration: 500
-      })
+    if (map && routeSource && routeSource.getFeatures().length > 0) {
+      const extent = routeSource.getExtent()
+      if (extent[0] !== Infinity) {
+        map.getView().fit(extent, { 
+          padding: [80, 80, 80, 80],
+          duration: 500
+        })
+      }
     }
   }
 }, { deep: true, immediate: true })
@@ -774,7 +843,7 @@ onUnmounted(() => {
       <span>纬度: {{ coordinates.lat.toFixed(4) }}°</span>
     </div>
     
-    <!-- 图例 -->
+    <!-- 设备图例 -->
     <div class="absolute bottom-3 right-3 bg-white/95 p-3 rounded-lg shadow z-10">
       <div class="text-xs font-semibold text-gray-700 mb-2">设备图例</div>
       <div class="space-y-1.5 text-xs">
@@ -792,7 +861,7 @@ onUnmounted(() => {
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/bu.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">水下分支器</span>
+          <span class="text-gray-600">分支器</span>
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/underwater.png" class="w-4 h-4 object-contain" />

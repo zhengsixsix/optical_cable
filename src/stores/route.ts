@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Route, RoutePoint, RouteSegment, RouteCostBreakdown, RouteRiskAnalysis } from '@/types'
+import type { Route, RoutePoint, RouteSegment } from '@/types'
 import { createRouteRepository } from '@/repositories'
-import { mockParetoRoutes } from '@/data/mockData'
 import { useSettingsStore } from './settings'
 
 // 规划配置参数
@@ -37,6 +36,9 @@ export const useRouteStore = defineStore('route', () => {
   // 悬停线段状态
   const hoveredSegmentId = ref<string | null>(null)
   const hoveredSegmentInfo = ref<HoveredSegmentInfo | null>(null)
+  
+  // 选中线段状态（用于水深剖面显示）
+  const selectedSegmentInfo = ref<HoveredSegmentInfo | null>(null)
 
   // Getters
   const currentRoute = computed(() =>
@@ -55,7 +57,6 @@ export const useRouteStore = defineStore('route', () => {
   async function loadRoutes() {
     try {
       routes.value = await repository.getRoutes()
-      // 不在初始化时计算Pareto路径，只有运行规划时才显示
     } catch (error) {
       console.error('加载路由失败:', error)
     }
@@ -127,6 +128,20 @@ export const useRouteStore = defineStore('route', () => {
   }
 
   /**
+   * 设置选中线段（用于水深剖面显示）
+   */
+  function selectSegmentInfo(segmentInfo: HoveredSegmentInfo | null) {
+    selectedSegmentInfo.value = segmentInfo
+  }
+
+  /**
+   * 清除选中线段
+   */
+  function clearSelectedSegmentInfo() {
+    selectedSegmentInfo.value = null
+  }
+
+  /**
    * 切换路径选中状态（多选）
    */
   function toggleRouteSelection(routeId: string) {
@@ -156,34 +171,9 @@ export const useRouteStore = defineStore('route', () => {
     return selectedRouteIds.value.includes(routeId)
   }
 
-
   /**
-   * 根据分段风险等级计算路由整体风险
+   * 计算两点间距离 (km)
    */
-  function calculateRouteRisk(segments: RouteSegment[]): number {
-    if (segments.length === 0) return 0
-    const riskMap = { low: 0.2, medium: 0.5, high: 0.8 }
-    const totalRisk = segments.reduce((sum, s) => sum + (riskMap[s.riskLevel] || 0.5), 0)
-    return totalRisk / segments.length
-  }
-
-  function generateSegments(points: RoutePoint[]): RouteSegment[] {
-    const segments: RouteSegment[] = []
-    for (let i = 0; i < points.length - 1; i++) {
-      segments.push({
-        id: `seg-${Date.now()}-${i}`,
-        startPointId: points[i].id,
-        endPointId: points[i + 1].id,
-        length: calculateDistance(points[i].coordinates, points[i + 1].coordinates),
-        depth: Math.random() * 5000,
-        cableType: 'lw',
-        riskLevel: 'low',
-        cost: 0,
-      })
-    }
-    return segments
-  }
-
   function calculateDistance(p1: [number, number], p2: [number, number]): number {
     const R = 6371 // 地球半径 km
     const dLat = (p2[1] - p1[1]) * Math.PI / 180
@@ -195,240 +185,44 @@ export const useRouteStore = defineStore('route', () => {
   }
 
   /**
-   * 生成 Pareto 路径数据 - 从集中数据文件导入
-   */
-  function generateMockParetoRoutes() {
-    const now = new Date()
-    
-    // 从集中数据创建路径
-    const paretoData = mockParetoRoutes.map(r => ({
-      ...r,
-      createdAt: now,
-      updatedAt: now,
-    })) as Route[]
-
-    routes.value = paretoData
-    paretoRoutes.value = paretoData
-    
-    // 默认选中均衡路线
-    currentRouteId.value = 'pareto-route-2'
-    
-    return paretoRoutes.value
-  }
-
-  /**
-   * 清除 Pareto 路径数据
-   */
-  function clearParetoRoutes() {
-    routes.value = []
-    paretoRoutes.value = []
-    currentRouteId.value = null
-  }
-
-  /**
-   * 设置 Pareto 路径数据（用于USE文件导入）
-   */
-  function setParetoRoutes(newRoutes: Route[]) {
-    routes.value = [...newRoutes]
-    paretoRoutes.value = [...newRoutes]
-    if (newRoutes.length > 0) {
-      currentRouteId.value = newRoutes[0].id
-    }
-  }
-
-  /**
-   * 根据工程设置生成 Pareto 路径
-   * 支持点对点和多点规划模式
+   * 根据工程设置生成路径
+   * 支持单点（点对点）和多点规划模式
    */
   function generateParetoRoutesFromSettings(): Route[] {
     const settingsStore = useSettingsStore()
     const config = settingsStore.routePlanningConfig
     
+    console.log('generateParetoRoutesFromSettings - mode:', config.mode, 'waypoints:', config.waypoints?.length)
+    
     // 多点规划模式
-    if (config.mode === 'multi-point' && config.waypoints && config.waypoints.length >= 3) {
+    if (config.mode === 'multi-point' && config.waypoints && config.waypoints.length >= 2) {
+      console.log('Using multi-point mode')
       return generateMultiPointRoutes(config.waypoints)
     }
     
     // 点对点模式
-    const startCoord: [number, number] = [config.startPoint.lon, config.startPoint.lat]
-    const endCoord: [number, number] = [config.endPoint.lon, config.endPoint.lat]
-    
+    console.log('Using point-to-point mode, generating 3 Pareto routes')
     return generateParetoRoutesWithCoords({
-      startPoint: { lon: startCoord[0], lat: startCoord[1], name: '起点登陆站' },
-      endPoint: { lon: endCoord[0], lat: endCoord[1], name: '终点登陆站' }
+      startPoint: { lon: config.startPoint.lon, lat: config.startPoint.lat, name: '起点' },
+      endPoint: { lon: config.endPoint.lon, lat: config.endPoint.lat, name: '终点' }
     })
   }
 
   /**
    * 多点规划路线生成
-   * 链式+分支拓扑：第一个点是起点，最后一个点是终点，中间点通过分支器连接
+   * 按顺序连接所有点，生成一条路线
    */
   function generateMultiPointRoutes(waypoints: Array<{ id: string; name: string; lon: number; lat: number }>): Route[] {
-    const settingsStore = useSettingsStore()
     const now = new Date()
     
-    // 从器件库获取设备
-    const amplifierTypes = settingsStore.amplifierTypes
-    const branchingUnitTypes = settingsStore.branchingUnitTypes
-    const defaultAmplifier = amplifierTypes.length > 0 ? amplifierTypes[0] : null
-    const defaultBU = branchingUnitTypes.length > 0 ? branchingUnitTypes[0] : null
+    // 构建所有点
+    const points: RoutePoint[] = waypoints.map((wp, i) => ({
+      id: `mp-p${i + 1}`,
+      coordinates: [wp.lon, wp.lat] as [number, number],
+      type: i === 0 ? 'landing' : i === waypoints.length - 1 ? 'landing' : 'waypoint',
+      name: wp.name || `点位${i + 1}`
+    }))
     
-    // 设备生成函数
-    const createAmplifierDevice = (index: number) => ({
-      deviceId: defaultAmplifier?.id || 'amp-default',
-      deviceType: 'amplifier',
-      deviceName: defaultAmplifier 
-        ? `${defaultAmplifier.name}-${String(index).padStart(2, '0')}`
-        : `放大器-${String(index).padStart(2, '0')}`,
-      gain: defaultAmplifier?.gain || 20,
-      noiseFigure: defaultAmplifier?.noiseFigure || 5,
-      outputPower: defaultAmplifier?.outputPower || 10,
-    })
-    
-    const createBranchingDevice = (index: number) => ({
-      deviceId: defaultBU?.id || 'bu-default',
-      deviceType: 'branching_unit',
-      deviceName: defaultBU 
-        ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
-        : `分支器-${String(index).padStart(2, '0')}`,
-      portCount: defaultBU?.portCount || 3,
-      insertionLoss: defaultBU?.insertionLoss || 0.5,
-    })
-    
-    const getAmpName = (index: number) => defaultAmplifier 
-      ? `${defaultAmplifier.name}-${String(index).padStart(2, '0')}`
-      : `放大器-${String(index).padStart(2, '0')}`
-    
-    const getBUName = (index: number) => defaultBU 
-      ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
-      : `分支器-${String(index).padStart(2, '0')}`
-
-    // 第一个和最后一个是主干线的起点和终点，中间的是分支点
-    const startStation = waypoints[0]
-    const endStation = waypoints[waypoints.length - 1]
-    const branchStations = waypoints.slice(1, -1) // 中间的分支站点
-    
-    const startCoord: [number, number] = [startStation.lon, startStation.lat]
-    const endCoord: [number, number] = [endStation.lon, endStation.lat]
-    
-    // 构建主干线上的中间点（分支器位置）
-    // 每个分支站点对应一个分支器，分支器位于主干线上离该分支站点最近的位置
-    const intermediatePoints: Array<{ coord: [number, number]; type: 'repeater' | 'branching'; name: string; device: any; branchTo?: { coord: [number, number]; name: string } }> = []
-    
-    let ampIndex = 1
-    let buIndex = 1
-    
-    // 为每个分支站点创建分支器
-    branchStations.forEach((station, i) => {
-      // 计算分支器在主干线上的位置（投影到主干线上）
-      const t = (i + 1) / (branchStations.length + 1)
-      const buCoord: [number, number] = [
-        startCoord[0] + (endCoord[0] - startCoord[0]) * t,
-        startCoord[1] + (endCoord[1] - startCoord[1]) * t
-      ]
-      
-      // 分支器前添加放大器
-      if (i === 0 || intermediatePoints.length === 0) {
-        const ampCoord: [number, number] = [
-          startCoord[0] + (buCoord[0] - startCoord[0]) * 0.5,
-          startCoord[1] + (buCoord[1] - startCoord[1]) * 0.5
-        ]
-        intermediatePoints.push({
-          coord: ampCoord,
-          type: 'repeater',
-          name: getAmpName(ampIndex++),
-          device: createAmplifierDevice(ampIndex - 1)
-        })
-      }
-      
-      // 添加分支器，并记录分支到哪个站点
-      intermediatePoints.push({
-        coord: buCoord,
-        type: 'branching',
-        name: getBUName(buIndex++),
-        device: createBranchingDevice(buIndex - 1),
-        branchTo: {
-          coord: [station.lon, station.lat],
-          name: station.name
-        }
-      })
-      
-      // 分支器后添加放大器
-      const nextT = (i + 2) / (branchStations.length + 1)
-      const nextPoint = i === branchStations.length - 1 ? endCoord : [
-        startCoord[0] + (endCoord[0] - startCoord[0]) * nextT,
-        startCoord[1] + (endCoord[1] - startCoord[1]) * nextT
-      ] as [number, number]
-      
-      const ampCoord2: [number, number] = [
-        buCoord[0] + (nextPoint[0] - buCoord[0]) * 0.5,
-        buCoord[1] + (nextPoint[1] - buCoord[1]) * 0.5
-      ]
-      intermediatePoints.push({
-        coord: ampCoord2,
-        type: 'repeater',
-        name: getAmpName(ampIndex++),
-        device: createAmplifierDevice(ampIndex - 1)
-      })
-    })
-    
-    // 创建多点规划路线
-    const multiPointRoute = createMultiPointRoute({
-      id: 'multi-point-route',
-      name: '多点规划路线',
-      startCoord,
-      endCoord,
-      startName: startStation.name,
-      endName: endStation.name,
-      intermediatePoints,
-      now
-    })
-    
-    routes.value = [multiPointRoute]
-    paretoRoutes.value = [multiPointRoute]
-    currentRouteId.value = 'multi-point-route'
-    
-    return [multiPointRoute]
-  }
-
-  /**
-   * 创建多点规划路线（包含分支）
-   */
-  function createMultiPointRoute(params: {
-    id: string
-    name: string
-    startCoord: [number, number]
-    endCoord: [number, number]
-    startName: string
-    endName: string
-    intermediatePoints: Array<{ coord: [number, number]; type: 'repeater' | 'branching'; name: string; device: any; branchTo?: { coord: [number, number]; name: string } }>
-    now: Date
-  }): Route {
-    const { id, name, startCoord, endCoord, startName, endName, intermediatePoints, now } = params
-    
-    // 构建主干线上的所有点
-    const points: RoutePoint[] = [
-      { id: `${id}-p1`, coordinates: startCoord, type: 'landing', name: startName }
-    ]
-    
-    intermediatePoints.forEach((p, i) => {
-      points.push({
-        id: `${id}-p${i + 2}`,
-        coordinates: p.coord,
-        type: p.type,
-        name: p.name,
-        device: p.device,
-        branchTo: p.branchTo // 分支目标信息
-      })
-    })
-    
-    points.push({
-      id: `${id}-p${points.length + 1}`,
-      coordinates: endCoord,
-      type: 'landing',
-      name: endName
-    })
-
     // 构建分段
     const segments: RouteSegment[] = []
     let totalLength = 0
@@ -439,7 +233,7 @@ export const useRouteStore = defineStore('route', () => {
       const depth = 1000 + Math.random() * 3000
       
       segments.push({
-        id: `${id}-s${i + 1}`,
+        id: `mp-s${i + 1}`,
         startPointId: points[i].id,
         endPointId: points[i + 1].id,
         length: Math.round(segLength),
@@ -449,21 +243,12 @@ export const useRouteStore = defineStore('route', () => {
         cost: Math.round(segLength * 30000)
       })
     }
-    
-    // 计算分支线长度
-    let branchLength = 0
-    intermediatePoints.forEach(p => {
-      if (p.branchTo) {
-        branchLength += calculateDistance(p.coord, p.branchTo.coord as [number, number])
-      }
-    })
-    totalLength += branchLength
 
     const totalCost = Math.round(totalLength * 35000)
 
-    return {
-      id,
-      name,
+    const route: Route = {
+      id: 'multi-point-route',
+      name: '多点规划路线',
       points,
       segments,
       totalLength: Math.round(totalLength),
@@ -485,118 +270,81 @@ export const useRouteStore = defineStore('route', () => {
       createdAt: now,
       updatedAt: now
     }
+    
+    routes.value = [route]
+    paretoRoutes.value = [route]
+    currentRouteId.value = 'multi-point-route'
+    
+    return [route]
   }
 
   /**
-   * 根据指定坐标生成 Pareto 路径
+   * 根据起终点坐标生成 Pareto 路径
+   * 生成三条不同走向的路径供选择
    */
   function generateParetoRoutesWithCoords(params: PlanningParams): Route[] {
-    const { startPoint, endPoint, waypoints } = params
-    const settingsStore = useSettingsStore()
+    const { startPoint, endPoint } = params
     const now = new Date()
     const startCoord: [number, number] = [startPoint.lon, startPoint.lat]
     const endCoord: [number, number] = [endPoint.lon, endPoint.lat]
     
-    // 从器件库获取设备（放大器和分支器）
-    const amplifierTypes = settingsStore.amplifierTypes
-    const fiberTypes = settingsStore.fiberTypes
-    const branchingUnitTypes = settingsStore.branchingUnitTypes
-    
-    // 获取默认放大器类型
-    const defaultAmplifier = amplifierTypes.length > 0 ? amplifierTypes[0] : null
-    // 获取默认分支器类型
-    const defaultBU = branchingUnitTypes.length > 0 ? branchingUnitTypes[0] : null
-    
-    // 生成放大器设备信息的辅助函数
-    const createAmplifierDevice = (index: number) => ({
-      deviceId: defaultAmplifier?.id || 'amp-default',
-      deviceType: 'amplifier',
-      deviceName: defaultAmplifier 
-        ? `${defaultAmplifier.name}-${String(index).padStart(2, '0')}`
-        : `放大器-${String(index).padStart(2, '0')}`,
-      // 放大器参数
-      gain: defaultAmplifier?.gain || 20,
-      noiseFigure: defaultAmplifier?.noiseFigure || 5,
-      outputPower: defaultAmplifier?.outputPower || 10,
-      bandwidth: defaultAmplifier?.bandwidth,
-      gainFlatness: defaultAmplifier?.gainFlatness,
-      pumpPower: defaultAmplifier?.pumpPower,
-    })
-    
-    // 生成分支器设备信息的辅助函数
-    const createBranchingDevice = (index: number) => ({
-      deviceId: defaultBU?.id || 'bu-default',
-      deviceType: 'branching_unit',
-      deviceName: defaultBU 
-        ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
-        : `分支器-${String(index).padStart(2, '0')}`,
-      // 分支器参数
-      portCount: defaultBU?.portCount || 3,
-      insertionLoss: defaultBU?.insertionLoss || 0.5,
-      wavelengthRange: defaultBU?.wavelengthRange || 1550,
-    })
-    
-    // 生成放大器设备名称
-    const getDeviceName = (index: number) => defaultAmplifier 
-      ? `${defaultAmplifier.name}-${String(index).padStart(2, '0')}`
-      : `放大器-${String(index).padStart(2, '0')}`
-    
-    // 生成分支器设备名称
-    const getBUName = (index: number) => defaultBU 
-      ? `${defaultBU.name}-${String(index).padStart(2, '0')}`
-      : `分支器-${String(index).padStart(2, '0')}`
-    
-    // 计算中间点（用于生成不同的路径方案）
+    // 计算起终点的中间位置和偏移量
     const midLon = (startCoord[0] + endCoord[0]) / 2
     const midLat = (startCoord[1] + endCoord[1]) / 2
-    const distance = calculateDistance(startCoord, endCoord)
     
-    // 生成三条不同策略的路径
+    // 计算垂直于起终点连线的偏移方向
+    const dLon = endCoord[0] - startCoord[0]
+    const dLat = endCoord[1] - startCoord[1]
+    const dist = Math.sqrt(dLon * dLon + dLat * dLat)
+    // 偏移量为距离的20%，使路线更明显区分
+    const offsetScale = dist * 0.2
+    // 垂直方向单位向量
+    const perpLon = -dLat / dist
+    const perpLat = dLon / dist
+    
+    console.log('generateParetoRoutesWithCoords - dist:', dist, 'offsetScale:', offsetScale)
+    
+    // 生成三条不同走向的路径
     const paretoData: Route[] = [
-      // 经济路线 - 直线距离最短，只有中继器，没有航路点
+      // 经济路线：直线（无中间点）
       createRoute({
         id: 'pareto-route-1',
         name: '经济路线',
         startCoord,
         endCoord,
-        startName: startPoint.name || '起点登陆站',
-        endName: endPoint.name || '终点登陆站',
-        intermediatePoints: [
-          { coord: [midLon, midLat] as [number, number], type: 'repeater' as const, name: getDeviceName(1), device: createAmplifierDevice(1) }
-        ],
+        startName: startPoint.name || '起点',
+        endName: endPoint.name || '终点',
+        intermediatePoints: [],
         riskMultiplier: 1.2,
         costMultiplier: 0.85,
         now
       }),
-      // 均衡路线 - 平衡成本和风险
+      // 均衡路线：向北偏移
       createRoute({
         id: 'pareto-route-2',
         name: '均衡路线',
         startCoord,
         endCoord,
-        startName: startPoint.name || '起点登陆站',
-        endName: endPoint.name || '终点登陆站',
+        startName: startPoint.name || '起点',
+        endName: endPoint.name || '终点',
         intermediatePoints: [
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.33, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.33] as [number, number], type: 'repeater' as const, name: getDeviceName(1), device: createAmplifierDevice(1) },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.66, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.66] as [number, number], type: 'repeater' as const, name: getDeviceName(2), device: createAmplifierDevice(2) }
+          { coord: [midLon + perpLon * offsetScale, midLat + perpLat * offsetScale] as [number, number] }
         ],
         riskMultiplier: 0.7,
         costMultiplier: 1.0,
         now
       }),
-      // 安全路线 - 避开风险区域，路径更长
+      // 安全路线：向南偏移，多一个中间点
       createRoute({
         id: 'pareto-route-3',
         name: '安全路线',
         startCoord,
         endCoord,
-        startName: startPoint.name || '起点登陆站',
-        endName: endPoint.name || '终点登陆站',
+        startName: startPoint.name || '起点',
+        endName: endPoint.name || '终点',
         intermediatePoints: [
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.2, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.15] as [number, number], type: 'repeater' as const, name: getDeviceName(1), device: createAmplifierDevice(1) },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.4, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.5] as [number, number], type: 'repeater' as const, name: getDeviceName(2), device: createAmplifierDevice(2) },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.6, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.6] as [number, number], type: 'repeater' as const, name: getDeviceName(3), device: createAmplifierDevice(3) },
-          { coord: [startCoord[0] + (endCoord[0] - startCoord[0]) * 0.85, startCoord[1] + (endCoord[1] - startCoord[1]) * 0.8] as [number, number], type: 'repeater' as const, name: getDeviceName(4), device: createAmplifierDevice(4) }
+          { coord: [startCoord[0] + dLon * 0.33 - perpLon * offsetScale * 1.5, startCoord[1] + dLat * 0.33 - perpLat * offsetScale * 1.5] as [number, number] },
+          { coord: [startCoord[0] + dLon * 0.66 - perpLon * offsetScale * 1.5, startCoord[1] + dLat * 0.66 - perpLat * offsetScale * 1.5] as [number, number] }
         ],
         riskMultiplier: 0.3,
         costMultiplier: 1.5,
@@ -612,7 +360,7 @@ export const useRouteStore = defineStore('route', () => {
   }
 
   /**
-   * 创建单条路径
+   * 创建单条路径（纯路线，无器件）
    */
   function createRoute(params: {
     id: string
@@ -621,7 +369,7 @@ export const useRouteStore = defineStore('route', () => {
     endCoord: [number, number]
     startName: string
     endName: string
-    intermediatePoints: Array<{ coord: [number, number]; type: 'waypoint' | 'repeater' | 'branching'; name?: string; device?: any }>
+    intermediatePoints: Array<{ coord: [number, number]; name?: string }>
     riskMultiplier: number
     costMultiplier: number
     now: Date
@@ -637,9 +385,8 @@ export const useRouteStore = defineStore('route', () => {
       points.push({
         id: `${id}-p${i + 2}`,
         coordinates: p.coord,
-        type: p.type,
-        name: p.name,
-        device: p.device  // 携带器件库设备信息
+        type: 'waypoint',
+        name: p.name || `途经点${i + 1}`
       })
     })
     
@@ -701,6 +448,123 @@ export const useRouteStore = defineStore('route', () => {
     }
   }
 
+  /**
+   * 清除 Pareto 路径数据
+   */
+  function clearParetoRoutes() {
+    routes.value = []
+    paretoRoutes.value = []
+    currentRouteId.value = null
+  }
+
+  /**
+   * 设置 Pareto 路径数据（用于文件导入）
+   */
+  function setParetoRoutes(newRoutes: Route[]) {
+    routes.value = [...newRoutes]
+    paretoRoutes.value = [...newRoutes]
+    if (newRoutes.length > 0) {
+      currentRouteId.value = newRoutes[0].id
+    }
+  }
+
+  /**
+   * 更新路线中的某个点位置（用于拖拽编辑）
+   */
+  function updateRoutePoint(routeId: string, pointId: string, newCoord: [number, number]) {
+    const route = routes.value.find(r => r.id === routeId)
+    if (!route) return
+    
+    const point = route.points.find(p => p.id === pointId)
+    if (!point) return
+    
+    point.coordinates = newCoord
+    
+    // 重新计算相关分段的长度
+    route.segments.forEach(seg => {
+      if (seg.startPointId === pointId || seg.endPointId === pointId) {
+        const startPt = route.points.find(p => p.id === seg.startPointId)
+        const endPt = route.points.find(p => p.id === seg.endPointId)
+        if (startPt && endPt) {
+          seg.length = Math.round(calculateDistance(startPt.coordinates, endPt.coordinates))
+          seg.cost = Math.round(seg.length * 30000)
+        }
+      }
+    })
+    
+    // 更新总长度和成本
+    route.totalLength = route.segments.reduce((sum, s) => sum + s.length, 0)
+    route.totalCost = route.segments.reduce((sum, s) => sum + s.cost, 0)
+    route.distance = route.totalLength
+    route.cost.total = route.totalCost
+    route.updatedAt = new Date()
+  }
+
+  /**
+   * 在路线中添加新点（在指定分段中间插入）
+   */
+  function addRoutePoint(routeId: string, segmentId: string, coord: [number, number], name?: string) {
+    const route = routes.value.find(r => r.id === routeId)
+    if (!route) return
+    
+    const segIndex = route.segments.findIndex(s => s.id === segmentId)
+    if (segIndex === -1) return
+    
+    const segment = route.segments[segIndex]
+    const startPtIndex = route.points.findIndex(p => p.id === segment.startPointId)
+    
+    // 创建新点
+    const newPointId = `${routeId}-p${Date.now()}`
+    const newPoint: RoutePoint = {
+      id: newPointId,
+      coordinates: coord,
+      type: 'waypoint',
+      name: name || `途经点`
+    }
+    
+    // 插入新点
+    route.points.splice(startPtIndex + 1, 0, newPoint)
+    
+    // 创建两个新分段替换原分段
+    const startPt = route.points.find(p => p.id === segment.startPointId)!
+    const endPt = route.points.find(p => p.id === segment.endPointId)!
+    
+    const seg1Length = Math.round(calculateDistance(startPt.coordinates, coord))
+    const seg2Length = Math.round(calculateDistance(coord, endPt.coordinates))
+    
+    const newSeg1: RouteSegment = {
+      id: `${routeId}-s${Date.now()}-1`,
+      startPointId: segment.startPointId,
+      endPointId: newPointId,
+      length: seg1Length,
+      depth: segment.depth,
+      cableType: segment.cableType,
+      riskLevel: segment.riskLevel,
+      cost: Math.round(seg1Length * 30000)
+    }
+    
+    const newSeg2: RouteSegment = {
+      id: `${routeId}-s${Date.now()}-2`,
+      startPointId: newPointId,
+      endPointId: segment.endPointId,
+      length: seg2Length,
+      depth: segment.depth,
+      cableType: segment.cableType,
+      riskLevel: segment.riskLevel,
+      cost: Math.round(seg2Length * 30000)
+    }
+    
+    // 替换分段
+    route.segments.splice(segIndex, 1, newSeg1, newSeg2)
+    
+    // 更新总长度
+    route.totalLength = route.segments.reduce((sum, s) => sum + s.length, 0)
+    route.totalCost = route.segments.reduce((sum, s) => sum + s.cost, 0)
+    route.distance = route.totalLength
+    route.cost.total = route.totalCost
+    route.updatedAt = new Date()
+  }
+
   return {
     routes,
     currentRouteId,
@@ -709,6 +573,7 @@ export const useRouteStore = defineStore('route', () => {
     selectedRouteIds,
     hoveredSegmentId,
     hoveredSegmentInfo,
+    selectedSegmentInfo,
     currentRoute,
     selectedRoute,
     selectedSegment,
@@ -717,13 +582,16 @@ export const useRouteStore = defineStore('route', () => {
     selectSegment,
     setHoveredSegment,
     clearHoveredSegment,
+    selectSegmentInfo,
+    clearSelectedSegmentInfo,
     toggleRouteSelection,
     selectAllRoutes,
     isRouteSelected,
-    generateMockParetoRoutes,
     clearParetoRoutes,
     setParetoRoutes,
     generateParetoRoutesFromSettings,
     generateParetoRoutesWithCoords,
+    updateRoutePoint,
+    addRoutePoint,
   }
 })

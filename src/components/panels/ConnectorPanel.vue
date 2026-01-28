@@ -151,14 +151,14 @@ const handleDelete = (id: string) => {
                 </div>
                 <div class="text-xs text-gray-500 space-y-0.5 pl-4">
                   <div v-if="elem.type === 'fiber'" class="flex items-center gap-3">
-                    <span>KP: <span class="font-medium text-gray-700">{{ elem.kp }} - {{ elem.endKp }}</span> km</span>
+                    <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }} - {{ elem.endKp?.toFixed(1) }}</span> km</span>
                     <span class="w-px h-3 bg-gray-300"></span>
-                    <span>长度: <span class="font-medium text-gray-700">{{ elem.length || (elem.endKp ? elem.endKp - elem.kp : 0) }}</span> km</span>
+                    <span>长度: <span class="font-medium text-gray-700">{{ (elem.length || (elem.endKp ? elem.endKp - elem.kp : 0)).toFixed(1) }}</span> km</span>
                   </div>
                   <div v-else class="flex items-center gap-3">
-                    <span>KP: <span class="font-medium text-gray-700">{{ elem.kp }}</span> km</span>
+                    <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }}</span> km</span>
                     <span class="w-px h-3 bg-gray-300"></span>
-                    <span>水深: <span class="font-medium text-gray-700">{{ elem.depth }}</span> m</span>
+                    <span>水深: <span class="font-medium text-gray-700">{{ elem.depth.toFixed(1) }}</span> m</span>
                   </div>
                   <div v-if="getComponentName(elem.type, elem.componentRefId)" class="text-blue-500">
                     器件: {{ getComponentName(elem.type, elem.componentRefId) }}

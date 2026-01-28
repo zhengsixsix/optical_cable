@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, nextTick } from 'vue'
 import { Button } from '@/components/ui'
 import { useAppStore, useRPLStore, useSettingsStore, useRouteStore } from '@/stores'
 import { 
@@ -37,10 +37,30 @@ const currentRepeaterType = computed(() =>
   settingsStore.settings.repeaterTypes[0]
 )
 
-// 生成中继器名称（器件库名称 + 序号）
-function generateRepeaterName(index: number): string {
-  const typeName = currentRepeaterType.value?.name || '中继器'
-  return `${typeName}-${String(index + 1).padStart(2, '0')}`
+// 从器件库获取放大器类型选项
+const amplifierTypes = computed(() => settingsStore.amplifierTypes || [])
+
+// 检查器件库是否有放大器
+const hasAmplifierInLibrary = computed(() => amplifierTypes.value.length > 0)
+
+// 生成中继器名称（从器件库获取放大器名称）
+function generateRepeaterName(index: number, type?: 'amplifier_e' | 'amplifier_w'): string {
+  const deviceType = type || (index % 2 === 0 ? 'amplifier_e' : 'amplifier_w')
+  
+  // 从器件库获取放大器名称
+  const amps = amplifierTypes.value
+  if (amps.length === 0) {
+    // 器件库为空，使用默认名称
+    const fallbackName = deviceType === 'amplifier_e' ? '放大器东' : '放大器西'
+    return `${fallbackName}-${String(index + 1).padStart(2, '0')}`
+  }
+  
+  // 使用器件库中的放大器名称，交替使用（如果有多个）
+  const ampIndex = deviceType === 'amplifier_e' ? 0 : (amps.length > 1 ? 1 : 0)
+  const ampName = amps[ampIndex].name
+  const direction = deviceType === 'amplifier_e' ? '东' : '西'
+  
+  return `${ampName}-${direction}-${String(index + 1).padStart(2, '0')}`
 }
 
 interface RepeaterConfig {
@@ -59,10 +79,23 @@ interface RepeaterConfig {
   remarks: string
 }
 
-const typeOptions = [
-  { value: 'amplifier_e', label: '放大器东' },
-  { value: 'amplifier_w', label: '放大器西' }
-]
+// 动态生成类型选项（从器件库获取放大器名称）
+const typeOptions = computed(() => {
+  const amps = amplifierTypes.value
+  if (amps.length === 0) {
+    return [
+      { value: 'amplifier_e', label: '放大器东' },
+      { value: 'amplifier_w', label: '放大器西' }
+    ]
+  }
+  // 使用器件库中的放大器名称
+  const eastName = amps[0].name
+  const westName = amps.length > 1 ? amps[1].name : amps[0].name
+  return [
+    { value: 'amplifier_e', label: `${eastName}-东` },
+    { value: 'amplifier_w', label: `${westName}-西` }
+  ]
+})
 
 const repeaters = ref<RepeaterConfig[]>([])
 const selectedRepeaterId = ref<string | null>(null)
@@ -108,6 +141,12 @@ function recalculateSpacing() {
 }
 
 function addRepeater() {
+  // 检查器件库是否有放大器
+  if (!hasAmplifierInLibrary.value) {
+    appStore.showNotification({ type: 'warning', message: '请先在器件库中上传放大器类型' })
+    return
+  }
+  
   const routeData = rplStore.currentTable?.records
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
   
@@ -128,11 +167,12 @@ function addRepeater() {
   const position = interpolateRoutePosition(routeData, newKP)
   
   const repType = currentRepeaterType.value
+  const newType = repeaters.value.length % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
   repeaters.value.push({
     id: `rep-${Date.now()}`,
     index: repeaters.value.length,
-    name: generateRepeaterName(repeaters.value.length),
-    type: repeaters.value.length % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
+    name: generateRepeaterName(repeaters.value.length, newType),
+    type: newType,
     kp: Math.round(newKP * 10) / 10,
     longitude: Math.round(position.longitude * 10000) / 10000,
     latitude: Math.round(position.latitude * 10000) / 10000,
@@ -152,6 +192,12 @@ function deleteRepeater(repId: string) {
 }
 
 function autoOptimize() {
+  // 检查器件库是否有放大器
+  if (!hasAmplifierInLibrary.value) {
+    appStore.showNotification({ type: 'warning', message: '请先在器件库中上传放大器类型' })
+    return
+  }
+  
   // 从 RPL 获取路由数据
   const routeData = rplStore.currentTable?.records
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
@@ -186,11 +232,12 @@ function autoOptimize() {
       const position = interpolateOnMainTrunk(buildFullRouteData(currentRoute.points), targetKp)
       
       const repType = currentRepeaterType.value
+      const newType = repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
       repeaters.value.push({
         id: `rep-${repeaterIndex}`,
         index: repeaterIndex,
-        name: generateRepeaterName(repeaterIndex),
-        type: repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
+        name: generateRepeaterName(repeaterIndex, newType),
+        type: newType,
         kp: Math.round(targetKp * 10) / 10,
         longitude: Math.round(position.longitude * 10000) / 10000,
         latitude: Math.round(position.latitude * 10000) / 10000,
@@ -235,11 +282,12 @@ function autoOptimize() {
           const branchKp = buKp + distanceFromBU
           
           const repType = currentRepeaterType.value
+          const branchType = repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
           repeaters.value.push({
             id: `rep-branch-${point.id}-${j}`,
             index: repeaterIndex,
-            name: `${generateRepeaterName(repeaterIndex)}[分支]`,
-            type: repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
+            name: `${generateRepeaterName(repeaterIndex, branchType)}[分支]`,
+            type: branchType,
             kp: Math.round(branchKp * 10) / 10,
             longitude: Math.round(lon * 10000) / 10000,
             latitude: Math.round(lat * 10000) / 10000,
@@ -273,11 +321,12 @@ function autoOptimize() {
     const position = interpolateRoutePosition(routeData, targetKp)
     
     const repType = currentRepeaterType.value
+    const simpleType = i % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
     repeaters.value.push({
       id: `rep-${i}`,
       index: i,
-      name: generateRepeaterName(i),
-      type: i % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
+      name: generateRepeaterName(i, simpleType),
+      type: simpleType,
       kp: Math.round(targetKp * 10) / 10,
       longitude: Math.round(position.longitude * 10000) / 10000,
       latitude: Math.round(position.latitude * 10000) / 10000,
@@ -468,9 +517,12 @@ const totalPower = computed(() => repeaters.value.reduce((sum, r) => sum + r.pow
 watch(() => props.visible, (val) => {
   if (val && repeaters.value.length === 0) {
     // 基于路由数据初始化，不使用写死数据
-    initRepeatersFromRoute()
+    // 使用 nextTick 确保组件已完全挂载
+    nextTick(() => {
+      initRepeatersFromRoute()
+    })
   }
-}, { immediate: true })
+})
 
 function handleSave() {
   emit('saved', repeaters.value)

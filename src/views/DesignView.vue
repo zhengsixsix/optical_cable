@@ -58,7 +58,7 @@ const openNewProject = () => {
   appStore.openDialog('new-project')
 }
 
-// 调试日志
+// 调试日志 + 初始化登陆站数据
 onMounted(() => {
   console.log('DesignView mounted')
   console.log('connectorStore.tables:', connectorStore.tables.length)
@@ -67,7 +67,128 @@ onMounted(() => {
   console.log('connectorStore.elements:', connectorStore.elements.length)
   console.log('rplStore.tables:', rplStore.tables.length)
   console.log('rplStore.currentTableId:', rplStore.currentTableId)
+  
+  // 从路由规划初始化登陆站和分支器到 monitorStore
+  initLandingStationsFromRoute()
 })
+
+// 从路由规划初始化登陆站和分支器数据
+const initLandingStationsFromRoute = () => {
+  const selectedRoute = routeStore.selectedRoute
+  if (!selectedRoute || selectedRoute.points.length === 0) return
+  
+  // 检查 monitorStore 是否已有登陆站数据
+  const hasLandingStations = monitorStore.devices.some(d => d.type === 'landing')
+  if (hasLandingStations) {
+    console.log('monitorStore 已有登陆站数据，跳过初始化')
+    return
+  }
+  
+  console.log('从路由规划初始化登陆站/分支器数据')
+  
+  // 统计登陆站数量，用于命名
+  const landingPoints = selectedRoute.points.filter(p => p.type === 'landing')
+  const isFirstLanding = (index: number) => {
+    const landingIndex = landingPoints.findIndex(p => p === selectedRoute.points[index])
+    return landingIndex === 0
+  }
+  const isLastLanding = (index: number) => {
+    const landingIndex = landingPoints.findIndex(p => p === selectedRoute.points[index])
+    return landingIndex === landingPoints.length - 1
+  }
+  
+  let cumulativeKp = 0
+  const devices: any[] = []
+  
+  selectedRoute.points.forEach((point, index) => {
+    // 计算 KP
+    if (index > 0) {
+      const prevPoint = selectedRoute.points[index - 1]
+      const dist = Math.sqrt(
+        Math.pow(point.coordinates[0] - prevPoint.coordinates[0], 2) +
+        Math.pow(point.coordinates[1] - prevPoint.coordinates[1], 2)
+      ) * 111 // 粗略转换为 km
+      cumulativeKp += dist
+    }
+    
+    // 只添加登陆站和分支器，不添加 waypoint
+    if (point.type === 'landing' || point.type === 'branching') {
+      const deviceType = point.type === 'landing' ? 'landing' : 'bu'
+      
+      // 登陆站命名：岸上站点-起点/终点
+      let deviceName = point.name
+      if (point.type === 'landing') {
+        if (isFirstLanding(index)) {
+          deviceName = point.name || '岸上站点-起点'
+        } else if (isLastLanding(index)) {
+          deviceName = point.name || '岸上站点-终点'
+        } else {
+          deviceName = point.name || '岸上站点'
+        }
+      } else {
+        deviceName = point.name || '分支器'
+      }
+      
+      devices.push({
+        id: point.id,
+        name: deviceName,
+        type: deviceType,
+        neType: point.type === 'landing' ? 'LTE' : 'BU',
+        kp: cumulativeKp,
+        longitude: point.coordinates[0],
+        latitude: point.coordinates[1],
+        depth: point.type === 'landing' ? 0 : 3000,
+        status: 'normal' as const,
+        location: `KP ${cumulativeKp.toFixed(1)}`,
+        sldEquipmentName: deviceName,
+        inputPower: 0,
+        outputPower: 0,
+        pumpCurrent: 0,
+        pfeVoltage: 48,
+        pfeCurrent: 0,
+        temperature: 25
+      })
+      
+      // 如果是分支器，添加分支登陆站
+      if (point.type === 'branching' && point.branchTo) {
+        const branchDist = Math.sqrt(
+          Math.pow(point.branchTo.coord[0] - point.coordinates[0], 2) +
+          Math.pow(point.branchTo.coord[1] - point.coordinates[1], 2)
+        ) * 111
+        
+        devices.push({
+          id: `branch-${point.id}`,
+          name: point.branchTo.name || '岸上站点-分支',
+          type: 'landing',
+          neType: 'LTE',
+          kp: cumulativeKp + branchDist,
+          longitude: point.branchTo.coord[0],
+          latitude: point.branchTo.coord[1],
+          depth: 0,
+          status: 'normal' as const,
+          location: `Branch from ${point.name}`,
+          sldEquipmentName: point.branchTo.name,
+          inputPower: 0,
+          outputPower: 0,
+          pumpCurrent: 0,
+          pfeVoltage: 48,
+          pfeCurrent: 0,
+          temperature: 25,
+          isBranchStation: true,
+          branchFrom: point.name
+        })
+      }
+    }
+  })
+  
+  if (devices.length > 0) {
+    // 按 KP 排序，分支登陆站放最后
+    const mainDevices = devices.filter(d => !(d as any).isBranchStation).sort((a, b) => a.kp - b.kp)
+    const branchDevices = devices.filter(d => (d as any).isBranchStation)
+    monitorStore.devices.splice(0, monitorStore.devices.length, ...mainDevices, ...branchDevices)
+    console.log('初始化了', devices.length, '个设备到 monitorStore')
+  }
+}
 
 // 监听 elements 变化
 watch(() => connectorStore.elements.length, (newLen) => {
@@ -558,6 +679,12 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
   const existingFibers = connectorStore.elements.filter(e => e.type === 'fiber')
   existingFibers.forEach(f => connectorStore.deleteElement(f.id))
   
+  // 从器件库获取光纤类型
+  const fiberTypes = settingsStore.fiberTypes || []
+  const defaultFiber = fiberTypes[0]
+  const fiberName = defaultFiber?.name || '光纤'
+  const fiberCategory = defaultFiber?.fiberCategory || 'G.654.E'
+  
   // 获取主干线节点（排除分支登陆站）按 KP 排序
   const mainTrunkNodes = connectorStore.elements
     .filter(e => e.type !== 'fiber' && !(e as any).isBranchStation)
@@ -571,20 +698,21 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
     
     connectorStore.addElement({
       type: 'fiber',
-      name: `光纤段 ${i + 1}`,
+      name: `${fiberName}-${String(i + 1).padStart(2, '0')}`,
       kp: startNode.kp,
       endKp: endNode.kp,
       longitude: (startNode.longitude + endNode.longitude) / 2,
       latitude: (startNode.latitude + endNode.latitude) / 2,
       depth: (startNode.depth + endNode.depth) / 2,
       status: 'active',
-      specifications: `G.654.E ${length.toFixed(1)}km`,
+      specifications: `${fiberCategory} ${length.toFixed(1)}km`,
       remarks: `${startNode.name} → ${endNode.name}`
     })
   }
   
   // 为分支登陆站创建分支光纤段（从分支器到分支登陆站）
   const branchStations = connectorStore.elements.filter(e => (e as any).isBranchStation)
+  let branchFiberIndex = mainTrunkNodes.length
   branchStations.forEach(branchStation => {
     const branchFromName = (branchStation as any).branchFrom
     // 找到对应的分支器
@@ -596,14 +724,14 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
       )
       connectorStore.addElement({
         type: 'fiber',
-        name: `分支光纤段`,
+        name: `${fiberName}-分支-${String(branchFiberIndex++).padStart(2, '0')}`,
         kp: branchingUnit.kp,
         endKp: branchingUnit.kp + length,
         longitude: (branchingUnit.longitude + branchStation.longitude) / 2,
         latitude: (branchingUnit.latitude + branchStation.latitude) / 2,
         depth: (branchingUnit.depth + branchStation.depth) / 2,
         status: 'active',
-        specifications: `G.654.E ${length.toFixed(1)}km`,
+        specifications: `${fiberCategory} ${length.toFixed(1)}km`,
         remarks: `[Branch] ${branchingUnit.name} → ${branchStation.name}`
       })
     }

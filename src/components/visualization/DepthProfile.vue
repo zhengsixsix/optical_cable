@@ -14,8 +14,8 @@ interface ProfilePoint {
   depth: number
 }
 
-// 悬停线段信息类型
-interface HoveredSegmentInfo {
+// 线段信息类型
+interface SegmentInfo {
   id: string
   routeId: string
   startPoint: { lon: number; lat: number }
@@ -28,7 +28,7 @@ interface HoveredSegmentInfo {
 
 interface Props {
   extent?: [number, number, number, number]
-  hoveredSegment?: HoveredSegmentInfo | null
+  segmentInfo?: SegmentInfo | null
 }
 
 const props = defineProps<Props>()
@@ -47,7 +47,7 @@ const hoverInfo = ref({
   elevation: 0  // 正值=海拔，负值=水深
 })
 
-// 加载剖面数据
+// 加载剖面数据（框选区域模式 - 沿左上角到右下角对角线采样）
 const loadProfileData = async (extent: [number, number, number, number]) => {
   loading.value = true
   hasData.value = false
@@ -57,10 +57,10 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
     await loadTifMeta()
 
     const [extMinX, extMinY, extMaxX, extMaxY] = extent
-    const centerY = (extMinY + extMaxY) / 2
-
-    const [startLon, startLat] = mercatorToLatLon(extMinX, centerY)
-    const [endLon, endLat] = mercatorToLatLon(extMaxX, centerY)
+    
+    // 左上角 (minX, maxY) 到 右下角 (maxX, minY) 的对角线
+    const [startLon, startLat] = mercatorToLatLon(extMinX, extMaxY)  // 左上角
+    const [endLon, endLat] = mercatorToLatLon(extMaxX, extMinY)      // 右下角
     const totalDistanceKm = haversineDistance(startLon, startLat, endLon, endLat)
 
     const sampleCount = 100
@@ -68,8 +68,9 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
 
     for (let i = 0; i <= sampleCount; i++) {
       const t = i / sampleCount
+      // 沿对角线插值
       const x = extMinX + (extMaxX - extMinX) * t
-      const y = centerY
+      const y = extMaxY - (extMaxY - extMinY) * t  // 从上到下
 
       // 转换为经纬度坐标（tif 文件是经纬度坐标系）
       const [lon, lat] = mercatorToLatLon(x, y)
@@ -97,6 +98,53 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
   }
 }
 
+// 加载剖面数据（线段模式 - 沿线段起终点采样 DEM）
+const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
+  loading.value = true
+  hasData.value = false
+
+  try {
+    // 使用共享的 tif 元数据缓存
+    await loadTifMeta()
+
+    const { startPoint, endPoint } = segment
+    const totalDistanceKm = haversineDistance(
+      startPoint.lon, startPoint.lat,
+      endPoint.lon, endPoint.lat
+    )
+
+    const sampleCount = 100
+    const points: ProfilePoint[] = []
+
+    for (let i = 0; i <= sampleCount; i++) {
+      const t = i / sampleCount
+      // 沿线段插值计算经纬度
+      const lon = startPoint.lon + (endPoint.lon - startPoint.lon) * t
+      const lat = startPoint.lat + (endPoint.lat - startPoint.lat) * t
+
+      // 从多个 tif 中查找对应的文件
+      const tifMeta = findTifForPoint(lon, lat)
+      if (tifMeta) {
+        const elevation = await getElevationFromTif(tifMeta, lon, lat)
+        if (elevation !== null) {
+          points.push({
+            distance: totalDistanceKm * t,
+            depth: elevation
+          })
+        }
+      }
+    }
+
+    profileData.value = points
+    hasData.value = points.length > 0
+    nextTick(() => drawProfile())
+  } catch (error) {
+    console.error('加载线段剖面数据失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
 // 绘制剖面图
 const drawProfile = () => {
   const canvas = canvasRef.value
@@ -116,7 +164,7 @@ const drawProfile = () => {
 
   const width = rect.width
   const height = rect.height
-  const padding = { top: 20, right: 15, bottom: 30, left: 45 }
+  const padding = { top: 20, right: 15, bottom: 35, left: 55 }
   const chartWidth = width - padding.left - padding.right
   const chartHeight = height - padding.top - padding.bottom
 
@@ -195,8 +243,67 @@ const drawProfile = () => {
   cableData.forEach(point => ctx.lineTo(xScale(point.distance), yScale(point.depth)))
   ctx.stroke()
 
-    // 存储交互数据
-    ; (canvas as any)._profileData = { seabedData, xScale, yScale, padding, maxDistance, chartWidth, chartHeight }
+  // ========== 绘制坐标轴 ==========
+  ctx.fillStyle = '#374151'
+  ctx.font = '10px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'top'
+
+  // X轴刻度（距离 km）
+  const xTickCount = 5
+  for (let i = 0; i <= xTickCount; i++) {
+    const dist = (maxDistance / xTickCount) * i
+    const x = xScale(dist)
+    
+    // 刻度线
+    ctx.beginPath()
+    ctx.strokeStyle = '#9CA3AF'
+    ctx.lineWidth = 1
+    ctx.moveTo(x, height - padding.bottom)
+    ctx.lineTo(x, height - padding.bottom + 4)
+    ctx.stroke()
+    
+    // 刻度标签
+    ctx.fillText(dist.toFixed(1), x, height - padding.bottom + 6)
+  }
+  
+  // X轴标题
+  ctx.fillStyle = '#6B7280'
+  ctx.fillText('距离 (km)', padding.left + chartWidth / 2, height - 6)
+
+  // Y轴刻度（高程/水深 m）
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#374151'
+  
+  const yTickCount = 5
+  for (let i = 0; i <= yTickCount; i++) {
+    const elev = minElev + (elevRange / yTickCount) * (yTickCount - i)
+    const y = padding.top + (chartHeight / yTickCount) * i
+    
+    // 刻度线
+    ctx.beginPath()
+    ctx.strokeStyle = '#9CA3AF'
+    ctx.lineWidth = 1
+    ctx.moveTo(padding.left - 4, y)
+    ctx.lineTo(padding.left, y)
+    ctx.stroke()
+    
+    // 刻度标签
+    ctx.fillText(elev.toFixed(0), padding.left - 6, y)
+  }
+  
+  // Y轴标题
+  ctx.save()
+  ctx.translate(10, padding.top + chartHeight / 2)
+  ctx.rotate(-Math.PI / 2)
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#6B7280'
+  ctx.fillText('高程 (m)', 0, 0)
+  ctx.restore()
+
+  // 存储交互数据
+  ; (canvas as any)._profileData = { seabedData, xScale, yScale, padding, maxDistance, chartWidth, chartHeight }
 }
 
 // 鼠标事件
@@ -254,9 +361,17 @@ onUnmounted(() => {
   containerRef.value?.removeEventListener('mouseleave', handleMouseLeave)
 })
 
+// 监听 extent 变化（框选区域模式）
 watch(() => props.extent, (newExtent) => {
   if (newExtent) loadProfileData(newExtent)
 }, { immediate: true })
+
+// 监听 segmentInfo 变化（线段选中模式）
+watch(() => props.segmentInfo, (newSegment) => {
+  if (newSegment) {
+    loadProfileDataFromSegment(newSegment)
+  }
+}, { immediate: true, deep: true })
 </script>
 
 <template>
@@ -270,7 +385,7 @@ watch(() => props.extent, (newExtent) => {
     </div>
 
     <div v-if="!hasData && !loading" class="absolute inset-0 flex items-center justify-center text-gray-500 text-xs">
-      <span>框选区域后显示地形剖面</span>
+      <span>点击选中路径线段或框选区域后显示地形剖面</span>
     </div>
 
     <div v-if="hoverInfo.visible"

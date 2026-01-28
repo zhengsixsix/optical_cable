@@ -34,7 +34,7 @@ import 'ol/ol.css'
 
 import { loadVolcanoData, loadEarthquakeData } from '@/utils/dataLoader'
 import { useShpLoader } from '@/services/ShpLoader'
-import { createColdCoralLayers } from '@/utils/layerFactory'
+import { createColdCoralLayers, createFishingLayers, createShippingLayers } from '@/utils/layerFactory'
 
 // 图标资源
 import volcanoIconUrl from '@/assets/volcano.svg'
@@ -109,6 +109,11 @@ let earthquakeDataLoaded = false
 
 let coldCoralLayers: (VectorLayer<VectorSource> | WebGLPointsLayer<VectorSource>)[] = []
 let coldCoralDataLoaded = false
+let fishingLayers: (VectorLayer<VectorSource> | WebGLPointsLayer<VectorSource>)[] = []
+let fishingDataLoaded = false
+let shippingLayers: (VectorLayer<VectorSource> | WebGLPointsLayer<VectorSource>)[] = []
+let shippingDataLoaded = false
+let elevationLayers: WebGLTileLayer[] = []  // 海洋高程 GeoTIFF 图层
 let routeLayer: VectorLayer<VectorSource> | null = null
 let routeSource: VectorSource | null = null
 
@@ -264,6 +269,16 @@ const disablePointDragging = () => {
   dragPanInteraction = null
 }
 
+// 获取当前活动的 routeId
+const getActiveRouteId = () => {
+  // monitorStore 模式优先
+  if (monitorStore.devices.length > 0) {
+    return 'monitor-route'
+  }
+  // 否则使用选中的 pareto 路线
+  return routeStore.selectedRoute?.id
+}
+
 // 处理指针移动
 const handlePointerMove = (evt: any) => {
   if (!isEditingRoute.value) return
@@ -273,13 +288,23 @@ const handlePointerMove = (evt: any) => {
     geom.setCoordinates(evt.coordinate)
     updateRouteLineFromPoints()
   } else {
-    // 检测是否悬停在点或线上
+    const activeRouteId = getActiveRouteId()
+    
+    // 检测是否悬停在点或线上（只检测当前活动路线）
     const features = map?.getFeaturesAtPixel(evt.pixel, {
-      layerFilter: (layer) => layer === routeLayer
+      layerFilter: (layer) => layer === routeLayer,
+      hitTolerance: 10
     })
 
-    const pointFeature = features?.find(f => f.getGeometry()?.getType() === 'Point')
-    const lineFeature = features?.find(f => f.getGeometry()?.getType() === 'LineString')
+    const pointFeature = features?.find(f => 
+      f.getGeometry()?.getType() === 'Point' && 
+      f.get('routeId') === activeRouteId
+    )
+    const lineFeature = features?.find(f => 
+      f.getGeometry()?.getType() === 'LineString' && 
+      f.get('routeId') === activeRouteId &&
+      !f.get('isBranchLine')
+    )
     
     if (editMode.value === 'drag') {
       if (pointFeature) {
@@ -307,13 +332,28 @@ const handlePointerMove = (evt: any) => {
 const handlePointerDown = (evt: any) => {
   if (!isEditingRoute.value) return
 
+  const activeRouteId = getActiveRouteId()
+  
   const features = map?.getFeaturesAtPixel(evt.pixel, {
-    layerFilter: (layer) => layer === routeLayer
+    layerFilter: (layer) => layer === routeLayer,
+    hitTolerance: 15  // 增加点击容差到15像素
   })
 
-  const pointFeature = features?.find(f => f.getGeometry()?.getType() === 'Point')
-  const lineFeature = features?.find(f => f.getGeometry()?.getType() === 'LineString')
+  console.log('handlePointerDown - editMode:', editMode.value, 'features:', features?.length, 'activeRouteId:', activeRouteId)
+
+  // 只处理当前活动路线的特征
+  const pointFeature = features?.find(f => 
+    f.getGeometry()?.getType() === 'Point' && 
+    f.get('routeId') === activeRouteId
+  )
+  const lineFeature = features?.find(f => 
+    f.getGeometry()?.getType() === 'LineString' && 
+    f.get('routeId') === activeRouteId &&
+    !f.get('isBranchLine')  // 排除分支线
+  )
   
+  console.log('pointFeature:', !!pointFeature, 'lineFeature:', !!lineFeature)
+
   if (editMode.value === 'drag') {
     // 拖拽模式
     if (pointFeature) {
@@ -327,7 +367,10 @@ const handlePointerDown = (evt: any) => {
   } else if (editMode.value === 'add') {
     // 添加点模式 - 点击线段添加新节点
     if (lineFeature) {
+      console.log('Adding point to segment:', lineFeature.get('segmentIndex'))
       addPointToSegment(lineFeature as Feature, evt.coordinate)
+    } else {
+      console.log('No line feature found at click position for route:', selectedRouteId)
     }
   } else if (editMode.value === 'delete') {
     // 删除点模式 - 点击节点删除
@@ -345,6 +388,9 @@ const handlePointerUp = () => {
     
     // 同步更新到 store
     syncPointMoveToStore(selectedPointFeature.value as Feature, coords)
+    
+    // 重绘路径以更新线段
+    drawParetoRoutes()
     
     appStore.showNotification({
       type: 'success',
@@ -539,29 +585,53 @@ const syncAddPointToStore = (routeId: string, insertIndex: number, coords: numbe
   } else {
     const route = routeStore.paretoRoutes.find(r => r.id === routeId)
     if (route) {
+      const newPointId = `point-new-${Date.now()}`
       const newPoint = {
-        id: `point-new-${Date.now()}`,
+        id: newPointId,
         name: `新节点-${insertIndex}`,
         type: 'waypoint' as const,
         coordinates: [coords[0], coords[1]] as [number, number]
       }
+      
+      // 插入新点
       route.points.splice(insertIndex, 0, newPoint)
       
-      // 更新 segments
-      if (insertIndex > 0 && insertIndex < route.segments.length + 1) {
+      // 更新 segments：把原来的 segment 拆成两个
+      const segmentIndexToSplit = insertIndex - 1
+      if (segmentIndexToSplit >= 0 && segmentIndexToSplit < route.segments.length) {
+        const oldSegment = route.segments[segmentIndexToSplit]
         const prevPoint = route.points[insertIndex - 1]
-        const newSegment = {
-          id: `seg-new-${Date.now()}`,
-          startPointId: prevPoint?.id || '',
-          endPointId: newPoint.id,
-          length: 50,
-          depth: 2000,
-          cableType: 'LW',
-          riskLevel: 'low' as const,
-          cost: 100
+        const nextPoint = route.points[insertIndex + 1]
+        
+        // 新的第一段：从前一个点到新点
+        const newSegment1 = {
+          id: `seg-new-${Date.now()}-1`,
+          startPointId: prevPoint?.id || oldSegment.startPointId,
+          endPointId: newPointId,
+          length: Math.round((oldSegment.length || 50) / 2),
+          depth: oldSegment.depth || 2000,
+          cableType: oldSegment.cableType || 'lw',
+          riskLevel: oldSegment.riskLevel || 'low' as const,
+          cost: Math.round((oldSegment.cost || 100) / 2)
         }
-        route.segments.splice(insertIndex, 0, newSegment)
+        
+        // 新的第二段：从新点到下一个点
+        const newSegment2 = {
+          id: `seg-new-${Date.now()}-2`,
+          startPointId: newPointId,
+          endPointId: nextPoint?.id || oldSegment.endPointId,
+          length: Math.round((oldSegment.length || 50) / 2),
+          depth: oldSegment.depth || 2000,
+          cableType: oldSegment.cableType || 'lw',
+          riskLevel: oldSegment.riskLevel || 'low' as const,
+          cost: Math.round((oldSegment.cost || 100) / 2)
+        }
+        
+        // 替换原来的 segment
+        route.segments.splice(segmentIndexToSplit, 1, newSegment1, newSegment2)
       }
+      
+      console.log('syncAddPointToStore - route updated:', route.points.length, 'points,', route.segments.length, 'segments')
     }
   }
 }
@@ -681,8 +751,13 @@ const updateRouteLineFromPoints = () => {
     return
   }
 
-  // 单条线模式（paretoRoutes）：处理分支线
+  // paretoRoutes 模式：通过 segmentIndex 匹配相邻线段
+  const draggedRouteId = selectedPointFeature.value.get('routeId')
+  
   lineFeatures.forEach(lf => {
+    // 只处理同一路线的线段
+    if (lf.get('routeId') !== draggedRouteId) return
+    
     const isBranchLine = lf.get('isBranchLine')
     const geom = lf.getGeometry() as LineString
     const coords = geom.getCoordinates()
@@ -691,13 +766,11 @@ const updateRouteLineFromPoints = () => {
     if (isBranchLine) {
       const branchFromPointIdx = lf.get('branchFromPointIndex')
       
-      // 如果拖拽的是分支器（分支线起点），且匹配分支器索引
       if ((draggedPointType === 'branching' || draggedPointType === 'bu') && 
           branchFromPointIdx === draggedPointIndex) {
         coords[0] = draggedCoords
         geom.setCoordinates(coords)
       }
-      // 如果拖拽的是分支登陆站（分支线终点），通过 branchFromPointIndex 匹配
       const draggedBranchFromIdx = selectedPointFeature.value?.get('branchFromPointIndex')
       if (draggedIsBranchStation && branchFromPointIdx === draggedBranchFromIdx) {
         coords[1] = draggedCoords
@@ -706,23 +779,18 @@ const updateRouteLineFromPoints = () => {
       return
     }
     
-    // 处理主幹线段：找到相关的线段并更新
-    const fromPointId = lf.get('fromPointId')
-    const toPointId = lf.get('toPointId')
-    
-    // 找到起点和终点的 Feature
-    const fromPointFeature = pointFeatures.find(pf => pf.get('pointId') === fromPointId || pf.getId() === fromPointId)
-    const toPointFeature = pointFeatures.find(pf => pf.get('pointId') === toPointId || pf.getId() === toPointId)
-    
+    // 处理主干线段：通过 segmentIndex 匹配
+    const segmentIndex = lf.get('segmentIndex')
     let updated = false
-    // 如果拖拽的是线段的起点，更新起点
-    if (fromPointFeature === selectedPointFeature.value) {
-      coords[0] = draggedCoords
+    
+    // 如果这条线段的终点是拖拽的点（segmentIndex == draggedPointIndex - 1）
+    if (segmentIndex === draggedPointIndex - 1 && coords.length >= 2) {
+      coords[1] = draggedCoords
       updated = true
     }
-    // 如果拖拽的是线段的终点，更新终点
-    if (toPointFeature === selectedPointFeature.value) {
-      coords[1] = draggedCoords
+    // 如果这条线段的起点是拖拽的点（segmentIndex == draggedPointIndex）
+    if (segmentIndex === draggedPointIndex && coords.length >= 2) {
+      coords[0] = draggedCoords
       updated = true
     }
     
@@ -939,6 +1007,9 @@ const initMap = () => {
     return new WebGLTileLayer({ source, style: rgbStyle, visible: true, opacity: 1 })
   })
 
+  // 保存到模块变量，供图层控制使用
+  elevationLayers = geoTiffLayers
+
   map = new Map({
     target: mapContainer.value,
     layers: [
@@ -1004,6 +1075,40 @@ const initMap = () => {
         const routeId = lineFeature.get('routeId')
         selectedCableId.value = routeId
         routeStore.selectRoute(routeId)
+        
+        // 获取线段信息用于水深剖面显示
+        const geom = lineFeature.getGeometry() as LineString
+        const coords = geom.getCoordinates()
+        const segmentIndex = lineFeature.get('segmentIndex') ?? 0
+        
+        // 获取线段详细信息
+        let segmentLength = lineFeature.get('segmentLength')
+        let segmentDepth = lineFeature.get('segmentDepth')
+        let segmentCableType = lineFeature.get('segmentCableType') || 'LW'
+        let segmentRiskLevel = lineFeature.get('segmentRiskLevel') || 'low'
+        
+        if (!segmentLength || !segmentDepth) {
+          const info = getSegmentInfo(routeId, segmentIndex)
+          if (info) {
+            segmentLength = info.length
+            segmentDepth = info.depth
+            segmentCableType = info.cableType || 'LW'
+            segmentRiskLevel = info.riskLevel || 'low'
+          }
+        }
+        
+        // 设置选中线段信息用于水深剖面
+        routeStore.selectSegmentInfo({
+          id: lineFeature.get('segmentId') || routeId,
+          routeId: routeId,
+          startPoint: { lon: coords[0][0], lat: coords[0][1] },
+          endPoint: { lon: coords[coords.length - 1][0], lat: coords[coords.length - 1][1] },
+          length: segmentLength || 0,
+          depth: segmentDepth || 0,
+          cableType: segmentCableType,
+          riskLevel: segmentRiskLevel
+        })
+        
         drawParetoRoutes()
         return
       }
@@ -1019,6 +1124,7 @@ const initMap = () => {
       }
     } else {
       selectedCableId.value = null
+      routeStore.clearSelectedSegmentInfo()
     }
   })
 
@@ -1410,6 +1516,125 @@ const initMap = () => {
     { immediate: false }
   )
 
+  // 加载并渲染渔业数据
+  const loadAndRenderFishing = async () => {
+    if (!map || fishingDataLoaded) return
+
+    layerStore.setLayerLoading('fishing', true)
+    const shpLoader = useShpLoader()
+
+    try {
+      const geojsonData = await shpLoader.load('/data/渔业数据.zip')
+      const features = shpLoader.parseFeatures(geojsonData)
+      console.log(`渔业数据解析完成，共 ${features.length} 个要素`)
+
+      if (features.length === 0) {
+        layerStore.setLayerLoading('fishing', false)
+        return
+      }
+
+      const layers = createFishingLayers(features)
+
+      layers.forEach((layer: any) => {
+        map!.addLayer(layer)
+        fishingLayers.push(layer)
+      })
+
+      fishingDataLoaded = true
+      layerStore.setLayerLoaded('fishing', true)
+
+      appStore.showNotification({ type: 'success', message: `已加载渔业数据，共 ${features.length} 个要素` })
+      appStore.addLog('INFO', `渔业数据加载完成`)
+
+    } catch (error) {
+      console.error('加载渔业数据失败:', error)
+      layerStore.setLayerLoading('fishing', false)
+      appStore.showNotification({ type: 'error', message: '加载渔业数据失败' })
+    }
+  }
+
+  const setFishingVisible = (visible: boolean) => {
+    fishingLayers.forEach(layer => layer.setVisible(visible))
+  }
+
+  // 监听渔业图层可见性
+  watch(
+    () => layerStore.layers.find(l => l.id === 'fishing')?.visible,
+    async (visible) => {
+      if (visible) {
+        if (!fishingDataLoaded) await loadAndRenderFishing()
+        else setFishingVisible(true)
+      } else {
+        setFishingVisible(false)
+      }
+    },
+    { immediate: false }
+  )
+
+  // 加载并渲染航道数据
+  const loadAndRenderShipping = async () => {
+    if (!map || shippingDataLoaded) return
+
+    layerStore.setLayerLoading('shipping', true)
+    const shpLoader = useShpLoader()
+
+    try {
+      const geojsonData = await shpLoader.load('/data/航道数据.zip')
+      const features = shpLoader.parseFeatures(geojsonData)
+      console.log(`航道数据解析完成，共 ${features.length} 个要素`)
+
+      if (features.length === 0) {
+        layerStore.setLayerLoading('shipping', false)
+        return
+      }
+
+      const layers = createShippingLayers(features)
+
+      layers.forEach((layer: any) => {
+        map!.addLayer(layer)
+        shippingLayers.push(layer)
+      })
+
+      shippingDataLoaded = true
+      layerStore.setLayerLoaded('shipping', true)
+
+      appStore.showNotification({ type: 'success', message: `已加载航道数据，共 ${features.length} 个要素` })
+      appStore.addLog('INFO', `航道数据加载完成`)
+
+    } catch (error) {
+      console.error('加载航道数据失败:', error)
+      layerStore.setLayerLoading('shipping', false)
+      appStore.showNotification({ type: 'error', message: '加载航道数据失败' })
+    }
+  }
+
+  const setShippingVisible = (visible: boolean) => {
+    shippingLayers.forEach(layer => layer.setVisible(visible))
+  }
+
+  // 监听航道图层可见性
+  watch(
+    () => layerStore.layers.find(l => l.id === 'shipping')?.visible,
+    async (visible) => {
+      if (visible) {
+        if (!shippingDataLoaded) await loadAndRenderShipping()
+        else setShippingVisible(true)
+      } else {
+        setShippingVisible(false)
+      }
+    },
+    { immediate: false }
+  )
+
+  // 监听海洋高程图层可见性（控制 GeoTIFF 底图）
+  watch(
+    () => layerStore.layers.find(l => l.id === 'elevation')?.visible,
+    (visible) => {
+      elevationLayers.forEach(layer => layer.setVisible(visible ?? true))
+    },
+    { immediate: false }
+  )
+
   setTimeout(() => {
     loading.value = false
     if (loadedCount === 0) {
@@ -1432,9 +1657,14 @@ const initMap = () => {
 // 路径颜色配置
 const routeColors = ['#3b82f6', '#10b981', '#f59e0b'] // 蓝、绿、橙
 
+// 器件库设备类型（系统规划落位的器件，路由规划模式下应过滤）
+const deviceLibraryTypes = ['amplifier_e', 'amplifier_w', 'repeater', 'Repeater', 'EDFA']
+
 // 绑制路径到地图
 const drawParetoRoutes = () => {
   if (!map) return
+
+  console.log('drawParetoRoutes - monitorStore.devices:', monitorStore.devices.length, 'paretoRoutes:', routeStore.paretoRoutes.length)
 
   // 如果图层已存在，先清除
   if (routeSource) {
@@ -1449,7 +1679,21 @@ const drawParetoRoutes = () => {
     map.addLayer(routeLayer)
   }
 
-  // 优先使用 paretoRoutes 绘制多条路线
+  // 检查 monitorStore.devices 中是否包含器件库设备（系统规划落位的器件）
+  const hasDeviceLibraryItems = monitorStore.devices.some(d => deviceLibraryTypes.includes(d.type))
+  
+  // 如果有 paretoRoutes 数据且 monitorStore 包含器件库设备，
+  // 说明是从系统规划切换回来的，应该优先使用 paretoRoutes 绘制路由规划数据
+  if (routeStore.paretoRoutes.length > 0 && hasDeviceLibraryItems) {
+    console.log('检测到器件库设备，切换到路由规划模式，使用 paretoRoutes 绘制')
+    // 不使用 monitorStore.devices，直接使用 paretoRoutes 绘制
+  } else if (monitorStore.devices.length > 0) {
+    // 优先使用 monitorStore 设备数据（实际工程数据，无器件库设备）
+    drawMonitorDevices()
+    return
+  }
+
+  // 使用 paretoRoutes 绘制多条路线
   if (routeStore.paretoRoutes.length > 0) {
     const routes = routeStore.paretoRoutes
     console.log('Drawing paretoRoutes:', routes.length, 'routes')
@@ -1457,12 +1701,12 @@ const drawParetoRoutes = () => {
     routes.forEach((route, routeIndex) => {
       const baseColor = routeColors[routeIndex % routeColors.length]
       const isRouteSelected = routeStore.selectedRoute?.id === route.id
-      // 选中路线使用更粗的线和实线
+      // 选中路线使用更粗的线和实线，非选中也用实线但细一些
       const lineWidth = isRouteSelected ? 5 : 3
-      const lineDash = isRouteSelected ? undefined : [8, 4]
+      const lineDash = undefined  // 所有路线都用实线
       const lineColor = isRouteSelected ? '#ef4444' : baseColor  // 选中时用红色高亮
 
-      console.log(`Route ${routeIndex}: ${route.id}, selected: ${isRouteSelected}, points: ${route.points.length}`)
+      console.log(`Route ${routeIndex}: ${route.id}, selected: ${isRouteSelected}, points: ${route.points.length}, color: ${lineColor}`)
 
       // 分段绘制光纤线（每个节点之间是独立的 Feature）
       for (let i = 0; i < route.points.length - 1; i++) {
@@ -1597,160 +1841,156 @@ const drawParetoRoutes = () => {
       const extent = routeSource.getExtent()
       map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
     }
-    return
+  }
+}
+
+// 绘制 monitorStore 设备数据
+const drawMonitorDevices = () => {
+  if (!map || !routeSource) return
+  
+  const devices = [...monitorStore.devices].sort((a, b) => (a.kp || 0) - (b.kp || 0))
+  console.log('Drawing monitorStore devices:', devices.length)
+  
+  // 分离主干设备和分支登陆站
+  const mainTrunkDevices = devices.filter((d: any) => !d.isBranchStation)
+  const branchStations = devices.filter((d: any) => d.isBranchStation)
+  
+  // 分段绘制主干光纤线（每段可独立选中）
+  for (let i = 0; i < mainTrunkDevices.length - 1; i++) {
+    const startDevice = mainTrunkDevices[i]
+    const endDevice = mainTrunkDevices[i + 1]
+    const isSelected = selectedCableId.value === `segment-${i}`
+    
+    const segmentFeature = new Feature({
+      geometry: new LineString([
+        [startDevice.longitude, startDevice.latitude],
+        [endDevice.longitude, endDevice.latitude]
+      ]),
+      routeId: 'monitor-route',
+      segmentIndex: i,
+      fromId: startDevice.id,
+      toId: endDevice.id,
+    })
+    segmentFeature.setStyle(new Style({
+      stroke: new Stroke({
+        color: isSelected ? '#f59e0b' : '#3b82f6',
+        width: isSelected ? 5 : 3,
+        lineDash: isSelected ? undefined : [8, 4],
+      }),
+    }))
+    routeSource!.addFeature(segmentFeature)
+  }
+  
+  // 绘制分支线（从分支器到分支登陆站）
+  branchStations.forEach((branchStation: any) => {
+    const branchFromName = branchStation.branchFrom
+    const branchingUnit = mainTrunkDevices.find((d: any) => d.name === branchFromName)
+    
+    if (branchingUnit) {
+      const branchFromIdx = mainTrunkDevices.indexOf(branchingUnit)
+      const branchLineFeature = new Feature({
+        geometry: new LineString([
+          [branchingUnit.longitude, branchingUnit.latitude],
+          [branchStation.longitude, branchStation.latitude]
+        ]),
+        routeId: 'monitor-route',
+        isBranchLine: true,
+        branchFromPointIndex: branchFromIdx,
+        branchToName: branchStation.name,
+        fromDeviceId: branchingUnit.id,
+        toDeviceId: branchStation.id,
+      })
+      branchLineFeature.setStyle(new Style({
+        stroke: new Stroke({
+          color: '#a855f7',
+          width: 2,
+          lineDash: [6, 4],
+        }),
+      }))
+      routeSource!.addFeature(branchLineFeature)
+    }
+  })
+
+  // 设备类型颜色映射
+  const deviceColorMap: Record<string, string> = {
+    'landing': '#22c55e',
+    'LandingStation': '#22c55e',
+    'repeater': '#3b82f6',
+    'Repeater': '#3b82f6',
+    'amplifier_e': '#3b82f6',
+    'amplifier_w': '#3b82f6',
+    'bu': '#a855f7',
+    'BU': '#a855f7',
+    'branching': '#a855f7',
+    'joint': '#f97316',
+    'Joint': '#f97316',
+    'underwater': '#06b6d4',
+    'PFE': '#06b6d4',
+    'waypoint': '#6b7280',
+  }
+  
+  const deviceSizeMap: Record<string, number> = {
+    'landing': 12,
+    'LandingStation': 12,
+    'repeater': 8,
+    'Repeater': 8,
+    'amplifier_e': 8,
+    'amplifier_w': 8,
+    'bu': 10,
+    'BU': 10,
+    'branching': 10,
+    'joint': 6,
+    'Joint': 6,
+    'underwater': 8,
+    'PFE': 8,
+    'waypoint': 5,
   }
 
-  // 备用：使用 monitorStore 设备数据（与实时监控页面一致）
-  if (monitorStore.devices.length > 0) {
-    const devices = [...monitorStore.devices].sort((a, b) => (a.kp || 0) - (b.kp || 0))
-    
-    // 分离主干设备和分支登陆站
-    const mainTrunkDevices = devices.filter((d: any) => !d.isBranchStation)
-    const branchStations = devices.filter((d: any) => d.isBranchStation)
-    
-    // 分段绘制主干光纤线（每段可独立选中）
-    for (let i = 0; i < mainTrunkDevices.length - 1; i++) {
-      const startDevice = mainTrunkDevices[i]
-      const endDevice = mainTrunkDevices[i + 1]
-      const isSelected = selectedCableId.value === `segment-${i}`
-      
-      const segmentFeature = new Feature({
-        geometry: new LineString([
-          [startDevice.longitude, startDevice.latitude],
-          [endDevice.longitude, endDevice.latitude]
-        ]),
-        routeId: `segment-${i}`,
-        segmentIndex: i,
-        fromId: startDevice.id,
-        toId: endDevice.id,
-      })
-      segmentFeature.setStyle(new Style({
-        stroke: new Stroke({
-          color: isSelected ? '#f59e0b' : '#3b82f6',
-          width: isSelected ? 5 : 3,
-          lineDash: isSelected ? undefined : [8, 4],
-        }),
-      }))
-      routeSource!.addFeature(segmentFeature)
-    }
-    
-    // 绘制分支线（从分支器到分支登陆站）
-    branchStations.forEach((branchStation: any, bsIndex: number) => {
-      // 通过 branchFrom 找到分支器
-      const branchFromName = branchStation.branchFrom
-      const branchingUnit = mainTrunkDevices.find((d: any) => d.name === branchFromName)
-      
+  devices.forEach((device, index) => {
+    let branchFromIdx = -1
+    if ((device as any).isBranchStation && (device as any).branchFrom) {
+      const branchingUnit = mainTrunkDevices.find((d: any) => d.name === (device as any).branchFrom)
       if (branchingUnit) {
-        const branchFromIdx = mainTrunkDevices.indexOf(branchingUnit)
-        const branchLineFeature = new Feature({
-          geometry: new LineString([
-            [branchingUnit.longitude, branchingUnit.latitude],
-            [branchStation.longitude, branchStation.latitude]
-          ]),
-          routeId: 'monitor-route',
-          isBranchLine: true,
-          branchFromPointIndex: branchFromIdx,
-          branchToName: branchStation.name,
-          fromDeviceId: branchingUnit.id,
-          toDeviceId: branchStation.id,
-        })
-        branchLineFeature.setStyle(new Style({
-          stroke: new Stroke({
-            color: '#a855f7', // 紫色
-            width: 2,
-            lineDash: [6, 4],
-          }),
-        }))
-        routeSource!.addFeature(branchLineFeature)
+        branchFromIdx = mainTrunkDevices.indexOf(branchingUnit)
       }
-    })
-
-    // 添加设备点 - 使用不同颜色的圆点区分设备类型
-    // 设备类型颜色映射
-    const deviceColorMap: Record<string, string> = {
-      'landing': '#22c55e',       // 登陆站 - 绿色
-      'LandingStation': '#22c55e',
-      'repeater': '#3b82f6',      // 中继器 - 蓝色
-      'Repeater': '#3b82f6',
-      'amplifier_e': '#3b82f6',
-      'amplifier_w': '#3b82f6',
-      'bu': '#a855f7',            // 分支器 - 紫色
-      'BU': '#a855f7',
-      'branching': '#a855f7',
-      'joint': '#f97316',         // 接头 - 橙色
-      'Joint': '#f97316',
-      'underwater': '#06b6d4',    // 水下站点 - 青色
-      'PFE': '#06b6d4',
-      'waypoint': '#6b7280',      // 航路点 - 灰色
     }
     
-    // 设备类型大小映射
-    const deviceSizeMap: Record<string, number> = {
-      'landing': 12,
-      'LandingStation': 12,
-      'repeater': 8,
-      'Repeater': 8,
-      'amplifier_e': 8,
-      'amplifier_w': 8,
-      'bu': 10,
-      'BU': 10,
-      'branching': 10,
-      'joint': 6,
-      'Joint': 6,
-      'underwater': 8,
-      'PFE': 8,
-      'waypoint': 5,
-    }
-
-    devices.forEach((device, index) => {
-      // 查找分支来源的分支器索引（如果是分支登陆站）
-      let branchFromIdx = -1
-      if ((device as any).isBranchStation && (device as any).branchFrom) {
-        const branchingUnit = mainTrunkDevices.find((d: any) => d.name === (device as any).branchFrom)
-        if (branchingUnit) {
-          branchFromIdx = mainTrunkDevices.indexOf(branchingUnit)
-        }
-      }
-      
-      const pointFeature = new Feature({
-        geometry: new Point([device.longitude, device.latitude]),
-        deviceId: device.id,
-        deviceType: device.type,
-        deviceName: device.name,
-        pointIndex: index,  // 添加 pointIndex 以支持拖抽编辑
-        pointType: device.type,  // 添加 pointType
-        routeId: 'monitor-route',  // 添加 routeId 以支持编辑模式检测
-        isBranchStation: (device as any).isBranchStation || false,
-        branchFromPointIndex: branchFromIdx >= 0 ? branchFromIdx : undefined,
-      })
-
-      // 根据设备类型设置颜色和大小
-      const color = deviceColorMap[device.type] || '#6b7280'
-      const radius = deviceSizeMap[device.type] || 6
-
-      pointFeature.setStyle(new Style({
-        image: new CircleStyle({
-          radius: radius,
-          fill: new Fill({ color: color }),
-          stroke: new Stroke({ color: '#fff', width: 2 }),
-        }),
-        text: new Text({
-          text: device.name,
-          offsetY: -(radius + 8),
-          font: '11px sans-serif',
-          fill: new Fill({ color: '#333' }),
-          stroke: new Stroke({ color: '#fff', width: 3 }),
-        }),
-      }))
-
-      routeSource!.addFeature(pointFeature)
+    const pointFeature = new Feature({
+      geometry: new Point([device.longitude, device.latitude]),
+      deviceId: device.id,
+      deviceType: device.type,
+      deviceName: device.name,
+      pointIndex: index,
+      pointType: device.type,
+      routeId: 'monitor-route',
+      isBranchStation: (device as any).isBranchStation || false,
+      branchFromPointIndex: branchFromIdx >= 0 ? branchFromIdx : undefined,
     })
 
-    // 缩放到路径范围
-    if (routeSource.getFeatures().length > 0) {
-      const extent = routeSource.getExtent()
-      map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
-    }
+    const color = deviceColorMap[device.type] || '#6b7280'
+    const radius = deviceSizeMap[device.type] || 6
+
+    pointFeature.setStyle(new Style({
+      image: new CircleStyle({
+        radius: radius,
+        fill: new Fill({ color: color }),
+        stroke: new Stroke({ color: '#fff', width: 2 }),
+      }),
+      text: new Text({
+        text: device.name,
+        offsetY: -(radius + 8),
+        font: '11px sans-serif',
+        fill: new Fill({ color: '#333' }),
+        stroke: new Stroke({ color: '#fff', width: 3 }),
+      }),
+    }))
+
+    routeSource!.addFeature(pointFeature)
+  })
+
+  if (routeSource.getFeatures().length > 0) {
+    const extent = routeSource.getExtent()
+    map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
   }
 }
 
@@ -2048,33 +2288,10 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
       connectorStore.currentTableId = connectorStore.tables[0].id
     }
     
-    // 同步到 monitorStore（实时监控面板）
-    const monitorDevices = devices.map((d: any) => ({
-      id: d.id,
-      name: d.name,
-      type: d.type,
-      neType: d.type,
-      status: 'normal' as const,
-      location: `KP${d.kp}`,
-      kp: d.kp,
-      sldEquipmentName: d.name,
-      longitude: d.longitude,
-      latitude: d.latitude,
-      depth: d.depth || 0,
-      inputPower: -10 + Math.random() * 2,
-      outputPower: 10 + Math.random() * 2,
-      pumpCurrent: 200 + Math.random() * 50,
-      pfeVoltage: 12000 + Math.random() * 500,
-      pfeCurrent: 1.5 + Math.random() * 0.2,
-      temperature: 25 + Math.random() * 5,
-      // 保留分支站点信息
-      isBranchStation: d.isBranchStation || false,
-      branchFrom: d.branchFrom || null,
-      branchTo: d.branchTo || null,
-    }))
-    monitorStore.devices = monitorDevices
+    // 注意：规划模式下不同步到 monitorStore，避免影响 Pareto 路线显示
+    // monitorStore.devices 仅用于 USE 文件导入的工程数据
     
-    console.log('Route synced to Connector:', allElements.length, 'elements, Monitor:', monitorDevices.length, 'devices')
+    console.log('Route synced to Connector:', allElements.length, 'elements')
   } catch (err) {
     console.error('syncRouteToConnector error:', err)
   }
@@ -2131,30 +2348,20 @@ const togglePlanning = () => {
 }
 
 const handleRunPlanning = () => {
-  // 检查器件库是否已导入
-  if (settingsStore.amplifierTypes.length === 0) {
-    appStore.showNotification({ 
-      type: 'warning', 
-      message: '请先在工程设置 > 器件库管理 中导入器件库' 
-    })
-    appStore.addLog('WARN', '运行规划失败：未导入器件库（放大器类型为空）')
-    return
-  }
-  
   const config = settingsStore.routePlanningConfig
   
   // 根据规划模式检查配置
   if (config.mode === 'multi-point') {
-    // 多点规划模式：检查 waypoints 是否至少有3个有效坐标
+    // 多点规划模式：检查 waypoints 是否至少有2个有效坐标
     const validWaypoints = (config.waypoints || []).filter(
       wp => wp.lon !== 0 || wp.lat !== 0
     )
-    if (validWaypoints.length < 3) {
+    if (validWaypoints.length < 2) {
       appStore.showNotification({ 
         type: 'warning', 
-        message: '多点规划至少需要3个有效的登陆站坐标，请在工程设置中配置' 
+        message: '多点规划至少需要2个有效的登陆站坐标，请在工程设置中配置' 
       })
-      appStore.addLog('WARN', `运行规划失败：多点规划需要至少3个坐标，当前只有${validWaypoints.length}个`)
+      appStore.addLog('WARN', `运行规划失败：多点规划需要至少2个坐标，当前只有${validWaypoints.length}个`)
       return
     }
   } else {
@@ -2189,6 +2396,9 @@ const handleRunPlanning = () => {
     enabledLayers.push('地震')
   }
 
+  // 清空 monitorStore 设备数据，确保使用 paretoRoutes 绘制
+  monitorStore.devices = []
+  
   // 根据工程设置生成 Pareto 路径
   routeStore.generateParetoRoutesFromSettings()
 

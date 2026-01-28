@@ -17,6 +17,9 @@ const routeStore = useRouteStore()
 
 const panelVisibility = computed(() => appStore.panelVisibility)
 
+// 获取选中的线段信息用于水深剖面显示
+const selectedSegment = computed(() => routeStore.selectedSegmentInfo)
+
 const showFullscreen3D = ref(false)
 
 function togglePanel(panel: 'depthProfile' | 'terrain3D' | 'realtime') {
@@ -40,7 +43,7 @@ function togglePanel(panel: 'depthProfile' | 'terrain3D' | 'realtime') {
         </div>
       </CardHeader>
       <CardContent class="flex-1 p-0 overflow-hidden">
-        <DepthProfile :extent="selectedExtent" />
+        <DepthProfile :extent="selectedExtent" :segment-info="selectedSegment" />
       </CardContent>
     </Card>
 
