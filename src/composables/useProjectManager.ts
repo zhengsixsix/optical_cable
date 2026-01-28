@@ -15,11 +15,55 @@ export interface CreateProjectParams {
   allowOtherUsers: boolean
   rplFile?: string
   rplFileData?: File  // RPL 文件对象，用于导入
+  planningMode?: 'point-to-point' | 'multi-point'
+  startStation?: {
+    name: string
+    longitude: number
+    latitude: number
+  }
+  endStation?: {
+    name: string
+    longitude: number
+    latitude: number
+  }
+  waypoints?: Array<{
+    id: string
+    name: string
+    longitude: number
+    latitude: number
+  }>
+  gisConfig?: {
+    planningRange: string
+    gridSize: string
+  }
   layers: Array<{
     key: string
     label: string
     checked: boolean
     value: string
+  }>
+  devices?: Array<{
+    id: string
+    name: string
+    type: string
+    file?: string
+    parsedData?: {
+      fiberTypes?: any[]
+      amplifierTypes?: any[]
+      branchingUnitTypes?: any[]
+    }
+  }>
+  // 路径规划成本
+  routeCosts?: Array<{
+    id: string
+    name: string
+    price: number
+  }>
+  // 系统规划成本
+  systemCosts?: Array<{
+    id: string
+    name: string
+    price: number
   }>
 }
 
@@ -265,7 +309,7 @@ export function useProjectManager() {
    * 新建项目
    */
   async function createProject(params: CreateProjectParams): Promise<boolean> {
-    const { projectType, projectName, allowOtherUsers, layers, rplFileData } = params
+    const { projectType, projectName, allowOtherUsers, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig } = params
     
     // 检查当前是否有未保存的项目
     if (hasOpenProject.value && isDirty.value) {
@@ -305,6 +349,110 @@ export function useProjectManager() {
       for (const layer of layers) {
         if (layer.checked) {
           layerStore.setLayerVisible(layer.key, true)
+        }
+      }
+
+      // 如果有设置站点位置或GIS配置，更新工程设置
+      const settingsStore = useSettingsStore()
+      
+      if (startStation || endStation || gisConfig || (waypoints && waypoints.length > 0)) {
+        settingsStore.updateRoutePlanningConfig({
+          mode: planningMode || 'point-to-point',
+          startPoint: startStation ? { lon: startStation.longitude, lat: startStation.latitude } : { lon: 0, lat: 0 },
+          endPoint: endStation ? { lon: endStation.longitude, lat: endStation.latitude } : { lon: 0, lat: 0 },
+          waypoints: waypoints ? waypoints.map(wp => ({
+            id: wp.id,
+            name: wp.name,
+            lon: wp.longitude,
+            lat: wp.latitude
+          })) : [],
+          isConfigured: true
+        })
+      }
+      
+      // 处理成本参数
+      const costUpdates: Record<string, number> = {}
+      
+      // 路径规划成本
+      if (params.routeCosts && params.routeCosts.length > 0) {
+        params.routeCosts.forEach((cost) => {
+          switch (cost.name) {
+            case '轻型海缆单价':
+              costUpdates.lightCableCost = cost.price
+              break
+            case '重型海缆单价':
+              costUpdates.heavyCableCost = cost.price
+              break
+            case '施工成本极大值':
+              costUpdates.maxConstructionCost = cost.price
+              break
+            case '深浅分界值':
+              costUpdates.depthThreshold = cost.price
+              break
+          }
+        })
+      }
+      
+      // 系统规划成本
+      if (params.systemCosts && params.systemCosts.length > 0) {
+        params.systemCosts.forEach((cost) => {
+          switch (cost.name) {
+            case '光缆成本':
+              costUpdates.cableCostPerKm = cost.price
+              break
+            case '中继器成本':
+              costUpdates.repeaterCost = cost.price
+              break
+            case '分支器成本':
+              costUpdates.branchingUnitCost = cost.price
+              break
+            case '岸上站点成本':
+              costUpdates.landingStationCost = cost.price
+              break
+            case '施工成本':
+              costUpdates.installationCostPerKm = cost.price
+              break
+          }
+        })
+      }
+      
+      if (Object.keys(costUpdates).length > 0) {
+        settingsStore.updateCostFactors(costUpdates)
+      }
+      
+      // 处理器件库文件（解析并导入器件数据）
+      if (params.devices && params.devices.length > 0) {
+        const deviceFiles: string[] = []
+        let totalFibers = 0, totalAmplifiers = 0, totalBranchingUnits = 0
+        
+        for (const device of params.devices) {
+          deviceFiles.push(device.file || device.name)
+          
+          // 如果有解析后的数据，导入到 settingsStore
+          if (device.parsedData) {
+            const { fiberTypes, amplifierTypes, branchingUnitTypes } = device.parsedData
+            
+            if (fiberTypes && fiberTypes.length > 0) {
+              fiberTypes.forEach((f: any) => settingsStore.addFiberType(f))
+              totalFibers += fiberTypes.length
+            }
+            if (amplifierTypes && amplifierTypes.length > 0) {
+              amplifierTypes.forEach((a: any) => settingsStore.addAmplifierType(a))
+              totalAmplifiers += amplifierTypes.length
+            }
+            if (branchingUnitTypes && branchingUnitTypes.length > 0) {
+              branchingUnitTypes.forEach((b: any) => settingsStore.addBranchingUnitType(b))
+              totalBranchingUnits += branchingUnitTypes.length
+            }
+          }
+        }
+        
+        settingsStore.setCurrentLibraryFile(deviceFiles.join(', '))
+        
+        if (totalFibers > 0 || totalAmplifiers > 0 || totalBranchingUnits > 0) {
+          appStore.addLog('INFO', `导入器件库: 光纤${totalFibers}种，放大器${totalAmplifiers}种，分支器${totalBranchingUnits}种`)
+        } else {
+          appStore.addLog('INFO', `导入器件库文件: ${deviceFiles.join(', ')}`)
         }
       }
 

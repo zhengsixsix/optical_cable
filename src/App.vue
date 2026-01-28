@@ -5,6 +5,7 @@ import { initAppearance, useProjectManager, type CreateProjectParams } from '@/c
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
+import ProjectWizardDialog from '@/components/dialogs/ProjectWizardDialog.vue'
 import UserManageDialog from '@/components/dialogs/UserManageDialog.vue'
 import AlarmManageDialog from '@/components/dialogs/AlarmManageDialog.vue'
 import HelpDialog from '@/components/dialogs/HelpDialog.vue'
@@ -84,8 +85,16 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
     @success="appStore.closeDialog()"
   />
 
+  <!-- 新建项目向导对话框 -->
+  <ProjectWizardDialog
+    :visible="appStore.activeDialog === 'new-project'"
+    @close="appStore.closeDialog()"
+    @success="handleProjectDialogSuccess"
+  />
+
+  <!-- 其他项目操作对话框（打开、保存、另存为） -->
   <ProjectDialog
-    :visible="['new-project', 'open-project', 'save-project', 'save-as-project'].includes(appStore.activeDialog || '')"
+    :visible="['open-project', 'save-project', 'save-as-project'].includes(appStore.activeDialog || '')"
     :mode="appStore.activeDialog?.replace('-project', '') as any"
     @close="appStore.closeDialog()"
     @success="handleProjectDialogSuccess"

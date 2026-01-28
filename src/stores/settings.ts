@@ -438,6 +438,11 @@ export const useSettingsStore = defineStore('settings', () => {
       saveToLocalStorage()
     }
   }
+  
+  // 设置当前器件库文件
+  function setCurrentLibraryFile(fileName: string) {
+    currentLibraryFile.value = fileName
+  }
 
   // 初始化时加载
   loadFromLocalStorage()
@@ -508,5 +513,6 @@ export const useSettingsStore = defineStore('settings', () => {
     updateSystemPlanningCache,
     invalidateSimulationCache,
     invalidateSystemPlanningCache,
+    setCurrentLibraryFile,
   }
 })
