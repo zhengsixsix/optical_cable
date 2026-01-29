@@ -1,2 +1,11 @@
 // 路由规划模块入口
-export * from './store'
+export { usePlanningStore } from './store'
+export type {
+  Route,
+  RoutePoint,
+  RouteSegment,
+  LayerConfig,
+  HoveredSegmentInfo,
+  PlanningPanelVisibility,
+} from './store'
+export * from './types'

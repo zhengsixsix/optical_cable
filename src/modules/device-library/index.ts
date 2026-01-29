@@ -1,2 +1,7 @@
 // 器件库模块入口
-export * from './store'
+export { useDeviceLibraryStore } from './store'
+export type {
+  DeviceCategory,
+  Device,
+  DeviceFilter,
+} from './store'
