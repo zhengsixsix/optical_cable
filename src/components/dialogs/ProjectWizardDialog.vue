@@ -1001,7 +1001,7 @@ const handleSubmit = async () => {
                 <div class="flex justify-between text-sm">
                   <span class="text-gray-500">项目类型</span>
                   <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium border border-blue-100">
-                    {{ projectType === 'ucp' ? '路由规划 (.ucp)' : '系统设计 (.use)' }}
+                    系统设计 (.use)
                   </span>
                 </div>
                 <div class="flex justify-between text-sm">

@@ -2460,8 +2460,10 @@ const handleRunPlanning = () => {
     enabledLayers.push('地震')
   }
 
-  // 清空 monitorStore 设备数据，确保使用 paretoRoutes 绘制
-  monitorStore.devices = []
+  // 清空 connectorStore 设备数据，确保使用 paretoRoutes 绘制
+  if (connectorStore.currentTable) {
+    connectorStore.currentTable.elements = []
+  }
   
   // 根据工程设置生成 Pareto 路径
   routeStore.generateParetoRoutesFromSettings()

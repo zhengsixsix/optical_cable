@@ -1319,8 +1319,8 @@ class ProjectFileService {
         }
       })
       
-      // 使用$patch确保响应式更新
-      monitorStore.$patch({ devices: newDevices })
+      // 设备数据已通过 connectorStore 管理，monitorStore.devices 是 computed 属性
+      // 无需额外设置，connectorStore.currentTable.elements 已在上面设置
       
     } else {
       // geometryPool为空时，尝试从其他来源创建paretoRoutes
@@ -1698,7 +1698,27 @@ class ProjectFileService {
     
     // 恢复 Monitor 数据
     if (project.monitorData) {
-      monitorStore.devices = project.monitorData.devices || []
+      // devices 是 computed 属性，通过 connectorStore 管理
+      if (project.monitorData.devices && project.monitorData.devices.length > 0) {
+        if (connectorStore.tables.length === 0) {
+          connectorStore.createTable(project.name || '导入项目', 'route-main')
+        }
+        if (connectorStore.currentTable) {
+          const connectorElements = project.monitorData.devices.map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            type: d.type,
+            longitude: d.longitude,
+            latitude: d.latitude,
+            depth: d.depth || 0,
+            kp: d.kp || 0,
+            status: 'active',
+            specifications: '',
+            remarks: d.name,
+          }))
+          connectorStore.currentTable.elements = connectorElements
+        }
+      }
       monitorStore.alarmHistory = project.monitorData.alarmHistory || []
     }
     

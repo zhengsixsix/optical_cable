@@ -630,7 +630,23 @@ export function useProjectManager() {
               }
             })
             
-            monitorStore.$patch({ devices: newDevices })
+            // 设备数据通过 connectorStore 管理，monitorStore.devices 是 computed 属性
+            if (connectorStore.currentTable) {
+              // 将设备数据转换为 connectorStore 格式
+              const connectorElements = newDevices.map((d: any) => ({
+                id: d.id,
+                name: d.name,
+                type: d.type,
+                longitude: d.longitude,
+                latitude: d.latitude,
+                depth: d.depth,
+                kp: d.kp,
+                status: 'active' as const,
+                specifications: '',
+                remarks: d.name,
+              }))
+              connectorStore.currentTable.elements = connectorElements
+            }
             
             appStore.addLog('INFO', `导入 RPL 文件: ${rplFileData.name}, ${records.length} 条记录, ${newDevices.length} 个设备`)
           }
