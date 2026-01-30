@@ -1,10 +1,10 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
-import { Card, CardHeader, CardContent, Button } from '@/components/ui'
-import MonitorPanel from '@/components/panels/MonitorPanel.vue'
+import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
+import MonitorPanel from '@/modules/monitoring/panels/MonitorPanel.vue'
 import PerformanceChart from '@/components/charts/PerformanceChart.vue'
-import MonitoringMap from '@/components/map/MonitoringMap.vue'
+import MonitoringMap from '@/modules/monitoring/components/MonitoringMap.vue'
 import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin, ChevronRight, Filter, TrendingDown, TrendingUp, Minus, Link2 } from 'lucide-vue-next'
 import { useConnectorStore, useMonitorStore, useRouteStore } from '@/stores'
 
@@ -450,11 +450,7 @@ const chartSeries = computed(() => {
           <!-- 查看方式 -->
           <div>
             <div class="text-xs text-gray-500 mb-1">查看方式</div>
-            <select v-model="viewMode" class="w-full text-sm border border-gray-300 rounded px-2 py-1.5 bg-white">
-              <option value="type">按设备类型</option>
-              <option value="link">按链路划分</option>
-              <option value="all">所有设备列表</option>
-            </select>
+            <Select v-model="viewMode" :options="[{ value: 'type', label: '按设备类型' }, { value: 'link', label: '按链路划分' }, { value: 'all', label: '所有设备列表' }]" />
           </div>
         </CardContent>
       </Card>

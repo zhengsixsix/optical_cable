@@ -1,9 +1,16 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Notification, LogEntry } from '@/types'
 import type { ProjectType, ProjectMetadata } from '@/services/ProjectFileService'
 
 export type ViewType = 'planning' | 'design' | 'monitoring' | 'settings'
+
+// 项目阶段类型
+export type ProjectPhase = 
+  | 'route-planning'         // 路由规划阶段
+  | 'transmission-planning'  // 传输规划阶段
+  | 'detailed-design'        // 详细设计阶段
+  | 'monitoring'             // 运维监控阶段
 
 // 地图选点模式
 export interface MapSelectMode {
@@ -17,6 +24,7 @@ export interface ProjectState {
   currentProject: ProjectMetadata | null
   isDirty: boolean
   lastSavedAt: string | null
+  phase: ProjectPhase  // 当前项目阶段
 }
 
 // 面板可见性状态类型
@@ -44,6 +52,7 @@ export const useAppStore = defineStore('app', () => {
     currentProject: null,
     isDirty: false,
     lastSavedAt: null,
+    phase: 'route-planning',
   })
   
   // 面板可见性状态
@@ -88,6 +97,7 @@ export const useAppStore = defineStore('app', () => {
   const hasOpenProject = computed(() => projectState.value.currentProject !== null)
   const currentProjectName = computed(() => projectState.value.currentProject?.name || '')
   const currentProjectType = computed(() => projectState.value.currentProject?.type || null)
+  const currentPhase = computed(() => projectState.value.phase)
 
   // Actions
   function switchView(view: ViewType) {
@@ -191,12 +201,10 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function openDialog(name: string) {
-    console.log('[Store] Opening dialog:', name)
     activeDialog.value = name
   }
 
   function closeDialog() {
-    console.log('[Store] Closing dialog')
     activeDialog.value = null
   }
 
@@ -256,9 +264,22 @@ export const useAppStore = defineStore('app', () => {
     projectState.value.currentProject = null
     projectState.value.isDirty = false
     projectState.value.lastSavedAt = null
+    projectState.value.phase = 'route-planning'
     if (projectName) {
       addLog('INFO', `关闭项目: ${projectName}`)
     }
+  }
+
+  // 设置项目阶段
+  function setProjectPhase(phase: ProjectPhase) {
+    const phaseNames: Record<ProjectPhase, string> = {
+      'route-planning': '路由规划',
+      'transmission-planning': '传输规划',
+      'detailed-design': '详细设计',
+      'monitoring': '运维监控',
+    }
+    projectState.value.phase = phase
+    addLog('INFO', `项目阶段切换到: ${phaseNames[phase]}`)
   }
 
   // 切换面板可见性
@@ -302,6 +323,7 @@ export const useAppStore = defineStore('app', () => {
     hasOpenProject,
     currentProjectName,
     currentProjectType,
+    currentPhase,
     switchView,
     showNotification,
     removeNotification,
@@ -320,5 +342,6 @@ export const useAppStore = defineStore('app', () => {
     setProjectDirty,
     markProjectSaved,
     closeCurrentProject,
+    setProjectPhase,
   }
 })

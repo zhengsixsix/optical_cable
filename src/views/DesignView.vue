@@ -1,14 +1,14 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
-import { Card, CardHeader, CardContent, Button, Select, Tooltip } from '@/components/ui'
-import ConnectorPanel from '@/components/panels/ConnectorPanel.vue'
-import WDMConfigDialog from '@/components/dialogs/WDMConfigDialog.vue'
-import ConnectorDialog from '@/components/dialogs/ConnectorDialog.vue'
-import RepeaterConfigDialog from '@/components/dialogs/RepeaterConfigDialog.vue'
-import SimulationModelSelectDialog from '@/components/dialogs/SimulationModelSelectDialog.vue'
-import LinkAnalysisDialog from '@/components/dialogs/LinkAnalysisDialog.vue'
-import SystemDesignMap from '@/components/map/SystemDesignMap.vue'
+import { Card, CardHeader, CardContent, Button, Select, Tooltip, Input } from '@/shared/components/base'
+import ConnectorPanel from '@/modules/design/panels/ConnectorPanel.vue'
+import WDMConfigDialog from '@/modules/design/dialogs/WDMConfigDialog.vue'
+import ConnectorDialog from '@/modules/design/dialogs/ConnectorDialog.vue'
+import RepeaterConfigDialog from '@/modules/design/dialogs/RepeaterConfigDialog.vue'
+import SimulationModelSelectDialog from '@/modules/design/dialogs/SimulationModelSelectDialog.vue'
+import LinkAnalysisDialog from '@/modules/design/dialogs/LinkAnalysisDialog.vue'
+import SystemDesignMap from '@/modules/design/components/SystemDesignMap.vue'
 import GSNRMarginChart from '@/components/charts/GSNRMarginChart.vue'
 import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
 import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore, useRouteStore } from '@/stores'
@@ -60,14 +60,6 @@ const openNewProject = () => {
 
 // 调试日志 + 初始化登陆站数据
 onMounted(() => {
-  console.log('DesignView mounted')
-  console.log('connectorStore.tables:', connectorStore.tables.length)
-  console.log('connectorStore.currentTableId:', connectorStore.currentTableId)
-  console.log('connectorStore.currentTable:', connectorStore.currentTable)
-  console.log('connectorStore.elements:', connectorStore.elements.length)
-  console.log('rplStore.tables:', rplStore.tables.length)
-  console.log('rplStore.currentTableId:', rplStore.currentTableId)
-  
   // 从路由规划初始化登陆站和分支器到 monitorStore
   initLandingStationsFromRoute()
 })
@@ -80,12 +72,8 @@ const initLandingStationsFromRoute = () => {
   // 检查 monitorStore 是否已有登陆站数据
   const hasLandingStations = monitorStore.devices.some(d => d.type === 'landing')
   if (hasLandingStations) {
-    console.log('monitorStore 已有登陆站数据，跳过初始化')
     return
   }
-  
-  console.log('从路由规划初始化登陆站/分支器数据')
-  
   // 统计登陆站数量，用于命名
   const landingPoints = selectedRoute.points.filter(p => p.type === 'landing')
   const isFirstLanding = (index: number) => {
@@ -113,17 +101,21 @@ const initLandingStationsFromRoute = () => {
     
     // 只添加登陆站和分支器，不添加 waypoint
     if (point.type === 'landing' || point.type === 'branching') {
-      const deviceType = point.type === 'landing' ? 'landing' : 'bu'
+      // 根据水深判断站点类型：depth > 0 为水下站点，否则为岸上站点
+      const pointDepth = (point as any).depth || 0
+      const isUnderwater = pointDepth > 0
+      const deviceType = point.type === 'branching' ? 'bu' : (isUnderwater ? 'underwater' : 'landing')
       
-      // 登陆站命名：岸上站点-起点/终点
+      // 站点命名：根据是否在水下区分
       let deviceName = point.name
       if (point.type === 'landing') {
+        const stationType = isUnderwater ? '水下站点' : '岸上站点'
         if (isFirstLanding(index)) {
-          deviceName = point.name || '岸上站点-起点'
+          deviceName = point.name || `${stationType}-起点`
         } else if (isLastLanding(index)) {
-          deviceName = point.name || '岸上站点-终点'
+          deviceName = point.name || `${stationType}-终点`
         } else {
-          deviceName = point.name || '岸上站点'
+          deviceName = point.name || stationType
         }
       } else {
         deviceName = point.name || '分支器'
@@ -137,7 +129,7 @@ const initLandingStationsFromRoute = () => {
         kp: cumulativeKp,
         longitude: point.coordinates[0],
         latitude: point.coordinates[1],
-        depth: point.type === 'landing' ? 0 : 3000,
+        depth: pointDepth,
         status: 'normal' as const,
         location: `KP ${cumulativeKp.toFixed(1)}`,
         sldEquipmentName: deviceName,
@@ -156,10 +148,13 @@ const initLandingStationsFromRoute = () => {
           Math.pow(point.branchTo.coord[1] - point.coordinates[1], 2)
         ) * 111
         
+        // 分支登陆站也根据水深判断
+        const branchDepth = (point.branchTo as any).depth || 0
+        const isBranchUnderwater = branchDepth > 0
         devices.push({
           id: `branch-${point.id}`,
-          name: point.branchTo.name || '岸上站点-分支',
-          type: 'landing',
+          name: point.branchTo.name || (isBranchUnderwater ? '水下站点-分支' : '岸上站点-分支'),
+          type: isBranchUnderwater ? 'underwater' : 'landing',
           neType: 'LTE',
           kp: cumulativeKp + branchDist,
           longitude: point.branchTo.coord[0],
@@ -186,13 +181,11 @@ const initLandingStationsFromRoute = () => {
     const mainDevices = devices.filter(d => !(d as any).isBranchStation).sort((a, b) => a.kp - b.kp)
     const branchDevices = devices.filter(d => (d as any).isBranchStation)
     monitorStore.devices.splice(0, monitorStore.devices.length, ...mainDevices, ...branchDevices)
-    console.log('初始化了', devices.length, '个设备到 monitorStore')
   }
 }
 
 // 监听 elements 变化
 watch(() => connectorStore.elements.length, (newLen) => {
-  console.log('connectorStore.elements changed:', newLen)
 })
 
 // 本地编辑状态
@@ -524,11 +517,7 @@ const handleModelConfirm = (config: { fiberModel: string; [key: string]: any }) 
     targetGsnrDb: adjustedTargetGsnr,  // 使用调制格式对应的 GSNR 要求
   }
   
-  console.log(`Span scan: modulation=${modulationFormat}, targetGSNR=${adjustedTargetGsnr}dB (with FEC gain ${fecGain}dB)`)
-  
   setTimeout(() => {
-    console.log('Span scan input: totalLength=', totalLength, 'km')
-    
     // Step 6: 执行 Span 扫描
     spanScanResult.value = opticalSimulationService.spanRangeScan(
       totalLength,
@@ -539,15 +528,6 @@ const handleModelConfirm = (config: { fiberModel: string; [key: string]: any }) 
         launchPowerPerChannel: wdmConfig?.launchPower || 1,  // 长距离预设使用 +1dBm
       }
     )
-    
-    // 调试输出
-    if (spanScanResult.value?.scanPoints) {
-      const points = spanScanResult.value.scanPoints
-      console.log('Span scan results:')
-      points.forEach(p => {
-        console.log(`  Span=${p.spanLengthKm}km: avgGSNR=${p.avgGsnrDb.toFixed(1)}dB, minGSNR=${p.minGsnrDb.toFixed(1)}dB, margin=${p.gsnrMarginDb.toFixed(1)}dB, meet=${p.meetTarget}`)
-      })
-    }
     
     // Step 7: 自动推荐
     const recommendation = repeaterPlacementService.autoRecommendSpan(
@@ -920,7 +900,6 @@ const handlePointMoved = (pointId: string, longitude: number, latitude: number) 
   if (device) {
     device.longitude = longitude
     device.latitude = latitude
-    console.log(`monitorStore 设备 ${device.name} 位置已更新: [${longitude.toFixed(4)}, ${latitude.toFixed(4)}]`)
   }
   
   // 更新 connectorStore
@@ -943,7 +922,6 @@ const handleLineClick = () => {
 
 // 编辑操作
 const handleEdit = (type: 'point' | 'line' | 'segment', id: string | null) => {
-  console.log('DesignView handleEdit:', type, id)
   if (type === 'point' && id) {
     // 优先从 connectorStore 查找
     let point = routePoints.value.find(p => p.id === id)
@@ -1006,7 +984,6 @@ const saveDeviceEdit = () => {
   // 使用 KP 匹配，因为 connectorStore 和 monitorStore 的 ID 可能不同
   const originalKp = routePoints.value.find(p => p.id === editingDevice.value!.id)?.kp
   const deviceIndex = monitorStore.devices.findIndex(d => Math.abs(d.kp - (originalKp ?? editingDevice.value!.kp)) < 0.01)
-  console.log('saveDeviceEdit: originalKp=', originalKp, 'deviceIndex=', deviceIndex, 'monitorStore.devices.length=', monitorStore.devices.length)
   if (deviceIndex !== -1) {
     const updatedDevice = {
       ...monitorStore.devices[deviceIndex],
@@ -1020,7 +997,6 @@ const saveDeviceEdit = () => {
     }
     // 使用 splice 确保触发响应式更新
     monitorStore.devices.splice(deviceIndex, 1, updatedDevice)
-    console.log('saveDeviceEdit: updated device=', updatedDevice)
   }
 
   if (success) {
@@ -1033,7 +1009,6 @@ const saveDeviceEdit = () => {
 
 // 删除操作
 const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => {
-  console.log('DesignView handleDelete:', type, id, 'routePoints:', routePoints.value.map(p => p.id))
   if (type === 'point' && id) {
     const point = routePoints.value.find(p => p.id === id)
     if (point) {
@@ -1415,44 +1390,35 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
       <div v-if="editingDevice" class="p-4 space-y-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">设备名称</label>
-          <input v-model="editingDevice.name" type="text"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+          <Input v-model="editingDevice.name" class="w-full" />
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">经度</label>
-            <input v-model.number="editingDevice.longitude" type="number" step="0.0001"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+            <Input v-model="editingDevice.longitude" type="number" class="w-full" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">纬度</label>
-            <input v-model.number="editingDevice.latitude" type="number" step="0.0001"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+            <Input v-model="editingDevice.latitude" type="number" class="w-full" />
           </div>
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">KP (km)</label>
-            <input v-model.number="editingDevice.kp" type="number" step="0.1"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+            <Input v-model="editingDevice.kp" type="number" class="w-full" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">深度 (m)</label>
-            <input v-model.number="editingDevice.depth" type="number"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+            <Input v-model="editingDevice.depth" type="number" class="w-full" />
           </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">设备类型</label>
-          <Select 
-            v-model="editingDevice.type"
-            :options="deviceTypeOptions"
-          />
+          <Select v-model="editingDevice.type" :options="deviceTypeOptions" />
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">规格型号</label>
-          <input v-model="editingDevice.specifications" type="text"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary" />
+          <Input v-model="editingDevice.specifications" class="w-full" />
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">备注</label>

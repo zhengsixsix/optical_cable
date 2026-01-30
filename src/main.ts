@@ -6,6 +6,15 @@ import './style.css'
 
 import { initAppearance } from '@/composables'
 
+// 静默处理 GeoTIFF 加载错误（大文件瓦片加载失败）
+window.addEventListener('unhandledrejection', (event) => {
+  if (event.reason?.message?.includes('offset') || 
+      event.reason?.stack?.includes('BlockedSource') ||
+      event.reason?.stack?.includes('GeoTIFF')) {
+    event.preventDefault()
+  }
+})
+
 const app = createApp(App)
 
 // 初始化外观设置

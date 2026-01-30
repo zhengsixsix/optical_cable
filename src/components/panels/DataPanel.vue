@@ -1,8 +1,8 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import FloatingPanel from './FloatingPanel.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
-import { Button } from '@/components/ui'
+import { Button } from '@/shared/components/base'
 import { useRouteStore, useAppStore } from '@/stores'
 import { Upload, Download, FileText, FolderOpen, Trash2 } from 'lucide-vue-next'
 

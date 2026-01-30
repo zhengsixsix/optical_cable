@@ -42,8 +42,8 @@ import {
   createDefaultWDMConfig,
 } from '@/types/useFile'
 
-// 项目类型
-export type ProjectType = 'ucp' | 'use'
+// 项目类型 (统一使用 use，保留 ucp 仅为向后兼容)
+export type ProjectType = 'use' | 'ucp'
 
 // 项目元数据
 export interface ProjectMetadata {
@@ -231,6 +231,8 @@ class ProjectFileService {
     const rplStore = useRPLStore()
     const sldStore = useSLDStore()
     const monitorStore = useMonitorStore()
+    const connectorStore = useConnectorStore()
+    const routeStore = useRouteStore()
 
     // 0. 收集 project_settings (工程设置)
     projectData.project_settings = this.collectProjectSettings(settingsStore)
@@ -249,6 +251,41 @@ class ProjectFileService {
 
     // 5. 收集 health_monitoring
     projectData.health_monitoring = this.collectHealthMonitoring(settingsStore, monitorStore)
+
+    // ===== 6. 收集扩展字段 (保存原始 Store 数据，确保完整恢复) =====
+    
+    // 6.1 保存 RPL 原始数据
+    projectData.routePlanning = {
+      rplTables: JSON.parse(JSON.stringify(rplStore.tables)),
+      routes: JSON.parse(JSON.stringify(routeStore.paretoRoutes || [])),
+      planningConfig: settingsStore.routePlanningConfig
+    }
+
+    // 6.2 保存 SLD 原始数据
+    projectData.transmissionPlanning = {
+      sldTables: JSON.parse(JSON.stringify(sldStore.tables)),
+      transmissionConfig: settingsStore.transmissionConfig,
+      repeaterConfigs: (settingsStore as any).repeaterPlacements || []
+    }
+
+    // 6.3 保存接线元数据
+    projectData.connectorTables = JSON.parse(JSON.stringify(connectorStore.tables))
+
+    // 6.4 保存监控数据
+    projectData.monitorData = {
+      devices: JSON.parse(JSON.stringify(monitorStore.devices)),
+      alarmHistory: JSON.parse(JSON.stringify(monitorStore.alarmHistory || []))
+    }
+
+    // 6.5 保存图层设置
+    projectData.layerSettings = {
+      oceanElevation: layerStore.getLayerVisible('elevation'),
+      volcanoDistribution: layerStore.getLayerVisible('volcano'),
+      fishingAreaDistribution: layerStore.getLayerVisible('fishing'),
+      slopeMap: layerStore.getLayerVisible('slope'),
+      earthquakeDistribution: layerStore.getLayerVisible('earthquake'),
+      shippingLanes: layerStore.getLayerVisible('shipping')
+    }
   }
 
   /**
@@ -712,45 +749,14 @@ class ProjectFileService {
   /**
    * 导出项目文件 (ZIP 格式)
    * @param name 项目名称
-   * @param projectType 项目类型: 'ucp' 或 'use'
    * @param allowOtherUsers 是否允许其他用户打开
+   * @description 统一使用 .use 格式
    */
-  async exportProject(name: string, projectType: ProjectType, allowOtherUsers: boolean = false): Promise<void> {
+  async exportProject(name: string, allowOtherUsers: boolean = false): Promise<void> {
     const projectData = this.createUSEProjectData(name, allowOtherUsers)
     
     // 更新时间戳
     projectData.metadata.updated_at = new Date().toISOString()
-    
-    // 如果是 UCP 项目，清除系统工程和健康监控模块的数据
-    if (projectType === 'ucp') {
-      // UCP 只保留路由工程数据，系统工程和监控模块置为默认值
-      projectData.system_engineering = {
-        wdm_config: {
-          channel_count: 0,
-          center_freq_thz: 193.1,
-          channel_spacing_ghz: 50,
-          baud_rate_gbaud: 64.0,
-          launch_power_vector: [],
-          initial_ase_vector: [],
-          initial_nli_vector: [],
-          modulation: '',
-          shaping_moments: { moment4: 0, moment6: 0 }
-        },
-        simulation_cache: null,
-        system_planning_cache: null
-      }
-      projectData.health_monitoring = {
-        collector_config: null,
-        device_mapping: [],
-        view_settings: {
-          node_positions: {},
-          filters: {
-            visible_types: [],
-            min_alarm_severity: 'ALL'
-          }
-        }
-      }
-    }
     
     // 创建 ZIP 文件
     const zip = new JSZip()
@@ -762,24 +768,21 @@ class ProjectFileService {
     // 创建 cache 目录 (可选)
     zip.folder('cache')
     
-    // 生成 ZIP 并下载
-    const fileExtension = projectType === 'ucp' ? 'ucp' : 'use'
+    // 统一使用 .use 扩展名
     const blob = await zip.generateAsync({ type: 'blob' })
-    this.downloadBlob(blob, `${name}.${fileExtension}`)
+    this.downloadBlob(blob, `${name}.use`)
   }
 
   /**
    * 导出 USE 文件 (ZIP 格式) - 向后兼容
    */
   async exportUSE(name: string, allowOtherUsers: boolean = false): Promise<void> {
-    return this.exportProject(name, 'use', allowOtherUsers)
+    return this.exportProject(name, allowOtherUsers)
   }
 
   /**
    * 保存项目 (ZIP 格式)
-   * 根据项目类型保存不同内容：
-   * - UCP: 只保存 route_engineering 模块
-   * - USE: 保存所有模块
+   * @description 统一使用 .use 格式保存所有模块
    */
   async saveProject(): Promise<{ success: boolean; error?: string }> {
     if (!this.currentProject) {
@@ -797,52 +800,21 @@ class ProjectFileService {
       this.currentProjectData.metadata.creator_user_id = this.currentProject.creatorId
     }
     
-    const projectType = this.currentProject.type
-    
     // 更新项目数据
     this.collectDataToProject(this.currentProjectData)
     this.currentProjectData.metadata.updated_at = new Date().toISOString()
     
-    // 如果是 UCP 项目，清除系统工程和健康监控模块的数据
-    const dataToSave = { ...this.currentProjectData }
-    if (projectType === 'ucp') {
-      dataToSave.system_engineering = {
-        wdm_config: {
-          channel_count: 0,
-          center_freq_thz: 193.1,
-          channel_spacing_ghz: 50,
-          baud_rate_gbaud: 64.0,
-          launch_power_vector: [],
-          initial_ase_vector: [],
-          initial_nli_vector: [],
-          modulation: '',
-          shaping_moments: { moment4: 0, moment6: 0 }
-        },
-        simulation_cache: null,
-        system_planning_cache: null
-      }
-      dataToSave.health_monitoring = {
-        collector_config: null,
-        device_mapping: [],
-        view_settings: {
-          node_positions: {},
-          filters: {
-            visible_types: [],
-            min_alarm_severity: 'ALL'
-          }
-        }
-      }
-    }
-    
     // 创建 ZIP
     const zip = new JSZip()
-    zip.file('project_data.json', JSON.stringify(dataToSave, null, 2))
+    zip.file('project_data.json', JSON.stringify(this.currentProjectData, null, 2))
     zip.folder('cache')
     
-    // 根据项目类型确定文件扩展名
-    const fileExtension = projectType === 'ucp' ? 'ucp' : 'use'
+    // 统一使用 .use 扩展名
     const blob = await zip.generateAsync({ type: 'blob' })
-    this.downloadBlob(blob, `${this.currentProject.name}.${fileExtension}`)
+    this.downloadBlob(blob, `${this.currentProject.name}.use`)
+    
+    // 更新项目类型为 use
+    this.currentProject.type = 'use'
     
     this.isDirty = false
     return { success: true }
@@ -911,9 +883,8 @@ class ProjectFileService {
           
           return { success: true, project: projectData }
         }
-      } catch (zipError) {
+      } catch {
         // 不是 ZIP 文件，尝试作为纯 JSON 读取 (向后兼容)
-        console.log('不是 ZIP 格式，尝试作为 JSON 读取')
       }
       
       // 尝试作为纯 JSON 读取 (向后兼容旧格式)
@@ -1019,6 +990,8 @@ class ProjectFileService {
     const rplStore = useRPLStore()
     const sldStore = useSLDStore()
     const monitorStore = useMonitorStore()
+    const connectorStore = useConnectorStore()
+    const routeStore = useRouteStore()
 
     // 0. 恢复工程设置 (project_settings)
     if (projectData.project_settings) {
@@ -1242,14 +1215,8 @@ class ProjectFileService {
         updatedAt: new Date(),
       }
       
-      console.log('USE Import: Creating main route with', displayPoints.length, 'points')
-      console.log('USE Import: First point coords:', displayPoints[0]?.coordinates)
-      console.log('USE Import: Last point coords:', displayPoints[displayPoints.length - 1]?.coordinates)
-      
       // 使用setParetoRoutes方法确保响应式更新
       routeStore.setParetoRoutes([mainRoute as any])
-      
-      console.log('USE Import: Route store updated, paretoRoutes length:', routeStore.paretoRoutes.length)
       
       // 8. 同步路线数据到 connectorStore 以便系统设计视图显示
       const connectorStore = useConnectorStore()
@@ -1321,7 +1288,6 @@ class ProjectFileService {
         })
         
         connectorStore.currentTable.elements = newElements
-        console.log('USE Import: ConnectorStore updated, elements count:', newElements.length, '(including fiber segments)')
       }
       
       // 9. 同步设备数据到 monitorStore 以便实时监控视图显示
@@ -1447,6 +1413,77 @@ class ProjectFileService {
 
     // 13. 从项目数据中提取起点/终点坐标并更新路径规划配置
     this.extractRoutePlanningConfig(projectData, settingsStore)
+
+    // ===== 14. 从扩展字段恢复原始 Store 数据 (优先级最高) =====
+    this.restoreExtensionData(projectData, rplStore, sldStore, connectorStore, monitorStore, routeStore, layerStore)
+  }
+
+  /**
+   * 从扩展字段恢复原始 Store 数据
+   * 这些数据比从 route_engineering 重建的数据更完整
+   */
+  private restoreExtensionData(
+    projectData: USEProjectData,
+    rplStore: any,
+    sldStore: any,
+    connectorStore: any,
+    monitorStore: any,
+    routeStore: any,
+    layerStore: any
+  ): void {
+    // 14.1 恢复 RPL 原始数据 (如果扩展字段存在)
+    if (projectData.routePlanning?.rplTables && projectData.routePlanning.rplTables.length > 0) {
+      rplStore.tables = projectData.routePlanning.rplTables
+      if (rplStore.tables.length > 0) {
+        rplStore.currentTableId = rplStore.tables[0].id
+      }
+      console.log('[ProjectFileService] 从扩展字段恢复 RPL 表格:', rplStore.tables.length)
+    }
+
+    // 14.2 恢复路由数据 (如果扩展字段存在)
+    if (projectData.routePlanning?.routes && projectData.routePlanning.routes.length > 0) {
+      routeStore.setParetoRoutes(projectData.routePlanning.routes)
+      console.log('[ProjectFileService] 从扩展字段恢复路由:', projectData.routePlanning.routes.length)
+    }
+
+    // 14.3 恢复 SLD 原始数据 (如果扩展字段存在) - 这是最重要的修复!
+    if (projectData.transmissionPlanning?.sldTables && projectData.transmissionPlanning.sldTables.length > 0) {
+      sldStore.tables = projectData.transmissionPlanning.sldTables
+      if (sldStore.tables.length > 0) {
+        sldStore.currentTableId = sldStore.tables[0].id
+      }
+      console.log('[ProjectFileService] 从扩展字段恢复 SLD 表格:', sldStore.tables.length)
+    }
+
+    // 14.4 恢复接线元数据 (如果扩展字段存在)
+    if (projectData.connectorTables && projectData.connectorTables.length > 0) {
+      connectorStore.tables = projectData.connectorTables
+      if (connectorStore.tables.length > 0) {
+        connectorStore.currentTableId = connectorStore.tables[0].id
+      }
+      console.log('[ProjectFileService] 从扩展字段恢复接线元表格:', connectorStore.tables.length)
+    }
+
+    // 14.5 恢复监控数据 (如果扩展字段存在)
+    if (projectData.monitorData?.devices && projectData.monitorData.devices.length > 0) {
+      monitorStore.$patch({ 
+        devices: projectData.monitorData.devices,
+        alarmHistory: projectData.monitorData.alarmHistory || []
+      })
+      console.log('[ProjectFileService] 从扩展字段恢复监控设备:', projectData.monitorData.devices.length)
+    }
+
+    // 14.6 恢复图层设置 (如果扩展字段存在)
+    if (projectData.layerSettings) {
+      const ls = projectData.layerSettings
+      layerStore.setLayerVisible('elevation', ls.oceanElevation ?? false)
+      layerStore.setLayerVisible('volcano', ls.volcanoDistribution ?? false)
+      layerStore.setLayerVisible('fishing', ls.fishingAreaDistribution ?? false)
+      layerStore.setLayerVisible('slope', ls.slopeMap ?? false)
+      layerStore.setLayerVisible('earthquake', ls.earthquakeDistribution ?? false)
+      layerStore.setLayerVisible('shipping', ls.shippingLanes ?? false)
+      console.log('[ProjectFileService] 从扩展字段恢复图层设置')
+    }
   }
 
   /**
@@ -1457,7 +1494,6 @@ class ProjectFileService {
     const geometryPool = projectData.route_engineering?.geometry_pool || []
     
     if (keyEvents.length === 0 || geometryPool.length === 0) {
-      console.log('USE Import: No key events or geometry pool, skipping route planning config extraction')
       return
     }
 
@@ -1475,7 +1511,6 @@ class ProjectFileService {
           endPoint: { lon: lastPoint[0], lat: lastPoint[1] },
           isConfigured: true,
         })
-        console.log('USE Import: Route planning config extracted from geometry pool')
       }
       return
     }
@@ -1495,7 +1530,6 @@ class ProjectFileService {
         endPoint: { lon: endCoords[0], lat: endCoords[1] },
         isConfigured: true,
       })
-      console.log('USE Import: Route planning config extracted - Start:', startCoords[0].toFixed(4), startCoords[1].toFixed(4), 'End:', endCoords[0].toFixed(4), endCoords[1].toFixed(4))
     }
   }
 
@@ -1517,7 +1551,6 @@ class ProjectFileService {
         multiPointFile: rp.multi_point_file,
         isConfigured: rp.start_point.lon !== 0 || rp.start_point.lat !== 0,
       })
-      console.log('USE Import: Route planning config restored - Mode:', rp.mode)
     }
 
     // 2. 恢复成本参数
@@ -1536,7 +1569,6 @@ class ProjectFileService {
         maxConstructionCost: cs.max_construction_cost,
         depthThreshold: cs.depth_threshold,
       })
-      console.log('USE Import: Cost settings restored')
     }
 
     // 3. 恢复仿真模型配置
@@ -1548,7 +1580,6 @@ class ProjectFileService {
       settingsStore.updateTransmissionConfig({
         calculationModels: ss.calculation_models,
       })
-      console.log('USE Import: Simulation settings restored - Fiber Model:', ss.fiber_model)
     }
   }
 

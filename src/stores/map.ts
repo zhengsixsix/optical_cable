@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Coordinate, Extent, Projection, ToolMode } from '@/types'
 
@@ -34,8 +34,7 @@ export const useMapStore = defineStore('map', () => {
 
   function setSelectedExtent(ext: Extent | null) {
     selectedExtent.value = ext
-    console.log('区域已选择:', ext)
-  }
+    }
 
   function setToolMode(mode: ToolMode) {
     toolMode.value = mode

@@ -1,9 +1,9 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Upload, Download, X, FileText, Check, AlertCircle, Loader2 } from 'lucide-vue-next'
 import { useGeoService } from '@/services'
 import { useRouteStore, useAppStore } from '@/stores'
-import { Button } from '@/components/ui'
+import { Button } from '@/shared/components/base'
 import { supportedImportFormats as supportedFormats, exportFormatOptions as exportFormats } from '@/data/mockData'
 
 /**

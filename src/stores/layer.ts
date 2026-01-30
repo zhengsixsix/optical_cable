@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { LayerConfig } from '@/types'
 import { createLayerRepository } from '@/repositories'
@@ -26,8 +26,7 @@ export const useLayerStore = defineStore('layer', () => {
     const layer = layers.value.find(l => l.id === id)
     if (layer) {
       layer.visible = visible
-      console.log(`图层 ${layer.name} 可见性: ${visible}`)
-    }
+      }
   }
 
   function setLayerLoaded(id: string, loaded: boolean) {
@@ -65,22 +64,20 @@ export const useLayerStore = defineStore('layer', () => {
     layers.value.forEach(layer => {
       layer.visible = true
     })
-    console.log('显示所有图层')
-  }
+    }
 
   function hideAllLayers() {
     layers.value.forEach(layer => {
       layer.visible = false
     })
-    console.log('隐藏所有图层')
-  }
+    }
 
   async function loadLayers() {
     try {
       const data = await repository.getLayers()
       layers.value = data
-    } catch (error) {
-      console.error('加载图层失败:', error)
+    } catch {
+      // 静默处理加载失败
     }
   }
 
@@ -95,11 +92,9 @@ export const useLayerStore = defineStore('layer', () => {
       await new Promise(resolve => setTimeout(resolve, 1000))
       layer.loaded = true
       layer.loading = false
-      console.log(`图层 ${layer.name} 加载成功`)
-    } catch (error) {
+      } catch {
       layer.loading = false
       layer.error = true
-      console.error(`图层 ${layer.name} 加载失败:`, error)
     }
   }
 

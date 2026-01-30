@@ -1,12 +1,14 @@
 /**
  * 项目数据管理 Store
- * 集中管理项目数据的加载和清空
+ * 集中管理项目数据的初始化和清空，是唯一的数据初始化入口
  * 
- * 数据流：
- * - 启动应用 → 空项目（各 store 为空）
- * - 打开 .ucp/.use → ProjectFileService.importProject() 解析文件 → 填充各 store
- * - 新建项目/演示模式 → loadDemoData() → 加载演示数据
- * - 关闭项目 → clearProjectData() → 清空各 store
+ * 使用场景：
+ * - 打开项目文件 (.use) → ProjectFileService.importProject() 加载数据 → setupDataLinks() + markDataLoaded()
+ * - 新建项目 → useProjectManager.createProject() 创建数据 → setupDataLinks() + markDataLoaded()
+ * - 演示模式 → loadDemoData() 加载 mock 数据
+ * - 关闭项目 → clearProjectData() 清空所有 store
+ * 
+ * 重要：不要在其他地方直接调用各 store 的 initMockData()，应统一通过此 store
  */
 
 import { defineStore } from 'pinia'

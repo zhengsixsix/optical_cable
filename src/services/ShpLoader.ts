@@ -72,9 +72,6 @@ export class ShpLoader {
                     // coord 现在应该是 [x, y]
                     if (Array.isArray(coord) && (Math.abs(coord[0]) > 180 || Math.abs(coord[1]) > 90)) {
                         dataProjection = 'EPSG:3857'
-                        console.log(`检测到 EPSG:3857 坐标 (例如: ${coord}), 将自动转换`)
-                    } else {
-                        console.log(`检测到 EPSG:4326 坐标 (例如: ${coord})`)
                     }
                 }
             }

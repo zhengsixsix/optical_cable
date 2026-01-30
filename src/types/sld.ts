@@ -55,6 +55,9 @@ export interface SLDEquipment {
   downstreamId?: string      // 下游连接设备ID
   branchId?: string          // 分支ID (BU专用)
   configParams?: SLDConfigParams  // 配置参数键值对
+  
+  // === 器件库引用 ===
+  componentRefId?: string    // 引用的器件库ID (中继器/分支器等)
 }
 
 // SLD光纤段
@@ -72,6 +75,9 @@ export interface SLDFiberSegment {
   attenuation: number        // 衰减 (dB/km)
   totalLoss: number          // 总损耗 (dB)
   remarks: string
+  
+  // === 器件库引用 ===
+  cableRefId?: string        // 引用的海缆器件库ID
 }
 
 // SLD传输参数

@@ -1,6 +1,6 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { Button } from '@/components/ui'
+import { Button } from '@/shared/components/base'
 import { Home, ArrowLeft } from 'lucide-vue-next'
 
 const router = useRouter()

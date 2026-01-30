@@ -1,6 +1,6 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Card, CardHeader, CardContent, Button } from '@/components/ui'
+import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, Palette } from 'lucide-vue-next'
 import { useAppStore } from '@/stores'
 import { loadAppearanceSettings, applyAppearanceSettings, type AppearanceSettings } from '@/composables'

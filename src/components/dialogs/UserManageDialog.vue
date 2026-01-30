@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { useUserStore } from '@/stores'
-import { Card, CardHeader, CardContent, Button } from '@/components/ui'
+import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, UserCheck, UserX, Trash2, Ban, CheckCircle } from 'lucide-vue-next'
 import type { User, UserStatus } from '@/stores/user'
 

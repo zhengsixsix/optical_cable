@@ -2,7 +2,7 @@
 import { cn } from '@/shared/utils'
 
 interface Props {
-  modelValue?: string
+  modelValue?: string | number
   placeholder?: string
   disabled?: boolean
   type?: 'text' | 'number' | 'password' | 'email'
@@ -16,12 +16,18 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: string): void
+  (e: 'update:modelValue', value: string | number): void
 }>()
 
 function handleInput(event: Event) {
   const target = event.target as HTMLInputElement
-  emit('update:modelValue', target.value)
+  // 对于 number 类型，返回数字值
+  if (props.type === 'number') {
+    const numValue = target.valueAsNumber
+    emit('update:modelValue', isNaN(numValue) ? target.value : numValue)
+  } else {
+    emit('update:modelValue', target.value)
+  }
 }
 </script>
 

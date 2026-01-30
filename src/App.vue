@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouteStore, useLayerStore, useAppStore, useUserStore } from '@/stores'
 import { initAppearance, useProjectManager, type CreateProjectParams } from '@/composables'
@@ -7,18 +7,18 @@ import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
 import ProjectWizardDialog from '@/components/dialogs/ProjectWizardDialog.vue'
 import UserManageDialog from '@/components/dialogs/UserManageDialog.vue'
-import AlarmManageDialog from '@/components/dialogs/AlarmManageDialog.vue'
+import AlarmManageDialog from '@/modules/monitoring/dialogs/AlarmManageDialog.vue'
 import HelpDialog from '@/components/dialogs/HelpDialog.vue'
-import RPLManageDialog from '@/components/dialogs/RPLManageDialog.vue'
-import SLDManageDialog from '@/components/dialogs/SLDManageDialog.vue'
-import RouteEditDialog from '@/components/dialogs/RouteEditDialog.vue'
+import RPLManageDialog from '@/modules/design/dialogs/RPLManageDialog.vue'
+import SLDManageDialog from '@/modules/design/dialogs/SLDManageDialog.vue'
+import RouteEditDialog from '@/modules/planning/dialogs/RouteEditDialog.vue'
 import ReportDialog from '@/components/dialogs/ReportDialog.vue'
 import AppearanceDialog from '@/components/dialogs/AppearanceDialog.vue'
 import AlarmNotification from '@/components/notifications/AlarmNotification.vue'
 import SavePromptDialog from '@/components/dialogs/SavePromptDialog.vue'
 import SaveAsDialog from '@/components/dialogs/SaveAsDialog.vue'
 import ImportFileDialog from '@/components/dialogs/ImportFileDialog.vue'
-import ImportGisDialog from '@/components/dialogs/ImportGisDialog.vue'
+import ImportGisDialog from '@/modules/planning/dialogs/ImportGisDialog.vue'
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()

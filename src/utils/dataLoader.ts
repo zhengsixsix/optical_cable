@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx'
+﻿import * as XLSX from 'xlsx'
 import type { VolcanoData, EarthquakeData } from '@/types'
 
 /**
@@ -22,10 +22,8 @@ export async function loadVolcanoData(url: string): Promise<VolcanoData[]> {
         longitude: parseFloat(row[1])
       }))
 
-    console.log(`成功加载 ${volcanoData.length} 个火山位置数据`)
     return volcanoData
-  } catch (error) {
-    console.error('加载火山数据失败:', error)
+  } catch {
     return []
   }
 }
@@ -52,10 +50,8 @@ export async function loadEarthquakeData(url: string): Promise<EarthquakeData[]>
         magnitude: parseFloat(row[2])
       }))
 
-    console.log(`成功加载 ${earthquakeData.length} 条地震数据`)
     return earthquakeData
-  } catch (error) {
-    console.error('加载地震数据失败:', error)
+  } catch {
     return []
   }
 }

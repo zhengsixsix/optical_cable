@@ -1,9 +1,9 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, DollarSign, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit } from 'lucide-vue-next'
 import { useAppStore } from '@/stores'
-import { Button, Select } from '@/components/ui'
-import MapSelectDialog from '@/components/dialogs/MapSelectDialog.vue'
+import { Button, Select } from '@/shared/components/base'
+import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 
 interface Props {
   visible: boolean
@@ -36,11 +36,10 @@ interface CostItem {
   price: number
 }
 
-type ProjectType = 'ucp' | 'use'
+type ProjectType = 'use'
 
 const projectTypeOptions = [
-  { value: 'ucp', label: '路由规划项目(.ucp)' },
-  { value: 'use', label: '系统设计项目(.use)' }
+  { value: 'use', label: '海缆规划项目 (.use)' }
 ]
 
 const props = defineProps<Props>()
@@ -64,7 +63,7 @@ const currentStep = ref(1)
 const isProcessing = ref(false)
 
 // 步骤1: 项目基本信息
-const projectType = ref<ProjectType>('ucp')
+const projectType = ref<ProjectType>('use')
 const projectName = ref('')
 const allowOtherUsers = ref(false)
 const isGisExpanded = ref(false)
@@ -138,7 +137,6 @@ const removeWaypoint = (id: string) => {
 
 // 切换规划模式
 const setPlanningMode = (mode: 'point-to-point' | 'multi-point') => {
-  console.log('切换规划模式:', mode)
   planningMode.value = mode
 }
 
@@ -175,7 +173,7 @@ const systemCostList = ref<CostItem[]>([
 // 重置表单
 const resetForm = () => {
   currentStep.value = 1
-  projectType.value = 'ucp'
+  projectType.value = 'use'
   projectName.value = ''
   allowOtherUsers.value = false
   startStation.value = { name: '起点', longitude: 0, latitude: 0 }

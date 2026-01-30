@@ -28,13 +28,14 @@ export interface WaypointConfig {
   name: string
   lon: number
   lat: number
+  depth?: number  // 水深，>0 表示水下站点
 }
 
 // 路径规划配置接口
 export interface RoutePlanningConfig {
   mode: 'point-to-point' | 'multi-point'
-  startPoint: { lon: number; lat: number }
-  endPoint: { lon: number; lat: number }
+  startPoint: { lon: number; lat: number; depth?: number }  // depth > 0 为水下站点
+  endPoint: { lon: number; lat: number; depth?: number }    // depth > 0 为水下站点
   planningRange: {
     northwest: { lon: number; lat: number }
     southeast: { lon: number; lat: number }

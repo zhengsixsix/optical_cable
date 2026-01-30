@@ -1,4 +1,4 @@
-const APPEARANCE_STORAGE_KEY = 'app_appearance_settings'
+﻿const APPEARANCE_STORAGE_KEY = 'app_appearance_settings'
 
 export interface AppearanceSettings {
   theme: 'light' | 'dark' | 'blue'
@@ -109,11 +109,9 @@ export function applyAppearanceSettings(settings: AppearanceSettings) {
   // 应用字体大小
   root.style.setProperty('--app-font-size', `${settings.fontSize}px`)
 
-  console.log('[Appearance] 主题已应用:', settings.theme, colors)
-}
+  }
 
 export function initAppearance() {
   const settings = loadAppearanceSettings()
   applyAppearanceSettings(settings)
-  console.log('[Appearance] 初始化完成:', settings)
-}
+  }

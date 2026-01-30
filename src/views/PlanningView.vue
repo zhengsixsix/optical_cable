@@ -1,12 +1,12 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
-import LayerControl from '@/components/panels/LayerControl.vue'
-import RouteStats from '@/components/panels/RouteStats.vue'
-import MapArea from '@/components/map/MapArea.vue'
+import LayerControl from '@/modules/planning/panels/LayerControl.vue'
+import RouteStats from '@/modules/planning/panels/RouteStats.vue'
+import MapArea from '@/modules/planning/components/MapArea.vue'
 import LogPanel from '@/components/panels/LogPanel.vue'
 import RightPanel from '@/components/panels/RightPanel.vue'
-import ImportGisDialog from '@/components/dialogs/ImportGisDialog.vue'
+import ImportGisDialog from '@/modules/planning/dialogs/ImportGisDialog.vue'
 import { useAppStore } from '@/stores'
 
 const appStore = useAppStore()

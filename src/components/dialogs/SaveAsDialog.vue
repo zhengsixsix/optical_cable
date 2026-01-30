@@ -1,11 +1,11 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * 另存为对话框
  * 用于将项目另存到新位置
  */
 import { ref, watch } from 'vue'
 import { Save, X, Loader2 } from 'lucide-vue-next'
-import { Button } from '@/components/ui'
+import { Button, Input } from '@/shared/components/base'
 
 interface Props {
   visible: boolean
@@ -108,24 +108,13 @@ const handleSubmit = async () => {
           <!-- 项目名称 -->
           <div class="flex items-center gap-3">
             <label class="w-[80px] text-sm text-gray-600 shrink-0">项目名称：</label>
-            <input 
-              v-model="projectName"
-              type="text" 
-              placeholder="请输入另存项目名称"
-              class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-            >
+            <Input v-model="projectName" placeholder="请输入另存项目名称" class="flex-1" />
           </div>
           
           <!-- 保存目录 -->
           <div class="flex items-center gap-3">
             <label class="w-[80px] text-sm text-gray-600 shrink-0">保存目录：</label>
-            <input 
-              v-model="savePath"
-              type="text" 
-              readonly
-              placeholder="请选择项目保存文件夹"
-              class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm bg-gray-50 cursor-default"
-            >
+            <Input v-model="savePath" readonly placeholder="请选择项目保存文件夹" class="flex-1" />
             <button 
               class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded transition-colors whitespace-nowrap"
               @click="handleBrowsePath"

@@ -1,6 +1,6 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Card, CardHeader, CardContent, Button } from '@/components/ui'
+import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, Upload, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-vue-next'
 import { useSettingsStore, useAppStore } from '@/stores'
 import { deviceImportService, type ImportResult } from '@/services/DeviceImportService'

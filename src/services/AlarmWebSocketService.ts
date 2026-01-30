@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 告警WebSocket服务
  * 负责与后端建立WebSocket连接，实时接收告警推送
  */
@@ -26,7 +26,6 @@ class AlarmWebSocketService {
   // 连接WebSocket
   connect(url: string) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log('[AlarmWS] Already connected')
       return
     }
 
@@ -37,7 +36,6 @@ class AlarmWebSocketService {
       this.ws = new WebSocket(url)
       
       this.ws.onopen = () => {
-        console.log('[AlarmWS] Connected to', url)
         this.isConnected.value = true
         this.connectionStatus.value = 'connected'
         this.reconnectAttempts = 0
@@ -71,7 +69,6 @@ class AlarmWebSocketService {
       }
       
       this.ws.onclose = () => {
-        console.log('[AlarmWS] Connection closed')
         this.isConnected.value = false
         this.connectionStatus.value = 'disconnected'
         this.notifyConnectionStatus('disconnected')
@@ -110,13 +107,10 @@ class AlarmWebSocketService {
   // 尝试重连
   private attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('[AlarmWS] Max reconnect attempts reached')
       return
     }
 
     this.reconnectAttempts++
-    console.log(`[AlarmWS] Reconnecting... attempt ${this.reconnectAttempts}`)
-    
     this.reconnectTimer = setTimeout(() => {
       this.connect(this.url)
     }, this.reconnectDelay)

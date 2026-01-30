@@ -1,14 +1,14 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Route, RoutePoint, RouteSegment } from '@/types'
 import { createRouteRepository } from '@/repositories'
 import { useSettingsStore } from './settings'
 
-// 规划配置参数
+// 点对点模式
 export interface PlanningParams {
-  startPoint: { lon: number; lat: number; name?: string }
-  endPoint: { lon: number; lat: number; name?: string }
-  waypoints?: Array<{ lon: number; lat: number; name?: string }>
+  startPoint: { lon: number; lat: number; name?: string; depth?: number }
+  endPoint: { lon: number; lat: number; name?: string; depth?: number }
+  waypoints?: Array<{ lon: number; lat: number; name?: string; depth?: number }>
 }
 
 // 悬停线段信息
@@ -46,7 +46,15 @@ export const useRouteStore = defineStore('route', () => {
   )
 
   // 兼容 ParetoPanel 使用的 selectedRoute
-  const selectedRoute = computed(() => currentRoute.value)
+  // 优先从 paretoRoutes 查找，再从 routes 查找
+  const selectedRoute = computed(() => {
+    if (currentRouteId.value) {
+      return paretoRoutes.value.find(r => r.id === currentRouteId.value) ||
+             routes.value.find(r => r.id === currentRouteId.value) ||
+             null
+    }
+    return null
+  })
 
   const selectedSegment = computed(() => {
     if (!currentRoute.value || !selectedSegmentId.value) return null
@@ -57,8 +65,8 @@ export const useRouteStore = defineStore('route', () => {
   async function loadRoutes() {
     try {
       routes.value = await repository.getRoutes()
-    } catch (error) {
-      console.error('加载路由失败:', error)
+    } catch {
+      // 静默处理加载失败
     }
   }
 
@@ -192,19 +200,15 @@ export const useRouteStore = defineStore('route', () => {
     const settingsStore = useSettingsStore()
     const config = settingsStore.routePlanningConfig
     
-    console.log('generateParetoRoutesFromSettings - mode:', config.mode, 'waypoints:', config.waypoints?.length)
-    
     // 多点规划模式
     if (config.mode === 'multi-point' && config.waypoints && config.waypoints.length >= 2) {
-      console.log('Using multi-point mode')
       return generateMultiPointRoutes(config.waypoints)
     }
     
     // 点对点模式
-    console.log('Using point-to-point mode, generating 3 Pareto routes')
     return generateParetoRoutesWithCoords({
-      startPoint: { lon: config.startPoint.lon, lat: config.startPoint.lat, name: '起点' },
-      endPoint: { lon: config.endPoint.lon, lat: config.endPoint.lat, name: '终点' }
+      startPoint: { lon: config.startPoint.lon, lat: config.startPoint.lat, name: '起点', depth: config.startPoint.depth },
+      endPoint: { lon: config.endPoint.lon, lat: config.endPoint.lat, name: '终点', depth: config.endPoint.depth }
     })
   }
 
@@ -212,7 +216,7 @@ export const useRouteStore = defineStore('route', () => {
    * 多点规划路线生成
    * 按顺序连接所有点，生成一条路线
    */
-  function generateMultiPointRoutes(waypoints: Array<{ id: string; name: string; lon: number; lat: number }>): Route[] {
+  function generateMultiPointRoutes(waypoints: Array<{ id: string; name: string; lon: number; lat: number; depth?: number }>): Route[] {
     const now = new Date()
     
     // 构建所有点
@@ -220,7 +224,8 @@ export const useRouteStore = defineStore('route', () => {
       id: `mp-p${i + 1}`,
       coordinates: [wp.lon, wp.lat] as [number, number],
       type: i === 0 ? 'landing' : i === waypoints.length - 1 ? 'landing' : 'waypoint',
-      name: wp.name || `点位${i + 1}`
+      name: wp.name || `点位${i + 1}`,
+      depth: wp.depth || 0  // 保留水深信息
     }))
     
     // 构建分段
@@ -302,8 +307,6 @@ export const useRouteStore = defineStore('route', () => {
     const perpLon = -dLat / dist
     const perpLat = dLon / dist
     
-    console.log('generateParetoRoutesWithCoords - dist:', dist, 'offsetScale:', offsetScale)
-    
     // 生成三条不同走向的路径
     const paretoData: Route[] = [
       // 经济路线：直线（无中间点）
@@ -314,6 +317,8 @@ export const useRouteStore = defineStore('route', () => {
         endCoord,
         startName: startPoint.name || '起点',
         endName: endPoint.name || '终点',
+        startDepth: startPoint.depth,
+        endDepth: endPoint.depth,
         intermediatePoints: [],
         riskMultiplier: 1.2,
         costMultiplier: 0.85,
@@ -327,6 +332,8 @@ export const useRouteStore = defineStore('route', () => {
         endCoord,
         startName: startPoint.name || '起点',
         endName: endPoint.name || '终点',
+        startDepth: startPoint.depth,
+        endDepth: endPoint.depth,
         intermediatePoints: [
           { coord: [midLon + perpLon * offsetScale, midLat + perpLat * offsetScale] as [number, number] }
         ],
@@ -342,6 +349,8 @@ export const useRouteStore = defineStore('route', () => {
         endCoord,
         startName: startPoint.name || '起点',
         endName: endPoint.name || '终点',
+        startDepth: startPoint.depth,
+        endDepth: endPoint.depth,
         intermediatePoints: [
           { coord: [startCoord[0] + dLon * 0.33 - perpLon * offsetScale * 1.5, startCoord[1] + dLat * 0.33 - perpLat * offsetScale * 1.5] as [number, number] },
           { coord: [startCoord[0] + dLon * 0.66 - perpLon * offsetScale * 1.5, startCoord[1] + dLat * 0.66 - perpLat * offsetScale * 1.5] as [number, number] }
@@ -369,16 +378,18 @@ export const useRouteStore = defineStore('route', () => {
     endCoord: [number, number]
     startName: string
     endName: string
+    startDepth?: number
+    endDepth?: number
     intermediatePoints: Array<{ coord: [number, number]; name?: string }>
     riskMultiplier: number
     costMultiplier: number
     now: Date
   }): Route {
-    const { id, name, startCoord, endCoord, startName, endName, intermediatePoints, riskMultiplier, costMultiplier, now } = params
+    const { id, name, startCoord, endCoord, startName, endName, startDepth, endDepth, intermediatePoints, riskMultiplier, costMultiplier, now } = params
     
     // 构建所有点
     const points: RoutePoint[] = [
-      { id: `${id}-p1`, coordinates: startCoord, type: 'landing', name: startName }
+      { id: `${id}-p1`, coordinates: startCoord, type: 'landing', name: startName, depth: startDepth || 0 }
     ]
     
     intermediatePoints.forEach((p, i) => {
@@ -394,7 +405,8 @@ export const useRouteStore = defineStore('route', () => {
       id: `${id}-p${points.length + 1}`,
       coordinates: endCoord,
       type: 'landing',
-      name: endName
+      name: endName,
+      depth: endDepth || 0
     })
 
     // 构建分段

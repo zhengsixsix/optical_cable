@@ -1,8 +1,8 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { FilePlus, FolderOpen, Save, X, Loader2 } from 'lucide-vue-next'
 import { useAppStore } from '@/stores'
-import { Button, Select } from '@/components/ui'
+import { Button, Select, Input } from '@/shared/components/base'
 
 interface Props {
   mode: 'new' | 'open' | 'save' | 'save-as'
@@ -16,11 +16,10 @@ interface LayerItem {
   value: string
 }
 
-type ProjectType = 'ucp' | 'use'
+type ProjectType = 'use'
 
 const projectTypeOptions = [
-  { value: 'ucp', label: '路由规划项目(.ucp)' },
-  { value: 'use', label: '系统设计项目(.use)' }
+  { value: 'use', label: '海缆规划项目 (.use)' }
 ]
 
 const props = defineProps<Props>()
@@ -30,7 +29,7 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
-const projectType = ref<ProjectType>('ucp')
+const projectType = ref<ProjectType>('use')
 const projectName = ref('')
 const savePath = ref('')
 const allowOtherUsers = ref(false)
@@ -48,7 +47,7 @@ const layerList = ref<LayerItem[]>([
 ])
 
 const resetForm = () => {
-  projectType.value = 'ucp'
+  projectType.value = 'use'
   projectName.value = ''
   savePath.value = ''
   allowOtherUsers.value = false
@@ -212,12 +211,7 @@ const handleSubmit = async () => {
               <!-- 项目名称 -->
               <div class="flex items-center gap-3">
                 <label class="w-[110px] text-sm text-gray-600 shrink-0">项目名称：</label>
-                <input 
-                  v-model="projectName"
-                  type="text" 
-                  placeholder="请输入项目名称"
-                  class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                >
+                <Input v-model="projectName" placeholder="请输入项目名称" class="flex-1" />
               </div>
               <!-- 允许其他用户打开 -->
               <div class="flex items-center gap-3">
@@ -277,11 +271,7 @@ const handleSubmit = async () => {
             <div class="space-y-3">
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">文件名称:</label>
-                <input 
-                  v-model="fileName"
-                  type="text" 
-                  class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                >
+                <Input v-model="fileName" class="flex-1" />
                 <button 
                   class="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white text-sm rounded transition-colors whitespace-nowrap"
                   @click="handleBrowse()"
@@ -319,12 +309,7 @@ const handleSubmit = async () => {
             <div class="space-y-3">
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">工程名称:</label>
-                <input 
-                  v-model="projectName"
-                  type="text" 
-                  class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  placeholder="请输入工程名称"
-                >
+                <Input v-model="projectName" placeholder="请输入工程名称" class="flex-1" />
               </div>
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">文件类型:</label>

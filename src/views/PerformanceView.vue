@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
-import { Card, CardHeader, CardContent, Select } from '@/components/ui'
+import { Card, CardHeader, CardContent, Select } from '@/shared/components/base'
 import { performanceTimeRangeOptions } from '@/data/mockData'
 import { useMonitorStore } from '@/stores'
 

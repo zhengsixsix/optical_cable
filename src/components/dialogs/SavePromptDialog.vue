@@ -1,10 +1,10 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * 保存提示对话框
  * 在关闭/切换项目时提示用户是否保存当前项目
  */
 import { X } from 'lucide-vue-next'
-import { Button } from '@/components/ui'
+import { Button } from '@/shared/components/base'
 
 interface Props {
   visible: boolean

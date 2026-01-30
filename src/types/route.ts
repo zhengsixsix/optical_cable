@@ -34,6 +34,7 @@ export interface RoutePoint {
   coordinates: [number, number]
   type: RoutePointType
   name?: string
+  depth?: number  // 水深，>0 表示水下站点，0 或不设置表示岸上站点
   // 器件库设备信息
   device?: RoutePointDevice
   // 分支目标（多点规划时使用）

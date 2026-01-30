@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
-import { Card, CardHeader, CardContent, Button, Tooltip } from '@/components/ui'
+import { Card, CardHeader, CardContent, Button, Tooltip, Input, Select } from '@/shared/components/base'
 import DeviceImportDialog from '@/components/dialogs/DeviceImportDialog.vue'
 import { useSettingsStore, useAppStore } from '@/stores'
 import { 
@@ -302,13 +302,8 @@ const clearLibrary = () => {
           <div class="flex items-center gap-2">
             <!-- 搜索框 -->
             <div class="relative">
-              <Search class="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input 
-                v-model="searchKeyword"
-                type="text"
-                placeholder="搜索..."
-                class="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-48"
-              />
+              <Search class="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 z-10" />
+              <Input v-model="searchKeyword" placeholder="搜索..." class="pl-8 w-48" />
             </div>
             <Button size="sm" @click="addNewItem">
               <Plus class="w-4 h-4 mr-1" /> 添加
@@ -479,11 +474,7 @@ const clearLibrary = () => {
         <!-- 通用字段 -->
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">名称</label>
-          <input 
-            v-model="editingItem.name"
-            type="text"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-          />
+          <Input v-model="editingItem.name" class="w-full" />
         </div>
         
         <!-- 光纤字段 -->
@@ -491,27 +482,24 @@ const clearLibrary = () => {
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">非线性系数 (W⁻¹·km⁻¹)</label>
-              <input v-model.number="editingItem.nonlinearCoeff" type="number" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.nonlinearCoeff" type="number" class="w-full" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">有效面积 (μm²)</label>
-              <input v-model.number="editingItem.effectiveArea" type="number" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.effectiveArea" type="number" class="w-full" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">色散 (ps/nm·km)</label>
-              <input v-model.number="editingItem.dispersion" type="number" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.dispersion" type="number" class="w-full" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">衰减系数 (dB/km)</label>
-              <input v-model.number="editingItem.attenuationCoeff" type="number" step="0.01" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.attenuationCoeff" type="number" class="w-full" />
             </div>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">仿真模型</label>
-            <select v-model="editingItem.simulationModel" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
-              <option value="GN">GN Model</option>
-              <option value="EGN">EGN Model</option>
-            </select>
+            <Select v-model="editingItem.simulationModel" :options="[{ value: 'GN', label: 'GN Model' }, { value: 'EGN', label: 'EGN Model' }]" class="w-full" />
           </div>
         </template>
         
@@ -520,19 +508,19 @@ const clearLibrary = () => {
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">增益 (dB)</label>
-              <input v-model.number="editingItem.gain" type="number" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.gain" type="number" class="w-full" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">噪声系数 (dB)</label>
-              <input v-model.number="editingItem.noiseFigure" type="number" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.noiseFigure" type="number" class="w-full" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">输出功率 (dBm)</label>
-              <input v-model.number="editingItem.outputPower" type="number" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.outputPower" type="number" class="w-full" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">增益平坦度 (dB)</label>
-              <input v-model.number="editingItem.gainFlatness" type="number" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.gainFlatness" type="number" class="w-full" />
             </div>
           </div>
         </template>
@@ -542,11 +530,11 @@ const clearLibrary = () => {
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">端口数</label>
-              <input v-model.number="editingItem.portCount" type="number" min="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.portCount" type="number" class="w-full" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">插入损耗 (dB)</label>
-              <input v-model.number="editingItem.insertionLoss" type="number" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+              <Input v-model="editingItem.insertionLoss" type="number" class="w-full" />
             </div>
           </div>
         </template>

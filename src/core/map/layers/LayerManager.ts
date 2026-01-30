@@ -1,4 +1,4 @@
-import type Map from 'ol/Map'
+import type OLMap from 'ol/Map'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
@@ -22,10 +22,10 @@ export interface LayerConfig {
  * 统一管理地图上的所有图层
  */
 export class LayerManager {
-  private map: Map
+  private map: OLMap
   private layers: Map<string, Layer> = new Map()
 
-  constructor(map: Map) {
+  constructor(map: OLMap) {
     this.map = map
     this.initBaseLayers()
   }

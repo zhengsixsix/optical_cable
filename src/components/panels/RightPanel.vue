@@ -1,10 +1,10 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Card, CardHeader, CardContent, Button } from '@/components/ui'
+import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { Printer, X, Maximize2 } from 'lucide-vue-next'
-import MonitorPanel from './MonitorPanel.vue'
-import DepthProfile from '@/components/visualization/DepthProfile.vue'
-import Terrain3D from '@/components/visualization/Terrain3D.vue'
+import MonitorPanel from '@/modules/monitoring/panels/MonitorPanel.vue'
+import DepthProfile from '@/modules/planning/components/DepthProfile.vue'
+import Terrain3D from '@/modules/planning/components/Terrain3D.vue'
 import { useAppStore, useRouteStore } from '@/stores'
 
 interface Props {

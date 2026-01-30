@@ -502,6 +502,41 @@ export interface USEHealthMonitoring {
 
 // ==================== USE 项目数据结构 ====================
 
+/** 路由规划扩展数据 (保存原始 RPL 表格) */
+export interface RouteplanningExtension {
+  rplTables: any[]  // 原始 RPL 表格数据
+  routes?: any[]    // 路由数据
+  planningConfig?: any
+}
+
+/** 传输规划扩展数据 (保存原始 SLD 表格) */
+export interface TransmissionPlanningExtension {
+  sldTables: any[]  // 原始 SLD 表格数据
+  transmissionConfig?: any
+  repeaterConfigs?: any[]
+}
+
+/** 接线元扩展数据 */
+export interface ConnectorExtension {
+  connectorTables: any[]  // 接线元表格数据
+}
+
+/** 监控扩展数据 */
+export interface MonitorExtension {
+  devices: any[]         // 监控设备数据
+  alarmHistory?: any[]   // 告警历史
+}
+
+/** 图层设置扩展数据 */
+export interface LayerSettingsExtension {
+  oceanElevation?: boolean
+  volcanoDistribution?: boolean
+  fishingAreaDistribution?: boolean
+  slopeMap?: boolean
+  earthquakeDistribution?: boolean
+  shippingLanes?: boolean
+}
+
 /** USE 项目数据 (project_data.json 内容) */
 export interface USEProjectData {
   metadata: USEMetadata
@@ -511,6 +546,13 @@ export interface USEProjectData {
   route_engineering: USERouteEngineering
   system_engineering: USESystemEngineering
   health_monitoring: USEHealthMonitoring
+  
+  // ===== 扩展字段 (保存原始 Store 数据，确保完整恢复) =====
+  routePlanning?: RouteplanningExtension       // RPL 原始数据
+  transmissionPlanning?: TransmissionPlanningExtension  // SLD 原始数据
+  connectorTables?: any[]                      // 接线元表格数据
+  monitorData?: MonitorExtension               // 监控数据
+  layerSettings?: LayerSettingsExtension       // 图层设置
 }
 
 // ==================== 链路器件参数获取流程 ====================

@@ -1,10 +1,10 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore, useUserStore, useMapStore, useRPLStore, useSLDStore, useRouteStore } from '@/stores'
 import { useProjectManager } from '@/composables'
 import { useRPLExport } from '@/services/RPLExportService'
-import { exportSLDFromRoute } from '@/services/SLDExportService'
+import { exportSLDFile } from '@/services/SLDExportService'
 import type { Projection } from '@/types'
 import {
   FileText, FolderOpen, Save, FilePlus, LogOut,
@@ -111,37 +111,23 @@ const handleExportRPL = async () => {
 
 // 导出 SLD 文件
 const handleExportSLD = async () => {
-  const currentRoute = routeStore.currentRoute
-  if (!currentRoute) {
-    appStore.showNotification({ type: 'warning', message: '没有可导出的路由数据' })
+  const currentTable = sldStore.currentTable
+  if (!currentTable) {
+    appStore.showNotification({ type: 'warning', message: '没有可导出的 SLD 数据' })
     return
   }
   
   try {
     const projectName = projectManager.currentProjectName.value || 'SubmarineCable'
-    const xmlContent = exportSLDFromRoute(currentRoute, projectName)
-    
-    // 下载 XML 文件
-    const blob = new Blob([xmlContent], { type: 'application/xml;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `SLD_${projectName}_${new Date().toISOString().slice(0, 10)}.xml`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-    
+    exportSLDFile(currentTable, { systemName: projectName })
     appStore.showNotification({ type: 'success', message: 'SLD 文件导出成功' })
-    appStore.addLog('INFO', `导出 SLD 文件: ${projectName}`)
+    appStore.addLog('INFO', `导出 SLD 文件: ${currentTable.name}`)
   } catch (error) {
     appStore.showNotification({ type: 'error', message: 'SLD 文件导出失败' })
   }
 }
 
 const showModal = (key: string) => {
-  console.log(`Menu Action: ${key}`)
-  
   // 特殊处理导出操作
   if (key === 'export-rpl') {
     handleExportRPL()
@@ -174,7 +160,6 @@ const showModal = (key: string) => {
 }
 
 const refreshView = () => {
-  console.log('Refreshing view...')
   window.location.reload()
 }
 
@@ -273,7 +258,7 @@ const togglePanel = (panel: string) => {
                     <a href="#" @click.prevent="showModal('import-project')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileInput class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导入工程 (.ucp)</span>
+                      <span class="text-sm">导入工程 (.use)</span>
                     </a>
                     <a href="#" @click.prevent="showModal('import-rpl')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">

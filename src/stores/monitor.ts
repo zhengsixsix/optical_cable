@@ -1,9 +1,10 @@
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import { mockMonitorDevices, mockAlarmHistory } from '@/data/mockData'
+import { defineStore, storeToRefs } from 'pinia'
+import { ref, computed, watch } from 'vue'
+import { mockAlarmHistory } from '@/data/mockData'
 import { dataLinkService } from '@/services'
+import { useConnectorStore } from './connector'
 
-// 监控设备类型
+// 监控设备类型 (派生自 ConnectorElement + 运行时数据)
 export interface MonitorDevice {
   id: string
   name: string
@@ -29,6 +30,20 @@ export interface MonitorDevice {
   fiberRefId?: string
 }
 
+// 运行时数据 (仅监控阶段使用)
+export interface RuntimeData {
+  status: 'normal' | 'warning' | 'error'
+  inputPower: number
+  outputPower: number
+  pumpCurrent: number
+  pfeVoltage: number
+  pfeCurrent: number
+  temperature: number
+  qValue?: number
+  ber?: number
+  osnr?: number
+}
+
 // 告警记录类型
 export interface AlarmRecord {
   id: number
@@ -41,13 +56,60 @@ export interface AlarmRecord {
   status: 'active' | 'acknowledged' | 'cleared'
 }
 
+// 默认运行时数据
+const defaultRuntimeData: RuntimeData = {
+  status: 'normal',
+  inputPower: -15,
+  outputPower: -10,
+  pumpCurrent: 200,
+  pfeVoltage: 48,
+  pfeCurrent: 1.2,
+  temperature: 5,
+}
+
 export const useMonitorStore = defineStore('monitor', () => {
-  // 设备列表
-  const devices = ref<MonitorDevice[]>([])
+  const connectorStore = useConnectorStore()
+  
+  // 运行时数据存储 (deviceId => RuntimeData)
+  const runtimeData = ref<Record<string, RuntimeData>>({})
   // 告警历史
   const alarmHistory = ref<AlarmRecord[]>([])
   // 选中的设备ID
   const selectedDeviceId = ref<string | null>(null)
+
+  // 设备列表 - 从 connectorStore 派生
+  const devices = computed<MonitorDevice[]>(() => {
+    // 过滤掉光纤段，只保留设备
+    const elements = connectorStore.elements.filter(e => e.type !== 'fiber')
+    
+    return elements.map(elem => {
+      const runtime = runtimeData.value[elem.id] || defaultRuntimeData
+      return {
+        id: elem.id,
+        name: elem.name,
+        type: elem.type,
+        neType: elem.type,
+        status: runtime.status,
+        location: `KP ${elem.kp.toFixed(1)}`,
+        kp: elem.kp,
+        sldEquipmentName: elem.name,
+        longitude: elem.longitude,
+        latitude: elem.latitude,
+        depth: elem.depth,
+        inputPower: runtime.inputPower,
+        outputPower: runtime.outputPower,
+        pumpCurrent: runtime.pumpCurrent,
+        pfeVoltage: runtime.pfeVoltage,
+        pfeCurrent: runtime.pfeCurrent,
+        temperature: runtime.temperature,
+        qValue: runtime.qValue,
+        ber: runtime.ber,
+        osnr: runtime.osnr,
+        componentRefId: elem.componentRefId,
+        fiberRefId: elem.fiberRefId,
+      }
+    })
+  })
 
   // 当前选中的设备
   const selectedDevice = computed(() => 
@@ -81,30 +143,16 @@ export const useMonitorStore = defineStore('monitor', () => {
     selectedDeviceId.value = deviceId
   }
 
-  // 更新设备数据
-  function updateDevice(deviceId: string, data: Partial<MonitorDevice>, emitLink = true) {
-    const device = devices.value.find(d => d.id === deviceId)
-    if (device) {
-      Object.assign(device, data)
-      
-      // 触发数据联动
-      if (emitLink) {
-        dataLinkService.emit({
-          source: 'monitor',
-          action: 'update',
-          data: device,
-          kp: device.kp,
-        })
-      }
-    }
+  // 更新设备运行时数据
+  function updateDevice(deviceId: string, data: Partial<RuntimeData>) {
+    const current = runtimeData.value[deviceId] || { ...defaultRuntimeData }
+    runtimeData.value[deviceId] = { ...current, ...data }
   }
 
   // 更新设备状态
   function updateDeviceStatus(deviceId: string, status: MonitorDevice['status']) {
-    const device = devices.value.find(d => d.id === deviceId)
-    if (device) {
-      device.status = status
-    }
+    const current = runtimeData.value[deviceId] || { ...defaultRuntimeData }
+    runtimeData.value[deviceId] = { ...current, status }
   }
 
   // 添加告警
@@ -169,37 +217,37 @@ export const useMonitorStore = defineStore('monitor', () => {
     return result
   }
 
-  // 初始化数据
+  // 初始化模拟运行时数据 (仅用于演示)
   function initMockData() {
-    if (devices.value.length === 0) {
-      devices.value = mockMonitorDevices.map(d => ({ ...d } as MonitorDevice))
+    // 设备列表现在从 connectorStore 派生，这里只初始化运行时数据和告警
+    if (alarmHistory.value.length === 0) {
       alarmHistory.value = mockAlarmHistory.map(a => ({ ...a } as AlarmRecord))
     }
-  }
-
-  // 监听其他模块的数据变更
-  function setupDataLinkListener() {
-    dataLinkService.subscribe('monitor', (event) => {
-      // 根据KP查找对应监控设备
-      const device = getDeviceByKp(event.kp || 0)
-      
-      if (event.action === 'update' && device) {
-        // 同步更新设备信息（包括类型、名称、坐标、深度）
-        updateDevice(device.id, {
-          name: event.data.name ?? device.name,
-          type: event.data.type ?? device.type,
-          neType: event.data.type ?? device.neType,
-          longitude: event.data.longitude ?? device.longitude,
-          latitude: event.data.latitude ?? device.latitude,
-          depth: event.data.depth ?? device.depth,
-        }, false)
+    // 为现有设备初始化模拟运行时数据
+    devices.value.forEach(device => {
+      if (!runtimeData.value[device.id]) {
+        runtimeData.value[device.id] = {
+          status: 'normal',
+          inputPower: -15 + Math.random() * 5,
+          outputPower: -10 + Math.random() * 5,
+          pumpCurrent: 200 + Math.random() * 50,
+          pfeVoltage: 48,
+          pfeCurrent: 1.2 + Math.random() * 0.3,
+          temperature: 4 + Math.random() * 2,
+        }
       }
     })
   }
 
-  // 清空数据
+  // 监听其他模块的数据变更 (设备信息现在从 connectorStore 派生，无需监听)
+  function setupDataLinkListener() {
+    // 设备基础信息现在从 connectorStore 自动派生
+    // 此方法保留以保持 API 兼容性
+  }
+
+  // 清空运行时数据
   function clearData() {
-    devices.value = []
+    runtimeData.value = {}
     alarmHistory.value = []
     selectedDeviceId.value = null
   }
@@ -207,6 +255,7 @@ export const useMonitorStore = defineStore('monitor', () => {
   return {
     // State
     devices,
+    runtimeData,
     alarmHistory,
     selectedDeviceId,
     // Getters

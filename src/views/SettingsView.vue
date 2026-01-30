@@ -1,8 +1,8 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
 import { useSettingsStore, useAppStore } from '@/stores'
-import { Card, CardContent, Button, Select } from '@/components/ui'
-import MapSelectDialog from '@/components/dialogs/MapSelectDialog.vue'
+import { Card, CardContent, Button, Select, Input } from '@/shared/components/base'
+import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import { Save, RotateCcw, MapPin, Radio, Activity, Database, Cable, Zap, GitBranch, Waves, Server, AlertTriangle, Plus, Trash2, Upload, Download, X, Edit, FolderOpen, FilePlus } from 'lucide-vue-next'
 import type { FiberType, AmplifierType, BranchingUnitType } from '@/types'
 import {
@@ -628,14 +628,12 @@ const handleReset = () => {
                 <template v-if="routeConfig.mode === 'point-to-point'">
                   <div class="flex items-center gap-4">
                     <label class="w-20 text-sm text-gray-600 text-right shrink-0">起点坐标：</label>
-                    <input v-model="routeConfig.startCoord" type="text" placeholder="经度,纬度"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none" />
+                    <Input v-model="routeConfig.startCoord" placeholder="经度,纬度" class="flex-1" />
                     <Button size="sm" variant="outline" @click="handleMapSelect('起点')">地图选点</Button>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-20 text-sm text-gray-600 text-right shrink-0">终点坐标：</label>
-                    <input v-model="routeConfig.endCoord" type="text" placeholder="经度,纬度"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <Input v-model="routeConfig.endCoord" placeholder="经度,纬度" class="flex-1" />
                     <Button size="sm" variant="outline" @click="handleMapSelect('终点')">地图选点</Button>
                   </div>
                 </template>
@@ -646,10 +644,8 @@ const handleReset = () => {
                     <!-- 多点列表 -->
                     <div v-for="(wp, index) in waypoints" :key="wp.id" class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
                       <span class="w-6 h-6 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center shrink-0">{{ index + 1 }}</span>
-                      <input v-model="wp.name" type="text" placeholder="站点名称"
-                        class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none" />
-                      <input v-model="wp.coord" type="text" placeholder="经度,纬度"
-                        class="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none" />
+                      <Input v-model="wp.name" placeholder="站点名称" class="w-24" />
+                      <Input v-model="wp.coord" placeholder="经度,纬度" class="flex-1" />
                       <Button size="sm" variant="outline" @click="handleWaypointMapSelect(wp.id)">
                         <MapPin class="w-3.5 h-3.5" />
                       </Button>
@@ -681,15 +677,12 @@ const handleReset = () => {
               <div class="space-y-4">
                 <div class="flex items-center gap-4">
                   <label class="w-20 text-sm text-gray-600 text-right shrink-0">规划范围：</label>
-                  <input v-model="routeConfig.planningRange" type="text"
-                    placeholder="西北角：xxx.xx,xxx.xx，东南角：xxx.xx,xxx.xx"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                  <Input v-model="routeConfig.planningRange" placeholder="西北角：xxx.xx,xxx.xx，东南角：xxx.xx,xxx.xx" class="flex-1" />
                   <Button size="sm" variant="outline" @click="handleMapSelect('规划范围')">地图选点</Button>
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-20 text-sm text-gray-600 text-right shrink-0">网格大小：</label>
-                  <input v-model="routeConfig.gridSize" type="text"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                  <Input v-model="routeConfig.gridSize" class="flex-1" />
                 </div>
               </div>
             </CardContent>
@@ -709,26 +702,22 @@ const handleReset = () => {
                 <div class="space-y-3 pl-3">
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">轻型海缆单价：</label>
-                    <input v-model="routeConfig.lightCableCost" type="text" placeholder="如：15"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <Input v-model="routeConfig.lightCableCost" placeholder="如：15" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">重型海缆单价：</label>
-                    <input v-model="routeConfig.heavyCableCost" type="text" placeholder="如：25"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <Input v-model="routeConfig.heavyCableCost" placeholder="如：25" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">施工成本极大值：</label>
-                    <input v-model="routeConfig.maxConstructionCost" type="text" placeholder="如：100"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <Input v-model="routeConfig.maxConstructionCost" placeholder="如：100" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">深浅分界值：</label>
-                    <input v-model="routeConfig.depthThreshold" type="text" placeholder="如：1000"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                    <Input v-model="routeConfig.depthThreshold" placeholder="如：1000" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">米</span>
                   </div>
                 </div>
@@ -743,32 +732,27 @@ const handleReset = () => {
                 <div class="space-y-3 pl-3">
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">电缆单价：</label>
-                    <input v-model="routeConfig.cableCostPerKm" type="text" placeholder="如：35000"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <Input v-model="routeConfig.cableCostPerKm" placeholder="如：35000" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">元/公里</span>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">安装单价：</label>
-                    <input v-model="routeConfig.installationCostPerKm" type="text" placeholder="如：15000"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <Input v-model="routeConfig.installationCostPerKm" placeholder="如：15000" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">元/公里</span>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">中继器单价：</label>
-                    <input v-model="routeConfig.repeaterCost" type="text" placeholder="如：250000"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <Input v-model="routeConfig.repeaterCost" placeholder="如：250000" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">分支器单价：</label>
-                    <input v-model="routeConfig.branchingUnitCost" type="text" placeholder="如：180000"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <Input v-model="routeConfig.branchingUnitCost" placeholder="如：180000" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
                   </div>
                   <div class="flex items-center gap-4">
                     <label class="w-28 text-sm text-gray-600 text-right shrink-0">登陆站成本：</label>
-                    <input v-model="routeConfig.landingStationCost" type="text" placeholder="如：5000000"
-                      class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none" />
+                    <Input v-model="routeConfig.landingStationCost" placeholder="如：5000000" class="flex-1" />
                     <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
                   </div>
                 </div>
@@ -799,20 +783,17 @@ const handleReset = () => {
               <div class="space-y-4">
                 <div>
                   <label class="text-xs text-gray-500 mb-1 block">波道数量</label>
-                  <input v-model.number="transConfig.channelCount" type="number" min="1" max="400"
-                    class="w-full px-3 py-2.5 text-sm border rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+                  <Input v-model="transConfig.channelCount" type="number" class="w-full" />
                   <p class="text-xs text-gray-400 mt-1">范围: 1-400，常用值: 96</p>
                 </div>
                 <div>
                   <label class="text-xs text-gray-500 mb-1 block">中心波长 (nm)</label>
-                  <input v-model.number="transConfig.centerWavelength" type="number" min="1500" max="1600"
-                    class="w-full px-3 py-2.5 text-sm border rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+                  <Input v-model="transConfig.centerWavelength" type="number" class="w-full" />
                   <p class="text-xs text-gray-400 mt-1">C波段: 1530-1565nm</p>
                 </div>
                 <div>
                   <label class="text-xs text-gray-500 mb-1 block">信道带宽 (GHz)</label>
-                  <input v-model.number="transConfig.channelBandwidth" type="number" min="25" max="100"
-                    class="w-full px-3 py-2.5 text-sm border rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+                  <Input v-model="transConfig.channelBandwidth" type="number" class="w-full" />
                   <p class="text-xs text-gray-400 mt-1">常用值: 50 GHz, 100 GHz</p>
                 </div>
               </div>
@@ -876,9 +857,7 @@ const handleReset = () => {
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">连接地址：</label>
-                  <input v-model="monitorConfig.connectionAddress" type="text"
-                    placeholder="tcp://monitor.example.com:1234"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                  <Input v-model="monitorConfig.connectionAddress" placeholder="tcp://monitor.example.com:1234" class="flex-1" />
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">认证信息：</label>
@@ -896,20 +875,17 @@ const handleReset = () => {
               <div class="space-y-4">
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">光功率阈值：</label>
-                  <input v-model.number="monitorConfig.powerThreshold" type="number" step="0.1"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                  <Input v-model="monitorConfig.powerThreshold" type="number" class="flex-1" />
                   <span class="text-sm text-gray-500 w-12 shrink-0">dBm</span>
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">温度阈值：</label>
-                  <input v-model.number="monitorConfig.temperatureThreshold" type="number" step="0.5"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                  <Input v-model="monitorConfig.temperatureThreshold" type="number" class="flex-1" />
                   <span class="text-sm text-gray-500 w-12 shrink-0">°C</span>
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">BER阈值：</label>
-                  <input v-model="monitorConfig.berThreshold" type="text" placeholder="1e-9"
-                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none" />
+                  <Input v-model="monitorConfig.berThreshold" placeholder="1e-9" class="flex-1" />
                 </div>
               </div>
             </CardContent>
@@ -1135,52 +1111,41 @@ const handleReset = () => {
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">光纤类型名称：</label>
-            <input v-model="newFiber.name" type="text"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newFiber.name" class="flex-1" />
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">非线性系数 (γ)：</label>
-            <input v-model.number="newFiber.nonlinearCoeff" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newFiber.nonlinearCoeff" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">W⁻¹·km⁻¹</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">有效面积 (A_eff)：</label>
-            <input v-model.number="newFiber.effectiveArea" type="number" step="1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newFiber.effectiveArea" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">μm²</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">色散 (Dispersion)：</label>
-            <input v-model.number="newFiber.dispersion" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newFiber.dispersion" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">ps/nm·km</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">非线性折射率 (n_2)：</label>
-            <input v-model.number="newFiber.nonlinearRefractiveIndex" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newFiber.nonlinearRefractiveIndex" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">×10⁻²⁰ m²/W</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">衰减系数 (α)：</label>
-            <input v-model.number="newFiber.attenuationCoeff" type="number" step="0.01"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newFiber.attenuationCoeff" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">dB/km</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">二阶色散 (β₂)：</label>
-            <input v-model.number="newFiber.secondOrderDispersion" type="number" step="1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newFiber.secondOrderDispersion" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">ps²</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">光纤仿真模型偏好：</label>
-            <select v-model="newFiber.simulationModel"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary">
-              <option value="GN">高斯噪声模型 (GN Model)</option>
-              <option value="EGN">增强高斯噪声模型 (EGN Model)</option>
-            </select>
+            <Select v-model="newFiber.simulationModel" :options="[{ value: 'GN', label: '高斯噪声模型 (GN Model)' }, { value: 'EGN', label: '增强高斯噪声模型 (EGN Model)' }]" class="flex-1" />
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">
@@ -1203,49 +1168,41 @@ const handleReset = () => {
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">放大器类型名称：</label>
-            <input v-model="newAmplifier.name" type="text"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.name" class="flex-1" />
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益：</label>
-            <input v-model.number="newAmplifier.gain" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.gain" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">带宽：</label>
-            <input v-model.number="newAmplifier.bandwidth" type="number" step="1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.bandwidth" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">nm</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益平坦度：</label>
-            <input v-model.number="newAmplifier.gainFlatness" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.gainFlatness" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">噪声系数：</label>
-            <input v-model.number="newAmplifier.noiseFigure" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.noiseFigure" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">泵浦功率：</label>
-            <input v-model.number="newAmplifier.pumpPower" type="number" step="1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.pumpPower" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">mW</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">输出功率：</label>
-            <input v-model.number="newAmplifier.outputPower" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.outputPower" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">dBm</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益范围功率：</label>
-            <input v-model.number="newAmplifier.gainRangePower" type="number" step="0.1"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newAmplifier.gainRangePower" type="number" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
         </div>
@@ -1269,25 +1226,21 @@ const handleReset = () => {
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">分支器类型名称：</label>
-            <input v-model="newBranching.name" type="text"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newBranching.name" class="flex-1" />
           </div>
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">端口数量：</label>
-            <input v-model.number="newBranching.portCount" type="number" min="1" placeholder="请输入端口数量"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newBranching.portCount" type="number" placeholder="请输入端口数量" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">个</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">端口间插损：</label>
-            <input v-model.number="newBranching.insertionLoss" type="number" step="0.1" placeholder="请输入端口间插损"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newBranching.insertionLoss" type="number" placeholder="请输入端口间插损" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">工作波长范围：</label>
-            <input v-model.number="newBranching.wavelengthRange" type="number" step="1" placeholder="请输入工作波长范围"
-              class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+            <Input v-model="newBranching.wavelengthRange" type="number" placeholder="请输入工作波长范围" class="flex-1" />
             <span class="text-xs text-gray-500 dark:text-gray-400">nm</span>
           </div>
         </div>
