@@ -2,9 +2,11 @@
  * DEM 高程数据服务
  * 
  * 功能：
- * 1. 启动时预加载6个tif的元数据（秒级）
+ * 1. 启动时预加载6个tif的完整数据到内存
  * 2. 提供 /api/dem/meta 返回所有tif的bbox信息
  * 3. 提供 /api/dem/clip 按bbox裁剪返回高程数据
+ * 4. 提供 /api/dem/point 查询单点高程
+ * 5. 提供 /api/dem/profile 获取路径剖面
  */
 
 import express from 'express'
@@ -24,19 +26,21 @@ app.use(express.json())
 const DEM_DIR = path.join(__dirname, '..', 'public', 'dem')
 const DEM_FILES = ['1.tif', '2.tif', '3.tif', '4.tif', '5.tif', '6.tif']
 
-// 全局缓存：存储tif元数据和image对象
+// 全局缓存：存储tif元数据、image对象和完整数据
 const tifCache = []
 
 /**
- * 启动时预加载所有tif元数据并预热缓存
+ * 启动时预加载所有tif完整数据到内存
  */
-async function preloadTifMeta() {
-  console.log('🚀 正在预加载 DEM 元数据...')
+async function preloadTifData() {
+  console.log('🚀 正在预加载 DEM 数据到内存...')
   const startTime = Date.now()
+  let totalMemory = 0
 
   for (const filename of DEM_FILES) {
     const filePath = path.join(DEM_DIR, filename)
     try {
+      const fileStart = Date.now()
       const tiff = await GeoTIFF.fromFile(filePath)
       const image = await tiff.getImage()
       const bbox = image.getBoundingBox()
@@ -44,6 +48,12 @@ async function preloadTifMeta() {
       const height = image.getHeight()
       const pixelWidth = (bbox[2] - bbox[0]) / width
       const pixelHeight = (bbox[3] - bbox[1]) / height
+
+      // 读取完整数据到内存
+      const rasters = await image.readRasters()
+      const fullData = rasters[0]  // Int16Array
+      const memoryMB = (fullData.byteLength / 1024 / 1024).toFixed(1)
+      totalMemory += fullData.byteLength
 
       tifCache.push({
         filename,
@@ -53,36 +63,18 @@ async function preloadTifMeta() {
         height,
         pixelWidth,
         pixelHeight,
-        image, // 保留image对象用于后续读取
+        image,
+        fullData,  // 完整数据缓存
       })
 
-      console.log(`  ✅ ${filename}: bbox=[${bbox.map(v => v.toFixed(2)).join(', ')}]`)
+      console.log(`  ✅ ${filename}: ${width}x${height}, ${memoryMB}MB, 耗时 ${Date.now() - fileStart}ms`)
     } catch (e) {
       console.error(`  ❌ ${filename} 加载失败:`, e.message)
     }
   }
 
-  console.log(`✨ 元数据加载完成，耗时 ${Date.now() - startTime}ms`)
-  
-  // 预热缓存：对每个tif读取一小块数据，强制加载内部索引
-  console.log('🔥 正在预热缓存...')
-  const warmupStart = Date.now()
-  
-  await Promise.all(tifCache.map(async (tif) => {
-    try {
-      // 读取一个小窗口强制geotiff加载数据
-      await tif.image.readRasters({
-        window: [0, 0, 10, 10],
-        width: 10,
-        height: 10,
-      })
-      console.log(`  🔥 ${tif.filename} 预热完成`)
-    } catch (e) {
-      console.warn(`  ⚠️ ${tif.filename} 预热失败:`, e.message)
-    }
-  }))
-  
-  console.log(`🌟 预热完成，耗时 ${Date.now() - warmupStart}ms`)
+  const totalMemoryMB = (totalMemory / 1024 / 1024).toFixed(1)
+  console.log(`✨ 数据加载完成，共 ${tifCache.length} 个文件，占用内存 ${totalMemoryMB}MB，总耗时 ${Date.now() - startTime}ms`)
 }
 
 /**
@@ -168,23 +160,24 @@ app.get('/api/dem/clip', async (req, res) => {
       return res.status(400).json({ success: false, error: '选择区域超出DEM数据范围' })
     }
 
-    // 读取裁剪后的数据
+    // 从内存缓存中裁剪数据
     const startTime = Date.now()
-    const rasters = await tif.image.readRasters({
-      window: [windowMinX, windowMinY, windowMaxX, windowMaxY],
-      width: outputWidth,
-      height: outputHeight,
-    })
-
-    const rawData = rasters[0]
+    const sourceWidth = windowMaxX - windowMinX
+    const sourceHeight = windowMaxY - windowMinY
     
-    // GeoTIFF 返回的数据是按行优先存储，但需要水平翻转以匹配坐标系
-    // 因为 geotiff 的 x 轴向右，但返回数据可能需要调整
+    // 使用双线性插值进行重采样
     const elevationData = new Int16Array(outputWidth * outputHeight)
-    for (let row = 0; row < outputHeight; row++) {
-      for (let col = 0; col < outputWidth; col++) {
-        // 数据复制，确保行列顺序正确
-        elevationData[row * outputWidth + col] = rawData[row * outputWidth + col]
+    for (let outY = 0; outY < outputHeight; outY++) {
+      for (let outX = 0; outX < outputWidth; outX++) {
+        // 计算源图像中的浮点坐标
+        const srcX = windowMinX + (outX / outputWidth) * sourceWidth
+        const srcY = windowMinY + (outY / outputHeight) * sourceHeight
+        
+        // 最近邻采样（简单高效）
+        const px = Math.min(Math.floor(srcX), tif.width - 1)
+        const py = Math.min(Math.floor(srcY), tif.height - 1)
+        const idx = py * tif.width + px
+        elevationData[outY * outputWidth + outX] = tif.fullData[idx]
       }
     }
     
@@ -254,14 +247,9 @@ app.get('/api/dem/point', async (req, res) => {
       return res.status(400).json({ success: false, error: '坐标超出范围' })
     }
 
-    // 读取单点
-    const rasters = await tif.image.readRasters({
-      window: [pixelX, pixelY, pixelX + 1, pixelY + 1],
-      width: 1,
-      height: 1,
-    })
-
-    const elevation = rasters[0][0]
+    // 直接从内存读取
+    const idx = pixelY * tif.width + pixelX
+    const elevation = tif.fullData[idx]
     res.json({
       success: true,
       data: {
@@ -314,10 +302,10 @@ function findTifForPoint(x, y) {
 }
 
 /**
- * 从指定 tif 读取单点高程
+ * 从指定 tif 读取单点高程（直接从内存）
  */
-async function getElevationFromTif(tif, x, y) {
-  if (!tif.image) return null
+function getElevationFromTif(tif, x, y) {
+  if (!tif.fullData) return null
   
   const [imgMinX, , , imgMaxY] = tif.bbox
   const pixelX = Math.floor((x - imgMinX) / tif.pixelWidth)
@@ -327,17 +315,9 @@ async function getElevationFromTif(tif, x, y) {
     return null
   }
   
-  try {
-    const rasters = await tif.image.readRasters({
-      window: [pixelX, pixelY, pixelX + 1, pixelY + 1],
-      width: 1,
-      height: 1,
-    })
-    const elevation = rasters[0][0]
-    return elevation === -32767 ? 0 : elevation
-  } catch {
-    return null
-  }
+  const idx = pixelY * tif.width + pixelX
+  const elevation = tif.fullData[idx]
+  return elevation === -32767 ? 0 : elevation
 }
 
 /**
@@ -376,7 +356,7 @@ app.post('/api/dem/profile', async (req, res) => {
     
     const startTime = Date.now()
     
-    // 性能优化：按tif分组采样点，批量读取
+    // 生成采样点
     const samplePoints = []
     for (let i = 0; i <= sampleCount; i++) {
       const t = i / sampleCount
@@ -385,73 +365,24 @@ app.post('/api/dem/profile', async (req, res) => {
       samplePoints.push({ t, lon, lat, distance: totalDistanceKm * t })
     }
     
-    // 按tif分组
-    const pointsByTif = new Map()
+    // 直接从内存读取每个采样点的高程
     for (const sp of samplePoints) {
       const tif = findTifForPoint(sp.lon, sp.lat)
-      if (tif) {
-        if (!pointsByTif.has(tif.filename)) {
-          pointsByTif.set(tif.filename, { tif, points: [] })
-        }
-        pointsByTif.get(tif.filename).points.push(sp)
-      }
-    }
-    
-    // 对每个tif批量读取
-    for (const [filename, { tif, points: tifPoints }] of pointsByTif) {
-      if (tifPoints.length === 0) continue
+      if (!tif || !tif.fullData) continue
       
-      // 计算包含所有点的最小窗口
       const [imgMinX, , , imgMaxY] = tif.bbox
-      let windowMinX = Infinity, windowMinY = Infinity
-      let windowMaxX = -Infinity, windowMaxY = -Infinity
+      const pixelX = Math.floor((sp.lon - imgMinX) / tif.pixelWidth)
+      const pixelY = Math.floor((imgMaxY - sp.lat) / tif.pixelHeight)
       
-      for (const sp of tifPoints) {
-        const pixelX = Math.floor((sp.lon - imgMinX) / tif.pixelWidth)
-        const pixelY = Math.floor((imgMaxY - sp.lat) / tif.pixelHeight)
-        windowMinX = Math.min(windowMinX, pixelX)
-        windowMaxX = Math.max(windowMaxX, pixelX)
-        windowMinY = Math.min(windowMinY, pixelY)
-        windowMaxY = Math.max(windowMaxY, pixelY)
-      }
-      
-      // 扩展窗口边界
-      windowMinX = Math.max(0, windowMinX - 1)
-      windowMinY = Math.max(0, windowMinY - 1)
-      windowMaxX = Math.min(tif.width, windowMaxX + 2)
-      windowMaxY = Math.min(tif.height, windowMaxY + 2)
-      
-      const windowWidth = windowMaxX - windowMinX
-      const windowHeight = windowMaxY - windowMinY
-      
-      if (windowWidth <= 0 || windowHeight <= 0) continue
-      
-      try {
-        // 一次性读取整个窗口
-        const rasters = await tif.image.readRasters({
-          window: [windowMinX, windowMinY, windowMaxX, windowMaxY],
-          width: windowWidth,
-          height: windowHeight,
-        })
-        const data = rasters[0]
-        
-        // 从缓存数据中提取每个采样点的高程
-        for (const sp of tifPoints) {
-          const pixelX = Math.floor((sp.lon - imgMinX) / tif.pixelWidth) - windowMinX
-          const pixelY = Math.floor((imgMaxY - sp.lat) / tif.pixelHeight) - windowMinY
-          
-          if (pixelX >= 0 && pixelX < windowWidth && pixelY >= 0 && pixelY < windowHeight) {
-            const elevation = data[pixelY * windowWidth + pixelX]
-            if (elevation !== -32767) {
-              points.push({
-                distance: sp.distance,
-                depth: elevation
-              })
-            }
-          }
+      if (pixelX >= 0 && pixelX < tif.width && pixelY >= 0 && pixelY < tif.height) {
+        const idx = pixelY * tif.width + pixelX
+        const elevation = tif.fullData[idx]
+        if (elevation !== -32767) {
+          points.push({
+            distance: sp.distance,
+            depth: elevation
+          })
         }
-      } catch (e) {
-        console.warn(`读取 ${filename} 失败:`, e.message)
       }
     }
     
@@ -518,7 +449,7 @@ app.post('/api/route/planning', async (req, res) => {
         let riskLevel = 'low'
         
         if (tif) {
-          const elevation = await getElevationFromTif(tif, midLon, midLat)
+          const elevation = getElevationFromTif(tif, midLon, midLat)
           if (elevation !== null) {
             depth = Math.abs(elevation)
             // 根据水深判断风险等级
@@ -611,7 +542,7 @@ app.post('/api/route/planning', async (req, res) => {
           let riskLevel = 'low'
           
           if (tif) {
-            const elevation = await getElevationFromTif(tif, segMidLon, segMidLat)
+            const elevation = getElevationFromTif(tif, segMidLon, segMidLat)
             if (elevation !== null) {
               depth = Math.abs(elevation)
             }
@@ -673,7 +604,7 @@ app.get('/health', (req, res) => {
 
 // 启动服务
 async function start() {
-  await preloadTifMeta()
+  await preloadTifData()
   
   app.listen(PORT, () => {
     console.log(`\n�\udf0a DEM服务已启动: http://localhost:${PORT}`)
