@@ -54,7 +54,6 @@ export interface RoutePlanningSettings {
   start_point: CoordPoint        // 起点坐标
   end_point: CoordPoint          // 终点坐标
   planning_range: PlanningRange  // 规划范围
-  multi_point_file?: string      // 多点文件路径
 }
 
 /** 成本参数 */
@@ -129,10 +128,81 @@ export interface ImportedLandingPoint {
   properties: LandingPointProperties
 }
 
-/** 环境上下文模块 */
+/** 导入的 BU 节点 (仅多点网络模式) */
+export interface ImportedBUNode {
+  id: string                     // BU 唯一标识符
+  name: string                   // BU 节点显示名称
+  coords: [number, number]       // 经纬度坐标 [Lon, Lat]
+  max_ports: number              // 该 BU 节点最大允许的端口数上限
+}
+
+/** 规划模式 - USE规范 */
+export type USEPlanningMode = 'POINT_TO_POINT' | 'MULTI_NODE_NETWORK'
+
+/** 成本约束方式 */
+export type CostConstraintMode = 'ABSOLUTE' | 'PREMIUM_RATIO'
+
+/** 绝对成本上限 */
+export interface AbsoluteCostLimit {
+  value: number                  // 成本上限值
+  unit: string                   // 成本单位，如 "万元"
+}
+
+/** 溢价比例配置 */
+export interface PremiumRatioConfig {
+  ratio: number                  // 溢价比例，如 0.25 表示 25%
+}
+
+/** 冗余策略配置 (仅多点网络模式) */
+export interface RedundancyConfig {
+  enabled: boolean               // 是否启用冗余
+  cost_constraint_mode?: CostConstraintMode  // 成本约束方式
+  absolute_cost_limit?: AbsoluteCostLimit    // 绝对成本上限
+  premium_ratio?: PremiumRatioConfig         // 溢价比例配置
+}
+
+/** 风险等级铠装映射项 */
+export interface RiskArmorMappingItem {
+  threshold: number              // 风险值下限阈值
+  cable_type_ref: string         // 引用 libraries.cable_types 中的缆型 ID
+}
+
+/** 海缆铠装映射规则 */
+export interface CableArmorMapping {
+  high_risk: RiskArmorMappingItem    // 高风险映射配置
+  medium_risk: RiskArmorMappingItem  // 中风险映射配置
+  low_risk: RiskArmorMappingItem     // 低风险映射配置
+}
+
+/** 规划范围配置 */
+export interface PlanningBoundsConfig {
+  mode: 'AUTO' | 'MANUAL'        // 范围设置方式
+  manual_bounds?: {              // 手动框选时的边界坐标
+    northwest: [number, number]  // 西北角坐标 [经度, 纬度]
+    southeast: [number, number]  // 东南角坐标 [经度, 纬度]
+  }
+}
+
+/** 算法配置 */
+export interface AlgorithmConfig {
+  planning_bounds: PlanningBoundsConfig  // 规划范围配置
+  grid_resolution_m: number              // 栅格分辨率，单位米
+}
+
+/** 路由规划参数设置 - 甲方规范 */
+export interface USERoutePlanningSettings {
+  cable_armor_mapping: CableArmorMapping  // 风险等级与缆型的映射规则
+  algorithm_config: AlgorithmConfig       // 路由算法配置参数
+}
+
+/** 环境上下文模块 - 甲方规范完整版 */
 export interface USEEnvironmentContext {
   layer_registry: LayerRegistryItem[]
+  planning_mode: USEPlanningMode           // 网络规划模式
+  redundancy_config?: RedundancyConfig     // 冗余策略配置 (多点模式)
   imported_landing_points: ImportedLandingPoint[]
+  imported_bu_nodes: ImportedBUNode[]      // BU 节点列表 (多点模式)
+  route_planning_settings: USERoutePlanningSettings  // 路由规划参数设置
 }
 
 // ==================== 3. 静态资源库模块 (libraries) ====================
@@ -294,14 +364,66 @@ export interface KeyEvent {
   name?: string                  // 站点名称（用于 LandStation）
 }
 
-/** 海缆分段（工程级设计对象） */
+/** 路由状态信息 - 甲方规范 */
+export interface RouteStatus {
+  is_segmented: boolean          // 是否已完成海缆段划分
+  is_adjusted: boolean           // 是否经过人工调整
+  last_modified: string          // 最后修改时间 (ISO 8601)
+}
+
+/** 分段方式 */
+export type SegmentationMethod = 'FIXED_LENGTH' | 'RISK_BASED'
+
+/** 风险等级分段参数 */
+export interface RiskBasedSegmentConfig {
+  min_length_km: number          // 最小段长约束 (km)
+  max_length_km: number          // 最大段长约束 (km)
+}
+
+/** 分段配置 - 甲方规范 */
+export interface SegmentationConfig {
+  method: SegmentationMethod     // 分段方式
+  fixed_length_km?: number       // 固定长度分段时的目标段长 (km)
+  risk_based?: RiskBasedSegmentConfig  // 风险等级分段参数
+}
+
+/** 几何范围信息 - 甲方规范对象格式 */
+export interface SegmentGeometryRange {
+  start_index: number            // 起点在 geometry_pool 中的索引
+  end_index: number              // 终点在 geometry_pool 中的索引
+  start_km: number               // 起点里程 (km)
+  end_km: number                 // 终点里程 (km)
+  length_km: number              // 该段几何长度 (km)
+}
+
+/** 风险等级 */
+export type RiskLevel = 'HIGH' | 'MEDIUM' | 'LOW'
+
+/** 风险信息 - 甲方规范 */
+export interface SegmentRiskInfo {
+  risk_level: RiskLevel          // 风险等级
+  average_risk_value: number     // 该段平均风险值
+}
+
+/** 海缆分段（工程级设计对象）- 甲方规范完整版 */
 export interface RouteSegment {
   segment_id: string             // 分段唯一标识
-  geometry_range: [number, number]  // 指向 geometry_pool 的索引区间 [start_index, end_index]
-  cable_struct_ref: string       // 引用 libraries.cable_types 中的 ID
+  geometry_range: SegmentGeometryRange  // 几何范围信息 (对象格式)
+  risk_info: SegmentRiskInfo     // 风险信息
+  cable_type_ref: string         // 引用 libraries.cable_types 中的 ID
   slack_percent: number          // 敷设余量百分比（如 2.5 代表增加 2.5%）
   burial_depth_m: number         // 设计埋深（米）
   is_locked: boolean             // 锁定标记，若为 true 自动规划算法不可覆盖
+}
+
+/** 海缆分段 - 兼容旧格式 (数组形式的 geometry_range) */
+export interface RouteSegmentLegacy {
+  segment_id: string
+  geometry_range: [number, number]  // 旧格式: [start_index, end_index]
+  cable_struct_ref: string       // 旧字段名
+  slack_percent: number
+  burial_depth_m: number
+  is_locked: boolean
 }
 
 /** Span 光学性能指标 */
@@ -325,8 +447,10 @@ export interface Span {
   is_locked: boolean             // 系统设计冻结标记
 }
 
-/** 路由工程模块 */
+/** 路由工程模块 - 甲方规范完整版 */
 export interface USERouteEngineering {
+  route_status: RouteStatus      // 路由状态信息
+  segmentation_config: SegmentationConfig  // 分段配置
   geometry_pool: GeometryPoint[] // 采样点的扁平数组
   key_events: KeyEvent[]         // 关键事件点列表
   segments: RouteSegment[]       // 海缆分段列表（工程对象）
@@ -507,6 +631,7 @@ export interface RouteplanningExtension {
   rplTables: any[]  // 原始 RPL 表格数据
   routes?: any[]    // 路由数据
   planningConfig?: any
+  cableTypeDatabase?: any[]  // 缆型数据库（包含用户新建的缆型）
 }
 
 /** 传输规划扩展数据 (保存原始 SLD 表格) */
@@ -663,7 +788,23 @@ export function createDefaultUSEProjectData(
     },
     environment_context: {
       layer_registry: [],
-      imported_landing_points: []
+      planning_mode: 'POINT_TO_POINT',
+      redundancy_config: {
+        enabled: false
+      },
+      imported_landing_points: [],
+      imported_bu_nodes: [],
+      route_planning_settings: {
+        cable_armor_mapping: {
+          high_risk: { threshold: 3.0, cable_type_ref: 'struct_da_01' },
+          medium_risk: { threshold: 2.0, cable_type_ref: 'struct_sa_01' },
+          low_risk: { threshold: 0, cable_type_ref: 'struct_lw_01' }
+        },
+        algorithm_config: {
+          planning_bounds: { mode: 'AUTO' },
+          grid_resolution_m: 500
+        }
+      }
     },
     libraries: {
       fibers: [],
@@ -672,6 +813,19 @@ export function createDefaultUSEProjectData(
       models: []
     },
     route_engineering: {
+      route_status: {
+        is_segmented: false,
+        is_adjusted: false,
+        last_modified: now
+      },
+      segmentation_config: {
+        method: 'RISK_BASED',
+        fixed_length_km: 2.0,
+        risk_based: {
+          min_length_km: 1.0,
+          max_length_km: 5.0
+        }
+      },
       geometry_pool: [],
       key_events: [],
       segments: [],

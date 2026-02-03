@@ -1,10 +1,38 @@
 ﻿<script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
-import { useSettingsStore, useAppStore } from '@/stores'
-import { Card, CardContent, Button, Select, Input } from '@/shared/components/base'
+import {ref, reactive, computed, watch} from 'vue'
+import {useRouter} from 'vue-router'
+import {useSettingsStore, useAppStore} from '@/stores'
+import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
-import { Save, RotateCcw, MapPin, Radio, Activity, Database, Cable, Zap, GitBranch, Waves, Server, AlertTriangle, Plus, Trash2, Upload, Download, X, Edit, FolderOpen, FilePlus } from 'lucide-vue-next'
-import type { FiberType, AmplifierType, BranchingUnitType } from '@/types'
+import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
+import {
+  Save,
+  RotateCcw,
+  MapPin,
+  Radio,
+  Activity,
+  Database,
+  Cable,
+  Zap,
+  GitBranch,
+  Waves,
+  Server,
+  AlertTriangle,
+  Plus,
+  Trash2,
+  Upload,
+  Download,
+  X,
+  Edit,
+  FolderOpen,
+  FilePlus,
+  Anchor,
+  ChevronDown,
+  ChevronRight,
+  Play
+} from 'lucide-vue-next'
+import type {FiberType, AmplifierType, BranchingUnitType} from '@/types'
+import type {BUConfig, ArmorMapping, RedundancyConfig} from '@/stores/settings'
 import {
   fiberModelOptions,
   planningModeOptions,
@@ -14,7 +42,22 @@ import {
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
+const router = useRouter()
 const activeTab = ref('equipment')
+
+// 折叠面板状态
+const expandedPanels = ref<Record<string, boolean>>({
+  siteLocation: true,
+  buConfig: true,
+  armorMapping: true,
+  redundancy: true,
+  gisSettings: true,
+  costParams: true
+})
+
+const togglePanel = (panelId: string) => {
+  expandedPanels.value[panelId] = !expandedPanels.value[panelId]
+}
 
 // 检查是否已打开项目
 const hasOpenProject = computed(() => appStore.hasOpenProject)
@@ -31,10 +74,10 @@ const handleOpenProject = () => {
 const deviceTypeTab = ref('fiber')
 
 const tabs = [
-  { id: 'equipment', label: '器件库配置' },
-  { id: 'route', label: '路径规划配置' },
-  { id: 'transmission', label: '传输系统配置' },
-  { id: 'monitoring', label: '监控系统配置' },
+  {id: 'equipment', label: '器件库配置'},
+  {id: 'route', label: '路径规划配置'},
+  {id: 'transmission', label: '传输系统配置'},
+  {id: 'monitoring', label: '监控系统配置'},
 ]
 
 // 弹窗状态
@@ -42,6 +85,8 @@ const showAddFiberDialog = ref(false)
 const showAddAmplifierDialog = ref(false)
 const showAddBranchingDialog = ref(false)
 const showMapSelectDialog = ref(false)
+const showCableTypeCreateDialog = ref(false)
+const cableTypePresetArmor = ref('')  // 预设的铠装类型
 const mapSelectType = ref<'start' | 'end' | 'range'>('start')
 const mapSelectTitle = ref('地图选点')
 
@@ -82,7 +127,7 @@ const newBranching = reactive<Omit<BranchingUnitType, 'id'>>({
 // 添加光纤类型
 const handleAddFiber = () => {
   if (!newFiber.name) {
-    appStore.showNotification({ type: 'warning', message: '请输入光纤类型名称' })
+    appStore.showNotification({type: 'warning', message: '请输入光纤类型名称'})
     return
   }
   settingsStore.addFiberType({
@@ -94,19 +139,19 @@ const handleAddFiber = () => {
     name: '', nonlinearCoeff: 0, effectiveArea: 0, dispersion: 0,
     nonlinearRefractiveIndex: 0, attenuationCoeff: 0, secondOrderDispersion: 0, simulationModel: 'GN',
   })
-  appStore.showNotification({ type: 'success', message: '光纤类型已添加' })
+  appStore.showNotification({type: 'success', message: '光纤类型已添加'})
 }
 
 // 删除光纤类型
 const handleDeleteFiber = (id: string) => {
   settingsStore.removeFiberType(id)
-  appStore.showNotification({ type: 'info', message: '光纤类型已删除' })
+  appStore.showNotification({type: 'info', message: '光纤类型已删除'})
 }
 
 // 添加放大器类型
 const handleAddAmplifier = () => {
   if (!newAmplifier.name) {
-    appStore.showNotification({ type: 'warning', message: '请输入放大器类型名称' })
+    appStore.showNotification({type: 'warning', message: '请输入放大器类型名称'})
     return
   }
   settingsStore.addAmplifierType({
@@ -118,19 +163,19 @@ const handleAddAmplifier = () => {
     name: '', gain: 0, bandwidth: 0, gainFlatness: 0,
     noiseFigure: 0, pumpPower: 0, outputPower: 0, gainRangePower: 0,
   })
-  appStore.showNotification({ type: 'success', message: '放大器类型已添加' })
+  appStore.showNotification({type: 'success', message: '放大器类型已添加'})
 }
 
 // 删除放大器类型
 const handleDeleteAmplifier = (id: string) => {
   settingsStore.removeAmplifierType(id)
-  appStore.showNotification({ type: 'info', message: '放大器类型已删除' })
+  appStore.showNotification({type: 'info', message: '放大器类型已删除'})
 }
 
 // 添加分支器类型
 const handleAddBranching = () => {
   if (!newBranching.name) {
-    appStore.showNotification({ type: 'warning', message: '请输入分支器类型名称' })
+    appStore.showNotification({type: 'warning', message: '请输入分支器类型名称'})
     return
   }
   settingsStore.addBranchingUnitType({
@@ -138,14 +183,14 @@ const handleAddBranching = () => {
     ...newBranching,
   })
   showAddBranchingDialog.value = false
-  Object.assign(newBranching, { name: '', portCount: 0, insertionLoss: 0, wavelengthRange: 0 })
-  appStore.showNotification({ type: 'success', message: '分支器类型已添加' })
+  Object.assign(newBranching, {name: '', portCount: 0, insertionLoss: 0, wavelengthRange: 0})
+  appStore.showNotification({type: 'success', message: '分支器类型已添加'})
 }
 
 // 删除分支器类型
 const handleDeleteBranching = (id: string) => {
   settingsStore.removeBranchingUnitType(id)
-  appStore.showNotification({ type: 'info', message: '分支器类型已删除' })
+  appStore.showNotification({type: 'info', message: '分支器类型已删除'})
 }
 
 // 导入器件库
@@ -156,17 +201,17 @@ const handleImportLibrary = () => {
   input.onchange = async (e: Event) => {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (!file) return
-    
+
     try {
       const text = await file.text()
       const lines = text.split('\n').map(line => line.trim()).filter(line => line)
-      
+
       let currentSection = ''
       let headers: string[] = []
       const fiberTypes: any[] = []
       const amplifierTypes: any[] = []
       const branchingUnitTypes: any[] = []
-      
+
       for (const line of lines) {
         // 检测分区标记
         if (line.startsWith('[') && line.endsWith(']')) {
@@ -174,15 +219,15 @@ const handleImportLibrary = () => {
           headers = []
           continue
         }
-        
+
         const values = line.split(',').map(v => v.trim())
-        
+
         // 第一行是表头
         if (headers.length === 0) {
           headers = values
           continue
         }
-        
+
         // 解析数据行
         const row: Record<string, any> = {}
         headers.forEach((h, i) => {
@@ -190,7 +235,7 @@ const handleImportLibrary = () => {
           // 数字字段转换
           row[h] = isNaN(Number(val)) ? val : Number(val)
         })
-        
+
         if (currentSection === 'FiberTypes' && row.name) {
           fiberTypes.push({
             id: `fiber-${Date.now()}-${fiberTypes.length}`,
@@ -225,20 +270,20 @@ const handleImportLibrary = () => {
           })
         }
       }
-      
+
       // 更新 store
       fiberTypes.forEach(f => settingsStore.addFiberType(f))
       amplifierTypes.forEach(a => settingsStore.addAmplifierType(a))
       branchingUnitTypes.forEach(b => settingsStore.addBranchingUnitType(b))
       settingsStore.currentLibraryFile = file.name
-      
+
       const total = fiberTypes.length + amplifierTypes.length + branchingUnitTypes.length
-      appStore.showNotification({ 
-        type: 'success', 
-        message: `器件库导入成功：光纤${fiberTypes.length}种，放大器${amplifierTypes.length}种，分支器${branchingUnitTypes.length}种` 
+      appStore.showNotification({
+        type: 'success',
+        message: `器件库导入成功：光纤${fiberTypes.length}种，放大器${amplifierTypes.length}种，分支器${branchingUnitTypes.length}种`
       })
     } catch (err) {
-      appStore.showNotification({ type: 'error', message: 'CSV文件解析失败' })
+      appStore.showNotification({type: 'error', message: 'CSV文件解析失败'})
     }
   }
   input.click()
@@ -251,14 +296,14 @@ const handleExportLibrary = () => {
     amplifierTypes: settingsStore.amplifierTypes,
     branchingUnitTypes: settingsStore.branchingUnitTypes,
   }
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   a.download = 'device-library.csv'
   a.click()
   URL.revokeObjectURL(url)
-  appStore.showNotification({ type: 'success', message: '器件库已导出' })
+  appStore.showNotification({type: 'success', message: '器件库已导出'})
 }
 
 // 将坐标对象转换为字符串格式
@@ -267,8 +312,8 @@ const formatCoord = (point: { lon: number; lat: number }): string => {
   return `${point.lon.toFixed(6)},${point.lat.toFixed(6)}`
 }
 
-// 多点坐标列表
-const waypoints = ref<Array<{ id: string; name: string; coord: string }>>([])
+// 多点坐标列表 - USE文件规范: imported_landing_points
+const waypoints = ref<Array<{ id: string; name: string; coord: string; isUnderwater: boolean }>>([])
 
 // 初始化多点坐标
 const initWaypoints = () => {
@@ -276,7 +321,8 @@ const initWaypoints = () => {
   waypoints.value = stored.map(wp => ({
     id: wp.id,
     name: wp.name,
-    coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : ''
+    coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : '',
+    isUnderwater: (wp.depth && wp.depth > 0) ? true : false  // depth > 0 表示水下站点
   }))
 }
 initWaypoints()
@@ -286,13 +332,66 @@ const handleAddWaypoint = () => {
   waypoints.value.push({
     id: `wp-${Date.now()}`,
     name: `登陆站${waypoints.value.length + 1}`,
-    coord: ''
+    coord: '',
+    isUnderwater: false  // 默认为岸上站点
   })
 }
 
 // 删除多点坐标
 const handleRemoveWaypoint = (id: string) => {
   waypoints.value = waypoints.value.filter(wp => wp.id !== id)
+}
+
+// 编辑登陆站（复用地图选点）
+const handleEditWaypoint = (id: string) => {
+  handleWaypointMapSelect(id)
+}
+
+// 获取坐标经度
+const getCoordLon = (coord: string): string => {
+  if (!coord) return ''
+  const parts = coord.split(',')
+  return parts[0]?.trim() || ''
+}
+
+// 获取坐标纬度
+const getCoordLat = (coord: string): string => {
+  if (!coord) return ''
+  const parts = coord.split(',')
+  return parts[1]?.trim() || ''
+}
+
+// 设置坐标经度（登陆站）
+const setCoordLon = (wp: { coord: string }, lon: string | number) => {
+  const lat = getCoordLat(wp.coord)
+  const lonStr = String(lon)
+  wp.coord = lonStr ? `${lonStr},${lat}` : (lat ? `,${lat}` : '')
+}
+
+// 设置坐标纬度（登陆站）
+const setCoordLat = (wp: { coord: string }, lat: string | number) => {
+  const lon = getCoordLon(wp.coord)
+  const latStr = String(lat)
+  wp.coord = lon ? `${lon},${latStr}` : (latStr ? `,${latStr}` : '')
+}
+
+// 设置坐标经度（BU）
+const setCoordLonBu = (bu: { coord: string }, lon: string | number) => {
+  const lat = getCoordLat(bu.coord)
+  const lonStr = String(lon)
+  bu.coord = lonStr ? `${lonStr},${lat}` : (lat ? `,${lat}` : '')
+}
+
+// 设置坐标纬度（BU）
+const setCoordLatBu = (bu: { coord: string }, lat: string | number) => {
+  const lon = getCoordLon(bu.coord)
+  const latStr = String(lat)
+  bu.coord = lon ? `${lon},${latStr}` : (latStr ? `,${latStr}` : '')
+}
+
+// 编辑 BU
+const handleEditBU = (id: string) => {
+  handleBuMapSelect(id)
 }
 
 // 多点地图选点
@@ -304,13 +403,254 @@ const handleWaypointMapSelect = (id: string) => {
   showMapSelectDialog.value = true
 }
 
+// ========== BU 列表配置 ========== USE文件规范: imported_bu_nodes
+const buConfigs = ref<Array<{ id: string; name: string; coord: string; max_ports: string }>>([])
+
+// 初始化 BU 配置
+const initBuConfigs = () => {
+  const stored = settingsStore.routePlanningConfig.buList || []
+  buConfigs.value = stored.map(bu => ({
+    id: bu.id,
+    name: bu.name,
+    coord: bu.lon && bu.lat ? `${bu.lon},${bu.lat}` : '',
+    max_ports: String(bu.portLimit)
+  }))
+}
+initBuConfigs()
+
+// 添加 BU
+const handleAddBU = () => {
+  buConfigs.value.push({
+    id: `bu-${Date.now()}`,
+    name: `BU${buConfigs.value.length + 1}`,
+    coord: '',
+    max_ports: '3'
+  })
+}
+
+// 删除 BU
+const handleRemoveBU = (id: string) => {
+  buConfigs.value = buConfigs.value.filter(bu => bu.id !== id)
+}
+
+// BU 地图选点
+const currentBuId = ref<string | null>(null)
+const handleBuMapSelect = (id: string) => {
+  currentBuId.value = id
+  mapSelectType.value = 'start' // 复用 start 类型
+  mapSelectTitle.value = '选择分支器位置'
+  showMapSelectDialog.value = true
+}
+
+// 端口上限选项
+const portLimitOptions = [
+  {value: '3', label: '3端口'},
+  {value: '4', label: '4端口'}
+]
+
+// ========== 点对点模式配置 ==========
+const startPointConfig = reactive({
+  name: '',
+  lon: '',
+  lat: '',
+  isUnderwater: false  // 水下站点标志
+})
+
+const endPointConfig = reactive({
+  name: '',
+  lon: '',
+  lat: '',
+  isUnderwater: false  // 水下站点标志
+})
+
+// 初始化点对点配置
+const initPointConfig = () => {
+  const start = settingsStore.routePlanningConfig.startPoint
+  const end = settingsStore.routePlanningConfig.endPoint
+  // 名称从 startPoint 和 endPoint 中获取
+  startPointConfig.name = start.name || ''
+  endPointConfig.name = end.name || ''
+  startPointConfig.isUnderwater = (start.depth && start.depth > 0) ? true : false
+  endPointConfig.isUnderwater = (end.depth && end.depth > 0) ? true : false
+  if (start.lon !== 0 || start.lat !== 0) {
+    startPointConfig.lon = String(start.lon)
+    startPointConfig.lat = String(start.lat)
+  }
+  if (end.lon !== 0 || end.lat !== 0) {
+    endPointConfig.lon = String(end.lon)
+    endPointConfig.lat = String(end.lat)
+  }
+}
+initPointConfig()
+
+// ========== GIS 配置 ==========
+const gisConfig = reactive({
+  rangeMode: 'auto' as 'auto' | 'manual',
+  nwLon: '',
+  nwLat: '',
+  seLon: '',
+  seLat: '',
+  gridResolution: '500'
+})
+
+// 初始化 GIS 配置
+const initGisConfig = () => {
+  const config = settingsStore.routePlanningConfig
+  const range = config.planningRange
+  if (range?.northwest && (range.northwest.lon !== 0 || range.northwest.lat !== 0)) {
+    gisConfig.rangeMode = 'manual'
+    gisConfig.nwLon = String(range.northwest.lon)
+    gisConfig.nwLat = String(range.northwest.lat)
+    gisConfig.seLon = String(range.southeast.lon)
+    gisConfig.seLat = String(range.southeast.lat)
+  }
+  // 初始化栅格分辨率
+  if (config.gridResolution) {
+    gisConfig.gridResolution = String(config.gridResolution)
+  }
+}
+initGisConfig()
+
+// 点对点模式地图选点
+const handleMapSelectPoint = (type: 'start' | 'end') => {
+  if (type === 'start') {
+    mapSelectType.value = 'start'
+    mapSelectTitle.value = '选择起点坐标'
+  } else {
+    mapSelectType.value = 'end'
+    mapSelectTitle.value = '选择终点坐标'
+  }
+  showMapSelectDialog.value = true
+}
+
+// 登陆站地图定位（跳转到地图并高亮）
+const handleWaypointMapLocate = (id: string) => {
+  const wp = waypoints.value.find(w => w.id === id)
+  if (wp && wp.coord) {
+    appStore.showNotification({type: 'info', message: `定位到登陆站: ${wp.name} (${wp.coord})`})
+    // TODO: 实际跳转到地图并定位
+  } else {
+    appStore.showNotification({type: 'warning', message: '该登陆站尚未设置坐标'})
+  }
+}
+
+// 地图框选
+const handleMapBoxSelect = () => {
+  mapSelectType.value = 'range'
+  mapSelectTitle.value = '框选规划范围'
+  showMapSelectDialog.value = true
+}
+
+// 登陆站编辑弹窗
+const showWaypointEditDialog = ref(false)
+const editingWaypoint = ref<{ id: string; name: string; coord: string } | null>(null)
+
+const openWaypointEditDialog = (wp: { id: string; name: string; coord: string }) => {
+  editingWaypoint.value = {...wp}
+  showWaypointEditDialog.value = true
+}
+
+const saveWaypointEdit = () => {
+  if (editingWaypoint.value) {
+    const wp = waypoints.value.find(w => w.id === editingWaypoint.value!.id)
+    if (wp) {
+      wp.name = editingWaypoint.value.name
+      wp.coord = editingWaypoint.value.coord
+    }
+  }
+  showWaypointEditDialog.value = false
+  editingWaypoint.value = null
+}
+
+// BU 编辑弹窗 - USE规范: max_ports
+const showBuEditDialog = ref(false)
+const editingBu = ref<{ id: string; name: string; coord: string; max_ports: string } | null>(null)
+
+const openBuEditDialog = (bu: { id: string; name: string; coord: string; max_ports: string }) => {
+  editingBu.value = {...bu}
+  showBuEditDialog.value = true
+}
+
+const saveBuEdit = () => {
+  if (editingBu.value) {
+    const bu = buConfigs.value.find(b => b.id === editingBu.value!.id)
+    if (bu) {
+      bu.name = editingBu.value.name
+      bu.coord = editingBu.value.coord
+      bu.max_ports = editingBu.value.max_ports
+    }
+  }
+  showBuEditDialog.value = false
+  editingBu.value = null
+}
+
+// ========== 铠装映射配置 ==========
+const armorMappings = ref<Array<{
+  riskLevel: string;
+  riskThreshold: string;
+  cableTypeName: string;
+  unitPrice: string
+}>>([])
+
+// 初始化铠装映射
+const initArmorMappings = () => {
+  const stored = settingsStore.routePlanningConfig.armorMappings || []
+  if (stored.length > 0) {
+    armorMappings.value = stored.map(m => ({
+      riskLevel: m.riskLevel,
+      riskThreshold: String(m.riskThreshold),
+      cableTypeName: m.cableTypeName,
+      unitPrice: String(m.unitPrice)
+    }))
+  } else {
+    // 默认值
+    armorMappings.value = [
+      {riskLevel: 'high', riskThreshold: '3', cableTypeName: 'DA (双铠装)', unitPrice: '24.0'},
+      {riskLevel: 'medium', riskThreshold: '2', cableTypeName: 'SA (单铠装)', unitPrice: '19.5'},
+      {riskLevel: 'low', riskThreshold: '0', cableTypeName: 'LW (轻型)', unitPrice: '15.0'},
+    ]
+  }
+}
+initArmorMappings()
+
+// 风险等级映射
+const riskLevelLabels: Record<string, string> = {
+  high: '高风险',
+  medium: '中风险',
+  low: '低风险'
+}
+
+// ========== 冗余策略配置 ==========
+const redundancyConfig = reactive({
+  enabled: false,
+  costLimitType: 'relative' as 'relative' | 'absolute',
+  relativeCostPercent: '30',
+  absoluteCostLimit: ''
+})
+
+// 初始化冗余策略
+const initRedundancyConfig = () => {
+  const stored = settingsStore.routePlanningConfig.redundancyConfig
+  if (stored) {
+    redundancyConfig.enabled = stored.enabled
+    redundancyConfig.costLimitType = stored.costLimitType
+    redundancyConfig.relativeCostPercent = String(stored.relativeCostPercent || 30)
+    redundancyConfig.absoluteCostLimit = stored.absoluteCostLimit ? String(stored.absoluteCostLimit) : ''
+  }
+}
+initRedundancyConfig()
+
+// 成本限制类型选项
+const costLimitTypeOptions = [
+  {value: 'relative', label: '相对成本（%）'},
+  {value: 'absolute', label: '绝对成本（万元）'}
+]
+
 const routeConfig = reactive({
   mode: settingsStore.routePlanningConfig.mode,
   // 点对点模式坐标 - 从 settingsStore 获取已有配置
   startCoord: formatCoord(settingsStore.routePlanningConfig.startPoint),
   endCoord: formatCoord(settingsStore.routePlanningConfig.endPoint),
-  // 多点模式文件
-  multiPointFile: settingsStore.routePlanningConfig.multiPointFile || '',
   // GIS设置
   planningRange: '',
   gridSize: '',
@@ -329,41 +669,75 @@ const routeConfig = reactive({
 
 // 监听 settingsStore 的变化，同步更新 routeConfig（当导入项目后自动更新）
 watch(
-  () => settingsStore.routePlanningConfig,
-  (newConfig) => {
-    routeConfig.mode = newConfig.mode
-    routeConfig.startCoord = formatCoord(newConfig.startPoint)
-    routeConfig.endCoord = formatCoord(newConfig.endPoint)
-    routeConfig.multiPointFile = newConfig.multiPointFile || ''
-    // 同步多点坐标
-    if (newConfig.waypoints) {
-      waypoints.value = newConfig.waypoints.map(wp => ({
-        id: wp.id,
-        name: wp.name,
-        coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : ''
-      }))
-    }
-  },
-  { deep: true }
+    () => settingsStore.routePlanningConfig,
+    (newConfig) => {
+      routeConfig.mode = newConfig.mode
+      routeConfig.startCoord = formatCoord(newConfig.startPoint)
+      routeConfig.endCoord = formatCoord(newConfig.endPoint)
+      // 同步点对点模式的站点名称、坐标和水下状态
+      startPointConfig.name = newConfig.startPoint.name || ''
+      startPointConfig.lon = newConfig.startPoint.lon ? String(newConfig.startPoint.lon) : ''
+      startPointConfig.lat = newConfig.startPoint.lat ? String(newConfig.startPoint.lat) : ''
+      startPointConfig.isUnderwater = (newConfig.startPoint.depth && newConfig.startPoint.depth > 0) ? true : false
+      endPointConfig.name = newConfig.endPoint.name || ''
+      endPointConfig.lon = newConfig.endPoint.lon ? String(newConfig.endPoint.lon) : ''
+      endPointConfig.lat = newConfig.endPoint.lat ? String(newConfig.endPoint.lat) : ''
+      endPointConfig.isUnderwater = (newConfig.endPoint.depth && newConfig.endPoint.depth > 0) ? true : false
+      // 同步多点坐标
+      if (newConfig.waypoints) {
+        waypoints.value = newConfig.waypoints.map(wp => ({
+          id: wp.id,
+          name: wp.name,
+          coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : '',
+          isUnderwater: (wp.depth && wp.depth > 0) ? true : false
+        }))
+      }
+      // 同步 BU 配置
+      if (newConfig.buList) {
+        buConfigs.value = newConfig.buList.map(bu => ({
+          id: bu.id,
+          name: bu.name,
+          coord: bu.lon && bu.lat ? `${bu.lon},${bu.lat}` : '',
+          max_ports: String(bu.portLimit)
+        }))
+      }
+      // 同步铠装映射配置
+      if (newConfig.armorMappings && newConfig.armorMappings.length > 0) {
+        armorMappings.value = newConfig.armorMappings.map(m => ({
+          riskLevel: m.riskLevel,
+          riskThreshold: String(m.riskThreshold),
+          cableTypeName: m.cableTypeName,
+          unitPrice: String(m.unitPrice)
+        }))
+      }
+      // 同步冗余策略配置
+      if (newConfig.redundancyConfig) {
+        redundancyConfig.enabled = newConfig.redundancyConfig.enabled
+        redundancyConfig.costLimitType = newConfig.redundancyConfig.costLimitType
+        redundancyConfig.relativeCostPercent = String(newConfig.redundancyConfig.relativeCostPercent || 30)
+        redundancyConfig.absoluteCostLimit = newConfig.redundancyConfig.absoluteCostLimit ? String(newConfig.redundancyConfig.absoluteCostLimit) : ''
+      }
+    },
+    {deep: true, immediate: true}
 )
 
 // 监听 costFactors 变化，同步更新成本参数
 watch(
-  () => settingsStore.costFactors,
-  (newCostFactors) => {
-    // 路径规划成本
-    routeConfig.lightCableCost = newCostFactors.lightCableCost?.toString() || ''
-    routeConfig.heavyCableCost = newCostFactors.heavyCableCost?.toString() || ''
-    routeConfig.maxConstructionCost = newCostFactors.maxConstructionCost?.toString() || ''
-    routeConfig.depthThreshold = newCostFactors.depthThreshold?.toString() || ''
-    // 系统规划成本
-    routeConfig.cableCostPerKm = newCostFactors.cableCostPerKm?.toString() || ''
-    routeConfig.installationCostPerKm = newCostFactors.installationCostPerKm?.toString() || ''
-    routeConfig.repeaterCost = newCostFactors.repeaterCost?.toString() || ''
-    routeConfig.branchingUnitCost = newCostFactors.branchingUnitCost?.toString() || ''
-    routeConfig.landingStationCost = newCostFactors.landingStationCost?.toString() || ''
-  },
-  { deep: true }
+    () => settingsStore.costFactors,
+    (newCostFactors) => {
+      // 路径规划成本
+      routeConfig.lightCableCost = newCostFactors.lightCableCost?.toString() || ''
+      routeConfig.heavyCableCost = newCostFactors.heavyCableCost?.toString() || ''
+      routeConfig.maxConstructionCost = newCostFactors.maxConstructionCost?.toString() || ''
+      routeConfig.depthThreshold = newCostFactors.depthThreshold?.toString() || ''
+      // 系统规划成本
+      routeConfig.cableCostPerKm = newCostFactors.cableCostPerKm?.toString() || ''
+      routeConfig.installationCostPerKm = newCostFactors.installationCostPerKm?.toString() || ''
+      routeConfig.repeaterCost = newCostFactors.repeaterCost?.toString() || ''
+      routeConfig.branchingUnitCost = newCostFactors.branchingUnitCost?.toString() || ''
+      routeConfig.landingStationCost = newCostFactors.landingStationCost?.toString() || ''
+    },
+    {deep: true}
 )
 
 // 地图选点功能
@@ -390,33 +764,48 @@ const handleMapSelectConfirm = (coord: string) => {
       wp.coord = coord
     }
     currentWaypointId.value = null
-    appStore.showNotification({ type: 'success', message: `坐标已选择: ${coord}` })
+    appStore.showNotification({type: 'success', message: `坐标已选择: ${coord}`})
     return
   }
-  
+
+  // BU 地图选点
+  if (currentBuId.value) {
+    const bu = buConfigs.value.find(b => b.id === currentBuId.value)
+    if (bu) {
+      bu.coord = coord
+    }
+    currentBuId.value = null
+    appStore.showNotification({type: 'success', message: `分支器位置已选择: ${coord}`})
+    return
+  }
+
+  // 解析坐标
+  const parts = coord.split(',')
+  const lon = parts[0]?.trim() || ''
+  const lat = parts[1]?.trim() || ''
+
   if (mapSelectType.value === 'start') {
+    // 点对点模式的起点
+    startPointConfig.lon = lon
+    startPointConfig.lat = lat
     routeConfig.startCoord = coord
   } else if (mapSelectType.value === 'end') {
+    // 点对点模式的终点
+    endPointConfig.lon = lon
+    endPointConfig.lat = lat
     routeConfig.endCoord = coord
   } else if (mapSelectType.value === 'range') {
+    // 范围框选 - 假设返回 "nwLon,nwLat,seLon,seLat" 格式
+    const rangeParts = coord.split(',')
+    if (rangeParts.length >= 4) {
+      gisConfig.nwLon = rangeParts[0]?.trim() || ''
+      gisConfig.nwLat = rangeParts[1]?.trim() || ''
+      gisConfig.seLon = rangeParts[2]?.trim() || ''
+      gisConfig.seLat = rangeParts[3]?.trim() || ''
+    }
     routeConfig.planningRange = coord
   }
-  appStore.showNotification({ type: 'success', message: `坐标已选择: ${coord}` })
-}
-
-// 浏览多点文件
-const handleBrowseMultiPointFile = () => {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.csv,.txt,.json'
-  input.onchange = (e: Event) => {
-    const file = (e.target as HTMLInputElement).files?.[0]
-    if (file) {
-      routeConfig.multiPointFile = file.name
-      appStore.showNotification({ type: 'success', message: `已选择文件: ${file.name}` })
-    }
-  }
-  input.click()
+  appStore.showNotification({type: 'success', message: `坐标已选择: ${coord}`})
 }
 
 const transConfig = reactive({
@@ -452,46 +841,111 @@ const toggleModel = (modelId: string) => {
 const parseCoordString = (coordStr: string): { lon: number; lat: number } => {
   const parts = coordStr.split(',').map(s => parseFloat(s.trim()))
   if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-    return { lon: parts[0], lat: parts[1] }
+    return {lon: parts[0], lat: parts[1]}
   }
-  return { lon: 0, lat: 0 }
+  return {lon: 0, lat: 0}
 }
 
 const handleSave = () => {
-  // 解析用户输入的起点终点坐标
-  const startPoint = parseCoordString(routeConfig.startCoord)
-  const endPoint = parseCoordString(routeConfig.endCoord)
-  
+  // 点对点模式：从 startPointConfig 和 endPointConfig 获取
+  const startPoint = {
+    name: startPointConfig.name || '',
+    lon: parseFloat(startPointConfig.lon) || 0,
+    lat: parseFloat(startPointConfig.lat) || 0,
+    depth: startPointConfig.isUnderwater ? 100 : 0  // 水下站点默认水深100m
+  }
+  const endPoint = {
+    name: endPointConfig.name || '',
+    lon: parseFloat(endPointConfig.lon) || 0,
+    lat: parseFloat(endPointConfig.lat) || 0,
+    depth: endPointConfig.isUnderwater ? 100 : 0  // 水下站点默认水深100m
+  }
+
   // 检查起点终点是否有效配置
   const isStartValid = startPoint.lon !== 0 || startPoint.lat !== 0
   const isEndValid = endPoint.lon !== 0 || endPoint.lat !== 0
-  
-  // 解析多点坐标
+
+  // 解析多点坐标 - USE规范: imported_landing_points
   const parsedWaypoints = waypoints.value.map(wp => {
     const coord = parseCoordString(wp.coord)
     return {
       id: wp.id,
       name: wp.name,
       lon: coord.lon,
-      lat: coord.lat
+      lat: coord.lat,
+      depth: wp.isUnderwater ? 100 : 0  // 水下站点默认水深100m，岸上站点为0
     }
   }).filter(wp => wp.lon !== 0 || wp.lat !== 0) // 过滤无效坐标
-  
+
+  // 解析 BU 配置列表 - USE规范: imported_bu_nodes
+  const parsedBuList: BUConfig[] = buConfigs.value.map(bu => {
+    const coord = parseCoordString(bu.coord)
+    const portNum = parseInt(bu.max_ports) || 3
+    return {
+      id: bu.id,
+      name: bu.name,
+      lon: coord.lon,
+      lat: coord.lat,
+      portLimit: Math.max(2, Math.min(8, portNum)) as 3 | 4  // 限制在2-8范围
+    }
+  }).filter(bu => bu.lon !== 0 || bu.lat !== 0) // 过滤无效坐标
+
+  // 解析铠装映射配置
+  const parsedArmorMappings: ArmorMapping[] = armorMappings.value.map(m => ({
+    riskLevel: m.riskLevel as 'high' | 'medium' | 'low',
+    riskThreshold: parseFloat(m.riskThreshold) || 0,
+    cableTypeId: m.riskLevel,  // 使用风险等级作为 ID
+    cableTypeName: m.cableTypeName,
+    unitPrice: parseFloat(m.unitPrice) || 0
+  }))
+
+  // 解析冗余策略配置
+  const parsedRedundancyConfig: RedundancyConfig = {
+    enabled: redundancyConfig.enabled,
+    costLimitType: redundancyConfig.costLimitType,
+    relativeCostPercent: redundancyConfig.costLimitType === 'relative' ? parseFloat(redundancyConfig.relativeCostPercent) || 30 : undefined,
+    absoluteCostLimit: redundancyConfig.costLimitType === 'absolute' ? parseFloat(redundancyConfig.absoluteCostLimit) || undefined : undefined
+  }
+
   // 多点模式下检查是否配置了足够的点
-  const isMultiPointConfigured = routeConfig.mode === 'multi-point' && parsedWaypoints.length >= 3
+  const isMultiPointConfigured = routeConfig.mode === 'multi-point' && parsedWaypoints.length >= 2
   const isConfigured = routeConfig.mode === 'point-to-point' ? (isStartValid && isEndValid) : isMultiPointConfigured
-  
+
+  // 解析规划范围
+  const planningRange = gisConfig.rangeMode === 'manual' ? {
+    northwest: {
+      lon: parseFloat(gisConfig.nwLon) || 0,
+      lat: parseFloat(gisConfig.nwLat) || 0
+    },
+    southeast: {
+      lon: parseFloat(gisConfig.seLon) || 0,
+      lat: parseFloat(gisConfig.seLat) || 0
+    }
+  } : {
+    northwest: {lon: 0, lat: 0},
+    southeast: {lon: 0, lat: 0}
+  }
+
+  // 点对点模式下，把起点和终点也保存到 waypoints
+  let finalWaypoints = parsedWaypoints
+  if (routeConfig.mode === 'point-to-point') {
+    finalWaypoints = [
+      {id: 'start', name: startPointConfig.name || '起点', lon: startPoint.lon, lat: startPoint.lat, depth: startPoint.depth},
+      {id: 'end', name: endPointConfig.name || '终点', lon: endPoint.lon, lat: endPoint.lat, depth: endPoint.depth}
+    ].filter(wp => wp.lon !== 0 || wp.lat !== 0)
+  }
+
   // 路径规划配置保存
   settingsStore.updateRoutePlanningConfig({
     mode: routeConfig.mode as 'point-to-point' | 'multi-point',
     startPoint,
     endPoint,
-    planningRange: {
-      northwest: { lon: 0, lat: 0 },
-      southeast: { lon: 0, lat: 0 },
-    },
-    multiPointFile: routeConfig.multiPointFile,
-    waypoints: parsedWaypoints,
+    planningRange,
+    gridResolution: parseInt(gisConfig.gridResolution) || 500,  // 栅格分辨率
+    waypoints: finalWaypoints,
+    buList: parsedBuList,
+    armorMappings: parsedArmorMappings,
+    redundancyConfig: parsedRedundancyConfig,
     isConfigured,
   })
 
@@ -531,7 +985,7 @@ const handleSave = () => {
   })
 
   settingsStore.saveToLocalStorage()
-  appStore.showNotification({ type: 'success', message: '设置已保存' })
+  appStore.showNotification({type: 'success', message: '设置已保存'})
 }
 
 const handleReset = () => {
@@ -547,7 +1001,91 @@ const handleReset = () => {
     seLon: settingsStore.routePlanningConfig.planningRange.southeast.lon,
     seLat: settingsStore.routePlanningConfig.planningRange.southeast.lat,
   })
-  appStore.showNotification({ type: 'info', message: '已重置为默认设置' })
+  appStore.showNotification({type: 'info', message: '已重置为默认设置'})
+}
+
+// 开始路由规划 - 保存配置并跳转到规划页面
+const handleStartRoutePlanning = () => {
+  // 先保存配置
+  handleSave()
+  // 跳转到规划页面
+  router.push('/planning')
+  appStore.showNotification({type: 'info', message: '已跳转到路由规划页面'})
+}
+
+// 根据风险等级获取铠装类型映射
+const riskToArmorType: Record<string, string[]> = {
+  high: ['DA', 'RA'],     // 高风险 -> 双铠装/岩石铠装
+  medium: ['SA'],         // 中风险 -> 单铠装
+  low: ['LW', 'LWP']      // 低风险 -> 轻型/轻型保护
+}
+
+// 缆型选项数据库 - 使用 store 中的数据以实现跨页面同步
+// settingsStore.cableTypeDatabase 是共享的缆型数据库
+
+// 根据风险等级获取过滤后的缆型选项
+const getFilteredCableOptions = (riskLevel: string) => {
+  const armorTypes = riskToArmorType[riskLevel] || ['SA']
+  const filteredCables = settingsStore.getCableTypesByArmor(armorTypes)
+  return filteredCables.map(c => ({
+    value: c.name,
+    label: `${c.name} - ¥${c.unitPrice}千元/km`
+  }))
+}
+
+// 处理缆型选择
+const handleCableTypeSelect = (mapping: {
+  riskLevel: string;
+  cableTypeName: string;
+  unitPrice: string
+}, value: string) => {
+  if (value === '__create_new__') {
+    // 打开新建缆型弹窗，预设铠装类型
+    const armorTypes = riskToArmorType[mapping.riskLevel]
+    const presetArmor = armorTypes?.[0] || 'SA'
+    handleOpenCableTypeCreate(presetArmor)
+    // 不更新 cableTypeName，保持原来的值
+    return
+  }
+  // 更新缆型名称
+  mapping.cableTypeName = value
+  // 更新单价 - 使用 store 中的数据
+  const cable = settingsStore.cableTypeDatabase.find(c => c.name === value)
+  if (cable) {
+    mapping.unitPrice = String(cable.unitPrice)
+  }
+}
+
+// 打开新建缆型弹窗
+const handleOpenCableTypeCreate = (presetArmor?: string) => {
+  cableTypePresetArmor.value = presetArmor || ''
+  showCableTypeCreateDialog.value = true
+}
+
+// 处理缆型创建完成
+const handleCableTypeCreated = (cableType: { id: string; name: string; armorType: string; unitPrice: number }) => {
+  // 添加到 store 的缆型数据库 - 这样其他页面也能访问新建的缆型
+  settingsStore.addCableTypeSpec({
+    id: cableType.id,
+    name: cableType.name,
+    armorType: cableType.armorType,
+    unitPrice: cableType.unitPrice
+  })
+
+  // 根据铠装类型找到对应的映射行并更新
+  const armorToRisk: Record<string, string> = {
+    'DA': 'high',
+    'RA': 'high',
+    'SA': 'medium',
+    'LW': 'low',
+    'LWP': 'low'
+  }
+  const targetRisk = armorToRisk[cableType.armorType] || 'medium'
+  const mapping = armorMappings.value.find(m => m.riskLevel === targetRisk)
+  if (mapping) {
+    mapping.cableTypeName = cableType.name
+    mapping.unitPrice = String(cableType.unitPrice)
+  }
 }
 </script>
 
@@ -558,7 +1096,7 @@ const handleReset = () => {
       <Card class="w-[500px] p-8">
         <div class="text-center space-y-6">
           <div class="w-20 h-20 mx-auto rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-            <AlertTriangle class="w-10 h-10 text-amber-500" />
+            <AlertTriangle class="w-10 h-10 text-amber-500"/>
           </div>
           <div>
             <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">工程设置</h2>
@@ -566,11 +1104,11 @@ const handleReset = () => {
           </div>
           <div class="flex justify-center gap-4">
             <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="handleNewProject">
-              <FilePlus class="w-4 h-4 mr-2" />
+              <FilePlus class="w-4 h-4 mr-2"/>
               新建项目
             </Button>
             <Button variant="outline" class="px-6" @click="handleOpenProject">
-              <FolderOpen class="w-4 h-4 mr-2" />
+              <FolderOpen class="w-4 h-4 mr-2"/>
               导入项目
             </Button>
           </div>
@@ -593,18 +1131,18 @@ const handleReset = () => {
               ? 'text-white shadow-md'
               : 'hover:bg-white dark:hover:bg-white/5 hover:shadow-sm text-gray-700 dark:text-gray-300'
           ]" :style="activeTab === tab.id ? { backgroundColor: 'var(--app-primary-color)' } : {}"
-            @click="activeTab = tab.id">
+                  @click="activeTab = tab.id">
             <span class="font-medium">{{ tab.label }}</span>
           </button>
         </div>
         <!-- 底部按钮 -->
         <div class="p-3 border-t bg-white space-y-2">
           <Button class="w-full bg-primary hover:bg-primary hover:brightness-90 text-white" @click="handleSave">
-            <Save class="w-4 h-4 mr-2" />
+            <Save class="w-4 h-4 mr-2"/>
             保存设置
           </Button>
-          <Button variant="outline" class="w-full" @click="handleReset">
-            <RotateCcw class="w-4 h-4 mr-2" />
+          <Button variant="outline" class="w-full text-xs" @click="handleReset">
+            <RotateCcw class="w-3.5 h-3.5 mr-1"/>
             重置默认
           </Button>
         </div>
@@ -613,147 +1151,612 @@ const handleReset = () => {
       <!-- 右侧内容区 -->
       <CardContent class="flex-1 overflow-y-auto p-6">
         <!-- 路径规划配置 -->
-        <div v-if="activeTab === 'route'" class="space-y-6">
-          <!-- 站点位置 -->
+        <div v-if="activeTab === 'route'" class="space-y-4">
+          <!-- 网络拓扑与站点配置 -->
           <Card>
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">站点位置</h3>
-              <div class="space-y-4">
-                <div class="flex items-center gap-4">
-                  <label class="w-20 text-sm text-gray-600 text-right shrink-0">规划模式：</label>
-                  <Select v-model="routeConfig.mode" :options="planningModeOptions" class="flex-1" />
+              <div
+                  class="flex items-center justify-between cursor-pointer select-none pb-3 border-b mb-4 group"
+                  @click="togglePanel('siteLocation')"
+              >
+                <h3 class="font-bold text-gray-800 text-lg group-hover:text-primary transition-colors">▼
+                  网络拓扑与站点配置</h3>
+                <component :is="expandedPanels.siteLocation ? ChevronDown : ChevronRight"
+                           class="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"/>
+              </div>
+              <div v-show="expandedPanels.siteLocation" class="space-y-6">
+                <!-- 网络规划模式 - 单选按钮 -->
+                <div class="space-y-3 bg-gray-50 p-4 rounded-lg border border-gray-100">
+                  <label class="text-sm font-semibold text-gray-700 block mb-2">网络规划模式</label>
+                  <div class="flex flex-col gap-3">
+                    <label class="flex items-start gap-3 cursor-pointer p-2 rounded hover:bg-white transition-colors">
+                      <input
+                          type="radio"
+                          name="planningMode"
+                          value="point-to-point"
+                          v-model="routeConfig.mode"
+                          class="w-4 h-4 mt-1 text-primary border-gray-300 focus:ring-primary"
+                      />
+                      <div>
+                        <span class="text-sm font-medium text-gray-800 block">点对点海缆规划</span>
+                        <span class="text-xs text-gray-500">适用于两个登陆站之间的单条海缆链路规划</span>
+                      </div>
+                    </label>
+                    <label class="flex items-start gap-3 cursor-pointer p-2 rounded hover:bg-white transition-colors">
+                      <input
+                          type="radio"
+                          name="planningMode"
+                          value="multi-point"
+                          v-model="routeConfig.mode"
+                          class="w-4 h-4 mt-1 text-primary border-gray-300 focus:ring-primary"
+                      />
+                      <div>
+                        <span class="text-sm font-medium text-gray-800 block">多点海缆网络规划</span>
+                        <span class="text-xs text-gray-500">适用于包含多个登陆站和分支器(BU)的复杂网络拓扑规划</span>
+                      </div>
+                    </label>
+                  </div>
                 </div>
 
-                <!-- 点对点模式 -->
+                <div class="border-t border-dashed my-4"></div>
+
+                <!-- 点对点模式：起点和终点 -->
                 <template v-if="routeConfig.mode === 'point-to-point'">
-                  <div class="flex items-center gap-4">
-                    <label class="w-20 text-sm text-gray-600 text-right shrink-0">起点坐标：</label>
-                    <Input v-model="routeConfig.startCoord" placeholder="经度,纬度" class="flex-1" />
-                    <Button size="sm" variant="outline" @click="handleMapSelect('起点')">地图选点</Button>
-                  </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-20 text-sm text-gray-600 text-right shrink-0">终点坐标：</label>
-                    <Input v-model="routeConfig.endCoord" placeholder="经度,纬度" class="flex-1" />
-                    <Button size="sm" variant="outline" @click="handleMapSelect('终点')">地图选点</Button>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- 起点 -->
+                    <div class="space-y-3 bg-blue-50/50 p-4 rounded-lg border border-blue-100">
+                      <div class="flex items-center justify-between">
+                        <label class="text-sm font-bold text-blue-800 flex items-center gap-2">
+                          <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+                          起点配置
+                        </label>
+                        <Button size="sm" variant="outline"
+                                class="h-7 text-xs bg-white hover:bg-blue-50 text-blue-600 border-blue-200"
+                                @click="handleMapSelectPoint('start')">
+                          <MapPin class="w-3 h-3 mr-1"/>
+                          地图选点
+                        </Button>
+                      </div>
+                      <div class="space-y-3">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-gray-500 w-10">名称</span>
+                          <Input v-model="startPointConfig.name" placeholder="请输入起点名称"
+                                 class="flex-1 h-8 text-sm"/>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                          <div class="space-y-1">
+                            <span class="text-xs text-gray-400 block">经度</span>
+                            <Input v-model="startPointConfig.lon" placeholder="121.4737"
+                                   class="w-full h-8 text-sm font-mono"/>
+                          </div>
+                          <div class="space-y-1">
+                            <span class="text-xs text-gray-400 block">纬度</span>
+                            <Input v-model="startPointConfig.lat" placeholder="31.2304"
+                                   class="w-full h-8 text-sm font-mono"/>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 终点 -->
+                    <div class="space-y-3 bg-green-50/50 p-4 rounded-lg border border-green-100">
+                      <div class="flex items-center justify-between">
+                        <label class="text-sm font-bold text-green-800 flex items-center gap-2">
+                          <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                          终点配置
+                        </label>
+                        <Button size="sm" variant="outline"
+                                class="h-7 text-xs bg-white hover:bg-green-50 text-green-600 border-green-200"
+                                @click="handleMapSelectPoint('end')">
+                          <MapPin class="w-3 h-3 mr-1"/>
+                          地图选点
+                        </Button>
+                      </div>
+                      <div class="space-y-3">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-gray-500 w-10">名称</span>
+                          <Input v-model="endPointConfig.name" placeholder="请输入终点名称" class="flex-1 h-8 text-sm"/>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                          <div class="space-y-1">
+                            <span class="text-xs text-gray-400 block">经度</span>
+                            <Input v-model="endPointConfig.lon" placeholder="121.5496"
+                                   class="w-full h-8 text-sm font-mono"/>
+                          </div>
+                          <div class="space-y-1">
+                            <span class="text-xs text-gray-400 block">纬度</span>
+                            <Input v-model="endPointConfig.lat" placeholder="29.8683"
+                                   class="w-full h-8 text-sm font-mono"/>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </template>
 
-                <!-- 多点规划模式 -->
+                <!-- 多点模式：登陆站列表 + BU 列表 -->
                 <template v-if="routeConfig.mode === 'multi-point'">
+                  <!-- 登陆站列表 -->
                   <div class="space-y-3">
-                    <!-- 多点列表 -->
-                    <div v-for="(wp, index) in waypoints" :key="wp.id" class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                      <span class="w-6 h-6 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center shrink-0">{{ index + 1 }}</span>
-                      <Input v-model="wp.name" placeholder="站点名称" class="w-24" />
-                      <Input v-model="wp.coord" placeholder="经度,纬度" class="flex-1" />
-                      <Button size="sm" variant="outline" @click="handleWaypointMapSelect(wp.id)">
-                        <MapPin class="w-3.5 h-3.5" />
-                      </Button>
-                      <Button size="sm" variant="outline" class="text-red-500 hover:bg-red-50" @click="handleRemoveWaypoint(wp.id)">
-                        <Trash2 class="w-3.5 h-3.5" />
+                    <div class="flex items-center justify-between">
+                      <label class="text-sm font-bold text-gray-700 flex items-center gap-2">
+                        <Anchor class="w-4 h-4 text-primary"/>
+                        登陆站列表
+                      </label>
+                      <Button size="sm" variant="outline"
+                              class="h-8 text-xs border-dashed border-gray-300 hover:border-primary hover:text-primary"
+                              @click="handleAddWaypoint">
+                        <Plus class="w-3.5 h-3.5 mr-1"/>
+                        新增登陆站
                       </Button>
                     </div>
-                    
-                    <!-- 添加按钮 -->
-                    <Button size="sm" variant="outline" class="w-full border-dashed" @click="handleAddWaypoint">
-                      <Plus class="w-4 h-4 mr-1" />
-                      添加登陆站
-                    </Button>
-                    
-                    <!-- 提示 -->
-                    <p v-if="waypoints.length < 3" class="text-xs text-amber-600 bg-amber-50 p-2 rounded">
-                      提示：多点规划至少需要3个登陆站，系统将自动在分支点添加分支器连接各站点
-                    </p>
+
+                    <!-- 登陆站表格 -->
+                    <div class="border rounded-lg overflow-hidden shadow-sm">
+                      <table class="w-full text-sm">
+                        <thead class="bg-gray-50 border-b">
+                        <tr>
+                          <th class="px-4 py-2.5 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider w-1/4">
+                            名称
+                          </th>
+                          <th class="px-4 py-2.5 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider">
+                            经度
+                          </th>
+                          <th class="px-4 py-2.5 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider">
+                            纬度
+                          </th>
+                          <th class="px-4 py-2.5 text-center font-semibold text-gray-600 text-xs uppercase tracking-wider w-24">
+                            操作
+                          </th>
+                        </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 bg-white">
+                        <tr v-for="(wp, index) in waypoints" :key="wp.id" class="hover:bg-gray-50 transition-colors">
+                          <td class="px-4 py-2">
+                            <Input v-model="wp.name" placeholder="站点名称" size="sm"
+                                   class="h-8 border-transparent focus:border-primary bg-transparent focus:bg-white hover:bg-gray-50"/>
+                          </td>
+                          <td class="px-4 py-2">
+                            <Input
+                                :model-value="getCoordLon(wp.coord)"
+                                @update:model-value="setCoordLon(wp, $event)"
+                                placeholder="经度"
+                                size="sm"
+                                class="h-8 border-transparent focus:border-primary bg-transparent focus:bg-white hover:bg-gray-50 font-mono text-xs"
+                            />
+                          </td>
+                          <td class="px-4 py-2">
+                            <Input
+                                :model-value="getCoordLat(wp.coord)"
+                                @update:model-value="setCoordLat(wp, $event)"
+                                placeholder="纬度"
+                                size="sm"
+                                class="h-8 border-transparent focus:border-primary bg-transparent focus:bg-white hover:bg-gray-50 font-mono text-xs"
+                            />
+                          </td>
+                          <td class="px-4 py-2">
+                            <div class="flex items-center justify-center gap-1">
+                              <button
+                                class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-primary hover:bg-primary/10 rounded-full transition-colors"
+                                title="编辑" 
+                                @click="handleEditWaypoint(wp.id)"
+                              >
+                                <Edit class="w-4 h-4"/>
+                              </button>
+                              <button
+                                class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                                title="地图定位" 
+                                @click="handleWaypointMapSelect(wp.id)"
+                              >
+                                <MapPin class="w-4 h-4"/>
+                              </button>
+                              <button
+                                class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                                title="删除" 
+                                @click="handleRemoveWaypoint(wp.id)"
+                              >
+                                <Trash2 class="w-4 h-4"/>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr v-if="waypoints.length === 0">
+                          <td colspan="4"
+                              class="px-4 py-8 text-center text-gray-400 bg-gray-50/50 dashed border-2 border-gray-100 m-2 rounded-lg">
+                            <div class="flex flex-col items-center justify-center gap-2">
+                              <Anchor class="w-8 h-8 text-gray-300"/>
+                              <span class="text-sm">暂无登陆站，请点击右上角添加</span>
+                            </div>
+                          </td>
+                        </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <!-- BU 列表 -->
+                  <div class="space-y-3 pt-2">
+                    <div class="flex items-center justify-between">
+                      <label class="text-sm font-bold text-gray-700 flex items-center gap-2">
+                        <GitBranch class="w-4 h-4 text-purple-500"/>
+                        BU (分支器) 列表
+                      </label>
+                      <Button size="sm" variant="outline"
+                              class="h-8 text-xs border-dashed border-gray-300 hover:border-purple-500 hover:text-purple-600"
+                              @click="handleAddBU">
+                        <Plus class="w-3.5 h-3.5 mr-1"/>
+                        新增 BU
+                      </Button>
+                    </div>
+
+                    <!-- BU 表格 -->
+                    <div class="border rounded-lg overflow-hidden shadow-sm">
+                      <table class="w-full text-sm">
+                        <thead class="bg-purple-50/30 border-b">
+                        <tr>
+                          <th class="px-4 py-2.5 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider w-1/4">
+                            名称
+                          </th>
+                          <th class="px-4 py-2.5 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider">
+                            经度
+                          </th>
+                          <th class="px-4 py-2.5 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider">
+                            纬度
+                          </th>
+                          <th class="px-4 py-2.5 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider w-24">
+                            max_ports
+                          </th>
+                          <th class="px-4 py-2.5 text-center font-semibold text-gray-600 text-xs uppercase tracking-wider w-24">
+                            操作
+                          </th>
+                        </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 bg-white">
+                        <tr v-for="(bu, index) in buConfigs" :key="bu.id"
+                            class="hover:bg-purple-50/10 transition-colors">
+                          <td class="px-4 py-2">
+                            <Input v-model="bu.name" placeholder="BU名称" size="sm"
+                                   class="h-8 border-transparent focus:border-purple-500 bg-transparent focus:bg-white hover:bg-gray-50"/>
+                          </td>
+                          <td class="px-4 py-2">
+                            <Input
+                                :model-value="getCoordLon(bu.coord)"
+                                @update:model-value="setCoordLonBu(bu, $event)"
+                                placeholder="经度"
+                                size="sm"
+                                class="h-8 border-transparent focus:border-purple-500 bg-transparent focus:bg-white hover:bg-gray-50 font-mono text-xs"
+                            />
+                          </td>
+                          <td class="px-4 py-2">
+                            <Input
+                                :model-value="getCoordLat(bu.coord)"
+                                @update:model-value="setCoordLatBu(bu, $event)"
+                                placeholder="纬度"
+                                size="sm"
+                                class="h-8 border-transparent focus:border-purple-500 bg-transparent focus:bg-white hover:bg-gray-50 font-mono text-xs"
+                            />
+                          </td>
+                          <td class="px-4 py-2">
+                            <Input
+                                v-model="bu.max_ports"
+                                type="number"
+                                min="2"
+                                max="8"
+                                placeholder="3"
+                                size="sm"
+                                class="h-8 w-16 border-transparent focus:border-purple-500 bg-transparent focus:bg-white hover:bg-gray-50 text-center"
+                            />
+                          </td>
+                          <td class="px-4 py-2">
+                            <div class="flex items-center justify-center gap-1">
+                              <button
+                                class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-full transition-colors"
+                                title="编辑" 
+                                @click="handleEditBU(bu.id)"
+                              >
+                                <Edit class="w-4 h-4"/>
+                              </button>
+                              <button
+                                class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                                title="删除" 
+                                @click="handleRemoveBU(bu.id)"
+                              >
+                                <Trash2 class="w-4 h-4"/>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr v-if="buConfigs.length === 0">
+                          <td colspan="5"
+                              class="px-4 py-8 text-center text-gray-400 bg-gray-50/50 dashed border-2 border-gray-100 m-2 rounded-lg">
+                            <div class="flex flex-col items-center justify-center gap-2">
+                              <GitBranch class="w-8 h-8 text-gray-300"/>
+                              <span class="text-sm">暂无 BU，请点击右上角添加</span>
+                            </div>
+                          </td>
+                        </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </template>
               </div>
             </CardContent>
           </Card>
 
-          <!-- GIS设置 -->
+          <!-- 海缆铠装预选 -->
           <Card>
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">GIS设置</h3>
-              <div class="space-y-4">
-                <div class="flex items-center gap-4">
-                  <label class="w-20 text-sm text-gray-600 text-right shrink-0">规划范围：</label>
-                  <Input v-model="routeConfig.planningRange" placeholder="西北角：xxx.xx,xxx.xx，东南角：xxx.xx,xxx.xx" class="flex-1" />
-                  <Button size="sm" variant="outline" @click="handleMapSelect('规划范围')">地图选点</Button>
+              <div
+                  class="flex items-center justify-between cursor-pointer select-none pb-3 border-b mb-4 group"
+                  @click="togglePanel('armorMapping')"
+              >
+                <h3 class="font-bold text-gray-800 text-lg group-hover:text-primary transition-colors">▼
+                  海缆铠装预选</h3>
+                <component :is="expandedPanels.armorMapping ? ChevronDown : ChevronRight"
+                           class="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"/>
+              </div>
+              <div v-show="expandedPanels.armorMapping" class="space-y-4">
+                <div class="flex items-center justify-between">
+                  <label class="text-sm font-semibold text-gray-700">风险等级与缆型映射规则</label>
+                  <span class="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">自动匹配</span>
                 </div>
-                <div class="flex items-center gap-4">
-                  <label class="w-20 text-sm text-gray-600 text-right shrink-0">网格大小：</label>
-                  <Input v-model="routeConfig.gridSize" class="flex-1" />
+
+                <!-- 铠装映射列表 -->
+                <div class="space-y-3">
+                  <div v-for="mapping in armorMappings" :key="mapping.riskLevel"
+                       class="flex items-center gap-4 p-4 bg-white border rounded-lg hover:shadow-sm hover:border-gray-300 transition-all group"
+                  >
+                    <!-- 风险等级标签 -->
+                    <div class="w-24 shrink-0 flex flex-col items-center gap-1">
+                      <span :class="[
+                        'text-xs font-bold px-3 py-1 rounded-full w-full text-center',
+                        mapping.riskLevel === 'high' ? 'bg-red-50 text-red-700' :
+                        mapping.riskLevel === 'medium' ? 'bg-yellow-50 text-yellow-700' :
+                        'bg-green-50 text-green-700'
+                      ]">{{ riskLevelLabels[mapping.riskLevel] }}</span>
+                      <span class="text-[10px] text-gray-400">
+                        {{
+                          mapping.riskLevel === 'high' ? '风险值 ≥ 3' : mapping.riskLevel === 'medium' ? '2 ≤ 风险 < 3' : '风险值 < 2'
+                        }}
+                      </span>
+                    </div>
+
+                    <!-- 阈值设置 (隐藏，因为是固定的逻辑) -->
+                    <input type="hidden" v-model="mapping.riskThreshold"/>
+
+                    <!-- 缆型选择 -->
+                    <div class="flex-1 flex flex-col gap-1">
+                      <label class="text-[10px] uppercase text-gray-400 font-semibold tracking-wider">选择缆型</label>
+                      <div class="flex items-center gap-2">
+                        <Cable class="w-4 h-4 text-gray-400 group-hover:text-gray-600 shrink-0"/>
+                        <Select
+                            :model-value="mapping.cableTypeName"
+                            @update:model-value="(val) => handleCableTypeSelect(mapping, val)"
+                            :options="[...getFilteredCableOptions(mapping.riskLevel), { value: '__create_new__', label: '➕ 新建缆型...' }]"
+                            placeholder="请选择缆型"
+                            class="flex-1 h-9"
+                        />
+                      </div>
+                    </div>
+
+                    <!-- 单价设置 -->
+                    <div class="w-40 flex flex-col gap-1">
+                      <label class="text-[10px] uppercase text-gray-400 font-semibold tracking-wider">预估单价</label>
+                      <div class="flex items-center gap-1">
+                        <Input v-model="mapping.unitPrice" type="number"
+                               class="flex-1 h-9 border-gray-200 focus:border-primary text-right"/>
+                        <span class="text-xs text-gray-500 shrink-0 w-12">千元/km</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <!-- 提示 -->
+                <div
+                    class="flex items-start gap-3 text-xs text-gray-500 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                  <span class="text-blue-500 mt-0.5">💡</span>
+                  <div class="leading-relaxed">
+                    <span class="font-medium text-blue-700">自动匹配逻辑说明：</span>
+                    系统将分析路由经过区域的风险图层，高风险区域（如断裂带、抛锚区）将自动匹配高防护等级缆型（双铠装），一般区域匹配标准铠装，深海安全区域匹配轻型缆。
+                  </div>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <!-- 成本参数 -->
-          <Card>
+          <!-- 冗余策略配置 - 仅多点模式显示 -->
+          <Card v-if="routeConfig.mode === 'multi-point'">
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">成本参数</h3>
-              
-              <!-- 路径规划成本 -->
-              <div class="mb-4">
-                <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                  <span class="w-1 h-4 bg-blue-500 rounded"></span>
-                  路径规划成本
-                </h4>
-                <div class="space-y-3 pl-3">
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">轻型海缆单价：</label>
-                    <Input v-model="routeConfig.lightCableCost" placeholder="如：15" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
+              <div
+                  class="flex items-center justify-between cursor-pointer select-none pb-3 border-b mb-4 group"
+                  @click="togglePanel('redundancy')"
+              >
+                <h3 class="font-bold text-gray-800 text-lg group-hover:text-primary transition-colors">▼
+                  冗余策略配置</h3>
+                <component :is="expandedPanels.redundancy ? ChevronDown : ChevronRight"
+                           class="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"/>
+              </div>
+              <div v-show="expandedPanels.redundancy" class="space-y-5">
+                <!-- 启用开关 -->
+                <div class="flex items-center justify-between bg-gray-50 p-4 rounded-lg border border-gray-100">
+                  <div class="flex items-center gap-3">
+                    <div class="p-2 rounded-full"
+                         :class="redundancyConfig.enabled ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-500'">
+                      <GitBranch class="w-5 h-5"/>
+                    </div>
+                    <div>
+                      <span class="text-sm font-bold text-gray-800 block">启用冗余保护路径</span>
+                      <span class="text-xs text-gray-500">为关键网络节点自动规划备份路由，提高网络可靠性</span>
+                    </div>
                   </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">重型海缆单价：</label>
-                    <Input v-model="routeConfig.heavyCableCost" placeholder="如：25" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
-                  </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">施工成本极大值：</label>
-                    <Input v-model="routeConfig.maxConstructionCost" placeholder="如：100" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">千元/公里</span>
-                  </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">深浅分界值：</label>
-                    <Input v-model="routeConfig.depthThreshold" placeholder="如：1000" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">米</span>
+                  <div class="flex items-center gap-3">
+                    <label class="text-sm text-gray-600 cursor-pointer hover:text-gray-900 transition-colors">
+                      <input type="radio" :value="false" v-model="redundancyConfig.enabled"
+                             class="mr-1 text-primary focus:ring-primary"> 关闭
+                    </label>
+                    <label class="text-sm font-medium text-primary cursor-pointer">
+                      <input type="radio" :value="true" v-model="redundancyConfig.enabled"
+                             class="mr-1 text-primary focus:ring-primary"> 启用
+                    </label>
                   </div>
                 </div>
+
+                <!-- 成本限制配置 -->
+                <transition
+                    enter-active-class="transition duration-300 ease-out"
+                    enter-from-class="transform -translate-y-2 opacity-0"
+                    enter-to-class="transform translate-y-0 opacity-100"
+                    leave-active-class="transition duration-200 ease-in"
+                    leave-from-class="transform translate-y-0 opacity-100"
+                    leave-to-class="transform -translate-y-2 opacity-0"
+                >
+                  <div v-if="redundancyConfig.enabled"
+                       class="border rounded-lg p-5 bg-white space-y-4 shadow-sm relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-1 h-full bg-primary"></div>
+                    <h4 class="text-sm font-bold text-gray-800">成本上限控制</h4>
+
+                    <div class="space-y-3">
+                      <label
+                          class="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                          :class="redundancyConfig.costLimitType === 'relative' ? 'border-primary ring-1 ring-primary/20 bg-primary/5' : 'border-gray-200'">
+                        <input type="radio" name="costLimitType" value="relative"
+                               v-model="redundancyConfig.costLimitType"
+                               class="w-4 h-4 text-primary border-gray-300 focus:ring-primary"/>
+                        <div class="ml-3 flex-1 flex items-center gap-2">
+                          <span class="text-sm font-medium text-gray-700">相对成本上限</span>
+                          <span class="text-xs text-gray-400">- 允许超出最小生成树成本的百分比</span>
+                        </div>
+                        <div class="flex items-center gap-2" v-if="redundancyConfig.costLimitType === 'relative'">
+                          <Input v-model="redundancyConfig.relativeCostPercent" type="number" placeholder="30"
+                                 class="w-20 h-8 text-right bg-white"/>
+                          <span class="text-sm text-gray-600 font-medium">%</span>
+                        </div>
+                      </label>
+
+                      <label
+                          class="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                          :class="redundancyConfig.costLimitType === 'absolute' ? 'border-primary ring-1 ring-primary/20 bg-primary/5' : 'border-gray-200'">
+                        <input type="radio" name="costLimitType" value="absolute"
+                               v-model="redundancyConfig.costLimitType"
+                               class="w-4 h-4 text-primary border-gray-300 focus:ring-primary"/>
+                        <div class="ml-3 flex-1 flex items-center gap-2">
+                          <span class="text-sm font-medium text-gray-700">绝对成本上限</span>
+                          <span class="text-xs text-gray-400">- 网络总建设预算硬性上限</span>
+                        </div>
+                        <div class="flex items-center gap-2" v-if="redundancyConfig.costLimitType === 'absolute'">
+                          <Input v-model="redundancyConfig.absoluteCostLimit" type="number" placeholder="1000"
+                                 class="w-24 h-8 text-right bg-white"/>
+                          <span class="text-sm text-gray-600 font-medium">万元</span>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                </transition>
               </div>
-              
-              <!-- 系统规划成本 -->
-              <div class="pt-4 border-t border-gray-200">
-                <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                  <span class="w-1 h-4 bg-green-500 rounded"></span>
-                  系统规划成本
-                </h4>
-                <div class="space-y-3 pl-3">
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">电缆单价：</label>
-                    <Input v-model="routeConfig.cableCostPerKm" placeholder="如：35000" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">元/公里</span>
+            </CardContent>
+          </Card>
+
+          <!-- GIS与路由算法设置 -->
+          <Card>
+            <CardContent class="p-5">
+              <div
+                  class="flex items-center justify-between cursor-pointer select-none pb-3 border-b mb-4 group"
+                  @click="togglePanel('gisSettings')"
+              >
+                <h3 class="font-bold text-gray-800 text-lg group-hover:text-primary transition-colors">▼
+                  GIS与路由算法设置</h3>
+                <component :is="expandedPanels.gisSettings ? ChevronDown : ChevronRight"
+                           class="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"/>
+              </div>
+              <div v-show="expandedPanels.gisSettings" class="space-y-6">
+                <!-- 规划范围 -->
+                <div class="space-y-3">
+                  <div class="flex items-center gap-2">
+                    <label class="text-sm font-bold text-gray-700">规划范围设定</label>
+                    <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">限制路由搜索区域</span>
                   </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">安装单价：</label>
-                    <Input v-model="routeConfig.installationCostPerKm" placeholder="如：15000" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">元/公里</span>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <label
+                        class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                        :class="gisConfig.rangeMode === 'auto' ? 'border-primary bg-primary/5' : 'border-gray-200'">
+                      <input
+                          type="radio"
+                          name="rangeMode"
+                          value="auto"
+                          v-model="gisConfig.rangeMode"
+                          class="w-4 h-4 mt-1 text-primary border-gray-300 focus:ring-primary"
+                      />
+                      <div class="ml-3">
+                        <span class="text-sm font-medium text-gray-800 block">自动全图范围</span>
+                        <span class="text-xs text-gray-500 mt-1 block">使用地图可视区域作为规划范围</span>
+                      </div>
+                    </label>
+                    <label
+                        class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                        :class="gisConfig.rangeMode === 'manual' ? 'border-primary bg-primary/5' : 'border-gray-200'">
+                      <input
+                          type="radio"
+                          name="rangeMode"
+                          value="manual"
+                          v-model="gisConfig.rangeMode"
+                          class="w-4 h-4 mt-1 text-primary border-gray-300 focus:ring-primary"
+                      />
+                      <div class="ml-3">
+                        <span class="text-sm font-medium text-gray-800 block">手动框选范围</span>
+                        <span class="text-xs text-gray-500 mt-1 block">自定义矩形区域作为规划边界</span>
+                      </div>
+                    </label>
                   </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">中继器单价：</label>
-                    <Input v-model="routeConfig.repeaterCost" placeholder="如：250000" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
+
+                  <!-- 手动框选时显示坐标输入 -->
+                  <transition
+                      enter-active-class="transition duration-300 ease-out"
+                      enter-from-class="opacity-0 translate-y-2"
+                      enter-to-class="opacity-100 translate-y-0"
+                  >
+                    <div v-if="gisConfig.rangeMode === 'manual'"
+                         class="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-2">
+                      <div class="flex items-end gap-4">
+                        <div class="flex-1 grid grid-cols-2 gap-4">
+                          <div class="space-y-2">
+                            <span class="text-xs font-semibold text-gray-500 uppercase">西北角 (Top-Left)</span>
+                            <div class="flex gap-2">
+                              <Input v-model="gisConfig.nwLon" placeholder="经度" class="w-full h-8 text-xs font-mono"/>
+                              <Input v-model="gisConfig.nwLat" placeholder="纬度" class="w-full h-8 text-xs font-mono"/>
+                            </div>
+                          </div>
+                          <div class="space-y-2">
+                            <span class="text-xs font-semibold text-gray-500 uppercase">东南角 (Bottom-Right)</span>
+                            <div class="flex gap-2">
+                              <Input v-model="gisConfig.seLon" placeholder="经度" class="w-full h-8 text-xs font-mono"/>
+                              <Input v-model="gisConfig.seLat" placeholder="纬度" class="w-full h-8 text-xs font-mono"/>
+                            </div>
+                          </div>
+                        </div>
+                        <Button size="sm" class="bg-white border hover:bg-gray-50 text-gray-700 h-8"
+                                @click="handleMapBoxSelect">
+                          <MapPin class="w-3.5 h-3.5 mr-1"/>
+                          地图框选
+                        </Button>
+                      </div>
+                    </div>
+                  </transition>
+                </div>
+
+                <div class="border-t border-gray-100 my-4"></div>
+
+                <!-- 栅格化参数 -->
+                <div class="flex items-center gap-6">
+                  <div class="flex-1">
+                    <label class="text-sm font-bold text-gray-700 block mb-1">栅格化分辨率</label>
+                    <span
+                        class="text-xs text-gray-500 block">设置路径规划时的网格粒度，数值越小精度越高但计算越慢。</span>
                   </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">分支器单价：</label>
-                    <Input v-model="routeConfig.branchingUnitCost" placeholder="如：180000" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
-                  </div>
-                  <div class="flex items-center gap-4">
-                    <label class="w-28 text-sm text-gray-600 text-right shrink-0">登陆站成本：</label>
-                    <Input v-model="routeConfig.landingStationCost" placeholder="如：5000000" class="flex-1" />
-                    <span class="text-sm text-gray-500 w-20 shrink-0">元/个</span>
+                  <div class="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-200">
+                    <Input v-model="gisConfig.gridResolution" type="number" placeholder="500"
+                           class="w-20 h-8 text-right bg-white"/>
+                    <span class="text-sm font-medium text-gray-600">meters</span>
                   </div>
                 </div>
               </div>
@@ -765,7 +1768,7 @@ const handleReset = () => {
         <div v-if="activeTab === 'transmission'" class="space-y-5">
           <div class="flex items-center gap-3 pb-3 border-b">
             <div class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Radio class="w-5 h-5 text-primary" />
+              <Radio class="w-5 h-5 text-primary"/>
             </div>
             <div>
               <h3 class="font-bold text-gray-800 text-lg">传输与仿真配置</h3>
@@ -777,23 +1780,23 @@ const handleReset = () => {
             <!-- 波道参数 -->
             <div class="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-5 space-y-4">
               <div class="flex items-center gap-2">
-                <Waves class="w-4 h-4 text-primary" />
+                <Waves class="w-4 h-4 text-primary"/>
                 <h4 class="font-medium text-gray-800 dark:text-gray-100">波道参数</h4>
               </div>
               <div class="space-y-4">
                 <div>
                   <label class="text-xs text-gray-500 mb-1 block">波道数量</label>
-                  <Input v-model="transConfig.channelCount" type="number" class="w-full" />
+                  <Input v-model="transConfig.channelCount" type="number" class="w-full"/>
                   <p class="text-xs text-gray-400 mt-1">范围: 1-400，常用值: 96</p>
                 </div>
                 <div>
                   <label class="text-xs text-gray-500 mb-1 block">中心波长 (nm)</label>
-                  <Input v-model="transConfig.centerWavelength" type="number" class="w-full" />
+                  <Input v-model="transConfig.centerWavelength" type="number" class="w-full"/>
                   <p class="text-xs text-gray-400 mt-1">C波段: 1530-1565nm</p>
                 </div>
                 <div>
                   <label class="text-xs text-gray-500 mb-1 block">信道带宽 (GHz)</label>
-                  <Input v-model="transConfig.channelBandwidth" type="number" class="w-full" />
+                  <Input v-model="transConfig.channelBandwidth" type="number" class="w-full"/>
                   <p class="text-xs text-gray-400 mt-1">常用值: 50 GHz, 100 GHz</p>
                 </div>
               </div>
@@ -802,7 +1805,7 @@ const handleReset = () => {
             <!-- 计算模型 -->
             <div class="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-5 space-y-4">
               <div class="flex items-center gap-2">
-                <Server class="w-4 h-4 text-primary" />
+                <Server class="w-4 h-4 text-primary"/>
                 <h4 class="font-medium text-gray-800 dark:text-gray-100">计算模型</h4>
               </div>
               <div class="space-y-2">
@@ -811,7 +1814,7 @@ const handleReset = () => {
                   transConfig.models.includes(opt.value) ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-200 dark:border-gray-700 dark:hover:border-gray-600'
                 ]">
                   <input type="checkbox" :checked="transConfig.models.includes(opt.value)"
-                    @change="toggleModel(opt.value)" class="w-4 h-4 text-primary rounded" />
+                         @change="toggleModel(opt.value)" class="w-4 h-4 text-primary rounded"/>
                   <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ opt.label }}</span>
                 </label>
               </div>
@@ -821,7 +1824,7 @@ const handleReset = () => {
             <div class="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-5 space-y-4 col-span-2">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <Zap class="w-4 h-4 text-primary" />
+                  <Zap class="w-4 h-4 text-primary"/>
                   <h4 class="font-medium text-gray-800 dark:text-gray-100">光纤仿真模型</h4>
                 </div>
                 <span class="text-xs text-primary bg-primary/10 px-2 py-1 rounded">非线性效应</span>
@@ -832,7 +1835,7 @@ const handleReset = () => {
                   fiberConfig.model === opt.value ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-200 dark:border-gray-700 dark:hover:border-gray-600'
                 ]">
                   <input type="radio" :value="opt.value" v-model="fiberConfig.model"
-                    class="w-4 h-4 text-primary mt-0.5" />
+                         class="w-4 h-4 text-primary mt-0.5"/>
                   <div>
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ opt.label }}</span>
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ opt.desc }}</p>
@@ -852,17 +1855,20 @@ const handleReset = () => {
               <div class="space-y-4">
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">数据源类型：</label>
-                  <Select v-model="monitorConfig.dataSourceType" :options="[{ value: 'realtime', label: '网络实时数据' }]"
-                    class="flex-1" />
+                  <Select v-model="monitorConfig.dataSourceType"
+                          :options="[{ value: 'realtime', label: '网络实时数据' }]"
+                          class="flex-1"/>
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">连接地址：</label>
-                  <Input v-model="monitorConfig.connectionAddress" placeholder="tcp://monitor.example.com:1234" class="flex-1" />
+                  <Input v-model="monitorConfig.connectionAddress" placeholder="tcp://monitor.example.com:1234"
+                         class="flex-1"/>
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">认证信息：</label>
                   <Button size="sm"
-                    @click="appStore.showNotification({ type: 'info', message: '认证配置功能开发中' })">配置</Button>
+                          @click="appStore.showNotification({ type: 'info', message: '认证配置功能开发中' })">配置
+                  </Button>
                 </div>
               </div>
             </CardContent>
@@ -875,17 +1881,17 @@ const handleReset = () => {
               <div class="space-y-4">
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">光功率阈值：</label>
-                  <Input v-model="monitorConfig.powerThreshold" type="number" class="flex-1" />
+                  <Input v-model="monitorConfig.powerThreshold" type="number" class="flex-1"/>
                   <span class="text-sm text-gray-500 w-12 shrink-0">dBm</span>
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">温度阈值：</label>
-                  <Input v-model="monitorConfig.temperatureThreshold" type="number" class="flex-1" />
+                  <Input v-model="monitorConfig.temperatureThreshold" type="number" class="flex-1"/>
                   <span class="text-sm text-gray-500 w-12 shrink-0">°C</span>
                 </div>
                 <div class="flex items-center gap-4">
                   <label class="w-24 text-sm text-gray-600 text-right shrink-0">BER阈值：</label>
-                  <Input v-model="monitorConfig.berThreshold" placeholder="1e-9" class="flex-1" />
+                  <Input v-model="monitorConfig.berThreshold" placeholder="1e-9" class="flex-1"/>
                 </div>
               </div>
             </CardContent>
@@ -898,7 +1904,7 @@ const handleReset = () => {
               <div class="space-y-3">
                 <div class="grid grid-cols-4 gap-4" v-for="row in 4" :key="row">
                   <label v-for="col in 4" :key="col" class="flex items-center gap-2">
-                    <input type="checkbox" class="w-4 h-4 text-primary border-gray-300 rounded" />
+                    <input type="checkbox" class="w-4 h-4 text-primary border-gray-300 rounded"/>
                     <span class="text-sm text-gray-600">字段{{ (row - 1) * 4 + col }}</span>
                   </label>
                 </div>
@@ -915,7 +1921,9 @@ const handleReset = () => {
               <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">器件库管理</h3>
               <div class="flex items-center justify-center gap-4 mb-4">
                 <span class="text-sm text-gray-600">当前器件库文件：</span>
-                <span class="text-sm text-gray-800 font-medium">{{ settingsStore.currentLibraryFile || '未导入' }}</span>
+                <span class="text-sm text-gray-800 font-medium">{{
+                    settingsStore.currentLibraryFile || '未导入'
+                  }}</span>
               </div>
               <div class="flex justify-center gap-4">
                 <Button variant="outline" @click="handleImportLibrary">导入器件库</Button>
@@ -927,7 +1935,8 @@ const handleReset = () => {
           <!-- 器件类型管理 -->
           <Card>
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 dark:text-gray-100 text-lg mb-4 pb-3 border-b">器件类型管理</h3>
+              <h3 class="text-center font-bold text-gray-800 dark:text-gray-100 text-lg mb-4 pb-3 border-b">
+                器件类型管理</h3>
 
               <!-- 器件类型标签 -->
               <div class="flex border-b mb-4">
@@ -937,68 +1946,72 @@ const handleReset = () => {
                     ? ''
                     : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
                 ]"
-                  :style="deviceTypeTab === 'fiber' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
-                  @click="deviceTypeTab = 'fiber'">光纤类型管理</button>
+                        :style="deviceTypeTab === 'fiber' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
+                        @click="deviceTypeTab = 'fiber'">光纤类型管理
+                </button>
                 <button :class="[
                   'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
                   deviceTypeTab === 'amplifier'
                     ? ''
                     : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
                 ]"
-                  :style="deviceTypeTab === 'amplifier' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
-                  @click="deviceTypeTab = 'amplifier'">放大器类型管理</button>
+                        :style="deviceTypeTab === 'amplifier' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
+                        @click="deviceTypeTab = 'amplifier'">放大器类型管理
+                </button>
                 <button :class="[
                   'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
                   deviceTypeTab === 'branching'
                     ? ''
                     : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
                 ]"
-                  :style="deviceTypeTab === 'branching' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
-                  @click="deviceTypeTab = 'branching'">分支器类型管理</button>
+                        :style="deviceTypeTab === 'branching' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
+                        @click="deviceTypeTab = 'branching'">分支器类型管理
+                </button>
               </div>
 
               <!-- 光纤类型管理 -->
               <div v-if="deviceTypeTab === 'fiber'">
                 <div class="mb-3">
                   <Button size="sm" class="bg-primary hover:bg-primary hover:brightness-90 text-white"
-                    @click="showAddFiberDialog = true">
-                    <Plus class="w-4 h-4 mr-1" />
+                          @click="showAddFiberDialog = true">
+                    <Plus class="w-4 h-4 mr-1"/>
                     增加光纤类型
                   </Button>
                 </div>
                 <div class="border rounded-lg overflow-hidden">
                   <table class="w-full text-sm">
                     <thead class="bg-gray-100 dark:bg-white/5">
-                      <tr>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">光纤类型名称</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">非线性系数</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">有效面积</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">色散</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">非线性折射率</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">衰减系数</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">二阶色散</th>
-                        <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
-                      </tr>
+                    <tr>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">光纤类型名称</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">非线性系数</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">有效面积</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">色散</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">非线性折射率</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">衰减系数</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">二阶色散</th>
+                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
+                    </tr>
                     </thead>
                     <tbody>
-                      <tr v-if="settingsStore.fiberTypes.length === 0">
-                        <td colspan="8" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
-                      </tr>
-                      <tr v-for="fiber in settingsStore.fiberTypes" :key="fiber.id"
+                    <tr v-if="settingsStore.fiberTypes.length === 0">
+                      <td colspan="8" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                    </tr>
+                    <tr v-for="fiber in settingsStore.fiberTypes" :key="fiber.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                        <td class="px-3 py-2">{{ fiber.name }}</td>
-                        <td class="px-3 py-2">{{ fiber.nonlinearCoeff }}</td>
-                        <td class="px-3 py-2">{{ fiber.effectiveArea }}</td>
-                        <td class="px-3 py-2">{{ fiber.dispersion }}</td>
-                        <td class="px-3 py-2">{{ fiber.nonlinearRefractiveIndex }} × 10⁻²⁰</td>
-                        <td class="px-3 py-2">{{ fiber.attenuationCoeff }}</td>
-                        <td class="px-3 py-2">{{ fiber.secondOrderDispersion }}</td>
-                        <td class="px-3 py-2 text-center">
-                          <button class="text-primary hover:text-primary hover:brightness-90 mx-1">修改</button>
-                          <button class="text-red-500 hover:text-red-700 mx-1"
-                            @click="handleDeleteFiber(fiber.id)">删除</button>
-                        </td>
-                      </tr>
+                      <td class="px-3 py-2">{{ fiber.name }}</td>
+                      <td class="px-3 py-2">{{ fiber.nonlinearCoeff }}</td>
+                      <td class="px-3 py-2">{{ fiber.effectiveArea }}</td>
+                      <td class="px-3 py-2">{{ fiber.dispersion }}</td>
+                      <td class="px-3 py-2">{{ fiber.nonlinearRefractiveIndex }} × 10⁻²⁰</td>
+                      <td class="px-3 py-2">{{ fiber.attenuationCoeff }}</td>
+                      <td class="px-3 py-2">{{ fiber.secondOrderDispersion }}</td>
+                      <td class="px-3 py-2 text-center">
+                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1">修改</button>
+                        <button class="text-red-500 hover:text-red-700 mx-1"
+                                @click="handleDeleteFiber(fiber.id)">删除
+                        </button>
+                      </td>
+                    </tr>
                     </tbody>
                   </table>
                 </div>
@@ -1008,46 +2021,47 @@ const handleReset = () => {
               <div v-if="deviceTypeTab === 'amplifier'">
                 <div class="mb-3">
                   <Button size="sm" class="bg-primary hover:bg-primary hover:brightness-90 text-white"
-                    @click="showAddAmplifierDialog = true">
-                    <Plus class="w-4 h-4 mr-1" />
+                          @click="showAddAmplifierDialog = true">
+                    <Plus class="w-4 h-4 mr-1"/>
                     增加放大器类型
                   </Button>
                 </div>
                 <div class="border rounded-lg overflow-hidden">
                   <table class="w-full text-sm">
                     <thead class="bg-gray-100 dark:bg-white/5">
-                      <tr>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">放大器类型名称</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">带宽</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益平坦度</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">噪声系数</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">泵浦功率</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">输出功率</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益范围功率</th>
-                        <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
-                      </tr>
+                    <tr>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">放大器类型名称</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">带宽</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益平坦度</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">噪声系数</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">泵浦功率</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">输出功率</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益范围功率</th>
+                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
+                    </tr>
                     </thead>
                     <tbody>
-                      <tr v-if="settingsStore.amplifierTypes.length === 0">
-                        <td colspan="9" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
-                      </tr>
-                      <tr v-for="amp in settingsStore.amplifierTypes" :key="amp.id"
+                    <tr v-if="settingsStore.amplifierTypes.length === 0">
+                      <td colspan="9" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                    </tr>
+                    <tr v-for="amp in settingsStore.amplifierTypes" :key="amp.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                        <td class="px-3 py-2">{{ amp.name }}</td>
-                        <td class="px-3 py-2">{{ amp.gain }}</td>
-                        <td class="px-3 py-2">{{ amp.bandwidth }}</td>
-                        <td class="px-3 py-2">{{ amp.gainFlatness }}</td>
-                        <td class="px-3 py-2">{{ amp.noiseFigure }}</td>
-                        <td class="px-3 py-2">{{ amp.pumpPower }}</td>
-                        <td class="px-3 py-2">{{ amp.outputPower }}</td>
-                        <td class="px-3 py-2">{{ amp.gainRangePower }}</td>
-                        <td class="px-3 py-2 text-center">
-                          <button class="text-blue-500 hover:text-blue-700 mx-1">修改</button>
-                          <button class="text-red-500 hover:text-red-700 mx-1"
-                            @click="handleDeleteAmplifier(amp.id)">删除</button>
-                        </td>
-                      </tr>
+                      <td class="px-3 py-2">{{ amp.name }}</td>
+                      <td class="px-3 py-2">{{ amp.gain }}</td>
+                      <td class="px-3 py-2">{{ amp.bandwidth }}</td>
+                      <td class="px-3 py-2">{{ amp.gainFlatness }}</td>
+                      <td class="px-3 py-2">{{ amp.noiseFigure }}</td>
+                      <td class="px-3 py-2">{{ amp.pumpPower }}</td>
+                      <td class="px-3 py-2">{{ amp.outputPower }}</td>
+                      <td class="px-3 py-2">{{ amp.gainRangePower }}</td>
+                      <td class="px-3 py-2 text-center">
+                        <button class="text-blue-500 hover:text-blue-700 mx-1">修改</button>
+                        <button class="text-red-500 hover:text-red-700 mx-1"
+                                @click="handleDeleteAmplifier(amp.id)">删除
+                        </button>
+                      </td>
+                    </tr>
                     </tbody>
                   </table>
                 </div>
@@ -1057,38 +2071,39 @@ const handleReset = () => {
               <div v-if="deviceTypeTab === 'branching'">
                 <div class="mb-3">
                   <Button size="sm" class="bg-primary hover:bg-primary hover:brightness-90 text-white"
-                    @click="showAddBranchingDialog = true">
-                    <Plus class="w-4 h-4 mr-1" />
+                          @click="showAddBranchingDialog = true">
+                    <Plus class="w-4 h-4 mr-1"/>
                     增加分支器类型
                   </Button>
                 </div>
                 <div class="border rounded-lg overflow-hidden">
                   <table class="w-full text-sm">
                     <thead class="bg-gray-100 dark:bg-white/5">
-                      <tr>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">分支器类型名称</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口数量</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口间插损</th>
-                        <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">工作波长范围</th>
-                        <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
-                      </tr>
+                    <tr>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">分支器类型名称</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口数量</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口间插损</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">工作波长范围</th>
+                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
+                    </tr>
                     </thead>
                     <tbody>
-                      <tr v-if="settingsStore.branchingUnitTypes.length === 0">
-                        <td colspan="5" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
-                      </tr>
-                      <tr v-for="bu in settingsStore.branchingUnitTypes" :key="bu.id"
+                    <tr v-if="settingsStore.branchingUnitTypes.length === 0">
+                      <td colspan="5" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                    </tr>
+                    <tr v-for="bu in settingsStore.branchingUnitTypes" :key="bu.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                        <td class="px-3 py-2">{{ bu.name }}</td>
-                        <td class="px-3 py-2">{{ bu.portCount }}</td>
-                        <td class="px-3 py-2">{{ bu.insertionLoss }}</td>
-                        <td class="px-3 py-2">{{ bu.wavelengthRange }}</td>
-                        <td class="px-3 py-2 text-center">
-                          <button class="text-primary hover:text-primary hover:brightness-90 mx-1">修改</button>
-                          <button class="text-red-500 hover:text-red-700 mx-1"
-                            @click="handleDeleteBranching(bu.id)">删除</button>
-                        </td>
-                      </tr>
+                      <td class="px-3 py-2">{{ bu.name }}</td>
+                      <td class="px-3 py-2">{{ bu.portCount }}</td>
+                      <td class="px-3 py-2">{{ bu.insertionLoss }}</td>
+                      <td class="px-3 py-2">{{ bu.wavelengthRange }}</td>
+                      <td class="px-3 py-2 text-center">
+                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1">修改</button>
+                        <button class="text-red-500 hover:text-red-700 mx-1"
+                                @click="handleDeleteBranching(bu.id)">删除
+                        </button>
+                      </td>
+                    </tr>
                     </tbody>
                   </table>
                 </div>
@@ -1103,7 +2118,7 @@ const handleReset = () => {
   <!-- 新增光纤器件弹窗 -->
   <Teleport to="body">
     <div v-if="showAddFiberDialog" class="fixed inset-0 z-50 flex items-center justify-center">
-      <div class="absolute inset-0 bg-black/50" @click="showAddFiberDialog = false" />
+      <div class="absolute inset-0 bg-black/50" @click="showAddFiberDialog = false"/>
       <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[450px]">
         <div class="px-5 py-3 border-b">
           <h3 class="font-bold text-gray-800 dark:text-gray-100">新增光纤器件</h3>
@@ -1111,46 +2126,49 @@ const handleReset = () => {
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">光纤类型名称：</label>
-            <Input v-model="newFiber.name" class="flex-1" />
+            <Input v-model="newFiber.name" class="flex-1"/>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">非线性系数 (γ)：</label>
-            <Input v-model="newFiber.nonlinearCoeff" type="number" class="flex-1" />
+            <Input v-model="newFiber.nonlinearCoeff" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">W⁻¹·km⁻¹</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">有效面积 (A_eff)：</label>
-            <Input v-model="newFiber.effectiveArea" type="number" class="flex-1" />
+            <Input v-model="newFiber.effectiveArea" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">μm²</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">色散 (Dispersion)：</label>
-            <Input v-model="newFiber.dispersion" type="number" class="flex-1" />
+            <Input v-model="newFiber.dispersion" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">ps/nm·km</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">非线性折射率 (n_2)：</label>
-            <Input v-model="newFiber.nonlinearRefractiveIndex" type="number" class="flex-1" />
+            <Input v-model="newFiber.nonlinearRefractiveIndex" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">×10⁻²⁰ m²/W</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">衰减系数 (α)：</label>
-            <Input v-model="newFiber.attenuationCoeff" type="number" class="flex-1" />
+            <Input v-model="newFiber.attenuationCoeff" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dB/km</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">二阶色散 (β₂)：</label>
-            <Input v-model="newFiber.secondOrderDispersion" type="number" class="flex-1" />
+            <Input v-model="newFiber.secondOrderDispersion" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">ps²</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">光纤仿真模型偏好：</label>
-            <Select v-model="newFiber.simulationModel" :options="[{ value: 'GN', label: '高斯噪声模型 (GN Model)' }, { value: 'EGN', label: '增强高斯噪声模型 (EGN Model)' }]" class="flex-1" />
+            <Select v-model="newFiber.simulationModel"
+                    :options="[{ value: 'GN', label: '高斯噪声模型 (GN Model)' }, { value: 'EGN', label: '增强高斯噪声模型 (EGN Model)' }]"
+                    class="flex-1"/>
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">
           <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6"
-            @click="handleAddFiber">保存</Button>
+                  @click="handleAddFiber">保存
+          </Button>
           <Button variant="outline" class="px-6" @click="showAddFiberDialog = false">取消</Button>
         </div>
       </div>
@@ -1160,7 +2178,7 @@ const handleReset = () => {
   <!-- 新增放大器弹窗 -->
   <Teleport to="body">
     <div v-if="showAddAmplifierDialog" class="fixed inset-0 z-50 flex items-center justify-center">
-      <div class="absolute inset-0 bg-black/50" @click="showAddAmplifierDialog = false" />
+      <div class="absolute inset-0 bg-black/50" @click="showAddAmplifierDialog = false"/>
       <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[450px]">
         <div class="px-5 py-3 border-b">
           <h3 class="font-bold text-gray-800 dark:text-gray-100">新增放大器类型</h3>
@@ -1168,47 +2186,48 @@ const handleReset = () => {
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">放大器类型名称：</label>
-            <Input v-model="newAmplifier.name" class="flex-1" />
+            <Input v-model="newAmplifier.name" class="flex-1"/>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益：</label>
-            <Input v-model="newAmplifier.gain" type="number" class="flex-1" />
+            <Input v-model="newAmplifier.gain" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">带宽：</label>
-            <Input v-model="newAmplifier.bandwidth" type="number" class="flex-1" />
+            <Input v-model="newAmplifier.bandwidth" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">nm</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益平坦度：</label>
-            <Input v-model="newAmplifier.gainFlatness" type="number" class="flex-1" />
+            <Input v-model="newAmplifier.gainFlatness" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">噪声系数：</label>
-            <Input v-model="newAmplifier.noiseFigure" type="number" class="flex-1" />
+            <Input v-model="newAmplifier.noiseFigure" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">泵浦功率：</label>
-            <Input v-model="newAmplifier.pumpPower" type="number" class="flex-1" />
+            <Input v-model="newAmplifier.pumpPower" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">mW</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">输出功率：</label>
-            <Input v-model="newAmplifier.outputPower" type="number" class="flex-1" />
+            <Input v-model="newAmplifier.outputPower" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dBm</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益范围功率：</label>
-            <Input v-model="newAmplifier.gainRangePower" type="number" class="flex-1" />
+            <Input v-model="newAmplifier.gainRangePower" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">
           <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6"
-            @click="handleAddAmplifier">保存</Button>
+                  @click="handleAddAmplifier">保存
+          </Button>
           <Button variant="outline" class="px-6" @click="showAddAmplifierDialog = false">取消</Button>
         </div>
       </div>
@@ -1218,7 +2237,7 @@ const handleReset = () => {
   <!-- 增加分支器类型弹窗 -->
   <Teleport to="body">
     <div v-if="showAddBranchingDialog" class="fixed inset-0 z-50 flex items-center justify-center">
-      <div class="absolute inset-0 bg-black/50" @click="showAddBranchingDialog = false" />
+      <div class="absolute inset-0 bg-black/50" @click="showAddBranchingDialog = false"/>
       <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[400px]">
         <div class="px-5 py-3 border-b">
           <h3 class="font-bold text-gray-800 dark:text-gray-100 text-center">增加分支器类型</h3>
@@ -1226,27 +2245,29 @@ const handleReset = () => {
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">分支器类型名称：</label>
-            <Input v-model="newBranching.name" class="flex-1" />
+            <Input v-model="newBranching.name" class="flex-1"/>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">端口数量：</label>
-            <Input v-model="newBranching.portCount" type="number" placeholder="请输入端口数量" class="flex-1" />
+            <Input v-model="newBranching.portCount" type="number" placeholder="请输入端口数量" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">个</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">端口间插损：</label>
-            <Input v-model="newBranching.insertionLoss" type="number" placeholder="请输入端口间插损" class="flex-1" />
+            <Input v-model="newBranching.insertionLoss" type="number" placeholder="请输入端口间插损" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">工作波长范围：</label>
-            <Input v-model="newBranching.wavelengthRange" type="number" placeholder="请输入工作波长范围" class="flex-1" />
+            <Input v-model="newBranching.wavelengthRange" type="number" placeholder="请输入工作波长范围"
+                   class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">nm</span>
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">
           <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6"
-            @click="handleAddBranching">保存</Button>
+                  @click="handleAddBranching">保存
+          </Button>
           <Button variant="outline" class="px-6" @click="showAddBranchingDialog = false">取消</Button>
         </div>
       </div>
@@ -1254,5 +2275,102 @@ const handleReset = () => {
   </Teleport>
 
   <!-- 地图选点弹窗 -->
-  <MapSelectDialog v-model:visible="showMapSelectDialog" :title="mapSelectTitle" @confirm="handleMapSelectConfirm" />
+  <MapSelectDialog 
+    v-model:visible="showMapSelectDialog" 
+    :title="mapSelectTitle" 
+    :mode="mapSelectType === 'range' ? 'range' : 'point'"
+    @confirm="handleMapSelectConfirm"
+  />
+
+  <!-- 新建缆型弹窗 -->
+  <CableTypeCreateDialog
+      :visible="showCableTypeCreateDialog"
+      :preset-armor-type="cableTypePresetArmor"
+      @close="showCableTypeCreateDialog = false"
+      @created="handleCableTypeCreated"
+  />
+
+  <!-- 编辑登陆站弹窗 -->
+  <Teleport to="body">
+    <div v-if="showWaypointEditDialog && editingWaypoint" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showWaypointEditDialog = false"/>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[400px]">
+        <div class="px-5 py-3 border-b">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100 text-center">编辑登陆站</h3>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="flex items-center gap-3">
+            <label class="w-20 text-sm text-gray-600 dark:text-gray-400 text-right">站点名称：</label>
+            <Input v-model="editingWaypoint.name" class="flex-1" placeholder="请输入站点名称"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-20 text-sm text-gray-600 dark:text-gray-400 text-right">经度：</label>
+            <Input :model-value="getCoordLon(editingWaypoint.coord)"
+                   @update:model-value="setCoordLon(editingWaypoint, $event)" class="flex-1" placeholder="如：121.4737"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-20 text-sm text-gray-600 dark:text-gray-400 text-right">纬度：</label>
+            <Input :model-value="getCoordLat(editingWaypoint.coord)"
+                   @update:model-value="setCoordLat(editingWaypoint, $event)" class="flex-1" placeholder="如：31.2304"/>
+          </div>
+          <div class="flex justify-center">
+            <Button size="sm" variant="outline" @click="handleWaypointMapSelect(editingWaypoint.id)">
+              <MapPin class="w-3.5 h-3.5 mr-1"/>
+              地图选点
+            </Button>
+          </div>
+        </div>
+        <div class="flex justify-center gap-4 p-4 border-t">
+          <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="saveWaypointEdit">
+            保存
+          </Button>
+          <Button variant="outline" class="px-6" @click="showWaypointEditDialog = false">取消</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 编辑 BU 弹窗 -->
+  <Teleport to="body">
+    <div v-if="showBuEditDialog && editingBu" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showBuEditDialog = false"/>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[400px]">
+        <div class="px-5 py-3 border-b">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100 text-center">编辑 BU</h3>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="flex items-center gap-3">
+            <label class="w-24 text-sm text-gray-600 dark:text-gray-400 text-right">BU 名称：</label>
+            <Input v-model="editingBu.name" class="flex-1" placeholder="请输入 BU 名称"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-24 text-sm text-gray-600 dark:text-gray-400 text-right">经度：</label>
+            <Input :model-value="getCoordLon(editingBu.coord)" @update:model-value="setCoordLonBu(editingBu, $event)"
+                   class="flex-1" placeholder="如：121.4737"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-24 text-sm text-gray-600 dark:text-gray-400 text-right">纬度：</label>
+            <Input :model-value="getCoordLat(editingBu.coord)" @update:model-value="setCoordLatBu(editingBu, $event)"
+                   class="flex-1" placeholder="如：31.2304"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-24 text-sm text-gray-600 dark:text-gray-400 text-right">最大端口：</label>
+            <Input v-model="editingBu.max_ports" type="number" min="2" max="8" placeholder="3" class="flex-1"/>
+            <span class="text-xs text-gray-500 dark:text-gray-400">个</span>
+          </div>
+          <div class="flex justify-center">
+            <Button size="sm" variant="outline" @click="handleBuMapSelect(editingBu.id)">
+              <MapPin class="w-3.5 h-3.5 mr-1"/>
+              地图选点
+            </Button>
+          </div>
+        </div>
+        <div class="flex justify-center gap-4 p-4 border-t">
+          <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="saveBuEdit">保存
+          </Button>
+          <Button variant="outline" class="px-6" @click="showBuEditDialog = false">取消</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>

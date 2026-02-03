@@ -39,11 +39,8 @@ const hasValidProject = computed(() => {
 
 const projectWarningMessage = computed(() => {
   const projectType = appStore.currentProjectType
-  if (projectType === 'ucp') {
-    return '当前打开的是路由规划项目(.ucp)，不支持系统设计功能。请创建或打开系统设计项目(.use)。'
-  }
   if (projectType === null) {
-    return '当前没有打开项目。请先创建或打开一个系统设计项目(.use)。'
+    return '当前没有打开项目。请先创建或打开一个项目(.use)。'
   }
   return ''
 })

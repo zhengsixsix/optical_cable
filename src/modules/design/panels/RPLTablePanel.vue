@@ -46,7 +46,7 @@ const pointTypeOptions = [
   { value: 'repeater', label: '中继器' },
   { value: 'branching', label: '分支器' },
   { value: 'joint', label: '接头' },
-  { value: 'waypoint', label: '航路点' },
+  { value: 'waypoint', label: '路径点' },
 ]
 
 const cableTypeOptions = [

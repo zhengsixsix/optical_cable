@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouteStore, useRPLStore, useMonitorStore } from '@/stores'
-import { loadTifMeta, findTifForPoint, getElevationFromTif } from '@/composables/useDemData'
+import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
@@ -331,17 +331,17 @@ const drawPoints = async () => {
     systemDeviceTypes.includes(point.type) || (point as any).isBranchStation
   )
   
-  // 确保 DEM 数据已加载
-  await loadTifMeta()
+  // 通过 Node 后端 API 查询所有 landing 类型站点的高程
+  const demAvailable = await checkDemService()
   
-  // 预先获取所有 landing 类型站点的高程
-  for (const point of systemDevices) {
-    if (point.type === 'landing' && !elevationCache.value[point.id]) {
-      const tifMeta = findTifForPoint(point.longitude, point.latitude)
-      if (tifMeta) {
-        const elevation = await getElevationFromTif(tifMeta, point.longitude, point.latitude)
-        if (elevation !== null) {
-          elevationCache.value[point.id] = elevation
+  if (demAvailable) {
+    for (const point of systemDevices) {
+      if (point.type === 'landing' && !elevationCache.value[point.id]) {
+        try {
+          const result = await fetchDemPoint(point.longitude, point.latitude)
+          elevationCache.value[point.id] = result.elevation
+        } catch (e) {
+          console.warn(`查询高程失败 (${point.longitude}, ${point.latitude}):`, e)
         }
       }
     }

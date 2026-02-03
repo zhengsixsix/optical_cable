@@ -9,11 +9,11 @@ export type RPLEventType =
   | 'Start'           // 起点
   | 'End'             // 终点
   | 'Alter Course'    // 改向点
-  | 'Repeater'        // 中继器
-  | 'Branching Unit'  // 分支器
+  | 'Repeater'        // 中继器 (系统规划阶段设备)
+  | 'Branching Unit'  // 分支器 (系统规划阶段设备)
   | 'Joint'           // 接头
   | 'Landing Station' // 登陆站
-  | 'Waypoint'        // 航路点
+  | 'Waypoint'        // 路径点 (路由规划阶段分段管理节点)
 
 // RPL电缆类型代码
 export type RPLCableCode = 'LW' | 'LWS' | 'SA' | 'DA' | 'SAS'

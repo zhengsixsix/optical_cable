@@ -1,5 +1,4 @@
 export { usePanel } from './usePanel'
-export { useMap } from './useMap'
 export * from './useDemData'
 export * from './useAppearance'
 export * from './useProjectManager'

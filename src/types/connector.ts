@@ -51,13 +51,22 @@ export interface ConnectorTable {
 // 接线元类型标签
 export const connectorTypeLabels: Record<ConnectorType, string> = {
   landing: '岸上站点',
-  amplifier_e: '放大器东',
-  amplifier_w: '放大器西',
-  bu: '水下分支器',
+  amplifier_e: '放大器',
+  amplifier_w: '放大器',
+  bu: '分支器',
   underwater: '水下站点',
-  fiber: '光纤段',
-  ola: '光放大器',
+  fiber: '光纤',
+  ola: '放大器',
   joint: '接头盒'
+}
+
+// 简化的过滤标签（只显示主要类型）
+export const connectorFilterLabels: Partial<Record<ConnectorType, string>> = {
+  landing: '岸上站点',
+  underwater: '水下站点',
+  amplifier_e: '放大器',
+  bu: '分支器',
+  fiber: '光纤'
 }
 
 // 接线元状态标签

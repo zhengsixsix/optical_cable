@@ -240,7 +240,7 @@ function addPoint(afterPointId?: string) {
   reindex()
   selectedPointId.value = newPoint.id
   saveHistory('添加点')
-  appStore.showNotification({ type: 'success', message: '已添加航路点' })
+  appStore.showNotification({ type: 'success', message: '已添加路径点' })
 }
 
 function deletePoint(pointId: string) {
@@ -442,10 +442,10 @@ watch(() => props.routeId, () => {
                 @change="updatePointType(point.id, ($event.target as HTMLSelectElement).value as EditablePoint['type'])"
                 @click.stop
               >
-                <option value="landing">登陆站</option>
+              <option value="landing">登陆站</option>
                 <option value="repeater">中继器</option>
                 <option value="branching">分支器</option>
-                <option value="waypoint">航路点</option>
+                <option value="waypoint">路径点</option>
               </select>
               
               <button 
@@ -494,7 +494,7 @@ watch(() => props.routeId, () => {
               <option value="landing">登陆站</option>
               <option value="repeater">中继器</option>
               <option value="branching">分支器</option>
-              <option value="waypoint">航路点</option>
+              <option value="waypoint">路径点</option>
             </select>
           </div>
         </div>

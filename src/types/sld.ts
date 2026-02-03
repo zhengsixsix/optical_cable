@@ -58,6 +58,10 @@ export interface SLDEquipment {
   
   // === 器件库引用 ===
   componentRefId?: string    // 引用的器件库ID (中继器/分支器等)
+  
+  // === BU 专用字段 ===
+  portLimit?: number         // 端口上限（用户预设约束，3或4）
+  actualPortCount?: number   // 实际端口数（路由规划后由算法推导）
 }
 
 // SLD光纤段

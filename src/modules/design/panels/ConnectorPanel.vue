@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { useConnectorStore, useAppStore, useSettingsStore } from '@/stores'
-import { connectorTypeLabels, connectorStatusLabels } from '@/types'
+import { connectorTypeLabels, connectorStatusLabels, connectorFilterLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus } from '@/types'
 import { Plus, Trash2, Edit2, Link2 } from 'lucide-vue-next'
 
@@ -43,6 +43,10 @@ const filterType = ref<ConnectorType | 'all'>('all')
 const filteredElements = computed(() => {
   if (filterType.value === 'all') {
     return connectorStore.elements
+  }
+  // 放大器类型合并过滤（amplifier_e 和 amplifier_w 一起过滤）
+  if (filterType.value === 'amplifier_e') {
+    return connectorStore.elements.filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
   }
   return connectorStore.elements.filter(e => e.type === filterType.value)
 })
@@ -107,7 +111,7 @@ const handleDelete = (id: string) => {
           全部
         </button>
         <button
-          v-for="(label, type) in connectorTypeLabels"
+          v-for="(label, type) in connectorFilterLabels"
           :key="type"
           :class="[
             'px-2.5 py-1 text-xs font-medium transition-colors border-b-2',
@@ -115,7 +119,7 @@ const handleDelete = (id: string) => {
               ? 'border-blue-500 text-blue-600' 
               : 'border-transparent text-gray-500 hover:text-gray-700'
           ]"
-          @click="filterType = type"
+          @click="filterType = type as ConnectorType"
         >
           {{ label }}
         </button>

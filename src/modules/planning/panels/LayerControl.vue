@@ -129,6 +129,13 @@ function handleReload(layerId: string) {
         </button>
         <button 
           class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 
+          title="导出图层"
+          @click="handleExport('')"
+        >
+          <Upload class="w-3.5 h-3.5" />
+        </button>
+        <button 
+          class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 
           title="浮动/全屏"
         >
           <Maximize2 class="w-3.5 h-3.5" />

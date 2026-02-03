@@ -1,9 +1,10 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, DollarSign, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit } from 'lucide-vue-next'
-import { useAppStore } from '@/stores'
+import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, DollarSign, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
+import { useAppStore, useSettingsStore } from '@/stores'
 import { Button, Select } from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
+import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
 
 interface Props {
   visible: boolean
@@ -49,6 +50,7 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const settingsStore = useSettingsStore()
 
 // 步骤定义
 const steps = [
@@ -73,14 +75,111 @@ const planningMode = ref<'point-to-point' | 'multi-point'>('point-to-point')
 const startStation = ref({ name: '起点', longitude: 0, latitude: 0 })
 const endStation = ref({ name: '终点', longitude: 0, latitude: 0 })
 // 多点规划站点列表
-const waypoints = ref<Array<{ id: string; name: string; longitude: number; latitude: number }>>([
-  { id: 'wp-1', name: '登陆站1', longitude: 0, latitude: 0 },
-  { id: 'wp-2', name: '登陆站2', longitude: 0, latitude: 0 },
-  { id: 'wp-3', name: '登陆站3', longitude: 0, latitude: 0 }
+const waypoints = ref<Array<{ id: string; name: string; longitude: number; latitude: number; isUnderwater: boolean }>>([
+  { id: 'wp-1', name: '登陆站1', longitude: 0, latitude: 0, isUnderwater: false },
+  { id: 'wp-2', name: '登陆站2', longitude: 0, latitude: 0, isUnderwater: false },
+  { id: 'wp-3', name: '登陆站3', longitude: 0, latitude: 0, isUnderwater: false }
 ])
 
-const gisPlanningRange = ref('')
-const gisGridSize = ref('')
+// BU 配置列表（多点模式） - max_ports 对应 USE 文件规范
+const buConfigs = ref<Array<{ id: string; name: string; longitude: number; latitude: number; max_ports: number }>>([])
+
+// 铠装映射配置
+const armorMappings = ref([
+  { riskLevel: 'high', riskThreshold: '3', cableTypeName: 'DA (双铠装)', unitPrice: '24.0' },
+  { riskLevel: 'medium', riskThreshold: '2', cableTypeName: 'SA (单铠装)', unitPrice: '19.5' },
+  { riskLevel: 'low', riskThreshold: '0', cableTypeName: 'LW (轻型)', unitPrice: '15.0' },
+])
+const riskLevelLabels: Record<string, string> = { high: '高风险', medium: '中风险', low: '低风险' }
+
+// 风险等级到铠装类型的映射
+const riskToArmorType: Record<string, string[]> = {
+  high: ['DA', 'RA'],     // 高风险 -> 双铠装/岩石铠装
+  medium: ['SA'],         // 中风险 -> 单铠装
+  low: ['LW', 'LWP']      // 低风险 -> 轻型/轻型保护
+}
+
+// 根据风险等级获取过滤后的缆型选项
+const getFilteredCableOptions = (riskLevel: string) => {
+  const armorTypes = riskToArmorType[riskLevel] || ['SA']
+  const filteredCables = settingsStore.getCableTypesByArmor(armorTypes)
+  return filteredCables.map(c => ({
+    value: c.name,
+    label: `${c.name} - ¥${c.unitPrice}千元/km`
+  }))
+}
+
+// 新建缆型弹窗状态
+const showCableTypeCreateDialog = ref(false)
+const cableTypePresetArmor = ref('')
+
+// 处理缆型选择
+const handleCableTypeSelect = (mapping: { riskLevel: string; cableTypeName: string; unitPrice: string }, value: string) => {
+  if (value === '__create_new__') {
+    // 打开新建缆型弹窗，预设铠装类型
+    const armorTypes = riskToArmorType[mapping.riskLevel]
+    cableTypePresetArmor.value = armorTypes?.[0] || 'SA'
+    showCableTypeCreateDialog.value = true
+    return
+  }
+  // 更新缆型名称
+  mapping.cableTypeName = value
+  // 更新单价
+  const cable = settingsStore.cableTypeDatabase.find(c => c.name === value)
+  if (cable) {
+    mapping.unitPrice = String(cable.unitPrice)
+  }
+}
+
+// 铠装类型到风险等级的反向映射
+const armorToRisk: Record<string, string> = {
+  'DA': 'high',
+  'RA': 'high',
+  'SA': 'medium',
+  'LW': 'low',
+  'LWP': 'low'
+}
+
+// 处理缆型创建完成
+const handleCableTypeCreated = (cableType: { id: string; name: string; armorType: string; unitPrice: number }) => {
+  // 添加到 store 的缆型数据库
+  settingsStore.addCableTypeSpec({
+    id: cableType.id,
+    name: cableType.name,
+    armorType: cableType.armorType,
+    unitPrice: cableType.unitPrice
+  })
+
+  // 根据铠装类型找到对应的映射行并更新
+  const targetRisk = armorToRisk[cableType.armorType] || 'medium'
+  const mapping = armorMappings.value.find(m => m.riskLevel === targetRisk)
+  if (mapping) {
+    mapping.cableTypeName = cableType.name
+    mapping.unitPrice = String(cableType.unitPrice)
+  }
+}
+
+// 冗余策略配置（多点模式）
+const redundancyConfig = ref({
+  enabled: false,
+  costLimitType: 'relative' as 'relative' | 'absolute',
+  relativeCostPercent: '30',
+  absoluteCostLimit: ''
+})
+const costLimitTypeOptions = [
+  { value: 'relative', label: '相对成本（%）' },
+  { value: 'absolute', label: '绝对成本（万元）' }
+]
+
+// GIS 配置 - 与工程设置对齐
+const gisConfig = ref({
+  rangeMode: 'auto' as 'auto' | 'manual',
+  nwLon: '',
+  nwLat: '',
+  seLon: '',
+  seLat: '',
+  gridResolution: '500'
+})
 const showMapSelect = ref(false)
 const mapSelectType = ref<'start' | 'end' | 'multi-point' | 'range'>('start')
 const currentWaypointId = ref<string | null>(null)
@@ -100,6 +199,16 @@ const handleMapSelect = (type: 'start' | 'end' | 'multi-point' | 'range', waypoi
 
 const handleMapConfirm = (coordStr: string) => {
   const [lon, lat] = coordStr.split(',').map(Number)
+  // BU 地图选点
+  if (currentBuId.value) {
+    const bu = buConfigs.value.find(b => b.id === currentBuId.value)
+    if (bu) {
+      bu.longitude = lon
+      bu.latitude = lat
+    }
+    currentBuId.value = null
+    return
+  }
   if (mapSelectType.value === 'start') {
     startStation.value.longitude = lon
     startStation.value.latitude = lat
@@ -113,8 +222,16 @@ const handleMapConfirm = (coordStr: string) => {
       wp.latitude = lat
     }
     currentWaypointId.value = null
-  } else {
-    gisPlanningRange.value = coordStr
+  } else if (mapSelectType.value === 'range') {
+    // 地图框选返回两个点：西北角,东南角
+    // 格式: "nwLon,nwLat,seLon,seLat" 或者单点 "lon,lat"
+    const parts = coordStr.split(',')
+    if (parts.length >= 4) {
+      gisConfig.value.nwLon = parts[0]
+      gisConfig.value.nwLat = parts[1]
+      gisConfig.value.seLon = parts[2]
+      gisConfig.value.seLat = parts[3]
+    }
   }
 }
 
@@ -123,7 +240,8 @@ const addWaypoint = () => {
     id: `wp-${Date.now()}`,
     name: `登陆站${waypoints.value.length + 1}`,
     longitude: 0,
-    latitude: 0
+    latitude: 0,
+    isUnderwater: false
   })
 }
 
@@ -134,6 +252,31 @@ const removeWaypoint = (id: string) => {
     appStore.showNotification({ type: 'warning', message: '多点规划至少需要2个站点' })
   }
 }
+
+// BU 操作
+const addBU = () => {
+  buConfigs.value.push({
+    id: `bu-${Date.now()}`,
+    name: `BU${buConfigs.value.length + 1}`,
+    longitude: 0,
+    latitude: 0,
+    max_ports: 3
+  })
+}
+
+const removeBU = (id: string) => {
+  buConfigs.value = buConfigs.value.filter(b => b.id !== id)
+}
+
+const currentBuId = ref<string | null>(null)
+const handleBuMapSelect = (buId: string) => {
+  currentBuId.value = buId
+  mapSelectType.value = 'start'
+  mapSelectTitle.value = '选择分支器位置'
+  showMapSelect.value = true
+}
+
+// portLimit 范围: 2-8
 
 // 切换规划模式
 const setPlanningMode = (mode: 'point-to-point' | 'multi-point') => {
@@ -180,12 +323,18 @@ const resetForm = () => {
   endStation.value = { name: '终点', longitude: 0, latitude: 0 }
   planningMode.value = 'point-to-point'
   waypoints.value = [
-    { id: 'wp-1', name: '登陆站1', longitude: 0, latitude: 0 },
-    { id: 'wp-2', name: '登陆站2', longitude: 0, latitude: 0 },
-    { id: 'wp-3', name: '登陆站3', longitude: 0, latitude: 0 }
+    { id: 'wp-1', name: '登陆站1', longitude: 0, latitude: 0, isUnderwater: false },
+    { id: 'wp-2', name: '登陆站2', longitude: 0, latitude: 0, isUnderwater: false },
+    { id: 'wp-3', name: '登陆站3', longitude: 0, latitude: 0, isUnderwater: false }
   ]
-  gisPlanningRange.value = ''
-  gisGridSize.value = ''
+  buConfigs.value = []
+  armorMappings.value = [
+    { riskLevel: 'high', riskThreshold: '3', cableTypeName: 'DA (双铠装)', unitPrice: '24.0' },
+    { riskLevel: 'medium', riskThreshold: '2', cableTypeName: 'SA (单铠装)', unitPrice: '19.5' },
+    { riskLevel: 'low', riskThreshold: '0', cableTypeName: 'LW (轻型)', unitPrice: '15.0' },
+  ]
+  redundancyConfig.value = { enabled: false, costLimitType: 'relative', relativeCostPercent: '30', absoluteCostLimit: '' }
+  gisConfig.value = { rangeMode: 'auto', nwLon: '', nwLat: '', seLon: '', seLat: '', gridResolution: '500' }
   isGisExpanded.value = false
   layerList.value.forEach(item => {
     item.checked = false
@@ -393,10 +542,48 @@ const handleSubmit = async () => {
     planningMode: planningMode.value,
     startStation: startStation.value,
     endStation: endStation.value,
-    waypoints: waypoints.value,
+    // USE文件规范: imported_landing_points
+    waypoints: waypoints.value.map(wp => ({
+      id: wp.id,
+      name: wp.name,
+      coords: [wp.longitude, wp.latitude] as [number, number],
+      // depth 字段用于区分水下/岸上站点
+      depth: wp.isUnderwater ? 100 : 0,
+      properties: {}
+    })),
+    // USE文件规范: imported_bu_nodes
+    buConfigs: buConfigs.value.map(bu => ({
+      id: bu.id,
+      name: bu.name,
+      coords: [bu.longitude, bu.latitude] as [number, number],
+      max_ports: Math.min(8, Math.max(2, bu.max_ports || 3))
+    })),
+    armorMappings: armorMappings.value.map(m => ({
+      riskLevel: m.riskLevel,
+      riskThreshold: parseFloat(m.riskThreshold) || 0,
+      cableTypeId: m.riskLevel,
+      cableTypeName: m.cableTypeName,
+      unitPrice: parseFloat(m.unitPrice) || 0
+    })),
+    redundancyConfig: {
+      enabled: redundancyConfig.value.enabled,
+      costLimitType: redundancyConfig.value.costLimitType,
+      relativeCostPercent: redundancyConfig.value.costLimitType === 'relative' ? parseFloat(redundancyConfig.value.relativeCostPercent) || 30 : undefined,
+      absoluteCostLimit: redundancyConfig.value.costLimitType === 'absolute' ? parseFloat(redundancyConfig.value.absoluteCostLimit) || undefined : undefined
+    },
     gisConfig: {
-      planningRange: gisPlanningRange.value,
-      gridSize: gisGridSize.value
+      rangeMode: gisConfig.value.rangeMode,
+      planningRange: gisConfig.value.rangeMode === 'manual' ? {
+        northwest: {
+          lon: parseFloat(gisConfig.value.nwLon) || 0,
+          lat: parseFloat(gisConfig.value.nwLat) || 0
+        },
+        southeast: {
+          lon: parseFloat(gisConfig.value.seLon) || 0,
+          lat: parseFloat(gisConfig.value.seLat) || 0
+        }
+      } : null,
+      gridResolution: parseFloat(gisConfig.value.gridResolution) || 500
     },
     layers: layerList.value.filter(l => l.checked),
     devices: deviceList.value,
@@ -733,10 +920,11 @@ const handleSubmit = async () => {
                   <div class="border border-gray-200 rounded-xl overflow-hidden">
                     <div class="bg-gray-50 px-4 py-2 border-b border-gray-200 flex text-xs font-medium text-gray-500">
                       <div class="w-8 text-center">序号</div>
-                      <div class="w-32 px-2">站点名称</div>
+                      <div class="w-28 px-2">站点名称</div>
                       <div class="flex-1 px-2">经度</div>
                       <div class="flex-1 px-2">纬度</div>
-                      <div class="w-32 text-center">操作</div>
+                      <div class="w-14 text-center">类型</div>
+                      <div class="w-20 text-center">操作</div>
                     </div>
                     <div class="max-h-[240px] overflow-y-auto">
                       <div
@@ -745,7 +933,7 @@ const handleSubmit = async () => {
                         class="flex items-center px-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors"
                       >
                         <div class="w-8 text-center text-sm text-gray-500">{{ index + 1 }}</div>
-                        <div class="w-32 px-2">
+                        <div class="w-28 px-2">
                           <input
                             v-model="wp.name"
                             type="text"
@@ -768,7 +956,19 @@ const handleSubmit = async () => {
                             class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:border-blue-500 outline-none"
                           >
                         </div>
-                        <div class="w-32 flex justify-center gap-2">
+                        <div class="w-14 flex justify-center">
+                          <button
+                            class="px-1.5 py-0.5 text-xs rounded-full transition-colors"
+                            :class="wp.isUnderwater 
+                              ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
+                              : 'bg-green-100 text-green-700 hover:bg-green-200'"
+                            @click="wp.isUnderwater = !wp.isUnderwater"
+                            :title="wp.isUnderwater ? '点击切换为岸上站点' : '点击切换为水下站点'"
+                          >
+                            {{ wp.isUnderwater ? '水下' : '岸上' }}
+                          </button>
+                        </div>
+                        <div class="w-20 flex justify-center gap-1">
                           <Button size="sm" variant="ghost" class="h-7 w-7 p-0 text-blue-600" title="地图选点" @click="handleMapSelect('multi-point', wp.id)">
                             <MapPin class="w-4 h-4" />
                           </Button>
@@ -789,6 +989,63 @@ const handleSubmit = async () => {
                     <span class="text-blue-600 font-medium">提示：</span>
                     多点规划至少需要配置 3 个站点，系统将自动在分支点添加分支器连接各个站点。
                   </p>
+
+                  <!-- BU 配置列表 -->
+                  <div class="mt-4 border border-orange-200 rounded-xl overflow-hidden">
+                    <div class="bg-orange-50 px-4 py-2 border-b border-orange-200 flex items-center justify-between">
+                      <span class="text-sm font-medium text-orange-700">分支器（BU）配置</span>
+                      <span class="text-xs text-orange-500">可选</span>
+                    </div>
+                    <div v-if="buConfigs.length > 0">
+                      <div class="bg-orange-50/50 px-4 py-1.5 border-b border-orange-100 flex text-xs font-medium text-orange-600">
+                        <div class="w-8 text-center">序号</div>
+                        <div class="w-24 px-2">名称</div>
+                        <div class="flex-1 px-2">经度</div>
+                        <div class="flex-1 px-2">纬度</div>
+                        <div class="w-20 px-2">最大端口</div>
+                        <div class="w-16 text-center">操作</div>
+                      </div>
+                      <div class="max-h-[160px] overflow-y-auto">
+                        <div
+                          v-for="(bu, index) in buConfigs"
+                          :key="bu.id"
+                          class="flex items-center px-4 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50"
+                        >
+                          <div class="w-8 text-center text-sm text-orange-500">{{ index + 1 }}</div>
+                          <div class="w-24 px-2">
+                            <input v-model="bu.name" type="text" class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:border-orange-500 outline-none" />
+                          </div>
+                          <div class="flex-1 px-2">
+                            <input v-model.number="bu.longitude" type="number" step="0.000001" placeholder="经度" class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:border-orange-500 outline-none" />
+                          </div>
+                          <div class="flex-1 px-2">
+                            <input v-model.number="bu.latitude" type="number" step="0.000001" placeholder="纬度" class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:border-orange-500 outline-none" />
+                          </div>
+                          <div class="w-20 px-2">
+                            <input v-model.number="bu.max_ports" type="number" min="2" max="8" class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:border-orange-500 outline-none" />
+                          </div>
+                          <div class="w-16 flex justify-center gap-1">
+                            <Button size="sm" variant="ghost" class="h-6 w-6 p-0 text-orange-600" title="地图选点" @click="handleBuMapSelect(bu.id)">
+                              <MapPin class="w-3.5 h-3.5" />
+                            </Button>
+                            <Button size="sm" variant="ghost" class="h-6 w-6 p-0 text-red-500" title="删除" @click="removeBU(bu.id)">
+                              <Trash2 class="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="p-2 bg-gray-50 border-t border-gray-200">
+                      <Button variant="outline" size="sm" class="w-full border-dashed text-orange-600 hover:border-orange-300" @click="addBU">
+                        <Plus class="w-3.5 h-3.5 mr-1" />
+                        添加分支器
+                      </Button>
+                    </div>
+                  </div>
+                  <p class="text-xs text-gray-500 ml-1">
+                    <span class="text-orange-600 font-medium">提示：</span>
+                    max_ports 为该 BU 节点最大允许的端口数上限，作为路由规划时的分支数量约束。
+                  </p>
                 </div>
               </div>
 
@@ -796,38 +1053,194 @@ const handleSubmit = async () => {
 
               <!-- GIS设置 -->
               <div>
-                <div class="flex items-center gap-2 mb-4">
+                <div class="flex items-center gap-2 mb-3">
                   <div class="p-1.5 bg-blue-50 rounded text-blue-600">
                     <MapPin class="w-4 h-4" />
                   </div>
-                  <h4 class="font-semibold text-gray-800">GIS设置</h4>
+                  <h4 class="font-semibold text-gray-800">GIS与路由算法设置</h4>
                 </div>
 
                 <div class="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-4">
+                  <!-- 规划范围设定 -->
                   <div class="space-y-3">
-                    <div class="flex items-center gap-4">
-                      <label class="w-20 text-sm font-medium text-gray-600 text-right shrink-0">规划范围</label>
-                      <div class="flex-1 flex items-center gap-2">
+                    <div class="flex items-center gap-2">
+                      <label class="text-sm font-bold text-gray-700">规划范围设定</label>
+                      <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">限制路由搜索区域</span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                      <label
+                        class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-white transition-colors"
+                        :class="gisConfig.rangeMode === 'auto' ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200'">
                         <input
-                          v-model="gisPlanningRange"
-                          type="text"
-                          placeholder="西北角：xxx.xx,xxx.xx，东南角：xxx.xx,xxx.xx"
-                          class="flex-1 px-3 py-2 text-sm border border-gray-200 rounded focus:border-blue-500 outline-none"
-                        >
-                        <Button size="sm" variant="outline" class="h-9 px-3 text-xs bg-white" @click="handleMapSelect('range')">
-                          地图选点
+                          type="radio"
+                          name="rangeMode"
+                          value="auto"
+                          v-model="gisConfig.rangeMode"
+                          class="w-4 h-4 mt-0.5 text-blue-600 border-gray-300 focus:ring-blue-500"
+                        />
+                        <div class="ml-2">
+                          <span class="text-sm font-medium text-gray-800 block">自动全图范围</span>
+                          <span class="text-xs text-gray-500">使用地图可视区域作为规划范围</span>
+                        </div>
+                      </label>
+                      <label
+                        class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-white transition-colors"
+                        :class="gisConfig.rangeMode === 'manual' ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200'">
+                        <input
+                          type="radio"
+                          name="rangeMode"
+                          value="manual"
+                          v-model="gisConfig.rangeMode"
+                          class="w-4 h-4 mt-0.5 text-blue-600 border-gray-300 focus:ring-blue-500"
+                        />
+                        <div class="ml-2">
+                          <span class="text-sm font-medium text-gray-800 block">手动框选范围</span>
+                          <span class="text-xs text-gray-500">自定义矩形区域作为规划边界</span>
+                        </div>
+                      </label>
+                    </div>
+
+                    <!-- 手动框选时显示坐标输入 -->
+                    <div v-if="gisConfig.rangeMode === 'manual'" class="bg-white p-3 rounded-lg border border-gray-200">
+                      <div class="flex items-end gap-3">
+                        <div class="flex-1 grid grid-cols-2 gap-3">
+                          <div class="space-y-1">
+                            <span class="text-xs font-semibold text-gray-500 uppercase">西北角 (Top-Left)</span>
+                            <div class="flex gap-2">
+                              <input v-model="gisConfig.nwLon" placeholder="经度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                              <input v-model="gisConfig.nwLat" placeholder="纬度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                            </div>
+                          </div>
+                          <div class="space-y-1">
+                            <span class="text-xs font-semibold text-gray-500 uppercase">东南角 (Bottom-Right)</span>
+                            <div class="flex gap-2">
+                              <input v-model="gisConfig.seLon" placeholder="经度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                              <input v-model="gisConfig.seLat" placeholder="纬度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                            </div>
+                          </div>
+                        </div>
+                        <Button size="sm" variant="outline" class="h-8 px-3 text-xs bg-white shrink-0" @click="handleMapSelect('range')">
+                          <MapPin class="w-3 h-3 mr-1" />
+                          地图框选
                         </Button>
                       </div>
                     </div>
-                    <div class="flex items-center gap-4">
-                      <label class="w-20 text-sm font-medium text-gray-600 text-right shrink-0">网格大小</label>
-                      <input
-                        v-model="gisGridSize"
-                        type="text"
-                        class="flex-1 px-3 py-2 text-sm border border-gray-200 rounded focus:border-blue-500 outline-none"
-                      >
+                  </div>
+
+                  <div class="border-t border-gray-200 my-2"></div>
+
+                  <!-- 栅格化参数 -->
+                  <div class="flex items-center gap-4">
+                    <div class="flex-1">
+                      <label class="text-sm font-bold text-gray-700 block">栅格化分辨率</label>
+                      <span class="text-xs text-gray-500">设置路径规划时的网格粒度，数值越小精度越高但计算越慢</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-white p-2 rounded-lg border border-gray-200">
+                      <input v-model="gisConfig.gridResolution" type="number" placeholder="500" class="w-20 h-8 px-2 text-sm text-right border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                      <span class="text-sm font-medium text-gray-600">meters</span>
                     </div>
                   </div>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-100 my-4"></div>
+
+              <!-- 海缆铠装映射配置 -->
+              <div>
+                <div class="flex items-center gap-2 mb-4">
+                  <div class="p-1.5 bg-purple-50 rounded text-purple-600">
+                    <Package class="w-4 h-4" />
+                  </div>
+                  <h4 class="font-semibold text-gray-800">海缆铠装映射</h4>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-2">
+                  <div v-for="mapping in armorMappings" :key="mapping.riskLevel" 
+                       class="flex items-center gap-2 p-2 bg-white border rounded-lg hover:shadow-sm hover:border-gray-300 transition-all">
+                    <!-- 风险等级标签 -->
+                    <div class="w-16 shrink-0 flex flex-col items-center">
+                      <span :class="[
+                        'text-[11px] font-bold px-2 py-0.5 rounded-full w-full text-center',
+                        mapping.riskLevel === 'high' ? 'bg-red-50 text-red-700' :
+                        mapping.riskLevel === 'medium' ? 'bg-yellow-50 text-yellow-700' :
+                        'bg-green-50 text-green-700'
+                      ]">{{ riskLevelLabels[mapping.riskLevel] }}</span>
+                      <span class="text-[9px] text-gray-400 mt-0.5">
+                        {{ mapping.riskLevel === 'high' ? '风险≥ 3' : mapping.riskLevel === 'medium' ? '2≤风险<3' : '风险<2' }}
+                      </span>
+                    </div>
+                    <!-- 缆型选择 -->
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-1">
+                        <Cable class="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                        <Select
+                          :model-value="mapping.cableTypeName"
+                          @update:model-value="(val) => handleCableTypeSelect(mapping, val)"
+                          :options="[...getFilteredCableOptions(mapping.riskLevel), { value: '__create_new__', label: '➕ 新建缆型...' }]"
+                          placeholder="选择缆型"
+                          class="flex-1 h-7 text-sm"
+                        />
+                      </div>
+                    </div>
+                    <!-- 单价设置 -->
+                    <div class="shrink-0 flex items-center gap-1">
+                      <input v-model="mapping.unitPrice" type="number" class="w-16 h-7 px-1.5 text-sm border border-gray-200 rounded focus:border-purple-500 outline-none text-right" />
+                      <span class="text-[11px] text-gray-500 w-14">千元/km</span>
+                    </div>
+                  </div>
+                  <p class="text-xs text-gray-500">
+                    <span class="text-purple-600 font-medium">提示：</span>根据风险值自动匹配铠装类型
+                  </p>
+                </div>
+              </div>
+
+              <!-- 冗余策略配置 - 仅多点模式 -->
+              <div v-if="planningMode === 'multi-point'" class="mt-4">
+                <div class="flex items-center gap-2 mb-4">
+                  <div class="p-1.5 bg-indigo-50 rounded text-indigo-600">
+                    <GitCommit class="w-4 h-4" />
+                  </div>
+                  <h4 class="font-semibold text-gray-800">冗余策略配置</h4>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-3">
+                  <div class="flex items-center gap-4">
+                    <span class="text-sm text-gray-600">启用冗余：</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" v-model="redundancyConfig.enabled" class="sr-only peer" />
+                      <div class="w-10 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
+                    </label>
+                    <span class="text-sm text-gray-500">{{ redundancyConfig.enabled ? '已启用' : '未启用' }}</span>
+                  </div>
+                  <template v-if="redundancyConfig.enabled">
+                    <div class="flex items-center gap-4">
+                      <span class="text-sm text-gray-600">限制类型：</span>
+                      <Select v-model="redundancyConfig.costLimitType" :options="costLimitTypeOptions" class="w-36" />
+                    </div>
+                    <div class="flex items-center gap-4">
+                      <span class="text-sm text-gray-600">{{ redundancyConfig.costLimitType === 'relative' ? '成本增加：' : '成本上限：' }}</span>
+                      <input 
+                        v-if="redundancyConfig.costLimitType === 'relative'"
+                        v-model="redundancyConfig.relativeCostPercent" 
+                        type="number" 
+                        placeholder="30" 
+                        class="w-20 px-2 py-1 text-sm border border-gray-200 rounded focus:border-indigo-500 outline-none text-right" 
+                      />
+                      <input 
+                        v-else
+                        v-model="redundancyConfig.absoluteCostLimit" 
+                        type="number" 
+                        placeholder="1000" 
+                        class="w-20 px-2 py-1 text-sm border border-gray-200 rounded focus:border-indigo-500 outline-none text-right" 
+                      />
+                      <span class="text-sm text-gray-500">{{ redundancyConfig.costLimitType === 'relative' ? '%' : '万元' }}</span>
+                    </div>
+                  </template>
+                  <p class="text-xs text-gray-500">
+                    <span class="text-indigo-600 font-medium">提示：</span>
+                    冗余策略用于多点规划时为关键节点配置备份路径。
+                  </p>
                 </div>
               </div>
             </div>
@@ -1062,6 +1475,15 @@ const handleSubmit = async () => {
   <MapSelectDialog
     v-model:visible="showMapSelect"
     :title="mapSelectTitle"
+    :mode="mapSelectType === 'range' ? 'range' : 'point'"
     @confirm="handleMapConfirm"
+  />
+
+  <!-- 新建缆型弹窗 -->
+  <CableTypeCreateDialog
+    :visible="showCableTypeCreateDialog"
+    :preset-armor-type="cableTypePresetArmor"
+    @close="showCableTypeCreateDialog = false"
+    @created="handleCableTypeCreated"
   />
 </template>

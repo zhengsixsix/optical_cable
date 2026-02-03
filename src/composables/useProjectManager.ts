@@ -102,7 +102,7 @@ export function useProjectManager() {
    */
   async function openProject(): Promise<void> {
     // 1. 先让用户选择文件
-    const file = await projectFileService.openFileDialog('.ucp,.use')
+    const file = await projectFileService.openFileDialog('.use')
     if (!file) return
     
     // 2. 检查当前是否有未保存的项目
@@ -358,8 +358,8 @@ export function useProjectManager() {
       if (startStation || endStation || gisConfig || (waypoints && waypoints.length > 0)) {
         settingsStore.updateRoutePlanningConfig({
           mode: planningMode || 'point-to-point',
-          startPoint: startStation ? { lon: startStation.longitude, lat: startStation.latitude } : { lon: 0, lat: 0 },
-          endPoint: endStation ? { lon: endStation.longitude, lat: endStation.latitude } : { lon: 0, lat: 0 },
+          startPoint: startStation ? { name: startStation.name, lon: startStation.longitude, lat: startStation.latitude } : { lon: 0, lat: 0 },
+          endPoint: endStation ? { name: endStation.name, lon: endStation.longitude, lat: endStation.latitude } : { lon: 0, lat: 0 },
           waypoints: waypoints ? waypoints.map(wp => ({
             id: wp.id,
             name: wp.name,

@@ -8,7 +8,7 @@ import { projectFileService } from '@/services/ProjectFileService'
 
 /**
  * ImportFileDialog 导入项目文件对话框
- * 支持导入工程(.ucp/.use)、RPL文件(.rpl/.csv)、GIS数据(.tif,.shp)
+ * 支持导入工程(.use)、RPL文件(.rpl/.csv)、GIS数据(.tif,.shp)
  */
 interface Props {
   visible: boolean
@@ -55,7 +55,7 @@ const dialogTitle = computed(() => {
 // 支持的文件格式
 const acceptFormats = computed(() => {
   switch (props.importType) {
-    case 'project': return '.ucp,.use'
+    case 'project': return '.use'
     case 'rpl': return '.rpl,.csv'
     case 'gis': return '.tif,.tiff,.shp'
     default: return '*'
@@ -65,7 +65,7 @@ const acceptFormats = computed(() => {
 // 格式说明
 const formatHint = computed(() => {
   switch (props.importType) {
-    case 'project': return '支持格式: .ucp, .use'
+    case 'project': return '支持格式: .use'
     case 'rpl': return '支持格式: .rpl, .csv'
     case 'gis': return '支持格式: .tif, .tiff, .shp'
     default: return ''

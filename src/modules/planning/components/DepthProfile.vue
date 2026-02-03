@@ -1,13 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Loader2 } from 'lucide-vue-next'
-import {
-  loadTifMeta,
-  findTifForPoint,
-  getElevationFromTif,
-  mercatorToLatLon,
-  haversineDistance,
-} from '@/composables/useDemData'
 
 interface ProfilePoint {
   distance: number
@@ -47,50 +40,31 @@ const hoverInfo = ref({
   elevation: 0  // 正值=海拔，负值=水深
 })
 
+// DEM API 基础地址
+const DEM_API_BASE = 'http://localhost:3001'
+
 // 加载剖面数据（框选区域模式 - 沿左上角到右下角对角线采样）
 const loadProfileData = async (extent: [number, number, number, number]) => {
   loading.value = true
   hasData.value = false
 
   try {
-    // 使用共享的 tif 元数据缓存
-    await loadTifMeta()
-
-    const [extMinX, extMinY, extMaxX, extMaxY] = extent
+    const response = await fetch(`${DEM_API_BASE}/api/dem/profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'extent',
+        extent,
+        sampleCount: 100
+      })
+    })
     
-    // 左上角 (minX, maxY) 到 右下角 (maxX, minY) 的对角线
-    const [startLon, startLat] = mercatorToLatLon(extMinX, extMaxY)  // 左上角
-    const [endLon, endLat] = mercatorToLatLon(extMaxX, extMinY)      // 右下角
-    const totalDistanceKm = haversineDistance(startLon, startLat, endLon, endLat)
-
-    const sampleCount = 100
-    const points: ProfilePoint[] = []
-
-    for (let i = 0; i <= sampleCount; i++) {
-      const t = i / sampleCount
-      // 沿对角线插值
-      const x = extMinX + (extMaxX - extMinX) * t
-      const y = extMaxY - (extMaxY - extMinY) * t  // 从上到下
-
-      // 转换为经纬度坐标（tif 文件是经纬度坐标系）
-      const [lon, lat] = mercatorToLatLon(x, y)
-
-      // 从多个 tif 中查找对应的文件
-      const tifMeta = findTifForPoint(lon, lat)
-      if (tifMeta) {
-        const elevation = await getElevationFromTif(tifMeta, lon, lat)
-        if (elevation !== null) {
-          points.push({
-            distance: totalDistanceKm * t,
-            depth: elevation
-          })
-        }
-      }
+    const result = await response.json()
+    if (result.success && result.data.points) {
+      profileData.value = result.data.points
+      hasData.value = result.data.points.length > 0
+      nextTick(() => drawProfile())
     }
-
-    profileData.value = points
-    hasData.value = points.length > 0
-    nextTick(() => drawProfile())
   } catch (error) {
     console.error('加载剖面数据失败:', error)
   } finally {
@@ -104,40 +78,25 @@ const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
   hasData.value = false
 
   try {
-    // 使用共享的 tif 元数据缓存
-    await loadTifMeta()
-
-    const { startPoint, endPoint } = segment
-    const totalDistanceKm = haversineDistance(
-      startPoint.lon, startPoint.lat,
-      endPoint.lon, endPoint.lat
-    )
-
-    const sampleCount = 100
-    const points: ProfilePoint[] = []
-
-    for (let i = 0; i <= sampleCount; i++) {
-      const t = i / sampleCount
-      // 沿线段插值计算经纬度
-      const lon = startPoint.lon + (endPoint.lon - startPoint.lon) * t
-      const lat = startPoint.lat + (endPoint.lat - startPoint.lat) * t
-
-      // 从多个 tif 中查找对应的文件
-      const tifMeta = findTifForPoint(lon, lat)
-      if (tifMeta) {
-        const elevation = await getElevationFromTif(tifMeta, lon, lat)
-        if (elevation !== null) {
-          points.push({
-            distance: totalDistanceKm * t,
-            depth: elevation
-          })
-        }
-      }
+    const response = await fetch(`${DEM_API_BASE}/api/dem/profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'segment',
+        segment: {
+          startPoint: segment.startPoint,
+          endPoint: segment.endPoint
+        },
+        sampleCount: 100
+      })
+    })
+    
+    const result = await response.json()
+    if (result.success && result.data.points) {
+      profileData.value = result.data.points
+      hasData.value = result.data.points.length > 0
+      nextTick(() => drawProfile())
     }
-
-    profileData.value = points
-    hasData.value = points.length > 0
-    nextTick(() => drawProfile())
   } catch (error) {
     console.error('加载线段剖面数据失败:', error)
   } finally {

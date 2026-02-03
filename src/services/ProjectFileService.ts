@@ -42,8 +42,8 @@ import {
   createDefaultWDMConfig,
 } from '@/types/useFile'
 
-// 项目类型 (统一使用 use，保留 ucp 仅为向后兼容)
-export type ProjectType = 'use' | 'ucp'
+// 项目类型
+export type ProjectType = 'use'
 
 // 项目元数据
 export interface ProjectMetadata {
@@ -115,7 +115,7 @@ class ProjectFileService {
 
   /**
    * 验证项目文件是否包含 RPL 路由数据
-   * UCP 和 USE 文件都必须包含 route_engineering 模块
+   * USE 文件必须包含 route_engineering 模块
    */
   private validateHasRPL(projectData: USEProjectData): { valid: boolean; error?: string } {
     // 检查 route_engineering 模块是否存在
@@ -183,21 +183,16 @@ class ProjectFileService {
    * @param fileName 文件名
    */
   private validateProjectFile(projectData: USEProjectData, fileName: string): { valid: boolean; error?: string } {
-    const isUSE = fileName.toLowerCase().endsWith('.use')
-    const isUCP = fileName.toLowerCase().endsWith('.ucp')
-    
-    // UCP 和 USE 都必须有 RPL 数据
+    // USE 文件必须有 RPL 数据
     const rplResult = this.validateHasRPL(projectData)
     if (!rplResult.valid) {
       return rplResult
     }
     
     // USE 文件还必须有 SLD 数据
-    if (isUSE) {
-      const sldResult = this.validateHasSLD(projectData)
-      if (!sldResult.valid) {
-        return sldResult
-      }
+    const sldResult = this.validateHasSLD(projectData)
+    if (!sldResult.valid) {
+      return sldResult
     }
     
     return { valid: true }
@@ -258,7 +253,8 @@ class ProjectFileService {
     projectData.routePlanning = {
       rplTables: JSON.parse(JSON.stringify(rplStore.tables)),
       routes: JSON.parse(JSON.stringify(routeStore.paretoRoutes || [])),
-      planningConfig: settingsStore.routePlanningConfig
+      planningConfig: settingsStore.routePlanningConfig,
+      cableTypeDatabase: JSON.parse(JSON.stringify(settingsStore.cableTypeDatabase || []))
     }
 
     // 6.2 保存 SLD 原始数据
@@ -318,8 +314,7 @@ class ProjectFileService {
             lon: routeConfig.planningRange?.southeast?.lon || 150,
             lat: routeConfig.planningRange?.southeast?.lat || 10
           }
-        },
-        multi_point_file: routeConfig.multiPointFile || undefined
+        }
       },
       cost_settings: {
         cable_cost_per_km: costFactors.cableCostPerKm || 35000,
@@ -399,7 +394,88 @@ class ProjectFileService {
       }
     }
 
-    return { layer_registry, imported_landing_points }
+    // 从 settingsStore 获取配置
+    const settingsStore = useSettingsStore()
+    const routeConfig = settingsStore.routePlanningConfig || {}
+
+    // 规划模式转换 - 甲方规范要求大写
+    const planning_mode: 'POINT_TO_POINT' | 'MULTI_NODE_NETWORK' = 
+      routeConfig.mode === 'multi-point' ? 'MULTI_NODE_NETWORK' : 'POINT_TO_POINT'
+
+    // 冗余配置
+    const redundancyConfig = (routeConfig as any).redundancyConfig || {}
+    const redundancy_config: any = {
+      enabled: (redundancyConfig as any).enabled || false
+    }
+    if ((redundancyConfig as any).enabled) {
+      if ((redundancyConfig as any).costLimitType === 'absolute') {
+        redundancy_config.cost_constraint_mode = 'ABSOLUTE'
+        redundancy_config.absolute_cost_limit = {
+          value: (redundancyConfig as any).absoluteCostLimit || 0,
+          unit: '万元'
+        }
+      } else {
+        redundancy_config.cost_constraint_mode = 'PREMIUM_RATIO'
+        redundancy_config.premium_ratio = {
+          ratio: ((redundancyConfig as any).relativeCostPercent || 30) / 100
+        }
+      }
+    }
+
+    // BU 节点列表 - 甲方规范
+    const imported_bu_nodes: any[] = ((routeConfig as any).buList || []).map((bu: any) => ({
+      id: bu.id,
+      name: bu.name,
+      coords: [bu.lon, bu.lat] as [number, number],
+      max_ports: bu.portLimit || 3
+    }))
+
+    // 铠装映射规则 - 甲方规范
+    const armorMappings = (routeConfig as any).armorMappings || []
+    const highRisk: any = armorMappings.find((m: any) => m.riskLevel === 'high') || {}
+    const mediumRisk: any = armorMappings.find((m: any) => m.riskLevel === 'medium') || {}
+    const lowRisk: any = armorMappings.find((m: any) => m.riskLevel === 'low') || {}
+
+    const cable_armor_mapping = {
+      high_risk: {
+        threshold: highRisk.riskThreshold || 3.0,
+        cable_type_ref: highRisk.cableTypeId || 'struct_da_01'
+      },
+      medium_risk: {
+        threshold: mediumRisk.riskThreshold || 2.0,
+        cable_type_ref: mediumRisk.cableTypeId || 'struct_sa_01'
+      },
+      low_risk: {
+        threshold: lowRisk.riskThreshold || 0,
+        cable_type_ref: lowRisk.cableTypeId || 'struct_lw_01'
+      }
+    }
+
+    // 算法配置 - 甲方规范
+    const planningRange = routeConfig.planningRange || {}
+    const hasManualBounds = planningRange.northwest?.lon !== 0 || planningRange.northwest?.lat !== 0
+    const algorithm_config = {
+      planning_bounds: {
+        mode: hasManualBounds ? 'MANUAL' as const : 'AUTO' as const,
+        manual_bounds: hasManualBounds ? {
+          northwest: [planningRange.northwest?.lon || 0, planningRange.northwest?.lat || 0] as [number, number],
+          southeast: [planningRange.southeast?.lon || 0, planningRange.southeast?.lat || 0] as [number, number]
+        } : undefined
+      },
+      grid_resolution_m: 500
+    }
+
+    return {
+      layer_registry,
+      planning_mode,
+      redundancy_config,
+      imported_landing_points,
+      imported_bu_nodes,
+      route_planning_settings: {
+        cable_armor_mapping,
+        algorithm_config
+      }
+    }
   }
 
   /**
@@ -517,14 +593,32 @@ class ProjectFileService {
 
   /**
    * 收集路由工程模块
-   * 符合文档规范: 包含 geometry_pool, key_events, segments, spans
+   * 符合甲方规范: 包含 route_status, segmentation_config, geometry_pool, key_events, segments, spans
    */
   private collectRouteEngineering(rplStore: any): USERouteEngineering {
     const settingsStore = useSettingsStore()
+    const now = new Date().toISOString()
     const geometry_pool: GeometryPoint[] = []
     const key_events: KeyEvent[] = []
     const segments: RouteSegment[] = []
     const spans: Span[] = []
+
+    // 路由状态 - 甲方规范
+    const route_status: any = {
+      is_segmented: rplStore.tables.some((t: any) => t.records && t.records.length > 0),
+      is_adjusted: false,
+      last_modified: now
+    }
+
+    // 分段配置 - 甲方规范
+    const segmentation_config: any = {
+      method: 'RISK_BASED',
+      fixed_length_km: 2.0,
+      risk_based: {
+        min_length_km: 1.0,
+        max_length_km: 5.0
+      }
+    }
 
     // 检查 RPL 表是否为空，如果为空则使用 routePlanningConfig 中的起点/终点配置
     const hasRPLData = rplStore.tables.some((table: any) => table.records && table.records.length > 0)
@@ -552,11 +646,21 @@ class ProjectFileService {
         name: '终点登陆站',
       })
       
-      // 创建分段
+      // 创建分段 - 甲方规范格式
       segments.push({
         segment_id: 'seg_0_1',
-        geometry_range: [0, 1],
-        cable_struct_ref: 'struct_lw',
+        geometry_range: {
+          start_index: 0,
+          end_index: 1,
+          start_km: 0,
+          end_km: 100,
+          length_km: 100
+        },
+        risk_info: {
+          risk_level: 'LOW',
+          average_risk_value: 1.0
+        },
+        cable_type_ref: 'struct_lw_01',
         slack_percent: 2.5,
         burial_depth_m: 1.5,
         is_locked: false,
@@ -575,7 +679,7 @@ class ProjectFileService {
         is_locked: false,
       })
       
-      return { geometry_pool, key_events, segments, spans }
+      return { route_status, segmentation_config, geometry_pool, key_events, segments, spans }
     }
 
     // 遍历所有 RPL 表
@@ -610,12 +714,25 @@ class ProjectFileService {
             name: record.remarks || record.pointType,
           })
 
-          // 创建分段 (Segment - 工程对象)
+          // 创建分段 (Segment - 工程对象) - 甲方规范格式
           if (lastEventId) {
+            const startKm = geometry_pool[segmentStartIndex]?.[3] || 0
+            const endKm = record.kp || record.cumulativeLength || 0
+            const riskLevel = this.mapRiskLevel(record.riskLevel || 'low')
             segments.push({
               segment_id: `seg_${segmentStartIndex}_${geoIndex}`,
-              geometry_range: [segmentStartIndex, geoIndex],
-              cable_struct_ref: record.cableType || 'struct_lw',
+              geometry_range: {
+                start_index: segmentStartIndex,
+                end_index: geoIndex,
+                start_km: startKm,
+                end_km: endKm,
+                length_km: endKm - startKm
+              },
+              risk_info: {
+                risk_level: riskLevel,
+                average_risk_value: record.avgRiskValue || (riskLevel === 'HIGH' ? 3.5 : riskLevel === 'MEDIUM' ? 2.5 : 1.5)
+              },
+              cable_type_ref: record.cableType || 'struct_lw_01',
               slack_percent: record.slack || 2.5,
               burial_depth_m: record.burialDepth || 1.5,
               is_locked: false,
@@ -649,7 +766,7 @@ class ProjectFileService {
       }
     }
 
-    return { geometry_pool, key_events, segments, spans }
+    return { route_status, segmentation_config, geometry_pool, key_events, segments, spans }
   }
 
   /**
@@ -662,6 +779,18 @@ class ProjectFileService {
       'branching': 'BU',
     }
     return map[pointType] || null
+  }
+
+  /**
+   * 映射风险等级到甲方规范格式
+   */
+  private mapRiskLevel(level: string): 'HIGH' | 'MEDIUM' | 'LOW' {
+    const map: Record<string, 'HIGH' | 'MEDIUM' | 'LOW'> = {
+      'high': 'HIGH',
+      'medium': 'MEDIUM',
+      'low': 'LOW',
+    }
+    return map[level?.toLowerCase()] || 'LOW'
   }
 
   /**
@@ -846,7 +975,7 @@ class ProjectFileService {
             }
           }
           
-          // 验证项目数据完整性（UCP 需要 RPL，USE 需要 RPL + SLD）
+          // 验证项目数据完整性（USE 需要 RPL + SLD）
           const validationResult = this.validateProjectFile(projectData, file.name)
           if (!validationResult.valid) {
             return {
@@ -865,8 +994,8 @@ class ProjectFileService {
           // 加载项目数据到 stores
           this.loadUSEProjectDataToStores(projectData)
           
-          // 根据文件扩展名确定项目类型
-          const projectType: ProjectType = file.name.toLowerCase().endsWith('.ucp') ? 'ucp' : 'use'
+          // 项目类型统一为 use
+          const projectType: ProjectType = 'use'
           
           // 更新当前项目信息
           this.currentProject = {
@@ -895,7 +1024,7 @@ class ProjectFileService {
       if (legacyProject.metadata?.file_format_version) {
         // 新版 JSON 格式 (未打包的)
         return this.handleNewFormatProject(legacyProject, file)
-      } else if (legacyProject.type === 'use' || legacyProject.type === 'ucp') {
+      } else if (legacyProject.type === 'use') {
         // 旧版格式
         return this.handleLegacyProject(legacyProject, file)
       }
@@ -918,7 +1047,7 @@ class ProjectFileService {
    * 处理新版格式项目
    */
   private handleNewFormatProject(projectData: USEProjectData, file: File): OpenProjectResult {
-    // 验证项目数据完整性（UCP 需要 RPL，USE 需要 RPL + SLD）
+    // 验证项目数据完整性（USE 需要 RPL + SLD）
     const validationResult = this.validateProjectFile(projectData, file.name)
     if (!validationResult.valid) {
       return {
@@ -935,8 +1064,8 @@ class ProjectFileService {
     
     this.loadUSEProjectDataToStores(projectData)
     
-    // 根据文件扩展名确定项目类型
-    const projectType: ProjectType = file.name.toLowerCase().endsWith('.ucp') ? 'ucp' : 'use'
+    // 项目类型统一为 use
+    const projectType: ProjectType = 'use'
     
     this.currentProject = {
       name: projectData.metadata.project_name,
@@ -960,10 +1089,8 @@ class ProjectFileService {
     // 加载旧版项目数据到 stores
     this.loadLegacyProjectToStores(project)
     
-    // 根据文件扩展名或项目类型确定项目类型
-    const projectType: ProjectType = file.name.toLowerCase().endsWith('.ucp') 
-      ? 'ucp' 
-      : (project.type === 'ucp' ? 'ucp' : 'use')
+    // 项目类型统一为 use
+    const projectType: ProjectType = 'use'
     
     this.currentProject = {
       name: project.name || project.projectName,
@@ -1079,14 +1206,32 @@ class ProjectFileService {
         eventMap.set(event.geo_index, event)
       }
       
-      // 创建 geometry_range 到 segment 的映射
-      const getSegmentForIndex = (geoIndex: number): RouteSegment | undefined => {
-        return segments.find(s => geoIndex >= s.geometry_range[0] && geoIndex <= s.geometry_range[1])
+      // 辅助函数：从 segment 获取 geometry_range 的起止索引（兼容新旧格式）
+      const getGeometryRange = (seg: any): { start: number; end: number } => {
+        if (Array.isArray(seg.geometry_range)) {
+          // 旧格式: [start_index, end_index]
+          return { start: seg.geometry_range[0], end: seg.geometry_range[1] }
+        } else if (seg.geometry_range && typeof seg.geometry_range === 'object') {
+          // 新格式: { start_index, end_index, ... }
+          return { start: seg.geometry_range.start_index, end: seg.geometry_range.end_index }
+        }
+        return { start: 0, end: 0 }
+      }
+      
+      // 创建 geometry_range 到 segment 的映射（兼容新旧格式）
+      const getSegmentForIndex = (geoIndex: number): any => {
+        return segments.find((s: any) => {
+          const range = getGeometryRange(s)
+          return geoIndex >= range.start && geoIndex <= range.end
+        })
       }
       
       // 创建 geometry_range 到 span 的映射（获取光纤类型）
       const getSpanForIndex = (geoIndex: number): any => {
-        return spans.find((s: any) => geoIndex >= s.geometry_range[0] && geoIndex <= s.geometry_range[1])
+        return spans.find((s: any) => {
+          const range = getGeometryRange(s)
+          return geoIndex >= range.start && geoIndex <= range.end
+        })
       }
 
       // 为每个 geometry_pool 点创建 RPL 记录
@@ -1108,10 +1253,11 @@ class ProjectFileService {
           pointType = this.mapEventTypeToPointType(event.type) as typeof pointType
         }
         
-        // 获取电缆类型
+        // 获取电缆类型（兼容新旧字段名 cable_type_ref / cable_struct_ref）
         let cableType: 'LW' | 'LWS' | 'SA' | 'DA' | 'SAS' = 'LW'
-        if (segment?.cable_struct_ref) {
-          const ref = segment.cable_struct_ref.toUpperCase()
+        const cableRef = segment?.cable_type_ref || segment?.cable_struct_ref
+        if (cableRef) {
+          const ref = cableRef.toUpperCase()
           if (ref.includes('DA')) cableType = 'DA'
           else if (ref.includes('SA')) cableType = 'SA'
           else if (ref.includes('LWS')) cableType = 'LWS'
@@ -1445,6 +1591,21 @@ class ProjectFileService {
       routeStore.setParetoRoutes(projectData.routePlanning.routes)
       console.log('[ProjectFileService] 从扩展字段恢复路由:', projectData.routePlanning.routes.length)
     }
+    
+    // 14.2.1 恢复缆型数据库 (如果扩展字段存在)
+    if (projectData.routePlanning?.cableTypeDatabase && projectData.routePlanning.cableTypeDatabase.length > 0) {
+      const settingsStore = useSettingsStore()
+      // 替换现有的缆型数据库
+      settingsStore.cableTypeDatabase.splice(0, settingsStore.cableTypeDatabase.length, ...projectData.routePlanning.cableTypeDatabase)
+      console.log('[ProjectFileService] 从扩展字段恢复缆型数据库:', projectData.routePlanning.cableTypeDatabase.length)
+    }
+    
+    // 14.2.2 恢复完整的路径规划配置 (包含 armorMappings, waypoints, buList 等)
+    if (projectData.routePlanning?.planningConfig) {
+      const settingsStore = useSettingsStore()
+      settingsStore.updateRoutePlanningConfig(projectData.routePlanning.planningConfig)
+      console.log('[ProjectFileService] 从扩展字段恢复路径规划配置')
+    }
 
     // 14.3 恢复 SLD 原始数据 (如果扩展字段存在) - 这是最重要的修复!
     if (projectData.transmissionPlanning?.sldTables && projectData.transmissionPlanning.sldTables.length > 0) {
@@ -1488,10 +1649,122 @@ class ProjectFileService {
 
   /**
    * 从项目数据中提取起点/终点坐标并更新路径规划配置
+   * 包括从 environment_context 和 route_engineering 恢复甲方规范的新字段
    */
   private extractRoutePlanningConfig(projectData: USEProjectData, settingsStore: any): void {
-    const keyEvents = projectData.route_engineering?.key_events || []
-    const geometryPool = projectData.route_engineering?.geometry_pool || []
+    const envContext = projectData.environment_context
+    const routeEng = projectData.route_engineering
+    const keyEvents = routeEng?.key_events || []
+    const geometryPool = routeEng?.geometry_pool || []
+    
+    // === 1. 从 environment_context 恢复新字段 ===
+    
+    // 1.1 恢复 planning_mode
+    if (envContext?.planning_mode) {
+      const mode = envContext.planning_mode === 'MULTI_NODE_NETWORK' ? 'multi-point' : 'two-point'
+      settingsStore.updateRoutePlanningConfig({ mode })
+    }
+    
+    // 1.2 恢复 redundancy_config
+    if (envContext?.redundancy_config) {
+      const rc = envContext.redundancy_config
+      const redundancyConfig: any = {
+        enabled: rc.enabled || false,
+        costLimitType: rc.cost_constraint_mode === 'ABSOLUTE' ? 'absolute' : 'relative',
+      }
+      if (rc.absolute_cost_limit) {
+        redundancyConfig.absoluteCostLimit = rc.absolute_cost_limit.value
+      }
+      if (rc.premium_ratio) {
+        redundancyConfig.relativeCostPercent = (rc.premium_ratio.ratio || 0.3) * 100
+      }
+      settingsStore.updateRoutePlanningConfig({ redundancyConfig })
+    }
+    
+    // 1.3 恢复 imported_bu_nodes
+    if (envContext?.imported_bu_nodes && envContext.imported_bu_nodes.length > 0) {
+      const buList = envContext.imported_bu_nodes.map((bu: any) => ({
+        id: bu.id,
+        name: bu.name,
+        lon: bu.coords?.[0] || 0,
+        lat: bu.coords?.[1] || 0,
+        portLimit: bu.max_ports || 3
+      }))
+      settingsStore.updateRoutePlanningConfig({ buList })
+    }
+    
+    // 1.4 恢复 route_planning_settings (cable_armor_mapping, algorithm_config)
+    if (envContext?.route_planning_settings) {
+      const rps = envContext.route_planning_settings
+      
+      // 1.4.1 铠装映射规则
+      if (rps.cable_armor_mapping) {
+        const cam = rps.cable_armor_mapping
+        const armorMappings = []
+        if (cam.high_risk) {
+          armorMappings.push({
+            riskLevel: 'high',
+            riskThreshold: cam.high_risk.threshold,
+            cableTypeId: cam.high_risk.cable_type_ref
+          })
+        }
+        if (cam.medium_risk) {
+          armorMappings.push({
+            riskLevel: 'medium',
+            riskThreshold: cam.medium_risk.threshold,
+            cableTypeId: cam.medium_risk.cable_type_ref
+          })
+        }
+        if (cam.low_risk) {
+          armorMappings.push({
+            riskLevel: 'low',
+            riskThreshold: cam.low_risk.threshold,
+            cableTypeId: cam.low_risk.cable_type_ref
+          })
+        }
+        settingsStore.updateRoutePlanningConfig({ armorMappings })
+      }
+      
+      // 1.4.2 算法配置 (规划范围)
+      if (rps.algorithm_config?.planning_bounds) {
+        const pb = rps.algorithm_config.planning_bounds
+        if (pb.mode === 'MANUAL' && pb.manual_bounds) {
+          settingsStore.updateRoutePlanningConfig({
+            planningRange: {
+              northwest: { lon: pb.manual_bounds.northwest[0], lat: pb.manual_bounds.northwest[1] },
+              southeast: { lon: pb.manual_bounds.southeast[0], lat: pb.manual_bounds.southeast[1] }
+            }
+          })
+        }
+      }
+    }
+    
+    // === 2. 从 route_engineering 恢复新字段 ===
+    
+    // 2.1 恢复 route_status
+    if (routeEng?.route_status) {
+      // route_status 信息可以存储到 settingsStore 扩展字段
+      ;(settingsStore as any).routeStatus = {
+        isSegmented: routeEng.route_status.is_segmented,
+        isAdjusted: routeEng.route_status.is_adjusted,
+        lastModified: routeEng.route_status.last_modified
+      }
+    }
+    
+    // 2.2 恢复 segmentation_config
+    if (routeEng?.segmentation_config) {
+      const sc = routeEng.segmentation_config
+      ;(settingsStore as any).segmentationConfig = {
+        method: sc.method,
+        fixedLengthKm: sc.fixed_length_km,
+        riskBased: sc.risk_based ? {
+          minLengthKm: sc.risk_based.min_length_km,
+          maxLengthKm: sc.risk_based.max_length_km
+        } : undefined
+      }
+    }
+    
+    // === 3. 原有逻辑：从 geometry_pool 和 key_events 提取起点/终点坐标 ===
     
     if (keyEvents.length === 0 || geometryPool.length === 0) {
       return
@@ -1548,7 +1821,6 @@ class ProjectFileService {
           northwest: { lon: rp.planning_range.northwest.lon, lat: rp.planning_range.northwest.lat },
           southeast: { lon: rp.planning_range.southeast.lon, lat: rp.planning_range.southeast.lat }
         },
-        multiPointFile: rp.multi_point_file,
         isConfigured: rp.start_point.lon !== 0 || rp.start_point.lat !== 0,
       })
     }

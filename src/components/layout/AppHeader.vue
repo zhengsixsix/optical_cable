@@ -290,11 +290,11 @@ const togglePanel = (panel: string) => {
                   class="absolute left-full top-0 pl-1 hidden group-hover/sub:block z-50 animate-in fade-in slide-in-from-left-2 duration-200">
                   <div
                     class="min-w-[220px] bg-white/95 backdrop-blur-md border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-lg py-2 -mt-2">
-                    <!-- 导出工程文件 - 根据项目类型显示不同后缀 -->
+                    <!-- 导出工程文件 -->
                     <a href="#" @click.prevent="handleSaveProject"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileText class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导出工程文件 ({{ projectManager.currentProjectType.value === 'ucp' ? '.ucp' : '.use' }})</span>
+                      <span class="text-sm">导出工程文件 (.use)</span>
                     </a>
                     <!-- 导出 RPL 文件 -->
                     <a href="#" @click.prevent="showModal('export-rpl')"

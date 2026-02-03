@@ -168,7 +168,7 @@ const handleSubmit = async () => {
       ref="projectFileInputRef"
       type="file"
       class="hidden"
-      accept=".ucp,.use"
+      accept=".use"
       @change="handleProjectFileSelected"
     >
     <div
@@ -265,7 +265,7 @@ const handleSubmit = async () => {
               <div class="text-center">
                 <FolderOpen class="w-10 h-10 mx-auto mb-2 text-gray-300" />
                 <p>最近项目列表 / 文件浏览区域</p>
-                <p class="text-sm">(例如: Project A.ucp, Project B.ucp...)</p>
+                <p class="text-sm">(例如: Project A.use, Project B.use...)</p>
               </div>
             </div>
             <div class="space-y-3">
@@ -281,7 +281,7 @@ const handleSubmit = async () => {
               </div>
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">文件类型:</label>
-                <span class="flex-1 px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600">.ucp</span>
+                <span class="flex-1 px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600">.use</span>
               </div>
             </div>
           </template>
@@ -295,7 +295,7 @@ const handleSubmit = async () => {
               </div>
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">文件类型:</label>
-                <span class="flex-1 px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600">.ucp</span>
+                <span class="flex-1 px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600">.use</span>
               </div>
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">保存位置:</label>
@@ -313,12 +313,12 @@ const handleSubmit = async () => {
               </div>
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">文件类型:</label>
-                <span class="flex-1 px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600">.ucp</span>
+                <span class="flex-1 px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600">.use</span>
               </div>
               <div class="flex items-center gap-3">
                 <label class="w-[80px] text-sm text-gray-600 font-medium shrink-0">保存位置:</label>
                 <span class="flex-1 px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600 truncate">{{ savePath }}</span>
-                <button 
+                <button
                   class="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white text-sm rounded transition-colors whitespace-nowrap"
                   @click="handleBrowse()"
                 >

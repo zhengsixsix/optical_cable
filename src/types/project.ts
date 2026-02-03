@@ -1,4 +1,4 @@
-// 项目文件类型定义 (.ucp / .use)
+// 项目文件类型定义 (.use)
 // 海底光缆路由规划系统项目配置文件格式
 
 // ==================== 通用类型 ====================
@@ -10,7 +10,7 @@ export interface Coordinate {
 }
 
 /** 文件类型 */
-export type ProjectFileType = 'ucp' | 'use'
+export type ProjectFileType = 'use'
 
 // ==================== 图层配置 ====================
 
@@ -51,7 +51,6 @@ export interface PathPlanningConfig {
   mode: PathPlanningMode       // 规划模式
   startPoint: Coordinate | null  // 起点坐标
   endPoint: Coordinate | null    // 终点坐标
-  multiPointFile: string | null  // 多点文件路径
 }
 
 // ==================== 传输系统配置 ====================
@@ -100,7 +99,7 @@ export const defaultMonitoringConfig: MonitoringSystemConfig = {
 
 // ==================== RPL/SLD 文件引用 ====================
 
-/** RPL文件引用 (用于 .ucp) */
+/** RPL文件引用 */
 export interface RplFileRef {
   path: string  // RPL文件路径
 }
@@ -110,7 +109,7 @@ export interface SldFileRef {
   path: string  // SLD文件路径
 }
 
-/** RPL文件引用 (用于 .use，包含关联的SLD文件) */
+/** RPL文件引用 (包含关联的SLD文件) */
 export interface RplFileRefWithSld {
   path: string           // RPL文件路径
   sldFiles: SldFileRef[] // 关联的SLD文件列表
@@ -126,56 +125,9 @@ export interface ProjectInfo {
   allowOthersOpen: boolean // 是否允许其他用户打开
 }
 
-// ==================== UCP 项目文件 ====================
-
-/** UCP 项目文件结构 */
-/** 注意: 实际的 UCPProject 接口定义在 ProjectFileService.ts 中 */
-export interface UCPProject {
-  type: 'ucp'              // 统一使用 type 字段
-  version: string
-  
-  // 项目基本信息
-  projectName: string
-  name: string
-  creatorUserId: string
-  creatorId: string
-  serverDirectory?: string
-  allowOtherUsers: boolean
-  createdAt: string
-  updatedAt: string
-  
-  // RPL文件列表
-  rplFiles: string[]
-  
-  // 路由规划数据
-  routePlanning: {
-    routes: any[]
-    rplTables: any[]
-    planningConfig: any
-  }
-  
-  // GIS数据
-  gisData: {
-    layers: string[]
-    bounds: any
-  }
-  
-  // 图层设置
-  layerSettings: LayerSettings
-  
-  // 器件库配置
-  componentLibrary: DeviceLibraryConfig
-  
-  // 设置
-  settings: {
-    cableTypes: any[]
-    costFactors: any
-  }
-}
-
 // ==================== USE 项目文件 ====================
 
-/** USE 项目文件结构 (比UCP多了SLD文件关联) */
+/** USE 项目文件结构 */
 /** 注意: 实际的 USEProject 接口定义在 ProjectFileService.ts 中 */
 /** 这里保留简化版本仅供类型引用 */
 export interface USEProject {
@@ -246,18 +198,18 @@ export interface USEProject {
 
 // ==================== 联合类型 ====================
 
-/** 项目文件联合类型 */
-export type ProjectFile = UCPProject | USEProject
+/** 项目文件类型 */
+export type ProjectFile = USEProject
 
 // ==================== 工厂函数 ====================
-// 注意: 实际的项目创建应使用 ProjectFileService.ts 中的 createUCPProject/createUSEProject
+// 注意: 实际的项目创建应使用 ProjectFileService.ts 中的 createUSEProject
 // 这里的工厂函数已废弃，保留仅为了向后兼容
 
-/** @deprecated 请使用 ProjectFileService.createUCPProject */
-export function createDefaultUCPProject(name: string, creatorId: string): any {
-  console.warn('createDefaultUCPProject 已废弃，请使用 ProjectFileService.createUCPProject')
+/** @deprecated 请使用 ProjectFileService.createUSEProject */
+export function createDefaultUSEProject(name: string, creatorId: string): any {
+  console.warn('createDefaultUSEProject 已废弃，请使用 ProjectFileService.createUSEProject')
   return {
-    type: 'ucp',
+    type: 'use',
     version: '2.0.0',
     projectName: name,
     name,
@@ -267,34 +219,19 @@ export function createDefaultUCPProject(name: string, creatorId: string): any {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     rplFiles: [],
+    rplSldAssociations: [],
     routePlanning: { routes: [], rplTables: [], planningConfig: {} },
+    transmissionPlanning: { sldTables: [], transmissionConfig: {}, repeaterConfigs: [] },
     gisData: { layers: [], bounds: {} },
     layerSettings: { ...defaultLayerSettings },
     componentLibrary: { currentLibrary: 'default' },
     settings: { cableTypes: [], costFactors: {} },
-  }
-}
-
-/** @deprecated 请使用 ProjectFileService.createUSEProject */
-export function createDefaultUSEProject(name: string, creatorId: string): any {
-  console.warn('createDefaultUSEProject 已废弃，请使用 ProjectFileService.createUSEProject')
-  const ucpProject = createDefaultUCPProject(name, creatorId)
-  return {
-    ...ucpProject,
-    type: 'use',
-    rplSldAssociations: [],
-    transmissionPlanning: { sldTables: [], transmissionConfig: {}, repeaterConfigs: [] },
     monitoringConfig: {},
     performanceResults: { gsnr: null, capacity: null, margin: null },
   }
 }
 
 // ==================== 类型守卫 ====================
-
-/** 判断是否为 UCP 项目 */
-export function isUCPProject(project: any): project is UCPProject {
-  return project.type === 'ucp'
-}
 
 /** 判断是否为 USE 项目 */
 export function isUSEProject(project: any): project is USEProject {

@@ -24,16 +24,14 @@ export {
   type SldFileRef,
   type RplFileRefWithSld,
   type ProjectInfo,
-  type UCPProject,
   type USEProject,
   type ProjectFile,
-  createDefaultUCPProject,
   createDefaultUSEProject,
-  isUCPProject,
   isUSEProject,
 } from './project'
 export * from './simulation'
 export * from './systemPlanning'
+export * from './cableSegment'
 
 // 通用类型
 export interface Notification {

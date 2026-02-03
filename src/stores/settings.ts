@@ -22,27 +22,58 @@ import { createDefaultModels } from '@/types/useFile'
 
 const STORAGE_KEY = 'cable-planner-settings'
 
-// 多点坐标接口
+// 多点坐标接口 - USE文件规范: imported_landing_points
 export interface WaypointConfig {
   id: string
   name: string
   lon: number
   lat: number
-  depth?: number  // 水深，>0 表示水下站点
+  depth?: number  // 水深，>0 表示水下站点，0 或不设置表示岸上站点
+  // properties 字段在实际使用中可扩展
+}
+
+// BU 配置接口 - USE文件规范: imported_bu_nodes
+export interface BUConfig {
+  id: string
+  name: string
+  lon: number
+  lat: number
+  portLimit: 3 | 4  // 对应 USE 规范的 max_ports
+}
+
+// 海缆铠装映射规则（新增）
+export interface ArmorMapping {
+  riskLevel: 'high' | 'medium' | 'low'
+  riskThreshold: number      // 风险阈值
+  cableTypeId: string        // 缆型ID（关联器件库）
+  cableTypeName: string      // 缆型名称
+  unitPrice: number          // 单价（千元/km）
+}
+
+// 冗余策略配置（新增）
+export interface RedundancyConfig {
+  enabled: boolean
+  costLimitType: 'relative' | 'absolute'
+  relativeCostPercent?: number  // 相对成本百分比（如30%）
+  absoluteCostLimit?: number    // 绝对成本上限（万元）
 }
 
 // 路径规划配置接口
 export interface RoutePlanningConfig {
   mode: 'point-to-point' | 'multi-point'
-  startPoint: { lon: number; lat: number; depth?: number }  // depth > 0 为水下站点
-  endPoint: { lon: number; lat: number; depth?: number }    // depth > 0 为水下站点
+  startPoint: { name?: string; lon: number; lat: number; depth?: number }  // depth > 0 为水下站点
+  endPoint: { name?: string; lon: number; lat: number; depth?: number }    // depth > 0 为水下站点
   planningRange: {
     northwest: { lon: number; lat: number }
     southeast: { lon: number; lat: number }
   }
-  multiPointFile?: string
+  gridResolution?: number  // 栅格分辨率（米），默认500
   waypoints?: WaypointConfig[]  // 多点规划的坐标点列表
   isConfigured?: boolean  // 用户是否主动配置过起点终点
+  // 新增字段
+  buList?: BUConfig[]              // BU 配置列表
+  armorMappings?: ArmorMapping[]   // 海缆铠装映射规则
+  redundancyConfig?: RedundancyConfig  // 冗余策略配置
 }
 
 // 传输系统配置接口
@@ -72,6 +103,39 @@ export interface FiberSimulationConfig {
   description: string
 }
 
+// 缆型数据库接口
+export interface CableTypeSpec {
+  id: string
+  name: string
+  armorType: string  // DA, RA, SA, LW, LWP
+  unitPrice: number  // 千元/km
+}
+
+// 默认缆型数据库
+const defaultCableTypeDatabase: CableTypeSpec[] = [
+  { id: 'da-01', name: 'DA-01 (双铠装)', armorType: 'DA', unitPrice: 24.0 },
+  { id: 'da-02', name: 'DA-02 (双铠加强)', armorType: 'DA', unitPrice: 26.5 },
+  { id: 'ra-01', name: 'RA-01 (岩石铠装)', armorType: 'RA', unitPrice: 28.0 },
+  { id: 'sa-01', name: 'SA-01 (单铠装)', armorType: 'SA', unitPrice: 19.5 },
+  { id: 'sa-02', name: 'SA-02 (单铠加强)', armorType: 'SA', unitPrice: 21.0 },
+  { id: 'lw-01', name: 'LW-01 (轻型)', armorType: 'LW', unitPrice: 15.0 },
+  { id: 'lwp-01', name: 'LWP-01 (轻型保护)', armorType: 'LWP', unitPrice: 16.5 },
+]
+
+// 默认铠装映射规则
+const defaultArmorMappings: ArmorMapping[] = [
+  { riskLevel: 'high', riskThreshold: 3, cableTypeId: 'da-01', cableTypeName: 'DA-01 (双铠装)', unitPrice: 24.0 },
+  { riskLevel: 'medium', riskThreshold: 2, cableTypeId: 'sa-01', cableTypeName: 'SA-01 (单铠装)', unitPrice: 19.5 },
+  { riskLevel: 'low', riskThreshold: 0, cableTypeId: 'lw-01', cableTypeName: 'LW-01 (轻型)', unitPrice: 15.0 },
+]
+
+// 默认冗余策略配置
+const defaultRedundancyConfig: RedundancyConfig = {
+  enabled: false,
+  costLimitType: 'relative',
+  relativeCostPercent: 30,
+}
+
 // 默认配置
 const defaultRoutePlanningConfig: RoutePlanningConfig = {
   mode: 'point-to-point',
@@ -81,8 +145,12 @@ const defaultRoutePlanningConfig: RoutePlanningConfig = {
     northwest: { lon: 100, lat: 50 },
     southeast: { lon: 150, lat: 10 },
   },
+  gridResolution: 500,  // 默认栅格分辨率 500 米
   waypoints: [],
   isConfigured: false,
+  buList: [],
+  armorMappings: defaultArmorMappings,
+  redundancyConfig: defaultRedundancyConfig,
 }
 
 const defaultTransmissionConfig: TransmissionConfig = {
@@ -131,6 +199,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const transmissionConfig = ref<TransmissionConfig>({ ...defaultTransmissionConfig })
   const monitoringConfig = ref<MonitoringConfig>({ ...defaultMonitoringConfig })
   const fiberSimulationConfig = ref<FiberSimulationConfig>({ ...defaultFiberSimulationConfig })
+  
+  // 缆型数据库（用于铠装选择的下拉菜单）
+  const cableTypeDatabase = ref<CableTypeSpec[]>([...defaultCableTypeDatabase])
   
   // 系统规划参数配置 (Step 3)
   const systemPlanningConfig = ref<SystemPlanningParams>({ ...defaultSystemPlanningParams })
@@ -182,7 +253,7 @@ export const useSettingsStore = defineStore('settings', () => {
         cableTypes: cableTypes.value,
         repeaterTypes: repeaterTypes.value,
         branchingUnits: branchingUnits.value,
-        // 不保存 costFactors，它应该只存储在项目文件 (.ucp/.use) 中
+        // 不保存 costFactors，它应该只存储在项目文件 (.use) 中
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch (error) {
@@ -343,6 +414,25 @@ export const useSettingsStore = defineStore('settings', () => {
   function updateFiberSimulationConfig(updates: Partial<FiberSimulationConfig>) {
     fiberSimulationConfig.value = { ...fiberSimulationConfig.value, ...updates }
   }
+  
+  // 缆型数据库管理
+  function addCableTypeSpec(spec: CableTypeSpec) {
+    // 检查名称是否重复
+    const exists = cableTypeDatabase.value.some(c => c.name === spec.name)
+    if (exists) {
+      return false
+    }
+    cableTypeDatabase.value.push(spec)
+    return true
+  }
+  
+  function removeCableTypeSpec(id: string) {
+    cableTypeDatabase.value = cableTypeDatabase.value.filter(c => c.id !== id)
+  }
+  
+  function getCableTypesByArmor(armorTypes: string[]): CableTypeSpec[] {
+    return cableTypeDatabase.value.filter(c => armorTypes.includes(c.armorType))
+  }
 
   // 更新系统规划参数 (Step 3)
   function updateSystemPlanningConfig(updates: Partial<SystemPlanningParams>) {
@@ -458,6 +548,11 @@ export const useSettingsStore = defineStore('settings', () => {
     transmissionConfig,
     monitoringConfig,
     fiberSimulationConfig,
+    // 缆型数据库
+    cableTypeDatabase,
+    addCableTypeSpec,
+    removeCableTypeSpec,
+    getCableTypesByArmor,
     // 新增器件类型
     fiberTypes,
     amplifierTypes,

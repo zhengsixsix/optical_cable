@@ -10,7 +10,7 @@ import { Button, Input } from '@/shared/components/base'
 interface Props {
   visible: boolean
   currentProjectName?: string
-  currentProjectType?: 'ucp' | 'use'
+  currentProjectType?: 'use'
 }
 
 const props = defineProps<Props>()

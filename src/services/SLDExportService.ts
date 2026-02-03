@@ -670,7 +670,7 @@ const POINT_TYPE_TO_ELEMENT: Record<string, string> = {
   'branching': 'BU',
   'bu': 'BU',
   'joint': 'Joint',
-  'waypoint': 'CableSpan',  // 航路点作为光缆段的一部分
+  'waypoint': 'CableSpan',  // 路径点作为光缆段的一部分
 }
 
 /**
@@ -749,7 +749,7 @@ export function exportSLDFromRoute(
     const upstreamId = sequenceId === 1 ? null : sequenceId - 1
     const hasNext = i < route.points.length - 1
     
-    // 如果是航路点，跳过（会作为CableSpan的一部分）
+    // 如果是路径点，跳过（会作为CableSpan的一部分）
     if (point.type === 'waypoint') {
       continue
     }
@@ -794,7 +794,7 @@ export function exportSLDFromRoute(
     // 如果有出向光缆段，添加 CableSpan
     if (segment && hasNext) {
       const nextPoint = route.points[i + 1]
-      // 找到下一个非航路点的设备
+      // 找到下一个非路径点的设备
       let nextDeviceIndex = i + 1
       while (nextDeviceIndex < route.points.length && route.points[nextDeviceIndex].type === 'waypoint') {
         nextDeviceIndex++
