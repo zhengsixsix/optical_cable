@@ -376,22 +376,87 @@ app.post('/api/dem/profile', async (req, res) => {
     
     const startTime = Date.now()
     
+    // 性能优化：按tif分组采样点，批量读取
+    const samplePoints = []
     for (let i = 0; i <= sampleCount; i++) {
       const t = i / sampleCount
       const lon = startLon + (endLon - startLon) * t
       const lat = startLat + (endLat - startLat) * t
-      
-      const tif = findTifForPoint(lon, lat)
+      samplePoints.push({ t, lon, lat, distance: totalDistanceKm * t })
+    }
+    
+    // 按tif分组
+    const pointsByTif = new Map()
+    for (const sp of samplePoints) {
+      const tif = findTifForPoint(sp.lon, sp.lat)
       if (tif) {
-        const elevation = await getElevationFromTif(tif, lon, lat)
-        if (elevation !== null) {
-          points.push({
-            distance: totalDistanceKm * t,
-            depth: elevation
-          })
+        if (!pointsByTif.has(tif.filename)) {
+          pointsByTif.set(tif.filename, { tif, points: [] })
         }
+        pointsByTif.get(tif.filename).points.push(sp)
       }
     }
+    
+    // 对每个tif批量读取
+    for (const [filename, { tif, points: tifPoints }] of pointsByTif) {
+      if (tifPoints.length === 0) continue
+      
+      // 计算包含所有点的最小窗口
+      const [imgMinX, , , imgMaxY] = tif.bbox
+      let windowMinX = Infinity, windowMinY = Infinity
+      let windowMaxX = -Infinity, windowMaxY = -Infinity
+      
+      for (const sp of tifPoints) {
+        const pixelX = Math.floor((sp.lon - imgMinX) / tif.pixelWidth)
+        const pixelY = Math.floor((imgMaxY - sp.lat) / tif.pixelHeight)
+        windowMinX = Math.min(windowMinX, pixelX)
+        windowMaxX = Math.max(windowMaxX, pixelX)
+        windowMinY = Math.min(windowMinY, pixelY)
+        windowMaxY = Math.max(windowMaxY, pixelY)
+      }
+      
+      // 扩展窗口边界
+      windowMinX = Math.max(0, windowMinX - 1)
+      windowMinY = Math.max(0, windowMinY - 1)
+      windowMaxX = Math.min(tif.width, windowMaxX + 2)
+      windowMaxY = Math.min(tif.height, windowMaxY + 2)
+      
+      const windowWidth = windowMaxX - windowMinX
+      const windowHeight = windowMaxY - windowMinY
+      
+      if (windowWidth <= 0 || windowHeight <= 0) continue
+      
+      try {
+        // 一次性读取整个窗口
+        const rasters = await tif.image.readRasters({
+          window: [windowMinX, windowMinY, windowMaxX, windowMaxY],
+          width: windowWidth,
+          height: windowHeight,
+        })
+        const data = rasters[0]
+        
+        // 从缓存数据中提取每个采样点的高程
+        for (const sp of tifPoints) {
+          const pixelX = Math.floor((sp.lon - imgMinX) / tif.pixelWidth) - windowMinX
+          const pixelY = Math.floor((imgMaxY - sp.lat) / tif.pixelHeight) - windowMinY
+          
+          if (pixelX >= 0 && pixelX < windowWidth && pixelY >= 0 && pixelY < windowHeight) {
+            const elevation = data[pixelY * windowWidth + pixelX]
+            if (elevation !== -32767) {
+              points.push({
+                distance: sp.distance,
+                depth: elevation
+              })
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`读取 ${filename} 失败:`, e.message)
+      }
+    }
+    
+    // 按距离排序
+    points.sort((a, b) => a.distance - b.distance)
     
     console.log(`📊 剖面数据生成: ${points.length}点, 总距离 ${totalDistanceKm.toFixed(2)}km, 耗时 ${Date.now() - startTime}ms`)
     
