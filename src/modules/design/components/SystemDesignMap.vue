@@ -316,7 +316,7 @@ const drawRouteLine = () => {
   })
 }
 
-// 绘制设备节点 - 只显示系统设备（登陆站、中继器、分支器），不显示 waypoint
+// 绘制设备节点 - 只显示系统设备（登陆站、放大器、分支器），不显示 waypoint
 const drawPoints = async () => {
   if (!pointSource) return
   pointSource.clear()
@@ -866,7 +866,7 @@ onUnmounted(() => {
     
     <!-- 编辑模式提示 -->
     <div v-if="editable" class="absolute top-3 left-3 bg-blue-500 text-white px-3 py-1.5 rounded text-xs shadow z-10">
-      编辑模式：可拖拽调整中继器位置
+      编辑模式：可拖拽调整放大器位置
     </div>
     
     <!-- 坐标显示 -->

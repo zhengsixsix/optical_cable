@@ -1178,7 +1178,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                           class="w-4 h-4 mt-1 text-primary border-gray-300 focus:ring-primary"
                       />
                       <div>
-                        <span class="text-sm font-medium text-gray-800 block">点对点海缆规划</span>
+                        <span class="text-sm font-medium text-gray-800 block">POINT_TO_POINT（点对点海缆规划）</span>
                         <span class="text-xs text-gray-500">适用于两个登陆站之间的单条海缆链路规划</span>
                       </div>
                     </label>
@@ -1191,10 +1191,13 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                           class="w-4 h-4 mt-1 text-primary border-gray-300 focus:ring-primary"
                       />
                       <div>
-                        <span class="text-sm font-medium text-gray-800 block">多点海缆网络规划</span>
+                        <span class="text-sm font-medium text-gray-800 block">MULTI_NODE_NETWORK（多点海缆网络规划）</span>
                         <span class="text-xs text-gray-500">适用于包含多个登陆站和分支器(BU)的复杂网络拓扑规划</span>
                       </div>
                     </label>
+                    <div class="text-[11px] text-gray-500 bg-blue-50/60 border border-blue-100 rounded px-3 py-2">
+                      BU 仅在 MULTI_NODE_NETWORK 模式下使用；POINT_TO_POINT 模式忽略 BU 配置。
+                    </div>
                   </div>
                 </div>
 

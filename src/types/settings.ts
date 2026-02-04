@@ -88,7 +88,7 @@ export interface CableType {
   fiberCount: number
 }
 
-// 中继器类型（保留兼容）
+// 放大器类型（保留兼容）
 export interface RepeaterType {
   id: string
   name: string
@@ -116,7 +116,7 @@ export interface CostFactors {
   // 新增字段 - 用于系统规划成本计算
   cableCostPerKm?: number        // 电缆每公里成本
   installationCostPerKm?: number // 安装每公里成本
-  repeaterCost?: number          // 中继器单价
+  repeaterCost?: number          // 放大器单价
   branchingUnitCost?: number     // 分支器单价
   landingStationCost?: number    // 登陆站成本
   currency?: string              // 货币类型
@@ -191,8 +191,8 @@ export const defaultSettings: AppSettings = {
     { id: 'da', name: 'DA (双铠装)', costPerKm: 35000, maxDepth: 200, fiberCount: 24 },
   ],
   repeaterTypes: [
-    { id: 'std', name: '标准中继器', cost: 500000, maxSpan: 80, powerConsumption: 50 },
-    { id: 'high', name: '高功率中继器', cost: 800000, maxSpan: 100, powerConsumption: 80 },
+    { id: 'std', name: '标准放大器', cost: 500000, maxSpan: 80, powerConsumption: 50 },
+    { id: 'high', name: '高功率放大器', cost: 800000, maxSpan: 100, powerConsumption: 80 },
   ],
   branchingUnits: [
     { id: 'bu2', name: '2端口分支器', cost: 200000, portCount: 2 },

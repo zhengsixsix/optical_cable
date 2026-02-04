@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia'
+﻿﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Notification, LogEntry } from '@/types'
 import type { ProjectType, ProjectMetadata } from '@/services/ProjectFileService'
@@ -304,7 +304,7 @@ export const useAppStore = defineStore('app', () => {
       layerDetailPanel: '图层详情',
       paretoAnalysisPanel: 'Pareto分析',
       segmentConfigPanel: '分段参数配置',
-      repeaterConfigPanel: '中继器配置',
+      repeaterConfigPanel: '放大器配置',
     }
     return names[panelName]
   }

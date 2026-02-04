@@ -1,10 +1,10 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { Button, Select } from '@/shared/components/base'
+import { Button } from '@/shared/components/base'
 import { BarChart2, Cpu, X, RefreshCw, Download, Filter } from 'lucide-vue-next'
-import { useSettingsStore, useAppStore } from '@/stores'
+import { useAppStore } from '@/stores'
 import { opticalSimulationService } from '@/services'
-import type { DetailedSimulationResult, SimulationModel, OpticalLink, ChannelEvolution } from '@/types/simulation'
+import type { DetailedSimulationResult, SimulationModel, OpticalLink } from '@/types/simulation'
 
 const props = defineProps<{
   visible: boolean
@@ -15,7 +15,6 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 
 // 仿真结果
@@ -26,6 +25,7 @@ const isSimulating = ref(false)
 const selectedModel = ref<SimulationModel>('GN')
 
 // 显示选项
+const activeTab = ref<'evolution' | 'spectrum' | 'heatmap' | 'table'>('evolution')
 const displayMode = ref<'average' | 'worst' | 'channel'>('average')
 const selectedChannel = ref(0)
 
@@ -51,6 +51,82 @@ const channelOptions = computed(() => {
     label: `Ch ${i + 1} (${ch.centerFreqTHz.toFixed(2)} THz)`,
   }))
 })
+
+// 频谱分布数据（取各信道末端值）
+const spectrumPoints = computed(() => {
+  if (!simulationResult.value) return []
+  return simulationResult.value.channelEvolutions.map((ch, i) => ({
+    channelIndex: i,
+    centerFreqTHz: ch.centerFreqTHz,
+    gsnr: ch.gsnrEvolution[ch.gsnrEvolution.length - 1] ?? 0,
+    osnr: ch.osnrEvolution[ch.osnrEvolution.length - 1] ?? 0,
+  }))
+})
+
+// 频谱分布图表数据
+const spectrumChart = computed(() => {
+  if (!spectrumPoints.value.length) return null
+  const padding = { top: 30, right: 40, bottom: 50, left: 60 }
+  const width = 720
+  const height = 320
+  const points = spectrumPoints.value
+
+  const yMin = Math.floor(Math.min(...points.map(p => Math.min(p.gsnr, p.osnr))) - 2)
+  const yMax = Math.ceil(Math.max(...points.map(p => Math.max(p.gsnr, p.osnr))) + 2)
+  const xMax = points.length - 1
+
+  const scaleX = (index: number) => padding.left + (index / Math.max(1, xMax)) * (width - padding.left - padding.right)
+  const scaleY = (value: number) => height - padding.bottom - ((value - yMin) / (yMax - yMin)) * (height - padding.top - padding.bottom)
+
+  const gsnrPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(i)} ${scaleY(p.gsnr)}`).join(' ')
+  const osnrPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(i)} ${scaleY(p.osnr)}`).join(' ')
+
+  const xTicks = []
+  const xStep = Math.max(1, Math.floor(points.length / 6))
+  for (let i = 0; i < points.length; i += xStep) {
+    xTicks.push({ value: i + 1, x: scaleX(i) })
+  }
+
+  const yTicks = []
+  const yStep = (yMax - yMin) / 5
+  for (let y = yMin; y <= yMax; y += yStep) {
+    yTicks.push({ value: y.toFixed(1), y: scaleY(y) })
+  }
+
+  return { width, height, padding, gsnrPath, osnrPath, xTicks, yTicks }
+})
+
+// 热力图数据（信道 × 跨段）
+const heatmapData = computed(() => {
+  if (!simulationResult.value) return null
+  const channels = simulationResult.value.channelEvolutions
+  let min = Infinity
+  let max = -Infinity
+  const values = channels.map(ch => ch.gsnrEvolution.map(v => {
+    min = Math.min(min, v)
+    max = Math.max(max, v)
+    return v
+  }))
+  return {
+    channels,
+    values,
+    kpPositions: simulationResult.value.kpPositions,
+    min,
+    max,
+  }
+})
+
+const getHeatColor = (value: number, min: number, max: number) => {
+  if (max <= min) return 'rgb(59, 130, 246)'
+  const ratio = (value - min) / (max - min)
+  const r = Math.round(239 - ratio * 180)
+  const g = Math.round(68 + ratio * 140)
+  const b = Math.round(68 + ratio * 80)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+// 表格数据
+const spanTableRows = computed(() => simulationResult.value?.spanResults || [])
 
 // 当前显示的演化数据
 const displayedEvolution = computed(() => {
@@ -153,7 +229,7 @@ const chartData = computed(() => {
     yTicks.push({ value: y.toFixed(1), y: scaleY(y) })
   }
   
-  // 中继器位置标记
+  // 放大器位置标记
   const repeaterMarks = kpPositions.slice(1, -1).map(kp => ({
     x: scaleX(kp),
     kp,
@@ -270,7 +346,7 @@ watch(() => props.visible, (visible) => {
             </Button>
           </div>
           <div class="flex items-center gap-3">
-            <div class="flex items-center gap-2">
+            <div v-if="activeTab === 'evolution'" class="flex items-center gap-2">
               <Filter class="w-4 h-4 text-gray-400" />
               <select
                 v-model="displayMode"
@@ -282,7 +358,7 @@ watch(() => props.visible, (visible) => {
               </select>
             </div>
             <select
-              v-if="displayMode === 'channel'"
+              v-if="activeTab === 'evolution' && displayMode === 'channel'"
               v-model="selectedChannel"
               class="px-2 py-1 text-sm border border-gray-200 rounded focus:ring-2 focus:ring-blue-500 w-40"
             >
@@ -294,6 +370,38 @@ watch(() => props.visible, (visible) => {
               <Download class="w-4 h-4 mr-1" /> 导出
             </Button>
           </div>
+        </div>
+
+        <!-- Tab 切换 -->
+        <div class="px-4 py-2 border-b bg-white flex items-center gap-2">
+          <button
+            class="px-3 py-1.5 text-xs rounded transition-colors"
+            :class="activeTab === 'evolution' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-600'"
+            @click="activeTab = 'evolution'"
+          >
+            沿程演化
+          </button>
+          <button
+            class="px-3 py-1.5 text-xs rounded transition-colors"
+            :class="activeTab === 'spectrum' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-600'"
+            @click="activeTab = 'spectrum'"
+          >
+            频谱分布
+          </button>
+          <button
+            class="px-3 py-1.5 text-xs rounded transition-colors"
+            :class="activeTab === 'heatmap' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-600'"
+            @click="activeTab = 'heatmap'"
+          >
+            热力图
+          </button>
+          <button
+            class="px-3 py-1.5 text-xs rounded transition-colors"
+            :class="activeTab === 'table' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-600'"
+            @click="activeTab = 'table'"
+          >
+            数据表
+          </button>
         </div>
 
         <!-- 图表内容 -->
@@ -321,7 +429,7 @@ watch(() => props.visible, (visible) => {
           </div>
 
           <!-- 演化曲线图 -->
-          <div class="bg-gray-50 rounded-lg border p-4">
+          <div v-if="activeTab === 'evolution'" class="bg-gray-50 rounded-lg border p-4">
             <div class="flex items-center justify-between mb-3">
               <h4 class="font-medium text-gray-700">{{ displayedEvolution?.label || '' }} 沿链路演化</h4>
               <div class="flex items-center gap-4 text-xs">
@@ -358,7 +466,7 @@ watch(() => props.visible, (visible) => {
                 />
               </g>
 
-              <!-- 中继器位置标记 -->
+              <!-- 放大器位置标记 -->
               <g v-for="mark in chartData.repeaterMarks" :key="'rep-' + mark.kp">
                 <line
                   :x1="mark.x"
@@ -472,6 +580,209 @@ watch(() => props.visible, (visible) => {
               <div class="text-center">
                 <Cpu class="w-12 h-12 mx-auto mb-2 text-gray-300" />
                 <div>点击"重新计算"执行精细仿真</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 频谱分布 -->
+          <div v-else-if="activeTab === 'spectrum'" class="bg-gray-50 rounded-lg border p-4">
+            <div class="flex items-center justify-between mb-3">
+              <h4 class="font-medium text-gray-700">频谱分布 (端到端)</h4>
+              <div class="flex items-center gap-4 text-xs">
+                <span class="flex items-center gap-1">
+                  <span class="w-3 h-0.5 bg-blue-500"></span>
+                  GSNR
+                </span>
+                <span class="flex items-center gap-1">
+                  <span class="w-3 h-0.5 bg-green-500"></span>
+                  OSNR
+                </span>
+              </div>
+            </div>
+            <svg v-if="spectrumChart" :width="spectrumChart.width" :height="spectrumChart.height" class="w-full">
+              <!-- 网格线 -->
+              <g stroke="#e5e7eb" stroke-width="1">
+                <line
+                  v-for="tick in spectrumChart.yTicks"
+                  :key="'sy-' + tick.value"
+                  :x1="spectrumChart.padding.left"
+                  :y1="tick.y"
+                  :x2="spectrumChart.width - spectrumChart.padding.right"
+                  :y2="tick.y"
+                  stroke-dasharray="4,4"
+                />
+              </g>
+              <!-- GSNR 曲线 -->
+              <path
+                :d="spectrumChart.gsnrPath"
+                fill="none"
+                stroke="#3b82f6"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <!-- OSNR 曲线 -->
+              <path
+                :d="spectrumChart.osnrPath"
+                fill="none"
+                stroke="#22c55e"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <!-- X 轴 -->
+              <g class="x-axis">
+                <line
+                  :x1="spectrumChart.padding.left"
+                  :y1="spectrumChart.height - spectrumChart.padding.bottom"
+                  :x2="spectrumChart.width - spectrumChart.padding.right"
+                  :y2="spectrumChart.height - spectrumChart.padding.bottom"
+                  stroke="#9ca3af"
+                  stroke-width="1"
+                />
+                <g v-for="tick in spectrumChart.xTicks" :key="'sxt-' + tick.value">
+                  <text
+                    :x="tick.x"
+                    :y="spectrumChart.height - spectrumChart.padding.bottom + 18"
+                    class="text-xs fill-gray-500"
+                    text-anchor="middle"
+                  >
+                    {{ tick.value }}
+                  </text>
+                </g>
+                <text
+                  :x="spectrumChart.width / 2"
+                  :y="spectrumChart.height - 10"
+                  class="text-xs fill-gray-600"
+                  text-anchor="middle"
+                >
+                  信道编号
+                </text>
+              </g>
+              <!-- Y 轴 -->
+              <g class="y-axis">
+                <line
+                  :x1="spectrumChart.padding.left"
+                  :y1="spectrumChart.padding.top"
+                  :x2="spectrumChart.padding.left"
+                  :y2="spectrumChart.height - spectrumChart.padding.bottom"
+                  stroke="#9ca3af"
+                  stroke-width="1"
+                />
+                <g v-for="tick in spectrumChart.yTicks" :key="'syt-' + tick.value">
+                  <text
+                    :x="spectrumChart.padding.left - 10"
+                    :y="tick.y + 4"
+                    class="text-xs fill-gray-500"
+                    text-anchor="end"
+                  >
+                    {{ tick.value }}
+                  </text>
+                </g>
+              </g>
+            </svg>
+            <div v-else class="flex items-center justify-center h-64 text-gray-400">
+              <div class="text-center">
+                <Cpu class="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                <div>暂无频谱分布数据</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 热力图 -->
+          <div v-else-if="activeTab === 'heatmap'" class="bg-gray-50 rounded-lg border p-4">
+            <div class="text-xs text-gray-500 mb-2">颜色代表 GSNR (dB)，横轴为跨段位置，纵轴为信道</div>
+            <div v-if="heatmapData" class="overflow-auto">
+              <table class="text-[10px] border-collapse">
+                <thead>
+                  <tr>
+                    <th class="px-2 py-1 text-left text-gray-500">Ch</th>
+                    <th
+                      v-for="(kp, idx) in heatmapData.kpPositions"
+                      :key="'kp-' + idx"
+                      class="px-1 py-1 text-gray-400 text-right"
+                    >
+                      {{ kp.toFixed(0) }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, rowIndex) in heatmapData.values" :key="'row-' + rowIndex">
+                    <td class="px-2 py-1 text-gray-600">Ch {{ rowIndex + 1 }}</td>
+                    <td
+                      v-for="(value, colIndex) in row"
+                      :key="'cell-' + rowIndex + '-' + colIndex"
+                      class="px-1 py-1 text-right text-white"
+                      :style="{ backgroundColor: getHeatColor(value, heatmapData.min, heatmapData.max) }"
+                    >
+                      {{ value.toFixed(1) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="flex items-center justify-center h-64 text-gray-400">
+              <div class="text-center">
+                <Cpu class="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                <div>暂无热力图数据</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 数据表 -->
+          <div v-else class="space-y-4">
+            <div class="border rounded-lg p-3">
+              <h4 class="text-xs font-bold text-gray-700 mb-2">跨段明细</h4>
+              <div class="overflow-auto">
+                <table class="w-full text-xs border-collapse">
+                  <thead class="bg-gray-100">
+                    <tr>
+                      <th class="px-2 py-1 text-left">跨段</th>
+                      <th class="px-2 py-1 text-right">长度(km)</th>
+                      <th class="px-2 py-1 text-right">损耗(dB)</th>
+                      <th class="px-2 py-1 text-right">GSNR(dB)</th>
+                      <th class="px-2 py-1 text-right">OSNR(dB)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in spanTableRows" :key="row.spanId" class="border-b">
+                      <td class="px-2 py-1">Span {{ row.index + 1 }}</td>
+                      <td class="px-2 py-1 text-right">{{ row.length.toFixed(1) }}</td>
+                      <td class="px-2 py-1 text-right">{{ row.spanLoss.toFixed(2) }}</td>
+                      <td class="px-2 py-1 text-right">{{ row.gsnr.toFixed(2) }}</td>
+                      <td class="px-2 py-1 text-right">{{ row.osnr.toFixed(2) }}</td>
+                    </tr>
+                    <tr v-if="spanTableRows.length === 0">
+                      <td colspan="5" class="px-2 py-4 text-center text-gray-400">暂无跨段数据</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="border rounded-lg p-3">
+              <h4 class="text-xs font-bold text-gray-700 mb-2">信道端到端</h4>
+              <div class="overflow-auto">
+                <table class="w-full text-xs border-collapse">
+                  <thead class="bg-gray-100">
+                    <tr>
+                      <th class="px-2 py-1 text-left">信道</th>
+                      <th class="px-2 py-1 text-right">中心频率(THz)</th>
+                      <th class="px-2 py-1 text-right">GSNR(dB)</th>
+                      <th class="px-2 py-1 text-right">OSNR(dB)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="ch in spectrumPoints" :key="'ch-' + ch.channelIndex" class="border-b">
+                      <td class="px-2 py-1">Ch {{ ch.channelIndex + 1 }}</td>
+                      <td class="px-2 py-1 text-right">{{ ch.centerFreqTHz.toFixed(2) }}</td>
+                      <td class="px-2 py-1 text-right">{{ ch.gsnr.toFixed(2) }}</td>
+                      <td class="px-2 py-1 text-right">{{ ch.osnr.toFixed(2) }}</td>
+                    </tr>
+                    <tr v-if="spectrumPoints.length === 0">
+                      <td colspan="4" class="px-2 py-4 text-center text-gray-400">暂无信道数据</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>

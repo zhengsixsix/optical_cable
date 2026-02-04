@@ -61,7 +61,7 @@ export interface CostSettings {
   // 系统规划成本参数
   cable_cost_per_km: number      // 电缆每公里成本
   installation_cost_per_km: number  // 安装每公里成本
-  repeater_cost: number          // 中继器单价
+  repeater_cost: number          // 放大器单价
   branching_unit_cost: number    // 分支器单价
   landing_station_cost: number   // 登陆站成本
   currency: string               // 货币类型

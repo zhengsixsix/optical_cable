@@ -14,6 +14,7 @@ import cors from 'cors'
 import * as GeoTIFF from 'geotiff'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import fs from 'fs/promises'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -25,6 +26,8 @@ app.use(express.json())
 // DEM文件路径（相对于server目录）
 const DEM_DIR = path.join(__dirname, '..', 'public', 'dem')
 const DEM_FILES = ['1.tif', '2.tif', '3.tif', '4.tif', '5.tif', '6.tif']
+const SHARED_DATA_DIR = path.join(__dirname, '..', 'public', 'data')
+const SHARED_EXTENSIONS = new Set(['.tif', '.tiff', '.shp', '.geojson', '.json', '.kml'])
 
 // 全局缓存：存储tif元数据、image对象和完整数据
 const tifCache = []
@@ -99,6 +102,50 @@ app.get('/api/dem/meta', (req, res) => {
     pixelHeight: t.pixelHeight,
   }))
   res.json({ success: true, data: meta })
+})
+
+/**
+ * GET /api/gis/shared
+ * 返回共享数据目录(public/data)中的GIS文件列表
+ */
+app.get('/api/gis/shared', async (req, res) => {
+  try {
+    const files = []
+
+    async function walk(dir) {
+      let entries = []
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          await walk(fullPath)
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase()
+          if (!SHARED_EXTENSIONS.has(ext)) continue
+          const stat = await fs.stat(fullPath)
+          const relativePath = path.relative(SHARED_DATA_DIR, fullPath).replace(/\\/g, '/')
+          files.push({
+            name: entry.name,
+            path: relativePath,
+            ext,
+            size: stat.size,
+            modifiedAt: stat.mtime.toISOString(),
+          })
+        }
+      }
+    }
+
+    await walk(SHARED_DATA_DIR)
+    files.sort((a, b) => a.path.localeCompare(b.path))
+    res.json({ success: true, data: files })
+  } catch (error) {
+    console.error('共享数据列表获取失败:', error)
+    res.status(500).json({ success: false, error: error.message })
+  }
 })
 
 /**

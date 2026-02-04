@@ -1,8 +1,9 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button, Select, Tooltip, Input } from '@/shared/components/base'
 import ConnectorPanel from '@/modules/design/panels/ConnectorPanel.vue'
+import BUConfigPanel from '@/modules/design/panels/BUConfigPanel.vue'
 import WDMConfigDialog from '@/modules/design/dialogs/WDMConfigDialog.vue'
 import ConnectorDialog from '@/modules/design/dialogs/ConnectorDialog.vue'
 import RepeaterConfigDialog from '@/modules/design/dialogs/RepeaterConfigDialog.vue'
@@ -35,6 +36,53 @@ const hasValidProject = computed(() => {
   // 1. 有 USE 项目
   // 2. 没有项目（允许浏览，但显示提示）
   return projectType === 'use' || projectType === null
+})
+
+// 放大器详情列表
+const amplifierDetailRows = computed(() => {
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  if (totalLength === 0) return []
+
+  const repeaterType = settingsStore.settings.repeaterTypes.find(r => r.id === selectedRepeaterType.value)
+  const fallbackModel = repeaterType?.name || '放大器'
+  const fallbackGain = repeaterType?.gain || 16
+  const fallbackPower = repeaterType?.powerConsumption || 0
+
+  let baseList = savedRepeaterConfigs.value.length > 0
+    ? savedRepeaterConfigs.value.map(r => ({
+        id: r.id,
+        kp: r.kp,
+        name: r.name,
+        model: r.model || fallbackModel,
+        gain: r.gain || fallbackGain,
+        powerConsumption: r.powerConsumption ?? fallbackPower,
+      }))
+    : []
+
+  if (baseList.length === 0) {
+    const spanLength = repeaterSpacing.value
+    const spanCount = Math.ceil(totalLength / spanLength)
+    baseList = Array.from({ length: Math.max(0, spanCount - 1) }, (_, i) => ({
+      id: `default-${i + 1}`,
+      kp: Math.round((i + 1) * spanLength * 10) / 10,
+      name: `${fallbackModel}-${String(i + 1).padStart(2, '0')}`,
+      model: fallbackModel,
+      gain: fallbackGain,
+      powerConsumption: fallbackPower,
+    }))
+  }
+
+  const sorted = [...baseList].sort((a, b) => a.kp - b.kp)
+  let prevKp = 0
+  return sorted.map((rep, index) => {
+    const spacing = rep.kp - prevKp
+    prevKp = rep.kp
+    return {
+      ...rep,
+      index: index + 1,
+      spacing,
+    }
+  })
 })
 
 const projectWarningMessage = computed(() => {
@@ -188,6 +236,67 @@ watch(() => connectorStore.elements.length, (newLen) => {
 // 本地编辑状态
 const selectedCableType = ref('lw')
 const selectedRepeaterType = ref('std')
+const availableRoutes = computed(() => {
+  return routeStore.paretoRoutes.length > 0 ? routeStore.paretoRoutes : routeStore.routes
+})
+
+const routeOptions = computed(() => (
+  availableRoutes.value.map((route, index) => ({
+    value: route.id,
+    label: route.name || `路径${index + 1}`,
+  }))
+))
+
+const rplOptions = computed(() => (
+  rplStore.tables.map(table => ({
+    value: table.id,
+    label: table.name,
+  }))
+))
+
+const handleRouteSelect = (routeId: string) => {
+  if (!routeId) {
+    routeStore.selectRoute(null)
+    return
+  }
+  routeStore.selectRoute(routeId)
+  const matchTable = rplStore.tables.find(t => t.routeId === routeId)
+  if (matchTable && rplStore.currentTableId !== matchTable.id) {
+    rplStore.selectTable(matchTable.id)
+  } else if (!matchTable) {
+    appStore.showNotification({ type: 'info', message: '该路由尚未生成 RPL 表格' })
+  }
+}
+
+const handleRplSelect = (tableId: string) => {
+  if (!tableId) {
+    rplStore.selectTable(null)
+    return
+  }
+  if (rplStore.currentTableId !== tableId) {
+    rplStore.selectTable(tableId)
+  }
+  const table = rplStore.tables.find(t => t.id === tableId)
+  if (table?.routeId && routeStore.currentRouteId !== table.routeId) {
+    routeStore.selectRoute(table.routeId)
+  }
+}
+
+watch(() => routeStore.currentRouteId, (routeId) => {
+  if (!routeId) return
+  const matchTable = rplStore.tables.find(t => t.routeId === routeId)
+  if (matchTable && rplStore.currentTableId !== matchTable.id) {
+    rplStore.selectTable(matchTable.id)
+  }
+})
+
+watch(() => rplStore.currentTableId, (tableId) => {
+  if (!tableId) return
+  const table = rplStore.tables.find(t => t.id === tableId)
+  if (table?.routeId && routeStore.currentRouteId !== table.routeId) {
+    routeStore.selectRoute(table.routeId)
+  }
+})
 
 // 下拉选项
 const cableTypeOptions = computed(() =>
@@ -205,11 +314,12 @@ const repeaterTypeOptions = computed(() =>
 )
 const repeaterSpacing = ref(80)
 const targetCapacity = ref(100)
+const resultView = ref<'overview' | 'performance' | 'amplifier'>('overview')
 
 // 检测成本参数是否已配置
 const hasCostSettings = computed(() => {
   const costSettings = settingsStore.costFactors
-  // 至少需要配置电缆成本和中继器成本
+  // 至少需要配置电缆成本和放大器成本
   return costSettings && 
     costSettings.cableCostPerKm !== undefined && 
     costSettings.cableCostPerKm > 0 &&
@@ -222,7 +332,7 @@ const goToProjectSettings = () => {
   router.push('/settings')
 }
 
-// 计算结果 - 从 rplStore 动态获取总长度，联动中继器配置
+// 计算结果 - 从 rplStore 动态获取总长度，联动放大器配置
 // 使用工程设置中的成本参数
 const designResult = computed(() => {
   const cable = settingsStore.settings.cableTypes.find(c => c.id === selectedCableType.value)
@@ -234,7 +344,7 @@ const designResult = computed(() => {
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
   if (totalLength === 0) return null
   
-  // 优先使用保存的中继器配置数量
+  // 优先使用保存的放大器配置数量
   const repeaterCount = savedRepeaterConfigs.value.length > 0 
     ? savedRepeaterConfigs.value.length 
     : Math.ceil(totalLength / repeaterSpacing.value)
@@ -268,10 +378,10 @@ const designResult = computed(() => {
   }
 })
 
-// 显示用中继器列表（最多显示5个）
+// 显示用放大器列表（最多显示5个）
 // 使用保存的配置名称，否则使用器件库名称
 const displayRepeaters = computed(() => {
-  // 如果有保存的中继器配置，使用配置中的名称
+  // 如果有保存的放大器配置，使用配置中的名称
   if (savedRepeaterConfigs.value.length > 0) {
     const configs = savedRepeaterConfigs.value
     if (configs.length <= 5) {
@@ -287,9 +397,9 @@ const displayRepeaters = computed(() => {
     ]
   }
   
-  // 没有配置时，使用器件库中继器类型名称
+  // 没有配置时，使用器件库放大器类型名称
   const repeaterType = settingsStore.settings.repeaterTypes.find(r => r.id === selectedRepeaterType.value)
-  const typeName = repeaterType?.name || '中继器'
+  const typeName = repeaterType?.name || '放大器'
   const count = designResult.value?.repeaterCount || 0
   
   if (count <= 5) {
@@ -351,13 +461,17 @@ const spanScanResult = ref<SpanScanResult | null>(null)
 const recommendedSpan = ref<number | null>(null)// 自动落位结果
 const autoPlacementResult = ref<any>(null)
 
-// 中继器配置数据（用于联动链路分析等）
+// 放大器配置数据（用于联动链路分析等）
 const savedRepeaterConfigs = ref<Array<{
   id: string
   kp: number
   name: string
   gain: number
   noiseFigure?: number
+  model?: string
+  spacing?: number
+  powerConsumption?: number
+  type?: string
 }>>([])
 
 // 设备编辑弹框
@@ -452,7 +566,7 @@ const handleCalculateGSNR = () => {
   }, 500)
 }
 
-// 打开中继器配置弹框
+// 打开放大器配置弹框
 const openRepeaterPanel = () => {
   showRepeaterDialog.value = true
 }
@@ -542,7 +656,7 @@ const handleModelConfirm = (config: { fiberModel: string; [key: string]: any }) 
       routePoints
     )
     
-    // 更新中继器间距
+    // 更新放大器间距
     repeaterSpacing.value = recommendation.recommendedSpanKm
     
     // 同步计算 GSNR 数据
@@ -584,12 +698,12 @@ const currentOpticalLink = computed<OpticalLink | null>(() => {
 
   const wdmConfig = settingsStore.transmissionConfig
 
-  // 构建节点列表 - 优先使用保存的中继器配置
+  // 构建节点列表 - 优先使用保存的放大器配置
   const nodes: LinkNode[] = []
   nodes.push({ id: 'terminal-start', type: 'terminal', name: '起点站', kp: 0 })
   
   if (savedRepeaterConfigs.value.length > 0) {
-    // 使用保存的中继器配置
+    // 使用保存的放大器配置
     savedRepeaterConfigs.value.forEach(rep => {
       nodes.push({
         id: rep.id,
@@ -715,21 +829,25 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
   })
 }
 
-// 处理中继器配置保存
+// 处理放大器配置保存
 const handleRepeatersSaved = (repeaters: any[]) => {
   savedRepeaterConfigs.value = repeaters.map(r => ({
     id: r.id,
     kp: r.kp,
     name: r.name,
     gain: r.gain || 16,
-    noiseFigure: 5
+    noiseFigure: r.noiseFigure || 5,
+    model: r.model,
+    spacing: r.spacing,
+    powerConsumption: r.powerConsumption,
+    type: r.type
   }))
   
-  // 区分主干线和分支线上的中继器
+  // 区分主干线和分支线上的放大器
   const mainTrunkRepeaters = repeaters.filter(r => !r.remarks?.includes('分支线'))
   const branchRepeaters = repeaters.filter(r => r.remarks?.includes('分支线'))
   
-  // 同步到 monitorStore，使地图显示中继器位置
+  // 同步到 monitorStore，使地图显示放大器位置
   const newDevices = repeaters.map(rep => {
     const isBranchRepeater = rep.remarks?.includes('分支线')
     const existing = monitorStore.devices.find(d => d.id === rep.id)
@@ -767,7 +885,7 @@ const handleRepeatersSaved = (repeaters: any[]) => {
     }
   })
   
-  // 保留非中继器设备（包括登陆站、分支器、分支登陆站等），替换中继器设备
+  // 保留非放大器设备（包括登陆站、分支器、分支登陆站等），替换放大器设备
   const repIds = new Set(repeaters.map(r => r.id))
   const otherDevices = monitorStore.devices.filter(d => {
     // 保留不在替换列表中的设备
@@ -776,13 +894,13 @@ const handleRepeatersSaved = (repeaters: any[]) => {
     if (d.type === 'landing' || d.type === 'bu' || d.type === 'branching' || (d as any).isBranchStation) {
       return true
     }
-    // 移除旧的中继器（会被新的替换）
+    // 移除旧的放大器（会被新的替换）
     if (d.type === 'amplifier_e' || d.type === 'amplifier_w') {
       return false
     }
     return true
   })
-  // 合并后按 KP 排序，分支线中继器和分支登陆站放在最后
+  // 合并后按 KP 排序，分支线放大器和分支登陆站放在最后
   const allDevices = [...otherDevices, ...newDevices]
   const mainTrunkDevices = allDevices.filter(d => 
     !(d as any).isBranchStation && !(d as any).isBranchRepeater
@@ -792,7 +910,7 @@ const handleRepeatersSaved = (repeaters: any[]) => {
   )
   monitorStore.devices.splice(0, monitorStore.devices.length, ...mainTrunkDevices, ...branchDevices)
   
-  // 同步到 connectorStore，使接线元管理显示中继器
+  // 同步到 connectorStore，使接线元管理显示放大器
   // 先按 KP 排序
   const sortedRepeaters = [...repeaters].sort((a, b) => a.kp - b.kp)
   
@@ -833,8 +951,8 @@ const handleRepeatersSaved = (repeaters: any[]) => {
   }
   
   showRepeaterDialog.value = false
-  appStore.showNotification({ type: 'success', message: `已保存 ${repeaters.length} 个中继器配置` })
-  appStore.addLog('INFO', `中继器配置已更新: ${repeaters.length} 个中继器`)
+  appStore.showNotification({ type: 'success', message: `已保存 ${repeaters.length} 个放大器配置` })
+  appStore.addLog('INFO', `放大器配置已更新: ${repeaters.length} 个放大器`)
 }
 
 // 打开链路分析 (Step 9)
@@ -874,7 +992,7 @@ const routePoints = computed(() => connectorStore.elements)
 const toggleEditMode = () => {
   isEditMode.value = !isEditMode.value
   if (isEditMode.value) {
-    appStore.showNotification({ type: 'info', message: '已开启编辑模式，可拖拽调整中继器位置' })
+    appStore.showNotification({ type: 'info', message: '已开启编辑模式，可拖拽调整放大器位置' })
   } else {
     appStore.showNotification({ type: 'info', message: '已关闭编辑模式' })
   }
@@ -1062,15 +1180,37 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
     <!-- 传输系统规划工具栏 -->
     <template #toolbar>
       <div class="flex items-center justify-between px-4 py-2 bg-white border-b">
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-3 flex-wrap">
           <span class="text-sm font-medium text-gray-700">传输系统规划</span>
           <span class="text-xs text-gray-400">| 配置 → 仿真 → 分析</span>
+          <div class="flex items-center gap-2 ml-2">
+            <span class="text-xs text-gray-500">路由</span>
+            <Select
+              v-if="routeOptions.length > 0"
+              :model-value="routeStore.currentRouteId || ''"
+              :options="routeOptions"
+              class="w-44"
+              @update:model-value="handleRouteSelect"
+            />
+            <span v-else class="text-xs text-gray-400">暂无路由</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-500">RPL</span>
+            <Select
+              v-if="rplOptions.length > 0"
+              :model-value="rplStore.currentTableId || ''"
+              :options="rplOptions"
+              class="w-44"
+              @update:model-value="handleRplSelect"
+            />
+            <span v-else class="text-xs text-gray-400">暂无表格</span>
+          </div>
         </div>
         <div class="flex items-center gap-2">
           <!-- 配置类按钮 -->
-          <Tooltip content="中继器位置与参数配置">
+          <Tooltip content="放大器位置与参数配置">
             <Button variant="outline" size="sm" @click="openRepeaterPanel">
-              <Radio class="w-4 h-4 mr-1" /> 中继器
+              <Radio class="w-4 h-4 mr-1" /> 放大器
             </Button>
           </Tooltip>
           <Tooltip content="WDM传输参数配置">
@@ -1119,7 +1259,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
     </template>
 
     <template #left>
-      <!-- 3.1.1 电缆/中继器配置 -->
+      <!-- 3.1.1 电缆/放大器配置 -->
       <Card class="flex-shrink-0">
         <CardHeader class="pb-2">
           <span class="font-semibold text-sm flex items-center gap-2">
@@ -1134,12 +1274,12 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
               <Select v-model="selectedCableType" :options="cableTypeOptions" />
             </div>
             <div>
-              <label class="block text-xs text-gray-500 mb-1 font-medium">中继器类型</label>
+              <label class="block text-xs text-gray-500 mb-1 font-medium">放大器类型</label>
               <Select v-model="selectedRepeaterType" :options="repeaterTypeOptions" />
             </div>
             <div>
               <div class="flex justify-between items-center mb-1">
-                <label class="text-xs text-gray-500 font-medium">中继器间距</label>
+                <label class="text-xs text-gray-500 font-medium">放大器间距</label>
                 <span class="text-xs font-bold text-primary">{{ repeaterSpacing }} km</span>
               </div>
               <input v-model.number="repeaterSpacing" type="range" min="40" max="120" step="5"
@@ -1148,6 +1288,9 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
           </div>
         </CardContent>
       </Card>
+
+      <!-- BU 配置 -->
+      <BUConfigPanel class="mt-2" />
 
       <!-- 3.1.2 接线元管理 -->
       <ConnectorPanel class="flex-1 mt-2 min-h-0" @add="openConnectorAdd" @edit="openConnectorEdit" />
@@ -1238,7 +1381,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
             </div>
             <div class="p-3 text-center border-r border-gray-200 bg-gray-50/30">
               <div class="text-sm font-semibold text-gray-800">{{ designResult.repeaterCount }}</div>
-              <div class="text-[10px] text-gray-500">中继器数</div>
+              <div class="text-[10px] text-gray-500">放大器数</div>
             </div>
             <div class="p-3 text-center border-r border-gray-200 bg-gray-50/30">
               <div class="text-sm font-semibold text-gray-800">{{ designResult.maxCapacity }}</div>
@@ -1258,81 +1401,162 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
       <!-- 3.1.5 结果反馈展示 -->
       <Card class="flex-1 flex flex-col">
         <CardHeader class="pb-2 flex-shrink-0 bg-gray-50/50 border-b">
-          <span class="font-semibold text-sm flex items-center gap-2 text-gray-700">
-            <GitBranch class="w-4 h-4 text-gray-600" />
-            结果反馈
-          </span>
+          <div class="flex items-center justify-between w-full">
+            <span class="font-semibold text-sm flex items-center gap-2 text-gray-700">
+              <GitBranch class="w-4 h-4 text-gray-600" />
+              结果反馈
+            </span>
+            <div class="flex gap-1">
+              <button
+                class="px-2 py-1 text-xs rounded transition-colors"
+                :class="resultView === 'overview' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-600'"
+                @click="resultView = 'overview'"
+              >
+                概览
+              </button>
+              <button
+                class="px-2 py-1 text-xs rounded transition-colors"
+                :class="resultView === 'performance' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-600'"
+                @click="resultView = 'performance'"
+              >
+                性能曲线
+              </button>
+              <button
+                class="px-2 py-1 text-xs rounded transition-colors"
+                :class="resultView === 'amplifier' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100 text-gray-600'"
+                @click="resultView = 'amplifier'"
+              >
+                放大器详情
+              </button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent class="pt-4 flex-1 flex flex-col bg-white">
-          <div v-if="designResult" class="space-y-4 flex-1">
-            <!-- 系统概览 -->
-            <div class="grid grid-cols-2 gap-3">
-              <div class="p-3 bg-gray-50 rounded border border-gray-200 text-center">
-                <div class="text-lg font-bold text-primary">{{ designResult.totalLength.toLocaleString() }}</div>
-                <div class="text-xs text-gray-500 mt-1">总长度 (km)</div>
+          <div v-if="designResult" class="flex-1 flex flex-col">
+            <!-- 概览 -->
+            <div v-show="resultView === 'overview'" class="space-y-4 flex-1">
+              <div class="grid grid-cols-2 gap-3">
+                <div class="p-3 bg-gray-50 rounded border border-gray-200 text-center">
+                  <div class="text-lg font-bold text-primary">{{ designResult.totalLength.toLocaleString() }}</div>
+                  <div class="text-xs text-gray-500 mt-1">总长度 (km)</div>
+                </div>
+                <div class="p-3 bg-gray-50 rounded border border-gray-200 text-center">
+                  <div class="text-lg font-bold text-primary">{{ designResult.repeaterCount }}</div>
+                  <div class="text-xs text-gray-500 mt-1">放大器数</div>
+                </div>
               </div>
-              <div class="p-3 bg-gray-50 rounded border border-gray-200 text-center">
-                <div class="text-lg font-bold text-primary">{{ designResult.repeaterCount }}</div>
-                <div class="text-xs text-gray-500 mt-1">中继器数</div>
+
+              <div class="border border-gray-200 rounded p-3">
+                <h4 class="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2 border-b pb-2">
+                  <span class="w-1 h-3 bg-gray-500 rounded-sm"></span>
+                  成本估算
+                </h4>
+                <div v-if="!hasCostSettings" class="text-center py-3">
+                  <div class="text-amber-600 text-xs mb-2">
+                    ⚠️ 成本参数未配置
+                  </div>
+                  <div class="text-gray-500 text-[10px] mb-3">
+                    请在工程设置中配置成本参数后查看成本估算
+                  </div>
+                  <Button size="sm" variant="outline" class="text-xs" @click="goToProjectSettings">
+                    去配置
+                  </Button>
+                </div>
+                <div v-else class="space-y-2 text-xs">
+                  <div class="flex justify-between items-center">
+                    <span class="text-gray-600">电缆成本</span>
+                    <span class="font-mono">{{ formatCost(designResult.cableCost) }}</span>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <span class="text-gray-600">放大器成本</span>
+                    <span class="font-mono">{{ formatCost(designResult.repeaterCost) }}</span>
+                  </div>
+                  <div class="flex justify-between items-center pt-2 border-t border-gray-200 mt-2">
+                    <span class="font-bold text-gray-700">总计</span>
+                    <span class="font-bold text-gray-900 font-mono">{{ formatCost(designResult.totalCost) }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="border border-gray-200 rounded p-3">
+                <h4 class="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2 border-b pb-2">
+                  <span class="w-1 h-3 bg-gray-500 rounded-sm"></span>
+                  容量分析
+                </h4>
+                <div class="flex items-center gap-3 mb-2">
+                  <div class="flex-1 bg-gray-100 rounded-sm h-3 overflow-hidden border border-gray-200">
+                    <div class="h-full transition-all duration-300"
+                      :class="targetCapacity <= designResult.maxCapacity ? 'bg-green-600' : 'bg-red-600'"
+                      :style="{ width: Math.min(100, (targetCapacity / designResult.maxCapacity) * 100) + '%' }" />
+                  </div>
+                  <span class="text-xs font-mono text-gray-700 w-16 text-right">{{ designResult.maxCapacity }} Tbps</span>
+                </div>
+                <div class="text-xs font-medium flex items-center gap-1.5"
+                  :class="targetCapacity <= designResult.maxCapacity ? 'text-green-700' : 'text-red-700'">
+                  <span class="flex items-center justify-center w-4 h-4 rounded-full text-[10px] text-white"
+                    :class="targetCapacity <= designResult.maxCapacity ? 'bg-green-600' : 'bg-red-600'">
+                    {{ targetCapacity <= designResult.maxCapacity ? '✓' : '!' }}
+                  </span>
+                  {{ targetCapacity <= designResult.maxCapacity ? '满足容量需求' : '容量不足，请调整参数' }}
+                </div>
               </div>
             </div>
 
-            <!-- 成本明细 -->
-            <div class="border border-gray-200 rounded p-3">
-              <h4 class="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2 border-b pb-2">
-                <span class="w-1 h-3 bg-gray-500 rounded-sm"></span>
-                成本估算
-              </h4>
-              <!-- 未配置成本参数时显示提示 -->
-              <div v-if="!hasCostSettings" class="text-center py-3">
-                <div class="text-amber-600 text-xs mb-2">
-                  ⚠️ 成本参数未配置
-                </div>
-                <div class="text-gray-500 text-[10px] mb-3">
-                  请在工程设置中配置成本参数后查看成本估算
-                </div>
-                <Button size="sm" variant="outline" class="text-xs" @click="goToProjectSettings">
-                  去配置
-                </Button>
+            <!-- 性能曲线 -->
+            <div v-show="resultView === 'performance'" class="space-y-3 flex-1">
+              <div class="border border-gray-200 rounded p-2">
+                <div class="text-xs text-gray-500 mb-2">GSNR 沿路由演化</div>
+                <GSNRMarginChart
+                  v-if="gsnrData.length > 0"
+                  :data="gsnrData"
+                  :required-gsnr="12"
+                  :warning-threshold="3"
+                  :height="200"
+                  :show-repeaters="true"
+                />
+                <div v-else class="text-center text-xs text-gray-400 py-6">暂无 GSNR 数据</div>
               </div>
-              <!-- 已配置时显示成本明细 -->
-              <div v-else class="space-y-2 text-xs">
-                <div class="flex justify-between items-center">
-                  <span class="text-gray-600">电缆成本</span>
-                  <span class="font-mono">{{ formatCost(designResult.cableCost) }}</span>
-                </div>
-                <div class="flex justify-between items-center">
-                  <span class="text-gray-600">中继器成本</span>
-                  <span class="font-mono">{{ formatCost(designResult.repeaterCost) }}</span>
-                </div>
-                <div class="flex justify-between items-center pt-2 border-t border-gray-200 mt-2">
-                  <span class="font-bold text-gray-700">总计</span>
-                  <span class="font-bold text-gray-900 font-mono">{{ formatCost(designResult.totalCost) }}</span>
-                </div>
+              <div class="border border-gray-200 rounded p-2">
+                <div class="text-xs text-gray-500 mb-2">Span 性能扫描</div>
+                <SpanPerformanceChart
+                  v-if="spanScanResult"
+                  :scan-result="spanScanResult"
+                  :height="200"
+                  :show-osnr="true"
+                />
+                <div v-else class="text-center text-xs text-gray-400 py-6">暂无 Span 扫描结果</div>
               </div>
             </div>
 
-            <!-- 容量状态 -->
-            <div class="border border-gray-200 rounded p-3">
-              <h4 class="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2 border-b pb-2">
-                <span class="w-1 h-3 bg-gray-500 rounded-sm"></span>
-                容量分析
-              </h4>
-              <div class="flex items-center gap-3 mb-2">
-                <div class="flex-1 bg-gray-100 rounded-sm h-3 overflow-hidden border border-gray-200">
-                  <div class="h-full transition-all duration-300"
-                    :class="targetCapacity <= designResult.maxCapacity ? 'bg-green-600' : 'bg-red-600'"
-                    :style="{ width: Math.min(100, (targetCapacity / designResult.maxCapacity) * 100) + '%' }" />
-                </div>
-                <span class="text-xs font-mono text-gray-700 w-16 text-right">{{ designResult.maxCapacity }} Tbps</span>
-              </div>
-              <div class="text-xs font-medium flex items-center gap-1.5"
-                :class="targetCapacity <= designResult.maxCapacity ? 'text-green-700' : 'text-red-700'">
-                <span class="flex items-center justify-center w-4 h-4 rounded-full text-[10px] text-white"
-                  :class="targetCapacity <= designResult.maxCapacity ? 'bg-green-600' : 'bg-red-600'">
-                  {{ targetCapacity <= designResult.maxCapacity ? '✓' : '!' }} </span>
-                    {{ targetCapacity <= designResult.maxCapacity ? '满足容量需求' : '容量不足，请调整参数' }} </div>
-              </div>
+            <!-- 放大器详情 -->
+            <div v-show="resultView === 'amplifier'" class="flex-1 overflow-auto">
+              <table class="w-full text-xs border-collapse">
+                <thead class="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th class="px-2 py-2 text-left">序号</th>
+                    <th class="px-2 py-2 text-left">名称</th>
+                    <th class="px-2 py-2 text-right">KP(km)</th>
+                    <th class="px-2 py-2 text-right">间距(km)</th>
+                    <th class="px-2 py-2 text-left">型号</th>
+                    <th class="px-2 py-2 text-right">增益(dB)</th>
+                    <th class="px-2 py-2 text-right">功耗(W)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in amplifierDetailRows" :key="row.id" class="border-b">
+                    <td class="px-2 py-2">{{ row.index }}</td>
+                    <td class="px-2 py-2">{{ row.name }}</td>
+                    <td class="px-2 py-2 text-right">{{ row.kp.toFixed(1) }}</td>
+                    <td class="px-2 py-2 text-right">{{ row.spacing.toFixed(1) }}</td>
+                    <td class="px-2 py-2">{{ row.model || '-' }}</td>
+                    <td class="px-2 py-2 text-right">{{ row.gain.toFixed(1) }}</td>
+                    <td class="px-2 py-2 text-right">{{ row.powerConsumption.toFixed(0) }}</td>
+                  </tr>
+                  <tr v-if="amplifierDetailRows.length === 0">
+                    <td colspan="7" class="px-2 py-6 text-center text-gray-400">暂无放大器数据</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
 
             <!-- 操作按钮 -->
@@ -1346,6 +1570,10 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                 <RotateCcw class="w-4 h-4 mr-2" /> 重置参数
               </Button>
             </div>
+          </div>
+          <div v-else class="flex-1 flex items-center justify-center text-sm text-gray-400">
+            暂无结果数据，请先导入路由并配置参数
+          </div>
         </CardContent>
       </Card>
     </template>

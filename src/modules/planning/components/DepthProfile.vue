@@ -40,16 +40,14 @@ const hoverInfo = ref({
   elevation: 0  // 正值=海拔，负值=水深
 })
 
-// DEM API 基础地址
-const DEM_API_BASE = 'http://localhost:3001'
-
 // 加载剖面数据（框选区域模式 - 沿左上角到右下角对角线采样）
 const loadProfileData = async (extent: [number, number, number, number]) => {
   loading.value = true
   hasData.value = false
 
   try {
-    const response = await fetch(`${DEM_API_BASE}/api/dem/profile`, {
+    const { API_ENDPOINTS } = await import('@/config/api')
+    const response = await fetch(API_ENDPOINTS.dem.profile, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -78,7 +76,8 @@ const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
   hasData.value = false
 
   try {
-    const response = await fetch(`${DEM_API_BASE}/api/dem/profile`, {
+    const { API_ENDPOINTS } = await import('@/config/api')
+    const response = await fetch(API_ENDPOINTS.dem.profile, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

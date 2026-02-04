@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRouteStore, useAppStore, useRPLStore } from '@/stores'
 import { repeaterModelOptions, repeaterSpacingConfig } from '@/data/mockData'
@@ -35,7 +35,7 @@ interface RepeaterConfig {
   longitude: number
   latitude: number
   depth: number
-  spacing: number        // 与前一中继器间距
+  spacing: number        // 与前一放大器间距
   model: string
   gain: number           // 增益 dB
   powerConsumption: number // 功耗 W
@@ -50,7 +50,7 @@ const modelOptions = repeaterModelOptions
 const recommendedSpacing = repeaterSpacingConfig.recommended
 const maxSpacing = repeaterSpacingConfig.max
 
-// 从 RPL 数据生成中继器配置
+// 从 RPL 数据生成放大器配置
 function generateRepeatersFromRPL() {
   const records = rplStore.currentTable?.records || []
   const repeaterRecords = records.filter(r => r.pointType === 'repeater')
@@ -149,7 +149,7 @@ function autoOptimize() {
     })
   }
   recalculateSpacing()
-  appStore.showNotification({ type: 'success', message: `已优化为 ${optimalCount} 个中继器，间距 ${optimalSpacing.toFixed(1)}km` })
+  appStore.showNotification({ type: 'success', message: `已优化为 ${optimalCount} 个放大器，间距 ${optimalSpacing.toFixed(1)}km` })
 }
 
 function moveRepeater(repId: string, delta: number) {
@@ -162,7 +162,7 @@ function moveRepeater(repId: string, delta: number) {
 
 function handleSave() {
   emit('update', repeaters.value)
-  appStore.showNotification({ type: 'success', message: '中继器配置已保存' })
+  appStore.showNotification({ type: 'success', message: '放大器配置已保存' })
 }
 
 function handleLocate(kp: number) {
@@ -191,7 +191,7 @@ watch(() => [props.routeId, rplStore.currentTable], () => {
     <CardHeader class="shrink-0 border-b">
       <div class="flex items-center gap-2">
         <Radio class="w-5 h-5 text-blue-600" />
-        <span class="font-semibold">中继器位置配置</span>
+        <span class="font-semibold">放大器位置配置</span>
       </div>
       <div class="flex items-center gap-2">
         <Button variant="outline" size="sm" @click="autoOptimize">
@@ -214,7 +214,7 @@ watch(() => [props.routeId, rplStore.currentTable], () => {
       <div class="px-4 py-3 bg-gray-50 border-b grid grid-cols-4 gap-4 text-sm">
         <div class="text-center">
           <div class="font-semibold text-blue-600">{{ totalRepeaters }}</div>
-          <div class="text-xs text-gray-500">中继器数量</div>
+          <div class="text-xs text-gray-500">放大器数量</div>
         </div>
         <div class="text-center">
           <div class="font-semibold text-green-600">{{ avgSpacing.toFixed(1) }}</div>
@@ -235,10 +235,10 @@ watch(() => [props.routeId, rplStore.currentTable], () => {
       <!-- 推荐提示 -->
       <div class="px-4 py-2 bg-blue-50 border-b text-xs text-blue-700 flex items-center gap-2">
         <AlertTriangle class="w-4 h-4" />
-        推荐中继器间距: {{ recommendedSpacing }}km，最大不超过 {{ maxSpacing }}km
+        推荐放大器间距: {{ recommendedSpacing }}km，最大不超过 {{ maxSpacing }}km
       </div>
 
-      <!-- 中继器列表 -->
+      <!-- 放大器列表 -->
       <div class="flex-1 overflow-auto">
         <table class="w-full text-sm border-collapse">
           <thead class="bg-gray-100 sticky top-0 z-10">
@@ -341,7 +341,7 @@ watch(() => [props.routeId, rplStore.currentTable], () => {
             </tr>
             <tr v-if="repeaters.length === 0">
               <td colspan="7" class="px-4 py-8 text-center text-gray-400">
-                暂无中继器，点击"添加"按钮添加
+                暂无放大器，点击"添加"按钮添加
               </td>
             </tr>
           </tbody>
@@ -350,9 +350,9 @@ watch(() => [props.routeId, rplStore.currentTable], () => {
 
       <!-- 底部状态 -->
       <div class="px-4 py-2 border-t bg-gray-50 text-xs text-gray-500 flex items-center justify-between">
-        <span>共 {{ repeaters.length }} 个中继器</span>
+        <span>共 {{ repeaters.length }} 个放大器</span>
         <span v-if="repeaters.some(r => hasSpacingWarning(r.spacing))" class="text-orange-600">
-          存在间距超标的中继器，建议调整
+          存在间距超标的放大器，建议调整
         </span>
       </div>
     </CardContent>

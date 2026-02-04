@@ -218,7 +218,7 @@ export class ReportExportService {
     // 材料成本
     lines.push('一、材料成本')
     lines.push(`  海缆材料: ${this.formatCurrency(data.cableCost)}`)
-    lines.push(`  中继器设备: ${this.formatCurrency(data.repeaterCost)}`)
+    lines.push(`  放大器设备: ${this.formatCurrency(data.repeaterCost)}`)
     lines.push(`  分支器设备: ${this.formatCurrency(data.branchingUnitCost)}`)
     lines.push(`  终端设备: ${this.formatCurrency(data.terminalEquipmentCost)}`)
     lines.push('')
@@ -270,7 +270,7 @@ export class ReportExportService {
       lines.push('【链路概要】')
       lines.push(`  总长度: ${data.totalLength.toFixed(1)} km`)
       lines.push(`  跨段数: ${data.spanCount}`)
-      lines.push(`  中继器数: ${data.repeaterCount}`)
+      lines.push(`  放大器数: ${data.repeaterCount}`)
       lines.push('')
 
       lines.push('【WDM参数】')
@@ -371,7 +371,7 @@ export class ReportExportService {
   <table>
     <tr><th>项目</th><th class="currency">金额</th></tr>
     <tr><td>海缆材料</td><td class="currency">${this.formatCurrency(data.cableCost)}</td></tr>
-    <tr><td>中继器设备</td><td class="currency">${this.formatCurrency(data.repeaterCost)}</td></tr>
+    <tr><td>放大器设备</td><td class="currency">${this.formatCurrency(data.repeaterCost)}</td></tr>
     <tr><td>分支器设备</td><td class="currency">${this.formatCurrency(data.branchingUnitCost)}</td></tr>
     <tr><td>终端设备</td><td class="currency">${this.formatCurrency(data.terminalEquipmentCost)}</td></tr>
     <tr><td>人工成本</td><td class="currency">${this.formatCurrency(data.laborCost)}</td></tr>
@@ -450,7 +450,7 @@ export class ReportExportService {
     const lines: string[] = [
       '项目,金额',
       `海缆材料,${data.cableCost}`,
-      `中继器设备,${data.repeaterCost}`,
+      `放大器设备,${data.repeaterCost}`,
       `分支器设备,${data.branchingUnitCost}`,
       `终端设备,${data.terminalEquipmentCost}`,
       `人工成本,${data.laborCost}`,
@@ -564,7 +564,7 @@ export class ReportExportService {
       total: params.costs.total,
       costBreakdown: [
         { category: '材料', item: params.cableType + ' 海缆', quantity: params.totalLength, unit: 'km', unitCost: params.costs.cable / Math.max(params.totalLength, 1), totalCost: params.costs.cable, percentage: params.costs.cable / params.costs.total * 100 },
-        { category: '设备', item: params.repeaterType + ' 中继器', quantity: params.repeaterCount, unit: '台', unitCost: params.costs.repeater / Math.max(params.repeaterCount, 1), totalCost: params.costs.repeater, percentage: params.costs.repeater / params.costs.total * 100 },
+        { category: '设备', item: params.repeaterType + ' 放大器', quantity: params.repeaterCount, unit: '台', unitCost: params.costs.repeater / Math.max(params.repeaterCount, 1), totalCost: params.costs.repeater, percentage: params.costs.repeater / params.costs.total * 100 },
       ]
     }
 
@@ -625,7 +625,7 @@ export class ReportExportService {
       isFeasible: params.performance.minMargin >= 0,
       bottleneckType: params.performance.minMargin < 2 ? 'ase' : 'none',
       recommendations: params.performance.minMargin < 2 
-        ? ['建议调整中继器间距', '考虑增加放大器增益']
+        ? ['建议调整放大器间距', '考虑增加放大器增益']
         : ['系统性能良好'],
       spanResults
     }

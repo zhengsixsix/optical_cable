@@ -129,7 +129,7 @@ class ProjectFileService {
       return { valid: false, error: '项目文件缺少路由点数据 (geometry_pool)' }
     }
     
-    // 检查是否有关键事件（登陆站、中继器等）
+    // 检查是否有关键事件（登陆站、放大器等）
     const keyEvents = projectData.route_engineering.key_events
     if (!keyEvents || keyEvents.length < 2) {
       return { valid: false, error: '项目文件缺少关键事件数据，至少需要2个登陆站' }
@@ -1312,7 +1312,7 @@ class ProjectFileService {
       // 7. 同步路线数据到 routeStore 以便地图显示
       const routeStore = useRouteStore()
       
-      // 创建路由点 (仅包含关键点: 登陆站、中继器、分支器)
+      // 创建路由点 (仅包含关键点: 登陆站、放大器、分支器)
       const routePoints = records
         .filter(r => r.pointType !== 'waypoint')
         .map(r => ({
@@ -1380,7 +1380,7 @@ class ProjectFileService {
         // 使用新数组替换以确保响应式
         const newElements: any[] = []
         
-        // 只添加关键点作为接线元（登陆站、中继器、分支器）
+        // 只添加关键点作为接线元（登陆站、放大器、分支器）
         records.forEach((record, index) => {
           if (record.pointType !== 'waypoint') {
             const connectorType = this.mapPointTypeToConnectorType(record.pointType)

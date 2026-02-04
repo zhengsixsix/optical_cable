@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, FileText, Download, CheckCircle, Loader2 } from 'lucide-vue-next'
@@ -39,7 +39,7 @@ const dialogTitle = computed(() =>
 // 获取当前设计数据
 const designData = computed(() => {
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
-  const repeaterSpacing = 80 // 默认中继器间距
+  const repeaterSpacing = 80 // 默认放大器间距
   const repeaterCount = Math.ceil(totalLength / repeaterSpacing)
   
   return {
@@ -63,7 +63,7 @@ const doExport = async () => {
         totalLength: designData.value.totalLength,
         repeaterCount: designData.value.repeaterCount,
         cableType: 'G.654.E 大有效面积光纤',
-        repeaterType: '标准中继器',
+        repeaterType: '标准放大器',
         repeaterSpacing: 80,
         costs: {
           cable: designData.value.totalLength * 25000,
@@ -149,7 +149,7 @@ const doExport = async () => {
                 <span class="font-medium">{{ designData.totalLength.toLocaleString() }} km</span>
               </div>
               <div class="flex justify-between">
-                <span class="text-gray-500">中继器数:</span>
+                <span class="text-gray-500">放大器数:</span>
                 <span class="font-medium">{{ designData.repeaterCount }}</span>
               </div>
               <div v-if="type === 'performance'" class="flex justify-between">

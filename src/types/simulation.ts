@@ -25,7 +25,7 @@ export interface FiberParams {
 
 // ========== 放大器参数 ==========
 
-/** 放大器/中继器参数 */
+/** 放大器/放大器参数 */
 export interface AmplifierParams {
   /** 放大器类型 */
   type: 'EDFA' | 'Raman' | 'Hybrid'
@@ -123,7 +123,7 @@ export interface LinkNode {
   name: string
   /** KP位置 (km) */
   kp: number
-  /** 放大器参数 (中继器节点) */
+  /** 放大器参数 (放大器节点) */
   amplifier?: AmplifierParams
 }
 

@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRPLStore, useAppStore } from '@/stores'
 import { exportRPLFile } from '@/services'
@@ -43,7 +43,7 @@ const metadata = computed(() => currentTable.value?.metadata)
 
 const pointTypeOptions = [
   { value: 'landing', label: '登陆站' },
-  { value: 'repeater', label: '中继器' },
+  { value: 'repeater', label: '放大器' },
   { value: 'branching', label: '分支器' },
   { value: 'joint', label: '接头' },
   { value: 'waypoint', label: '路径点' },
@@ -190,7 +190,7 @@ const someSelected = computed(() =>
           </div>
           <div class="text-center">
             <div class="font-semibold text-blue-600">{{ metadata.repeaters }}</div>
-            <div class="text-xs text-gray-500">中继器</div>
+            <div class="text-xs text-gray-500">放大器</div>
           </div>
           <div class="text-center">
             <div class="font-semibold text-purple-600">{{ metadata.branchingUnits }}</div>

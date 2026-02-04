@@ -2356,30 +2356,40 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
       }
     })
 
-    // 生成光纤段
-    const fibers: any[] = []
+    // 生成海缆段（用于配置铠装类型和敷设余量）
+    const cableSegments: any[] = []
     for (let i = 0; i < devices.length - 1; i++) {
       const fromElem = devices[i]
       const toElem = devices[i + 1]
-      fibers.push({
-        id: `fiber-${Date.now()}-${i}`,
-        name: `光纤段 F${i + 1}`,
-        type: 'fiber',
+      const segmentLength = Math.abs(toElem.kp - fromElem.kp)
+      
+      // 默认使用轻铠 (LW)，后续可根据风险等级调整
+      cableSegments.push({
+        id: `cable-seg-${Date.now()}-${i}`,
+        name: `海缆段 SEG-${String(i + 1).padStart(3, '0')}`,
+        type: 'cable_segment',
         kp: fromElem.kp,
         endKp: toElem.kp,
-        longitude: 0,
-        latitude: 0,
-        depth: 0,
-        status: 'active',
+        longitude: (fromElem.longitude + toElem.longitude) / 2,
+        latitude: (fromElem.latitude + toElem.latitude) / 2,
+        depth: (fromElem.depth + toElem.depth) / 2,
+        status: 'planned',
         specifications: '',
         remarks: `${fromElem.name} → ${toElem.name}`,
         fromDeviceId: fromElem.id,
         toDeviceId: toElem.id,
-        length: Math.abs(toElem.kp - fromElem.kp),
+        length: segmentLength,
+        // 海缆段特有属性
+        cableTypeId: 'LW',
+        cableTypeName: 'LW (轻型)',
+        armorType: '轻铠',
+        slack: 3,           // 默认 3% 敷设余量
+        burialDepth: 1.0,   // 默认 1m 埋深
+        riskLevel: 'low',   // 默认低风险
       })
     }
 
-    const allElements = [...devices, ...fibers]
+    const allElements = [...devices, ...cableSegments]
 
     // 确保有表格
     if (connectorStore.tables.length === 0) {
@@ -2488,9 +2498,10 @@ const handleRunPlanning = async () => {
   const serviceAvailable = await checkRoutePlanningService()
   if (!serviceAvailable) {
     isPlanningLoading.value = false
+    const { API_BASE_URL } = await import('@/config/api')
     appStore.showNotification({
       type: 'error',
-      message: '规划服务不可用，请确保后端服务已启动 (localhost:3001)'
+      message: `规划服务不可用，请确保后端服务已启动 (${API_BASE_URL})`
     })
     appStore.addLog('ERROR', '路由规划服务不可用')
     return

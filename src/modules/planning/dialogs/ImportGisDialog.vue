@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { Upload, X, FileText, Loader2, Check, AlertCircle, Trash2 } from 'lucide-vue-next'
 import { useAppStore, useLayerStore } from '@/stores'
+import { fetchSharedGisFiles, type SharedGisFile } from '@/services'
 import { Button } from '@/shared/components/base'
 
 interface Props {
@@ -26,13 +27,17 @@ const emit = defineEmits<{
 const appStore = useAppStore()
 const layerStore = useLayerStore()
 
-const dataSource = ref<'local' | 'server' | 'web'>('local')
+const dataSource = ref<'local' | 'server'>('local')
 const isDragging = ref(false)
 const isProcessing = ref(false)
 const coordinateSystem = ref('')
 const processOption = ref('default')
 const showPreview = ref(true)
 const droppedFiles = ref<File[]>([])
+const sharedFiles = ref<SharedGisFile[]>([])
+const isSharedLoading = ref(false)
+const sharedLoaded = ref(false)
+const uploadCacheKey = 'gis-upload-cache-v1'
 
 const gisLayers = ref<GisLayerItem[]>([
   { id: 'elevation', name: '海洋高程', required: true, checked: true, filePath: '', status: 'none' },
@@ -56,6 +61,14 @@ watch(() => props.visible, (val) => {
     resetForm()
   }
 })
+watch(dataSource, (source) => {
+  if (source === 'server' && !sharedLoaded.value) {
+    loadSharedFiles()
+  }
+  if (source === 'server') {
+    droppedFiles.value = []
+  }
+})
 
 function resetForm() {
   dataSource.value = 'local'
@@ -70,6 +83,47 @@ function resetForm() {
   })
 }
 
+async function loadSharedFiles() {
+  if (isSharedLoading.value) return
+  isSharedLoading.value = true
+  try {
+    sharedFiles.value = await fetchSharedGisFiles()
+    sharedLoaded.value = true
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `获取共享数据失败: ${(error as Error).message}` })
+  } finally {
+    isSharedLoading.value = false
+  }
+}
+
+function getUploadCache(): string[] {
+  try {
+    const raw = localStorage.getItem(uploadCacheKey)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+function setUploadCache(cache: string[]) {
+  try {
+    localStorage.setItem(uploadCacheKey, JSON.stringify(cache.slice(-200)))
+  } catch {
+    // ignore
+  }
+}
+
+function checkDuplicateAndRemember(file: File): boolean {
+  const signature = `${file.name}_${file.size}_${file.lastModified}`
+  const cache = getUploadCache()
+  if (cache.includes(signature)) {
+    appStore.showNotification({ type: 'warning', message: `检测到重复文件: ${file.name}，建议直接使用服务器共享数据` })
+    return true
+  }
+  cache.push(signature)
+  setUploadCache(cache)
+  return false
+}
 function handleSelectAll(checked: boolean) {
   gisLayers.value.forEach(layer => {
     layer.checked = checked
@@ -77,6 +131,7 @@ function handleSelectAll(checked: boolean) {
 }
 
 function handleDragOver(e: DragEvent) {
+  if (dataSource.value !== 'local') return
   e.preventDefault()
   isDragging.value = true
 }
@@ -86,12 +141,14 @@ function handleDragLeave() {
 }
 
 function handleDrop(e: DragEvent) {
+  if (dataSource.value !== 'local') return
   e.preventDefault()
   isDragging.value = false
   
   const files = e.dataTransfer?.files
   if (files) {
     Array.from(files).forEach(file => {
+      if (checkDuplicateAndRemember(file)) return
       if (!droppedFiles.value.find(f => f.name === file.name)) {
         droppedFiles.value.push(file)
         autoMatchFile(file)
@@ -135,12 +192,14 @@ function removeDroppedFile(index: number) {
 }
 
 function handleBrowse(layer: GisLayerItem) {
+  if (dataSource.value !== 'local') return
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = '.tif,.tiff,.shp,.geojson,.json'
   input.onchange = (e) => {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (file) {
+      if (checkDuplicateAndRemember(file)) return
       layer.filePath = file.name
       layer.status = 'pending'
       if (!droppedFiles.value.find(f => f.name === file.name)) {
@@ -149,6 +208,10 @@ function handleBrowse(layer: GisLayerItem) {
     }
   }
   input.click()
+}
+function handleSharedSelect(layer: GisLayerItem, value: string) {
+  layer.filePath = value
+  layer.status = value ? 'pending' : 'none'
 }
 
 function clearFilePath(layer: GisLayerItem) {
@@ -246,15 +309,30 @@ function getStatusText(status: string) {
                 v-model="dataSource"
                 class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               >
-                <option value="local">本地文件</option>
-                <option value="server">服务器文件</option>
-                <option value="web">WMS服务</option>
+                <option value="local">个人上传</option>
+                <option value="server">服务器共享</option>
               </select>
+            </div>
+          </div>
+          <div v-if="dataSource === 'server'" class="border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50 text-sm text-gray-600">
+            <div class="flex items-center justify-between">
+              <span>共享数据来源：/public/data</span>
+              <button
+                class="text-xs text-blue-600 hover:underline"
+                :disabled="isSharedLoading"
+                @click="loadSharedFiles"
+              >
+                {{ isSharedLoading ? '加载中...' : '刷新列表' }}
+              </button>
+            </div>
+            <div v-if="sharedFiles.length === 0" class="text-xs text-gray-400 mt-2">
+              暂无共享数据，请在 data 目录中放置 GIS 文件
             </div>
           </div>
 
           <!-- 文件拖放区域 -->
           <div 
+            v-if="dataSource === 'local'"
             :class="[
               'border-2 border-dashed rounded-lg p-6 text-center transition-colors mb-4',
               isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50'
@@ -323,29 +401,45 @@ function getStatusText(status: string) {
                   <span v-if="layer.required" class="text-red-500">(*)</span>
                 </span>
                 <div class="flex-1 flex items-center gap-2">
-                  <span 
-                    v-if="layer.filePath"
-                    class="flex-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded text-xs text-gray-600 truncate"
-                  >
-                    {{ layer.filePath }}
-                  </span>
-                  <span v-else class="flex-1 px-2 py-1 text-gray-400 text-xs">未选择</span>
-                  <button 
-                    v-if="layer.filePath"
-                    class="text-gray-400 hover:text-red-500 transition-colors"
-                    title="清除"
-                    @click="clearFilePath(layer)"
-                  >
-                    <Trash2 class="w-3.5 h-3.5" />
-                  </button>
+                  <template v-if="dataSource === 'server'">
+                    <select
+                      class="flex-1 px-2 py-1 border border-gray-200 rounded text-xs text-gray-700"
+                      :value="layer.filePath"
+                      @change="handleSharedSelect(layer, ($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="">选择共享文件</option>
+                      <option v-for="file in sharedFiles" :key="file.path" :value="file.path">
+                        {{ file.path }}
+                      </option>
+                    </select>
+                  </template>
+                  <template v-else>
+                    <span 
+                      v-if="layer.filePath"
+                      class="flex-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded text-xs text-gray-600 truncate"
+                    >
+                      {{ layer.filePath }}
+                    </span>
+                    <span v-else class="flex-1 px-2 py-1 text-gray-400 text-xs">未选择</span>
+                    <button 
+                      v-if="layer.filePath"
+                      class="text-gray-400 hover:text-red-500 transition-colors"
+                      title="清除"
+                      @click="clearFilePath(layer)"
+                    >
+                      <Trash2 class="w-3.5 h-3.5" />
+                    </button>
+                  </template>
                 </div>
                 <div class="w-[70px] flex justify-center">
                   <button 
+                    v-if="dataSource === 'local'"
                     class="px-2 py-1 bg-gray-500 hover:bg-gray-600 text-white text-xs rounded transition-colors"
                     @click="handleBrowse(layer)"
                   >
                     选择文件
                   </button>
+                  <span v-else class="text-xs text-gray-400">共享数据</span>
                 </div>
                 <div class="w-[50px] flex justify-center">
                   <span :class="['text-xs', getStatusClass(layer.status)]">

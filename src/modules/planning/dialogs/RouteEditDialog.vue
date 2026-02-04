@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
@@ -67,7 +67,7 @@ function handleClose() {
             @click="activeTab = 'repeater'"
           >
             <Radio class="w-4 h-4" />
-            中继器配置
+            放大器配置
           </button>
         </div>
 

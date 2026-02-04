@@ -7,14 +7,14 @@ interface GSNRDataPoint {
   kp: number           // KP位置 (km)
   gsnr: number         // GSNR值 (dB)
   margin: number       // 余量 (dB)
-  repeaterIndex?: number  // 中继器序号
+  repeaterIndex?: number  // 放大器序号
 }
 
 const props = withDefaults(defineProps<{
   data: GSNRDataPoint[]
   requiredGsnr?: number      // 所需GSNR阈值
   warningThreshold?: number  // 警告阈值
-  showRepeaters?: boolean    // 显示中继器位置
+  showRepeaters?: boolean    // 显示放大器位置
   height?: number            // 图表高度
   title?: string
 }>(), {
@@ -259,7 +259,7 @@ const drawChart = () => {
       ctx.lineWidth = 2
       ctx.stroke()
       
-      // 中继器标记
+      // 放大器标记
       if (props.showRepeaters && point.repeaterIndex !== undefined) {
         ctx.fillStyle = '#374151'
         ctx.font = '9px sans-serif'
@@ -446,7 +446,7 @@ onUnmounted(() => {
               </span>
             </div>
             <div v-if="hoveredPoint.repeaterIndex !== undefined">
-              中继器: R{{ hoveredPoint.repeaterIndex }}
+              放大器: R{{ hoveredPoint.repeaterIndex }}
             </div>
           </div>
         </div>

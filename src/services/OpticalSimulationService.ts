@@ -293,7 +293,7 @@ export class OpticalSimulationService {
         description = '链路损耗过大'
         recommendations.push('优化光缆路由减少总长度')
         recommendations.push('检查连接器和接头损耗')
-        recommendations.push('增加中继器数量')
+        recommendations.push('增加放大器数量')
       }
     } else {
       description = '系统性能满足要求'

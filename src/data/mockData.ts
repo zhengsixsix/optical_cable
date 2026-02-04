@@ -15,11 +15,11 @@ export const mockRPLRecords: Omit<RPLRecord, 'id' | 'sequence'>[] = [
   { kp: 0, longitude: 121.4737, latitude: 31.2304, depth: 15, pointType: 'landing', cableType: 'DA', segmentLength: 0, cumulativeLength: 0, slack: 0, burialDepth: 2.0, remarks: '上海登陆站' },
   { kp: 25, longitude: 122.1, latitude: 30.8, depth: 45, pointType: 'waypoint', cableType: 'SA', segmentLength: 25, cumulativeLength: 25, slack: 2.5, burialDepth: 1.5, remarks: '' },
   { kp: 80, longitude: 123.5, latitude: 29.5, depth: 120, pointType: 'waypoint', cableType: 'SA', segmentLength: 55, cumulativeLength: 80, slack: 2.5, burialDepth: 1.0, remarks: '' },
-  { kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 160, slack: 3.0, burialDepth: 0, remarks: 'R1中继器' },
+  { kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 160, slack: 3.0, burialDepth: 0, remarks: 'R1放大器' },
   { kp: 240, longitude: 127.0, latitude: 26.5, depth: 1200, pointType: 'waypoint', cableType: 'LW', segmentLength: 80, cumulativeLength: 240, slack: 2.5, burialDepth: 0, remarks: '' },
-  { kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 320, slack: 3.0, burialDepth: 0, remarks: 'R2中继器' },
+  { kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 320, slack: 3.0, burialDepth: 0, remarks: 'R2放大器' },
   { kp: 400, longitude: 129.8, latitude: 24.0, depth: 3200, pointType: 'waypoint', cableType: 'LW', segmentLength: 80, cumulativeLength: 400, slack: 2.5, burialDepth: 0, remarks: '' },
-  { kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 480, slack: 3.0, burialDepth: 0, remarks: 'R3中继器' },
+  { kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, pointType: 'repeater', cableType: 'LW', segmentLength: 80, cumulativeLength: 480, slack: 3.0, burialDepth: 0, remarks: 'R3放大器' },
   { kp: 520, longitude: 131.0, latitude: 22.5, depth: 1500, pointType: 'branching', cableType: 'LW', segmentLength: 40, cumulativeLength: 520, slack: 2.5, burialDepth: 0, remarks: 'BU1分支器' },
   { kp: 580, longitude: 131.8, latitude: 22.0, depth: 350, pointType: 'waypoint', cableType: 'SA', segmentLength: 60, cumulativeLength: 580, slack: 2.5, burialDepth: 1.0, remarks: '' },
   { kp: 620, longitude: 132.3, latitude: 21.8, depth: 80, pointType: 'waypoint', cableType: 'DA', segmentLength: 40, cumulativeLength: 620, slack: 2.5, burialDepth: 1.5, remarks: '' },
@@ -30,9 +30,9 @@ export const mockRPLRecords: Omit<RPLRecord, 'id' | 'sequence'>[] = [
 export const mockSLDEquipments: Omit<SLDEquipment, 'id' | 'sequence'>[] = [
   { name: '上海终端站', type: 'TE', location: '上海', kp: 0, longitude: 121.4737, latitude: 31.2304, depth: 0, specifications: 'SLTE-400G', remarks: '' },
   { name: 'PFE-SH', type: 'PFE', location: '上海', kp: 0.5, longitude: 121.48, latitude: 31.22, depth: 15, specifications: 'PFE-15kV', remarks: '上海馈电' },
-  { name: 'REP-01', type: 'REP', location: 'KP 160', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, specifications: 'EREP-C+L', remarks: '对应RPL R1中继器' },
-  { name: 'REP-02', type: 'REP', location: 'KP 320', kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, specifications: 'EREP-C+L', remarks: '对应RPL R2中继器' },
-  { name: 'REP-03', type: 'REP', location: 'KP 480', kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, specifications: 'EREP-C+L', remarks: '对应RPL R3中继器' },
+  { name: 'REP-01', type: 'REP', location: 'KP 160', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, specifications: 'EREP-C+L', remarks: '对应RPL R1放大器' },
+  { name: 'REP-02', type: 'REP', location: 'KP 320', kp: 320, longitude: 128.5, latitude: 25.2, depth: 2500, specifications: 'EREP-C+L', remarks: '对应RPL R2放大器' },
+  { name: 'REP-03', type: 'REP', location: 'KP 480', kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, specifications: 'EREP-C+L', remarks: '对应RPL R3放大器' },
   { name: 'BU-01', type: 'BU', location: 'KP 520', kp: 520, longitude: 131.0, latitude: 22.5, depth: 1500, specifications: 'BU-R3', remarks: '对应RPL BU1分支器' },
   { name: 'PFE-OK', type: 'PFE', location: '冲绳', kp: 649, longitude: 132.7, latitude: 21.55, depth: 20, specifications: 'PFE-15kV', remarks: '冲绳馈电' },
   { name: '冲绳终端站', type: 'TE', location: '冲绳', kp: 650, longitude: 132.8, latitude: 21.5, depth: 0, specifications: 'SLTE-400G', remarks: '' },
@@ -120,8 +120,8 @@ export const mockRoutes = [
     name: '路径 1 (成本优先)',
     points: [
       { id: 'p1-1', coordinates: [121.4737, 31.2304], type: 'landing', name: '上海登陆站' },
-      { id: 'p1-2', coordinates: [125.2, 28.0], type: 'repeater', name: 'R1中继器' },
-      { id: 'p1-3', coordinates: [128.5, 25.2], type: 'repeater', name: 'R2中继器' },
+      { id: 'p1-2', coordinates: [125.2, 28.0], type: 'repeater', name: 'R1放大器' },
+      { id: 'p1-3', coordinates: [128.5, 25.2], type: 'repeater', name: 'R2放大器' },
       { id: 'p1-4', coordinates: [132.8, 21.5], type: 'landing', name: '冲绳登陆站' },
     ],
     segments: [
@@ -144,9 +144,9 @@ export const mockRoutes = [
     points: [
       { id: 'p2-1', coordinates: [121.4737, 31.2304], type: 'landing', name: '上海登陆站' },
       { id: 'p2-2', coordinates: [123.5, 29.5], type: 'waypoint' },
-      { id: 'p2-3', coordinates: [125.2, 28.0], type: 'repeater', name: 'R1中继器' },
-      { id: 'p2-4', coordinates: [128.5, 25.2], type: 'repeater', name: 'R2中继器' },
-      { id: 'p2-5', coordinates: [130.5, 23.0], type: 'repeater', name: 'R3中继器' },
+      { id: 'p2-3', coordinates: [125.2, 28.0], type: 'repeater', name: 'R1放大器' },
+      { id: 'p2-4', coordinates: [128.5, 25.2], type: 'repeater', name: 'R2放大器' },
+      { id: 'p2-5', coordinates: [130.5, 23.0], type: 'repeater', name: 'R3放大器' },
       { id: 'p2-6', coordinates: [132.8, 21.5], type: 'landing', name: '冲绳登陆站' },
     ],
     segments: [
@@ -172,10 +172,10 @@ export const mockRoutes = [
       { id: 'p3-1', coordinates: [121.4737, 31.2304], type: 'landing', name: '上海登陆站' },
       { id: 'p3-2', coordinates: [122.1, 30.8], type: 'waypoint' },
       { id: 'p3-3', coordinates: [123.5, 29.5], type: 'waypoint' },
-      { id: 'p3-4', coordinates: [125.2, 28.0], type: 'repeater', name: 'R1中继器' },
+      { id: 'p3-4', coordinates: [125.2, 28.0], type: 'repeater', name: 'R1放大器' },
       { id: 'p3-5', coordinates: [127.0, 26.5], type: 'waypoint' },
-      { id: 'p3-6', coordinates: [128.5, 25.2], type: 'repeater', name: 'R2中继器' },
-      { id: 'p3-7', coordinates: [130.5, 23.0], type: 'repeater', name: 'R3中继器' },
+      { id: 'p3-6', coordinates: [128.5, 25.2], type: 'repeater', name: 'R2放大器' },
+      { id: 'p3-7', coordinates: [130.5, 23.0], type: 'repeater', name: 'R3放大器' },
       { id: 'p3-8', coordinates: [131.0, 22.5], type: 'branching', name: 'BU1分支器' },
       { id: 'p3-9', coordinates: [132.8, 21.5], type: 'landing', name: '冲绳登陆站' },
     ],
@@ -218,21 +218,21 @@ export const mockLayers = [
 // ============================================
 export const mockMonitorDevices = [
   {
-    id: 'mon-rep-01', name: '中继器 R1', type: 'Repeater', neType: 'Repeater', status: 'normal',
+    id: 'mon-rep-01', name: '放大器 R1', type: 'Repeater', neType: 'Repeater', status: 'normal',
     location: 'KP 160', kp: 160, sldEquipmentName: 'REP-01',
     longitude: 125.2, latitude: 28.0, depth: 850,
     inputPower: -12.5, outputPower: 2.8, pumpCurrent: 285,
     pfeVoltage: 48.2, pfeCurrent: 1.25, temperature: 4.2,
   },
   {
-    id: 'mon-rep-02', name: '中继器 R2', type: 'Repeater', neType: 'Repeater', status: 'warning',
+    id: 'mon-rep-02', name: '放大器 R2', type: 'Repeater', neType: 'Repeater', status: 'warning',
     location: 'KP 320', kp: 320, sldEquipmentName: 'REP-02',
     longitude: 128.5, latitude: 25.2, depth: 2500,
     inputPower: -13.2, outputPower: 2.5, pumpCurrent: 295,
     pfeVoltage: 47.8, pfeCurrent: 1.28, temperature: 5.1,
   },
   {
-    id: 'mon-rep-03', name: '中继器 R3', type: 'Repeater', neType: 'Repeater', status: 'normal',
+    id: 'mon-rep-03', name: '放大器 R3', type: 'Repeater', neType: 'Repeater', status: 'normal',
     location: 'KP 480', kp: 480, sldEquipmentName: 'REP-03',
     longitude: 130.5, latitude: 23.0, depth: 2800,
     inputPower: -12.8, outputPower: 2.6, pumpCurrent: 280,
@@ -278,8 +278,8 @@ export const mockMonitorDevices = [
 ]
 
 export const mockAlarmHistory = [
-  { id: 1, time: '14:30', device: '中继器 R2', deviceId: 'mon-rep-02', neType: 'Repeater', message: '温度超过阈值', level: 'warning', status: 'active' },
-  { id: 2, time: '12:15', device: '中继器 R1', deviceId: 'mon-rep-01', neType: 'Repeater', message: '信号恢复正常', level: 'info', status: 'cleared' },
+  { id: 1, time: '14:30', device: '放大器 R2', deviceId: 'mon-rep-02', neType: 'Repeater', message: '温度超过阈值', level: 'warning', status: 'active' },
+  { id: 2, time: '12:15', device: '放大器 R1', deviceId: 'mon-rep-01', neType: 'Repeater', message: '信号恢复正常', level: 'info', status: 'cleared' },
   { id: 3, time: '10:45', device: '分支器 B1', deviceId: 'mon-bu-01', neType: 'BU', message: '端口连接正常', level: 'info', status: 'cleared' },
   { id: 4, time: '09:30', device: '登陆站 L1', deviceId: 'mon-te-sh', neType: 'LandingStation', message: '系统自检完成', level: 'info', status: 'cleared' },
   { id: 5, time: '08:00', device: '系统', deviceId: '', neType: '', message: '系统启动完成', level: 'info', status: 'cleared' },
@@ -303,7 +303,7 @@ export const mockEditableRoutePoints = [
 ]
 
 // ============================================
-// 中继器配置 - 用于 RepeaterConfigPanel/Dialog
+// 放大器配置 - 用于 RepeaterConfigPanel/Dialog
 // ============================================
 export const mockRepeaterConfigs = [
   { name: 'REP-01', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, model: 'EREP-C+L', gain: 15, powerConsumption: 45 },
@@ -311,14 +311,14 @@ export const mockRepeaterConfigs = [
   { name: 'REP-03', kp: 480, longitude: 130.5, latitude: 23.0, depth: 2800, model: 'EREP-C+L', gain: 15, powerConsumption: 45 },
 ]
 
-// 中继器型号选项
+// 放大器型号选项
 export const repeaterModelOptions = [
   { value: 'EREP-C', label: 'EREP-C (C波段)' },
   { value: 'EREP-C+L', label: 'EREP-C+L (C+L波段)' },
   { value: 'EREP-S+C+L', label: 'EREP-S+C+L (全波段)' },
 ]
 
-// 中继器间距配置
+// 放大器间距配置
 export const repeaterSpacingConfig = {
   recommended: 80,  // 推荐间距 km
   max: 120,         // 最大间距 km
@@ -330,12 +330,12 @@ export const repeaterSpacingConfig = {
 // ============================================
 export const mockAlarmRecords = [
   { id: '1', time: '2024-12-10 14:30:25', device: '登陆站 L1', deviceType: 'landing', message: '供电电压低于阈值 (47.2V < 47.5V)', level: 'critical', status: 'active', type: 'voltage' },
-  { id: '2', time: '2024-12-10 14:28:15', device: '中继器 R2', deviceType: 'repeater', message: '设备温度超过警告阈值 (5.2°C > 5.0°C)', level: 'warning', status: 'active', type: 'temperature' },
-  { id: '3', time: '2024-12-10 12:15:30', device: '中继器 R1', deviceType: 'repeater', message: '输出光功率下降 (-2.5dBm)', level: 'major', status: 'acknowledged', type: 'power' },
+  { id: '2', time: '2024-12-10 14:28:15', device: '放大器 R2', deviceType: 'repeater', message: '设备温度超过警告阈值 (5.2°C > 5.0°C)', level: 'warning', status: 'active', type: 'temperature' },
+  { id: '3', time: '2024-12-10 12:15:30', device: '放大器 R1', deviceType: 'repeater', message: '输出光功率下降 (-2.5dBm)', level: 'major', status: 'acknowledged', type: 'power' },
   { id: '4', time: '2024-12-10 10:45:00', device: '分支器 B1', deviceType: 'branching', message: '端口2连接异常', level: 'warning', status: 'cleared', type: 'other' },
-  { id: '5', time: '2024-12-10 09:30:20', device: '中继器 R3', deviceType: 'repeater', message: 'BER超过阈值 (1e-5 > 1e-6)', level: 'major', status: 'active', type: 'other' },
+  { id: '5', time: '2024-12-10 09:30:20', device: '放大器 R3', deviceType: 'repeater', message: 'BER超过阈值 (1e-5 > 1e-6)', level: 'major', status: 'active', type: 'other' },
   { id: '6', time: '2024-12-10 08:15:10', device: '登陆站 L2', deviceType: 'landing', message: 'OSNR下降告警 (25dB < 28dB)', level: 'warning', status: 'acknowledged', type: 'power' },
-  { id: '7', time: '2024-12-09 23:45:00', device: '中继器 R3', deviceType: 'repeater', message: '温度传感器故障', level: 'info', status: 'cleared', type: 'temperature' },
+  { id: '7', time: '2024-12-09 23:45:00', device: '放大器 R3', deviceType: 'repeater', message: '温度传感器故障', level: 'info', status: 'cleared', type: 'temperature' },
   { id: '8', time: '2024-12-09 20:30:00', device: '登陆站 L1', deviceType: 'landing', message: '供电电压恢复正常', level: 'info', status: 'cleared', type: 'voltage' },
 ]
 
@@ -358,7 +358,7 @@ export const alarmFilterOptions = {
   deviceTypeOptions: [
     { value: 'all', label: '全部设备' },
     { value: 'landing', label: '登陆站' },
-    { value: 'repeater', label: '中继器' },
+    { value: 'repeater', label: '放大器' },
     { value: 'branching', label: '分支器' },
   ],
   statusOptions: [
@@ -373,18 +373,18 @@ export const alarmFilterOptions = {
 // 性能历史数据 - 用于 PerformanceView
 // ============================================
 export const mockPerformanceData = [
-  { id: 1, time: '2024-12-10 10:00', device: '中继器 R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
-  { id: 2, time: '2024-12-10 11:00', device: '中继器 R1', voltage: '48.1V', temp: '4.3°C', status: 'Normal' },
-  { id: 3, time: '2024-12-10 12:00', device: '中继器 R1', voltage: '48.3V', temp: '4.2°C', status: 'Normal' },
-  { id: 4, time: '2024-12-10 13:00', device: '中继器 R1', voltage: '48.2V', temp: '4.4°C', status: 'Warning' },
-  { id: 5, time: '2024-12-10 14:00', device: '中继器 R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
-  { id: 6, time: '2024-12-10 15:00', device: '中继器 R1', voltage: '48.1V', temp: '4.1°C', status: 'Normal' },
+  { id: 1, time: '2024-12-10 10:00', device: '放大器 R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
+  { id: 2, time: '2024-12-10 11:00', device: '放大器 R1', voltage: '48.1V', temp: '4.3°C', status: 'Normal' },
+  { id: 3, time: '2024-12-10 12:00', device: '放大器 R1', voltage: '48.3V', temp: '4.2°C', status: 'Normal' },
+  { id: 4, time: '2024-12-10 13:00', device: '放大器 R1', voltage: '48.2V', temp: '4.4°C', status: 'Warning' },
+  { id: 5, time: '2024-12-10 14:00', device: '放大器 R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
+  { id: 6, time: '2024-12-10 15:00', device: '放大器 R1', voltage: '48.1V', temp: '4.1°C', status: 'Normal' },
 ]
 
 export const performanceDeviceOptions = [
-  { value: 'r1', label: '中继器 R1' },
-  { value: 'r2', label: '中继器 R2' },
-  { value: 'r3', label: '中继器 R3' },
+  { value: 'r1', label: '放大器 R1' },
+  { value: 'r2', label: '放大器 R2' },
+  { value: 'r3', label: '放大器 R3' },
   { value: 'b1', label: '分支器 B1' },
 ]
 
@@ -477,7 +477,7 @@ export const protectionOptions = [
 // 注：在路由规划阶段，“路径点”是分段管理节点，用于配置海缆铠装类型和敷设余量
 export const pointTypeOptions = [
   { value: 'landing', label: '登陆站' },
-  { value: 'repeater', label: '中继器' },
+  { value: 'repeater', label: '放大器' },
   { value: 'branching', label: '分支器' },
   { value: 'joint', label: '接头' },
   { value: 'waypoint', label: '路径点' },
@@ -494,7 +494,7 @@ export const fiberPairTypeOptions = [
 export const equipmentTypeOptions = [
   { value: 'TE', label: '终端设备 (TE)' },
   { value: 'PFE', label: '供电设备 (PFE)' },
-  { value: 'REP', label: '中继器 (REP)' },
+  { value: 'REP', label: '放大器 (REP)' },
   { value: 'BU', label: '分支器 (BU)' },
   { value: 'JOINT', label: '接头 (JOINT)' },
   { value: 'OADM', label: '光分插复用器 (OADM)' },

@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, Info, Book, Phone, Mail, MapPin, FileText, Headphones } from 'lucide-vue-next'
@@ -59,7 +59,7 @@ const manualSections = [
   },
   {
     title: '3. 传输系统设计',
-    content: '配置传输系统参数，包括中继器配置、分段参数等。'
+    content: '配置传输系统参数，包括放大器配置、分段参数等。'
   },
   {
     title: '4. 成本与风险评估',

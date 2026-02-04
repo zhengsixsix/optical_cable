@@ -55,7 +55,7 @@ export type NeType = 'LandingStation' | 'Repeater' | 'BU' | 'CableSpan' | 'SLTE'
 
 export const NeTypeMap: Record<NeType, string> = {
   LandingStation: '登陆站',
-  Repeater: '中继器',
+  Repeater: '放大器',
   BU: '分支器',
   CableSpan: '海缆段',
   SLTE: '终端传输设备',
@@ -64,7 +64,7 @@ export const NeTypeMap: Record<NeType, string> = {
 
 export const NeTypeOptions = [
   { value: 'LandingStation', label: '登陆站' },
-  { value: 'Repeater', label: '中继器' },
+  { value: 'Repeater', label: '放大器' },
   { value: 'BU', label: '分支器' },
   { value: 'CableSpan', label: '海缆段' },
   { value: 'SLTE', label: '终端传输设备' },

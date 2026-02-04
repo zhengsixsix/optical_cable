@@ -59,6 +59,7 @@ const getTypeClass = (type: ConnectorType) => {
     amplifier_w: 'bg-green-100 text-green-700',
     bu: 'bg-purple-100 text-purple-700',
     underwater: 'bg-gray-100 text-gray-700',
+    cable_segment: 'bg-amber-100 text-amber-700',
     fiber: 'bg-orange-100 text-orange-700',
     ola: 'bg-green-100 text-green-700',
     joint: 'bg-gray-100 text-gray-700'
@@ -154,11 +155,28 @@ const handleDelete = (id: string) => {
                   </span>
                 </div>
                 <div class="text-xs text-gray-500 space-y-0.5 pl-4">
-                  <div v-if="elem.type === 'fiber'" class="flex items-center gap-3">
+                  <!-- 海缆段显示 -->
+                  <div v-if="elem.type === 'cable_segment'" class="space-y-0.5">
+                    <div class="flex items-center gap-3">
+                      <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }} - {{ elem.endKp?.toFixed(1) }}</span> km</span>
+                      <span class="w-px h-3 bg-gray-300"></span>
+                      <span>长度: <span class="font-medium text-gray-700">{{ (elem.length || 0).toFixed(1) }}</span> km</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <span>缆型: <span class="font-medium text-amber-600">{{ elem.cableTypeName || 'LW' }}</span></span>
+                      <span class="w-px h-3 bg-gray-300"></span>
+                      <span>余量: <span class="font-medium text-gray-700">{{ elem.slack ?? 3 }}%</span></span>
+                      <span class="w-px h-3 bg-gray-300"></span>
+                      <span>埋深: <span class="font-medium text-gray-700">{{ elem.burialDepth ?? 1.0 }}m</span></span>
+                    </div>
+                  </div>
+                  <!-- 光纤段显示 -->
+                  <div v-else-if="elem.type === 'fiber'" class="flex items-center gap-3">
                     <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }} - {{ elem.endKp?.toFixed(1) }}</span> km</span>
                     <span class="w-px h-3 bg-gray-300"></span>
                     <span>长度: <span class="font-medium text-gray-700">{{ (elem.length || (elem.endKp ? elem.endKp - elem.kp : 0)).toFixed(1) }}</span> km</span>
                   </div>
+                  <!-- 其他类型显示 -->
                   <div v-else class="flex items-center gap-3">
                     <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }}</span> km</span>
                     <span class="w-px h-3 bg-gray-300"></span>

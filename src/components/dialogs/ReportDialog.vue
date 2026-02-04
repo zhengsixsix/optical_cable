@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { X, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-vue-next'
@@ -190,7 +190,7 @@ const generateReportContent = () => {
     const data = costReportData.value
     content += `【成本明细】\n`
     content += `- 海缆材料成本: ${formatCurrency(data.cableCost)}\n`
-    content += `- 中继器设备成本: ${formatCurrency(data.repeaterCost)}\n`
+    content += `- 放大器设备成本: ${formatCurrency(data.repeaterCost)}\n`
     content += `- 人工成本: ${formatCurrency(data.laborCost)}\n`
     content += `- 勘测成本: ${formatCurrency(data.surveyingCost)}\n`
     content += `- 船舶租赁成本: ${formatCurrency(data.vesselCost)}\n`
@@ -281,7 +281,7 @@ const generateReportContent = () => {
                 <span class="font-medium">{{ formatCurrency(costReportData.cableCost) }}</span>
               </div>
               <div class="flex justify-between text-sm">
-                <span class="text-gray-600">中继器设备成本</span>
+                <span class="text-gray-600">放大器设备成本</span>
                 <span class="font-medium">{{ formatCurrency(costReportData.repeaterCost) }}</span>
               </div>
               <div class="flex justify-between text-sm">

@@ -347,13 +347,13 @@ export const useRPLStore = defineStore('rpl', () => {
       }
       prevCumulativeDistance = record.cumulativeLength
 
-      // 7. 中继器间距检查
+      // 7. 放大器间距检查
       if (index > 0 && record.pointType === 'repeater') {
         const prevRepeaterIndex = records.slice(0, index).reverse().findIndex(r => r.pointType === 'repeater')
         if (prevRepeaterIndex > -1) {
           const distance = record.cumulativeLength - records[index - 1 - prevRepeaterIndex].cumulativeLength
           if (distance > 120) {
-            warnings.push({ recordId: record.id, field: 'segmentLength', message: `行${lineNum}: 中继器间距${distance.toFixed(1)}km超过建议值120km` })
+            warnings.push({ recordId: record.id, field: 'segmentLength', message: `行${lineNum}: 放大器间距${distance.toFixed(1)}km超过建议值120km` })
           }
         }
       }

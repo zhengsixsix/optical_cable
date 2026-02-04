@@ -1,7 +1,9 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
 import { Button } from '@/shared/components/base'
 import { useAppStore, useRPLStore, useSettingsStore, useRouteStore } from '@/stores'
+import { repeaterPlacementService } from '@/services'
+import type { RoutePoint } from '@/types'
 import { 
   X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio 
 } from 'lucide-vue-next'
@@ -20,7 +22,7 @@ const rplStore = useRPLStore()
 const settingsStore = useSettingsStore()
 const routeStore = useRouteStore()
 
-// 从器件库获取中继器类型选项
+// 从器件库获取放大器类型选项
 const repeaterTypeOptions = computed(() =>
   settingsStore.settings.repeaterTypes.map(r => ({
     value: r.id,
@@ -28,10 +30,10 @@ const repeaterTypeOptions = computed(() =>
   }))
 )
 
-// 当前选中的中继器类型
+// 当前选中的放大器类型
 const selectedRepeaterTypeId = ref('std')
 
-// 获取当前选中的中继器类型信息
+// 获取当前选中的放大器类型信息
 const currentRepeaterType = computed(() => 
   settingsStore.settings.repeaterTypes.find(r => r.id === selectedRepeaterTypeId.value) ||
   settingsStore.settings.repeaterTypes[0]
@@ -43,7 +45,7 @@ const amplifierTypes = computed(() => settingsStore.amplifierTypes || [])
 // 检查器件库是否有放大器
 const hasAmplifierInLibrary = computed(() => amplifierTypes.value.length > 0)
 
-// 生成中继器名称（从器件库获取放大器名称）
+// 生成放大器名称（从器件库获取放大器名称）
 function generateRepeaterName(index: number, type?: 'amplifier_e' | 'amplifier_w'): string {
   const deviceType = type || (index % 2 === 0 ? 'amplifier_e' : 'amplifier_w')
   
@@ -61,6 +63,148 @@ function generateRepeaterName(index: number, type?: 'amplifier_e' | 'amplifier_w
   const direction = deviceType === 'amplifier_e' ? '东' : '西'
   
   return `${ampName}-${direction}-${String(index + 1).padStart(2, '0')}`
+}
+
+function normalizeConstraints(updateInputs = false) {
+  let minSpacing = Number(minSpacingConstraint.value) || 0
+  let maxSpacing = Number(maxSpacingConstraint.value) || 0
+  let maxSlope = Number(maxSlopeConstraint.value) || 0
+  let depthMin = Number(depthMinConstraint.value) || 0
+  let depthMax = Number(depthMaxConstraint.value) || 0
+
+  if (minSpacing <= 0) minSpacing = 1
+  if (maxSpacing <= 0) maxSpacing = minSpacing
+  if (minSpacing > maxSpacing) [minSpacing, maxSpacing] = [maxSpacing, minSpacing]
+  if (maxSlope <= 0) maxSlope = 15
+  if (depthMin > depthMax) [depthMin, depthMax] = [depthMax, depthMin]
+
+  if (updateInputs) {
+    minSpacingConstraint.value = Math.round(minSpacing * 10) / 10
+    maxSpacingConstraint.value = Math.round(maxSpacing * 10) / 10
+    maxSlopeConstraint.value = Math.round(maxSlope * 10) / 10
+    depthMinConstraint.value = Math.round(depthMin)
+    depthMaxConstraint.value = Math.round(depthMax)
+  }
+
+  return { minSpacing, maxSpacing, maxSlope, depthMin, depthMax }
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function buildRoutePointsFromRPL(): RoutePoint[] {
+  const records = rplStore.currentTable?.records || []
+  return records.map((rec, index) => ({
+    id: rec.id || `rpl-${index}`,
+    coordinates: [rec.longitude, rec.latitude],
+    type: rec.pointType === 'landing'
+      ? 'landing'
+      : rec.pointType === 'branching'
+        ? 'branching'
+        : rec.pointType === 'repeater'
+          ? 'repeater'
+          : 'waypoint',
+    name: rec.remarks || undefined,
+    depth: rec.depth
+  }))
+}
+
+function buildTerrainFromRoutePoints(points: RoutePoint[]) {
+  const terrain: Array<{ kp: number; longitude: number; latitude: number; depth: number; slope: number }> = []
+  let kp = 0
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i]
+    let slope = 0
+    if (i > 0) {
+      const prev = points[i - 1]
+      const distance = calculateDistance(prev.coordinates, point.coordinates)
+      kp += distance
+      const prevDepth = prev.depth ?? 3000
+      const pointDepth = point.depth ?? 3000
+      const depthDiff = Math.abs(pointDepth - prevDepth)
+      slope = distance > 0 ? Math.atan(depthDiff / (distance * 1000)) * (180 / Math.PI) : 0
+    }
+    terrain.push({
+      kp,
+      longitude: point.coordinates[0],
+      latitude: point.coordinates[1],
+      depth: point.depth ?? 3000,
+      slope
+    })
+  }
+  return terrain
+}
+
+function buildTerrainFromRPL() {
+  const records = rplStore.currentTable?.records || []
+  return records.map((rec, index) => {
+    if (index === 0) {
+      return {
+        kp: rec.kp,
+        longitude: rec.longitude,
+        latitude: rec.latitude,
+        depth: rec.depth,
+        slope: 0
+      }
+    }
+    const prev = records[index - 1]
+    const distance = calculateDistance([prev.longitude, prev.latitude], [rec.longitude, rec.latitude])
+    const depthDiff = Math.abs(rec.depth - prev.depth)
+    const slope = distance > 0 ? Math.atan(depthDiff / (distance * 1000)) * (180 / Math.PI) : 0
+    return {
+      kp: rec.kp,
+      longitude: rec.longitude,
+      latitude: rec.latitude,
+      depth: rec.depth,
+      slope
+    }
+  })
+}
+
+function getPlacementContext() {
+  const currentRoute = routeStore.selectedRoute
+  if (currentRoute?.points && currentRoute.points.length > 1) {
+    return {
+      routePoints: currentRoute.points,
+      terrain: buildTerrainFromRoutePoints(currentRoute.points)
+    }
+  }
+  const records = rplStore.currentTable?.records || []
+  if (records.length < 2) return null
+  return {
+    routePoints: buildRoutePointsFromRPL(),
+    terrain: buildTerrainFromRPL()
+  }
+}
+
+function getRouteTotalLength() {
+  const currentRoute = routeStore.selectedRoute
+  if (currentRoute?.points && currentRoute.points.length > 1) {
+    let total = 0
+    for (let i = 1; i < currentRoute.points.length; i++) {
+      total += calculateDistance(
+        currentRoute.points[i - 1].coordinates,
+        currentRoute.points[i].coordinates
+      )
+    }
+    return total
+  }
+  return rplStore.currentTable?.metadata?.totalLength ?? 0
+}
+
+function getAutoTargetSpacing(minSpacing: number, maxSpacing: number) {
+  if (placementObjective.value === 'min_count') return maxSpacing
+  if (placementObjective.value === 'terrain') return minSpacing
+  return (minSpacing + maxSpacing) / 2
+}
+
+function applyPlacementStrategy() {
+  if (placementStrategy.value === 'auto') {
+    autoOptimizeWithConstraints()
+  } else {
+    generateFixedSpacing()
+  }
 }
 
 interface RepeaterConfig {
@@ -100,7 +244,7 @@ const typeOptions = computed(() => {
 const repeaters = ref<RepeaterConfig[]>([])
 const selectedRepeaterId = ref<string | null>(null)
 
-// 从器件库获取中继器型号选项
+// 从器件库获取放大器型号选项
 const modelOptions = computed(() => 
   settingsStore.settings.repeaterTypes.map(r => ({
     value: r.name,
@@ -115,19 +259,45 @@ const maxSpacing = computed(() => {
   return Math.round((currentRepeaterType.value?.maxSpan || 80) * 1.5)
 })
 
-// 初始化时基于路由数据生成中继器（如果有路由数据）
+type PlacementStrategy = 'auto' | 'fixed'
+type PlacementObjective = 'balanced' | 'min_count' | 'terrain'
+
+const placementStrategy = ref<PlacementStrategy>('auto')
+const placementObjective = ref<PlacementObjective>('balanced')
+const fixedSpacing = ref(recommendedSpacing.value)
+const minSpacingConstraint = ref(Math.max(1, Math.round(recommendedSpacing.value * 0.8)))
+const maxSpacingConstraint = ref(Math.max(minSpacingConstraint.value, maxSpacing.value))
+const maxSlopeConstraint = ref(15)
+const depthMinConstraint = ref(1000)
+const depthMaxConstraint = ref(5000)
+
+const normalizedMinSpacing = computed(() => {
+  const min = Number(minSpacingConstraint.value) || 0
+  return min > 0 ? min : 1
+})
+const normalizedMaxSpacing = computed(() => {
+  const max = Number(maxSpacingConstraint.value) || 0
+  return Math.max(max, normalizedMinSpacing.value)
+})
+const placementActionLabel = computed(() =>
+  placementStrategy.value === 'auto' ? '自动优化' : '按间距生成'
+)
+
+// 初始化时基于路由数据生成放大器（如果有路由数据）
 function initRepeatersFromRoute() {
-  const routeData = rplStore.currentTable?.records
-  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  const routeData = rplStore.currentTable?.records ?? []
+  const totalLength = getRouteTotalLength()
+  const hasRoutePoints = !!(routeStore.selectedRoute?.points && routeStore.selectedRoute.points.length > 1)
+  const hasRplPoints = !!(routeData && routeData.length > 1)
   
-  if (!routeData || routeData.length < 2 || totalLength === 0) {
+  if ((!hasRoutePoints && !hasRplPoints) || totalLength === 0) {
     // 没有路由数据，显示空列表
     repeaters.value = []
     return
   }
   
-  // 基于路由自动生成中继器
-  autoOptimize()
+  // 基于路由自动生成放大器
+  applyPlacementStrategy()
 }
 
 function recalculateSpacing() {
@@ -147,16 +317,24 @@ function addRepeater() {
     return
   }
   
-  const routeData = rplStore.currentTable?.records
-  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  const routeData = rplStore.currentTable?.records ?? []
+  const totalLength = getRouteTotalLength()
+  const hasRoutePoints = !!(routeStore.selectedRoute?.points && routeStore.selectedRoute.points.length > 1)
+  const hasRplPoints = !!(routeData && routeData.length > 1)
   
-  if (!routeData || routeData.length < 2 || totalLength === 0) {
-    appStore.showNotification({ type: 'warning', message: '请先导入路由数据（RPL）' })
+  if ((!hasRoutePoints && !hasRplPoints) || totalLength === 0) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据' })
     return
   }
   
+  const { minSpacing, maxSpacing } = normalizeConstraints()
+  const spacingInput = Number(fixedSpacing.value) || recommendedSpacing.value
+  const spacing = clampNumber(spacingInput, minSpacing, maxSpacing)
+  if (spacing !== spacingInput) {
+    fixedSpacing.value = Math.round(spacing * 10) / 10
+  }
   const lastRep = repeaters.value[repeaters.value.length - 1]
-  const newKP = lastRep ? lastRep.kp + recommendedSpacing.value : recommendedSpacing.value
+  const newKP = lastRep ? lastRep.kp + spacing : spacing
   
   // 检查是否超出总长度
   if (newKP >= totalLength) {
@@ -177,8 +355,8 @@ function addRepeater() {
     longitude: Math.round(position.longitude * 10000) / 10000,
     latitude: Math.round(position.latitude * 10000) / 10000,
     depth: Math.round(position.depth),
-    spacing: repType?.maxSpan || recommendedSpacing.value,
-    model: repType?.name || '标准中继器',
+    spacing: spacing,
+    model: repType?.name || '标准放大器',
     gain: repType?.gain || 15,
     powerConsumption: repType?.powerConsumption || 45,
     remarks: '',
@@ -191,46 +369,109 @@ function deleteRepeater(repId: string) {
   recalculateSpacing()
 }
 
-function autoOptimize() {
-  // 检查器件库是否有放大器
+function autoOptimizeWithConstraints() {
   if (!hasAmplifierInLibrary.value) {
     appStore.showNotification({ type: 'warning', message: '请先在器件库中上传放大器类型' })
     return
   }
-  
-  // 从 RPL 获取路由数据
-  const routeData = rplStore.currentTable?.records
-  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
-  
-  if (!routeData || routeData.length < 2 || totalLength === 0) {
-    appStore.showNotification({ type: 'warning', message: '请先导入路由数据（RPL）' })
+
+  const context = getPlacementContext()
+  if (!context) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据' })
     return
   }
-  
+
+  const { minSpacing, maxSpacing, maxSlope, depthMin, depthMax } = normalizeConstraints(true)
+  const targetSpacing = getAutoTargetSpacing(minSpacing, maxSpacing)
+
+  repeaterPlacementService.setConfig({
+    targetSpacing,
+    minSpacing,
+    maxSpacing,
+    maxSlope,
+    preferredDepthRange: { min: depthMin, max: depthMax },
+  })
+
+  const result = repeaterPlacementService.calculatePlacements(
+    context.routePoints,
+    context.terrain
+  )
+
+  const repType = currentRepeaterType.value
+  repeaters.value = result.locations.map((loc, index) => {
+    const newType = index % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
+    return {
+      id: `rep-${Date.now()}-${index}`,
+      index,
+      name: generateRepeaterName(index, newType),
+      type: newType,
+      kp: Math.round(loc.kp * 10) / 10,
+      longitude: Math.round(loc.longitude * 10000) / 10000,
+      latitude: Math.round(loc.latitude * 10000) / 10000,
+      depth: Math.round(loc.depth),
+      spacing: 0,
+      model: repType?.name || '标准放大器',
+      gain: repType?.gain || 15,
+      powerConsumption: repType?.powerConsumption || 45,
+      remarks: loc.adjustmentReason ? `优化: ${loc.adjustmentReason}` : '',
+    }
+  })
+
+  recalculateSpacing()
+
+  if (!result.feasibility.isValid) {
+    appStore.showNotification({ 
+      type: 'warning', 
+      message: `自动优化完成，但存在约束问题：${result.feasibility.issues[0]}` 
+    })
+  } else if (result.feasibility.warnings.length > 0) {
+    appStore.showNotification({ 
+      type: 'info', 
+      message: `自动优化完成（${result.totalCount} 个放大器），存在 ${result.feasibility.warnings.length} 项提示` 
+    })
+  } else {
+    appStore.showNotification({ 
+      type: 'success', 
+      message: `已自动优化 ${result.totalCount} 个放大器，调整 ${result.adjustedCount} 个` 
+    })
+  }
+}
+
+function generateFixedSpacing() {
+  if (!hasAmplifierInLibrary.value) {
+    appStore.showNotification({ type: 'warning', message: '请先在器件库中上传放大器类型' })
+    return
+  }
+
+  const routeData = rplStore.currentTable?.records ?? []
+  const totalLength = getRouteTotalLength()
+
+  const hasRoutePoints = !!(routeStore.selectedRoute?.points && routeStore.selectedRoute.points.length > 1)
+  const hasRplPoints = !!(routeData && routeData.length > 1)
+
+  if ((!hasRoutePoints && !hasRplPoints) || totalLength === 0) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据' })
+    return
+  }
+
+  const { minSpacing, maxSpacing } = normalizeConstraints(true)
+  const spacingInput = Number(fixedSpacing.value) || recommendedSpacing.value
+  const spacing = clampNumber(spacingInput, minSpacing, maxSpacing)
+  if (spacing !== spacingInput) {
+    fixedSpacing.value = Math.round(spacing * 10) / 10
+    appStore.showNotification({ type: 'info', message: `固定间距已调整为 ${spacing.toFixed(1)}km 以满足约束` })
+  }
+
   const currentRoute = routeStore.selectedRoute
-  const spacing = recommendedSpacing.value
   repeaters.value = []
   let repeaterIndex = 0
-  
-  // 检查是否有分支结构
-  if (currentRoute && currentRoute.points) {
-    // 计算主干线长度
-    let mainTrunkLength = 0
-    for (let i = 1; i < currentRoute.points.length; i++) {
-      mainTrunkLength += calculateDistance(
-        currentRoute.points[i - 1].coordinates,
-        currentRoute.points[i].coordinates
-      )
-    }
-    
-    // 主干线上的中继器
-    const mainCount = Math.max(1, Math.round(mainTrunkLength / spacing) - 1)
-    const mainSpacing = mainTrunkLength / (mainCount + 1)
-    
-    for (let i = 0; i < mainCount; i++) {
-      const targetKp = (i + 1) * mainSpacing
-      const position = interpolateOnMainTrunk(buildFullRouteData(currentRoute.points), targetKp)
-      
+
+  if (currentRoute && currentRoute.points && currentRoute.points.length > 1) {
+    const mainRouteData = buildFullRouteData(currentRoute.points)
+    const mainTrunkLength = mainRouteData.length > 0 ? mainRouteData[mainRouteData.length - 1].kp : 0
+
+    for (let targetKp = spacing; targetKp < mainTrunkLength; targetKp += spacing) {
+      const position = interpolateOnMainTrunk(mainRouteData, targetKp)
       const repType = currentRepeaterType.value
       const newType = repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
       repeaters.value.push({
@@ -242,16 +483,16 @@ function autoOptimize() {
         longitude: Math.round(position.longitude * 10000) / 10000,
         latitude: Math.round(position.latitude * 10000) / 10000,
         depth: Math.round(position.depth),
-        spacing: mainSpacing,
-        model: repType?.name || '标准中继器',
+        spacing: spacing,
+        model: repType?.name || '标准放大器',
         gain: repType?.gain || 15,
         powerConsumption: repType?.powerConsumption || 45,
         remarks: '',
       })
       repeaterIndex++
     }
-    
-    // 每条分支线上的中继器
+
+    // 每条分支线上的放大器（固定间距）
     let buKp = 0
     for (let i = 0; i < currentRoute.points.length; i++) {
       const point = currentRoute.points[i]
@@ -261,30 +502,22 @@ function autoOptimize() {
           point.coordinates
         )
       }
-      
+
       if (point.type === 'branching' && point.branchTo) {
         const buCoord = point.coordinates
         const branchEndCoord = point.branchTo.coord
         const branchLength = calculateDistance(buCoord, branchEndCoord)
-        
-        // 分支线上需要的中继器数量
-        const branchCount = Math.floor(branchLength / spacing)
-        
-        for (let j = 1; j <= branchCount; j++) {
-          const distanceFromBU = j * spacing
-          if (distanceFromBU >= branchLength) break
-          
+
+        for (let distanceFromBU = spacing; distanceFromBU < branchLength; distanceFromBU += spacing) {
           const ratio = distanceFromBU / branchLength
           const lon = buCoord[0] + (branchEndCoord[0] - buCoord[0]) * ratio
           const lat = buCoord[1] + (branchEndCoord[1] - buCoord[1]) * ratio
-          
-          // 分支线上的 KP = 分支器 KP + 分支线上的距离
           const branchKp = buKp + distanceFromBU
-          
+
           const repType = currentRepeaterType.value
           const branchType = repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
           repeaters.value.push({
-            id: `rep-branch-${point.id}-${j}`,
+            id: `rep-branch-${point.id}-${repeaterIndex}`,
             index: repeaterIndex,
             name: `${generateRepeaterName(repeaterIndex, branchType)}[分支]`,
             type: branchType,
@@ -293,7 +526,7 @@ function autoOptimize() {
             latitude: Math.round(lat * 10000) / 10000,
             depth: 3000,
             spacing: spacing,
-            model: repType?.name || '标准中继器',
+            model: repType?.name || '标准放大器',
             gain: repType?.gain || 15,
             powerConsumption: repType?.powerConsumption || 45,
             remarks: `分支线: ${point.name} → ${point.branchTo.name}`,
@@ -302,48 +535,41 @@ function autoOptimize() {
         }
       }
     }
-    
-    recalculateSpacing()
-    const branchRepeaterCount = repeaterIndex - mainCount
-    appStore.showNotification({ 
-      type: 'success', 
-      message: `已优化: 主干线 ${mainCount} 个, 分支线 ${branchRepeaterCount} 个中继器` 
-    })
-    return
+  } else {
+    for (let targetKp = spacing; targetKp < totalLength; targetKp += spacing) {
+      const position = interpolateRoutePosition(routeData, targetKp)
+
+      const repType = currentRepeaterType.value
+      const simpleType = repeaterIndex % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
+      repeaters.value.push({
+        id: `rep-${repeaterIndex}`,
+        index: repeaterIndex,
+        name: generateRepeaterName(repeaterIndex, simpleType),
+        type: simpleType,
+        kp: Math.round(targetKp * 10) / 10,
+        longitude: Math.round(position.longitude * 10000) / 10000,
+        latitude: Math.round(position.latitude * 10000) / 10000,
+        depth: Math.round(position.depth),
+        spacing: spacing,
+        model: repType?.name || '标准放大器',
+        gain: repType?.gain || 15,
+        powerConsumption: repType?.powerConsumption || 45,
+        remarks: '',
+      })
+      repeaterIndex++
+    }
   }
-  
-  // 无分支结构，使用原来的逻辑
-  const optimalCount = Math.max(1, Math.round(totalLength / spacing) - 1)
-  const optimalSpacing = totalLength / (optimalCount + 1)
-  
-  for (let i = 0; i < optimalCount; i++) {
-    const targetKp = (i + 1) * optimalSpacing
-    const position = interpolateRoutePosition(routeData, targetKp)
-    
-    const repType = currentRepeaterType.value
-    const simpleType = i % 2 === 0 ? 'amplifier_e' : 'amplifier_w'
-    repeaters.value.push({
-      id: `rep-${i}`,
-      index: i,
-      name: generateRepeaterName(i, simpleType),
-      type: simpleType,
-      kp: Math.round(targetKp * 10) / 10,
-      longitude: Math.round(position.longitude * 10000) / 10000,
-      latitude: Math.round(position.latitude * 10000) / 10000,
-      depth: Math.round(position.depth),
-      spacing: optimalSpacing,
-      model: repType?.name || '标准中继器',
-      gain: repType?.gain || 15,
-      powerConsumption: repType?.powerConsumption || 45,
-      remarks: '',
-    })
-  }
+
   recalculateSpacing()
-  appStore.showNotification({ type: 'success', message: `已优化为 ${optimalCount} 个中继器，平均间距 ${optimalSpacing.toFixed(1)}km` })
+  const branchRepeaterCount = repeaters.value.filter(r => r.remarks?.includes('分支线')).length
+  appStore.showNotification({ 
+    type: 'success', 
+    message: `已按固定间距 ${spacing.toFixed(1)}km 生成 ${repeaters.value.length} 个放大器${branchRepeaterCount ? `，分支线 ${branchRepeaterCount} 个` : ''}` 
+  })
 }
 
 // 根据 KP 插值计算路由位置
-function interpolateRoutePosition(routeData: any[], targetKp: number): { longitude: number; latitude: number; depth: number; isBranch?: boolean; branchId?: string } {
+function interpolateRoutePosition(routeData: any[] | undefined, targetKp: number): { longitude: number; latitude: number; depth: number; isBranch?: boolean; branchId?: string } {
   // 获取当前路由（包含分支信息）
   const currentRoute = routeStore.selectedRoute
   
@@ -363,7 +589,11 @@ function interpolateRoutePosition(routeData: any[], targetKp: number): { longitu
   }
   
   // 回退到原来的逻辑（用 RPL 数据）
-  const sorted = [...routeData].sort((a, b) => (a.kp || 0) - (b.kp || 0))
+  const safeRouteData = routeData ?? []
+  if (safeRouteData.length === 0) {
+    return { longitude: 0, latitude: 0, depth: 3000 }
+  }
+  const sorted = [...safeRouteData].sort((a, b) => (a.kp || 0) - (b.kp || 0))
   
   let before = sorted[0]
   let after = sorted[sorted.length - 1]
@@ -502,8 +732,8 @@ function moveRepeater(repId: string, delta: number) {
   }
 }
 
-const hasSpacingWarning = (spacing: number) => spacing > maxSpacing.value
-const hasSpacingError = (spacing: number) => spacing > maxSpacing.value * 1.2
+const isSpacingAboveMax = (spacing: number) => spacing > normalizedMaxSpacing.value
+const isSpacingBelowMin = (spacing: number) => spacing < normalizedMinSpacing.value
 
 const totalRepeaters = computed(() => repeaters.value.length)
 const avgSpacing = computed(() => {
@@ -526,7 +756,7 @@ watch(() => props.visible, (val) => {
 
 function handleSave() {
   emit('saved', repeaters.value)
-  appStore.showNotification({ type: 'success', message: '中继器配置已保存' })
+  appStore.showNotification({ type: 'success', message: '放大器配置已保存' })
   emit('close')
 }
 
@@ -547,7 +777,7 @@ function handleClose() {
         <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
           <div class="flex items-center gap-2">
             <Radio class="w-5 h-5 text-blue-600" />
-            <h3 class="text-sm font-bold text-gray-800">中继器位置配置</h3>
+            <h3 class="text-sm font-bold text-gray-800">放大器位置配置</h3>
           </div>
           <div class="flex items-center gap-2">
             <!-- 器件类型选择 -->
@@ -562,9 +792,9 @@ function handleClose() {
                 </option>
               </select>
             </div>
-            <Button variant="outline" size="sm" @click="autoOptimize">
+            <Button variant="outline" size="sm" @click="applyPlacementStrategy">
               <RotateCcw class="w-4 h-4 mr-1" />
-              简单优化
+              {{ placementActionLabel }}
             </Button>
             <Button variant="outline" size="sm" @click="addRepeater">
               <Plus class="w-4 h-4 mr-1" />
@@ -580,14 +810,14 @@ function handleClose() {
         <div class="px-4 py-3 bg-gray-50 border-b grid grid-cols-4 gap-4 text-sm">
           <div class="text-center">
             <div class="font-bold text-blue-600">{{ totalRepeaters }}</div>
-            <div class="text-xs text-gray-500">中继器数量</div>
+            <div class="text-xs text-gray-500">放大器数量</div>
           </div>
           <div class="text-center">
             <div class="font-bold text-green-600">{{ avgSpacing.toFixed(1) }}</div>
             <div class="text-xs text-gray-500">平均间距(km)</div>
           </div>
           <div class="text-center">
-            <div :class="['font-bold', hasSpacingWarning(maxSpacingValue) ? 'text-orange-600' : 'text-gray-600']">
+            <div :class="['font-bold', isSpacingAboveMax(maxSpacingValue) ? 'text-orange-600' : 'text-gray-600']">
               {{ maxSpacingValue.toFixed(1) }}
             </div>
             <div class="text-xs text-gray-500">最大间距(km)</div>
@@ -598,10 +828,96 @@ function handleClose() {
           </div>
         </div>
 
+        <!-- 策略与约束 -->
+        <div class="px-4 py-3 border-b bg-white text-xs text-gray-700">
+          <div class="flex flex-wrap items-center gap-4">
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500">布设策略</span>
+              <label class="flex items-center gap-1 cursor-pointer">
+                <input v-model="placementStrategy" type="radio" class="accent-blue-500" value="auto" />
+                自动优化
+              </label>
+              <label class="flex items-center gap-1 cursor-pointer">
+                <input v-model="placementStrategy" type="radio" class="accent-blue-500" value="fixed" />
+                固定间距
+              </label>
+            </div>
+            <div v-if="placementStrategy === 'fixed'" class="flex items-center gap-2">
+              <span class="text-gray-500">固定间距(km)</span>
+              <input
+                v-model.number="fixedSpacing"
+                type="number"
+                step="0.1"
+                min="0.1"
+                class="w-20 px-2 py-1 border border-gray-300 rounded bg-white"
+              />
+            </div>
+            <div v-else class="flex items-center gap-2">
+              <span class="text-gray-500">优化目标</span>
+              <select v-model="placementObjective" class="px-2 py-1 border border-gray-300 rounded bg-white">
+                <option value="balanced">均衡</option>
+                <option value="min_count">少放大器</option>
+                <option value="terrain">地形优先</option>
+              </select>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500">最小间距(km)</span>
+              <input
+                v-model.number="minSpacingConstraint"
+                type="number"
+                step="0.1"
+                min="0.1"
+                class="w-20 px-2 py-1 border border-gray-300 rounded bg-white"
+              />
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500">最大间距(km)</span>
+              <input
+                v-model.number="maxSpacingConstraint"
+                type="number"
+                step="0.1"
+                min="0.1"
+                class="w-20 px-2 py-1 border border-gray-300 rounded bg-white"
+              />
+            </div>
+            <div v-if="placementStrategy === 'auto'" class="flex items-center gap-2">
+              <span class="text-gray-500">最大坡度(°)</span>
+              <input
+                v-model.number="maxSlopeConstraint"
+                type="number"
+                step="0.1"
+                min="0"
+                class="w-20 px-2 py-1 border border-gray-300 rounded bg-white"
+              />
+            </div>
+            <div v-if="placementStrategy === 'auto'" class="flex items-center gap-2">
+              <span class="text-gray-500">优选水深(m)</span>
+              <input
+                v-model.number="depthMinConstraint"
+                type="number"
+                step="1"
+                min="0"
+                class="w-20 px-2 py-1 border border-gray-300 rounded bg-white"
+              />
+              <span class="text-gray-400">-</span>
+              <input
+                v-model.number="depthMaxConstraint"
+                type="number"
+                step="1"
+                min="0"
+                class="w-20 px-2 py-1 border border-gray-300 rounded bg-white"
+              />
+            </div>
+          </div>
+        </div>
         <!-- 推荐提示 -->
-        <div class="px-4 py-2 bg-blue-50 border-b text-xs text-blue-700 flex items-center gap-2">
+        <div class="px-4 py-2 bg-blue-50 border-b text-xs text-blue-700 flex flex-wrap items-center gap-2">
           <AlertTriangle class="w-4 h-4" />
-          推荐中继器间距: {{ recommendedSpacing }}km，最大不超过 {{ maxSpacing }}km
+          <span>器件推荐间距: {{ recommendedSpacing }}km</span>
+          <span>约束间距: {{ normalizedMinSpacing }}-{{ normalizedMaxSpacing }}km</span>
+          <span v-if="placementStrategy === 'auto'">
+            坡度≤{{ maxSlopeConstraint }}°，水深 {{ depthMinConstraint }}-{{ depthMaxConstraint }}m
+          </span>
         </div>
         
         <!-- 表格内容 -->
@@ -658,8 +974,8 @@ function handleClose() {
                 <td class="px-3 py-2 text-right border-b">
                   <span :class="[
                     'font-mono',
-                    hasSpacingError(rep.spacing) ? 'text-red-600 font-bold' : 
-                    hasSpacingWarning(rep.spacing) ? 'text-orange-600' : 'text-gray-700'
+                    isSpacingAboveMax(rep.spacing) ? 'text-red-600 font-bold' : 
+                    isSpacingBelowMin(rep.spacing) ? 'text-orange-600' : 'text-gray-700'
                   ]">
                     {{ rep.spacing.toFixed(1) }}
                   </span>
@@ -676,13 +992,13 @@ function handleClose() {
                   </select>
                 </td>
                 <td class="px-3 py-2 text-center border-b">
-                  <span v-if="hasSpacingError(rep.spacing)" class="text-xs text-red-600 flex items-center justify-center gap-1">
+                  <span v-if="isSpacingAboveMax(rep.spacing)" class="text-xs text-red-600 flex items-center justify-center gap-1">
                     <AlertTriangle class="w-3 h-3" />
-                    超限
+                    过大
                   </span>
-                  <span v-else-if="hasSpacingWarning(rep.spacing)" class="text-xs text-orange-600 flex items-center justify-center gap-1">
+                  <span v-else-if="isSpacingBelowMin(rep.spacing)" class="text-xs text-orange-600 flex items-center justify-center gap-1">
                     <AlertTriangle class="w-3 h-3" />
-                    警告
+                    过小
                   </span>
                   <span v-else class="text-xs text-green-600 flex items-center justify-center gap-1">
                     <CheckCircle class="w-3 h-3" />
@@ -719,10 +1035,10 @@ function handleClose() {
                 <td colspan="8" class="px-4 py-8 text-center text-gray-400">
                   <div v-if="!rplStore.currentTable?.records?.length" class="space-y-2">
                     <div>请先导入路由数据（RPL）</div>
-                    <div class="text-xs">中继器位置将基于路由数据自动计算</div>
+                    <div class="text-xs">放大器位置将基于路由数据自动计算</div>
                   </div>
                   <div v-else>
-                    点击"简单优化"自动生成，或点击"添加"手动添加
+                    点击"{{ placementActionLabel }}"自动生成，或点击"添加"手动添加
                   </div>
                 </td>
               </tr>
@@ -733,9 +1049,9 @@ function handleClose() {
         <!-- 底部按钮 -->
         <div class="flex items-center justify-between px-4 py-3 border-t bg-gray-50">
           <span class="text-xs text-gray-500">
-            共 {{ repeaters.length }} 个中继器
-            <span v-if="repeaters.some(r => hasSpacingWarning(r.spacing))" class="text-orange-600 ml-2">
-              | 存在间距超标的中继器
+            共 {{ repeaters.length }} 个放大器
+            <span v-if="repeaters.some(r => isSpacingAboveMax(r.spacing) || isSpacingBelowMin(r.spacing))" class="text-orange-600 ml-2">
+              | 存在间距不符合约束的放大器
             </span>
           </span>
           <div class="flex gap-2">

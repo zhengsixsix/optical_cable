@@ -1,12 +1,12 @@
 /**
- * 中继器智能落位算法服务
+ * 放大器智能落位算法服务
  * 实现基于地形的自动落位、坡度规避、最优位置计算
  */
 
 import type { RoutePoint } from '@/types/route'
 import type { SpanScanResult } from '@/types/simulation'
 
-// 中继器落位点
+// 放大器落位点
 export interface RepeaterLocation {
   id: string
   index: number                // 序号
@@ -90,7 +90,7 @@ const DEFAULT_CONFIG: PlacementConfig = {
 }
 
 /**
- * 中继器智能落位服务
+ * 放大器智能落位服务
  */
 export class RepeaterPlacementService {
   private config: PlacementConfig = DEFAULT_CONFIG
@@ -110,7 +110,7 @@ export class RepeaterPlacementService {
   }
 
   /**
-   * 自动计算中继器落位
+   * 自动计算放大器落位
    * @param routePoints - 路由点列表
    * @param terrainData - 地形数据
    */
@@ -161,7 +161,7 @@ export class RepeaterPlacementService {
       locations.push({
         id: `repeater-${i}`,
         index: i,
-        name: `中继器-${String(i).padStart(2, '0')}`,
+        name: `放大器-${String(i).padStart(2, '0')}`,
         kp,
         longitude: 0,
         latitude: 0,
@@ -372,10 +372,10 @@ export class RepeaterPlacementService {
     for (let i = 1; i < locations.length; i++) {
       const spacing = locations[i].kp - locations[i - 1].kp
       if (spacing < this.config.minSpacing) {
-        issues.push(`中继器 ${i} 和 ${i + 1} 间距过小 (${spacing.toFixed(1)} km)`)
+        issues.push(`放大器 ${i} 和 ${i + 1} 间距过小 (${spacing.toFixed(1)} km)`)
       }
       if (spacing > this.config.maxSpacing) {
-        issues.push(`中继器 ${i} 和 ${i + 1} 间距过大 (${spacing.toFixed(1)} km)`)
+        issues.push(`放大器 ${i} 和 ${i + 1} 间距过大 (${spacing.toFixed(1)} km)`)
       }
     }
 
@@ -616,7 +616,7 @@ export class RepeaterPlacementService {
   }
 
   /**
-   * 手动调整中继器位置
+   * 手动调整放大器位置
    */
   adjustRepeaterLocation(
     locations: RepeaterLocation[],
@@ -651,7 +651,7 @@ export class RepeaterPlacementService {
    * 基于 Span 扫描结果推荐最优配置
    * 
    * @param scanResult - Span 扫描结果
-   * @param preferLongerSpan - 是否偏好更长的 Span（减少中继器数量）
+   * @param preferLongerSpan - 是否偏好更长的 Span（减少放大器数量）
    */
   autoRecommendSpan(
     scanResult: SpanScanResult,
@@ -764,7 +764,7 @@ export class RepeaterPlacementService {
       })
     }
     
-    // 4. 在每条分支线上也落位中继器
+    // 4. 在每条分支线上也落位放大器
     const branchingUnits = routePoints.filter(p => p.type === 'branching' && p.branchTo)
     branchingUnits.forEach((bu) => {
       if (!bu.branchTo) return
@@ -780,18 +780,18 @@ export class RepeaterPlacementService {
         branchEndCoord[0], branchEndCoord[1]
       )
       
-      // 如果分支线长度小于一个 span，不需要落位中继器
+      // 如果分支线长度小于一个 span，不需要落位放大器
       if (branchLength < spanLength) return
       
       // 获取分支器在主干线上的 KP
       const buKP = this.getPointKP(bu, mainTrunkPoints)
       
-      // 分支线上需要的中继器数量（按实际间距计算）
+      // 分支线上需要的放大器数量（按实际间距计算）
       const branchRepeaterCount = Math.floor(branchLength / spanLength)
       
       // 在分支线上按间距落位
       for (let j = 1; j <= branchRepeaterCount; j++) {
-        // 按实际距离计算比例（从分支器开始，每隔 spanLength 落一个中继器）
+        // 按实际距离计算比例（从分支器开始，每隔 spanLength 落一个放大器）
         const distanceFromBU = j * spanLength
         const ratio = distanceFromBU / branchLength
         

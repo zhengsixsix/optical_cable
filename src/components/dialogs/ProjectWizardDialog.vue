@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, DollarSign, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
 import { useAppStore, useSettingsStore } from '@/stores'
@@ -307,7 +307,7 @@ const routeCostList = ref<CostItem[]>([
 // 系统规划成本
 const systemCostList = ref<CostItem[]>([
   { id: 's1', name: '光缆成本', unit: '元/km', price: 0 },
-  { id: 's2', name: '中继器成本', unit: '元/个', price: 0 },
+  { id: 's2', name: '放大器成本', unit: '元/个', price: 0 },
   { id: 's3', name: '分支器成本', unit: '元/个', price: 0 },
   { id: 's4', name: '岸上站点成本', unit: '元/个', price: 0 },
   { id: 's5', name: '施工成本', unit: '元/km', price: 0 },
@@ -349,7 +349,7 @@ const resetForm = () => {
   ]
   systemCostList.value = [
     { id: 's1', name: '光缆成本', unit: '元/km', price: 0 },
-    { id: 's2', name: '中继器成本', unit: '元/个', price: 0 },
+    { id: 's2', name: '放大器成本', unit: '元/个', price: 0 },
     { id: 's3', name: '分支器成本', unit: '元/个', price: 0 },
     { id: 's4', name: '岸上站点成本', unit: '元/个', price: 0 },
     { id: 's5', name: '施工成本', unit: '元/km', price: 0 },

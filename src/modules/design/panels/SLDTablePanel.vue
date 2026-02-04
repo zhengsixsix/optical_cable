@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useSLDStore, useAppStore, useRouteStore } from '@/stores'
 import { exportSLDFile, exportSLDFileFromRoute, exportEquipmentsToCSV as exportSLDEquipmentsToCSV } from '@/services/SLDExportService'
@@ -41,7 +41,7 @@ const transmissionParams = computed(() => currentTable.value?.transmissionParams
 const equipmentTypeLabels: Record<SLDEquipmentType, string> = {
   TE: '终端设备',
   PFE: '供电设备',
-  REP: '中继器',
+  REP: '放大器',
   BU: '分支器',
   JOINT: '接头',
   OADM: '光分插复用器',
@@ -139,7 +139,7 @@ const handleExportXML = () => {
           </div>
           <div class="text-center">
             <div class="font-semibold text-blue-600">{{ metadata.repeaterCount }}</div>
-            <div class="text-xs text-gray-500">中继器</div>
+            <div class="text-xs text-gray-500">放大器</div>
           </div>
           <div class="text-center">
             <div class="font-semibold text-purple-600">{{ metadata.branchingUnitCount }}</div>

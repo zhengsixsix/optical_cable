@@ -9,7 +9,7 @@ export interface RoutePointDevice {
   deviceId: string           // 器件库中的设备ID
   deviceType: string         // 设备类型（repeater/branching/cable等）
   deviceName: string         // 设备名称
-  // 中继器参数
+  // 放大器参数
   cost?: number              // 成本
   maxSpan?: number           // 最大跨距
   powerConsumption?: number  // 功耗

@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouteStore, useMapStore, useAppStore, useRPLStore } from '@/stores'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
@@ -443,7 +443,7 @@ watch(() => props.routeId, () => {
                 @click.stop
               >
               <option value="landing">登陆站</option>
-                <option value="repeater">中继器</option>
+                <option value="repeater">放大器</option>
                 <option value="branching">分支器</option>
                 <option value="waypoint">路径点</option>
               </select>
@@ -492,7 +492,7 @@ watch(() => props.routeId, () => {
               @change="updatePointType(selectedPoint.id, ($event.target as HTMLSelectElement).value as EditablePoint['type'])"
             >
               <option value="landing">登陆站</option>
-              <option value="repeater">中继器</option>
+              <option value="repeater">放大器</option>
               <option value="branching">分支器</option>
               <option value="waypoint">路径点</option>
             </select>

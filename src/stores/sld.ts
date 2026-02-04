@@ -256,7 +256,7 @@ export const useSLDStore = defineStore('sld', () => {
       }
     })
 
-    // 检查中继器间距
+    // 检查放大器间距
     const repeaters = equipments.filter(e => e.type === 'REP').sort((a, b) => a.kp - b.kp)
     for (let i = 1; i < repeaters.length; i++) {
       const distance = repeaters[i].kp - repeaters[i-1].kp
@@ -265,7 +265,7 @@ export const useSLDStore = defineStore('sld', () => {
           itemId: repeaters[i].id, 
           itemType: 'equipment', 
           field: 'kp', 
-          message: `中继器 ${repeaters[i].name}: 与前一中继器间距${distance.toFixed(1)}km超过建议值120km` 
+          message: `放大器 ${repeaters[i].name}: 与前一放大器间距${distance.toFixed(1)}km超过建议值120km` 
         })
       }
     }

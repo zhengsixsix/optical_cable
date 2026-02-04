@@ -3,8 +3,7 @@
  * 调用后端 Node 服务进行路由规划计算
  */
 
-// API 服务地址
-const API_BASE = import.meta.env.VITE_DEM_API_URL || 'http://localhost:3001'
+import { API_BASE_URL, API_ENDPOINTS, checkApiHealth } from '@/config/api'
 
 // 坐标点接口
 export interface Coordinate {
@@ -104,7 +103,7 @@ export interface RoutePlanningResult {
  * 调用后端路由规划接口
  */
 export async function fetchRoutePlanning(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
-  const url = `${API_BASE}/api/route/planning`
+  const url = API_ENDPOINTS.route.planning
   
   const response = await fetch(url, {
     method: 'POST',
@@ -127,21 +126,12 @@ export async function fetchRoutePlanning(request: RoutePlanningRequest): Promise
  * 检查路由规划服务是否可用
  */
 export async function checkRoutePlanningService(): Promise<boolean> {
-  try {
-    const response = await fetch(`${API_BASE}/health`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000)
-    })
-    const result = await response.json()
-    return result.status === 'ok'
-  } catch {
-    return false
-  }
+  return checkApiHealth()
 }
 
 /**
  * 获取 API 基础地址
  */
 export function getApiBase(): string {
-  return API_BASE
+  return API_BASE_URL
 }

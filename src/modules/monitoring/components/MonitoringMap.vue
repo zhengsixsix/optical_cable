@@ -478,7 +478,7 @@ onUnmounted(() => {
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/amplifier-e.png" class="w-5 h-5 object-contain" />
-          <span class="text-gray-600">中继器/放大器</span>
+          <span class="text-gray-600">放大器/放大器</span>
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/bu.png" class="w-5 h-5 object-contain" />

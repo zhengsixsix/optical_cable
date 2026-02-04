@@ -5,7 +5,7 @@
 export type SLDEquipmentType = 
   | 'TE'           // 终端设备 Terminal Equipment
   | 'PFE'          // 供电设备 Power Feeding Equipment
-  | 'REP'          // 中继器 Repeater
+  | 'REP'          // 放大器 Repeater
   | 'BU'           // 分支器 Branching Unit
   | 'JOINT'        // 接头 Joint
   | 'OADM'         // 光分插复用器
@@ -57,7 +57,7 @@ export interface SLDEquipment {
   configParams?: SLDConfigParams  // 配置参数键值对
   
   // === 器件库引用 ===
-  componentRefId?: string    // 引用的器件库ID (中继器/分支器等)
+  componentRefId?: string    // 引用的器件库ID (放大器/分支器等)
   
   // === BU 专用字段 ===
   portLimit?: number         // 端口上限（用户预设约束，3或4）
@@ -115,7 +115,7 @@ export interface SLDMetadata {
   totalLength: number        // 总长度
   totalEquipments: number    // 设备总数
   terminalCount: number      // 终端数量
-  repeaterCount: number      // 中继器数量
+  repeaterCount: number      // 放大器数量
   branchingUnitCount: number // 分支器数量
   jointCount: number         // 接头数量
   totalFiberPairs: number    // 总光纤对数

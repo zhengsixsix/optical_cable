@@ -9,7 +9,7 @@ export type RPLEventType =
   | 'Start'           // 起点
   | 'End'             // 终点
   | 'Alter Course'    // 改向点
-  | 'Repeater'        // 中继器 (系统规划阶段设备)
+  | 'Repeater'        // 放大器 (系统规划阶段设备)
   | 'Branching Unit'  // 分支器 (系统规划阶段设备)
   | 'Joint'           // 接头
   | 'Landing Station' // 登陆站
@@ -82,7 +82,7 @@ export interface RPLMetadata {
   totalLength: number        // 总长度 (km)
   totalCableLength: number   // 电缆总长度 (含余缆)
   landingStations: number    // 登陆站数量
-  repeaters: number          // 中继器数量
+  repeaters: number          // 放大器数量
   branchingUnits: number     // 分支器数量
   joints: number             // 接头数量
   averageDepth: number       // 平均水深

@@ -400,7 +400,7 @@ export function useProjectManager() {
             case '光缆成本':
               costUpdates.cableCostPerKm = cost.price
               break
-            case '中继器成本':
+            case '放大器成本':
               costUpdates.repeaterCost = cost.price
               break
             case '分支器成本':
