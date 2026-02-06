@@ -61,18 +61,6 @@ export interface CreateProjectParams {
       branchingUnitTypes?: any[]
     }
   }>
-  // 路径规划成本
-  routeCosts?: Array<{
-    id: string
-    name: string
-    price: number
-  }>
-  // 系统规划成本
-  systemCosts?: Array<{
-    id: string
-    name: string
-    price: number
-  }>
 }
 
 // 保存提示对话框的用户选择
@@ -386,57 +374,7 @@ export function useProjectManager() {
         })
       }
       
-      // 处理成本参数
-      const costUpdates: Record<string, number> = {}
-      
-      // 路径规划成本
-      if (params.routeCosts && params.routeCosts.length > 0) {
-        params.routeCosts.forEach((cost) => {
-          switch (cost.name) {
-            case '轻型海缆单价':
-              costUpdates.lightCableCost = cost.price
-              break
-            case '重型海缆单价':
-              costUpdates.heavyCableCost = cost.price
-              break
-            case '施工成本极大值':
-              costUpdates.maxConstructionCost = cost.price
-              break
-            case '深浅分界值':
-              costUpdates.depthThreshold = cost.price
-              break
-          }
-        })
-      }
-      
-      // 系统规划成本
-      if (params.systemCosts && params.systemCosts.length > 0) {
-        params.systemCosts.forEach((cost) => {
-          switch (cost.name) {
-            case '光缆成本':
-              costUpdates.cableCostPerKm = cost.price
-              break
-            case '放大器成本':
-              costUpdates.repeaterCost = cost.price
-              break
-            case '分支器成本':
-              costUpdates.branchingUnitCost = cost.price
-              break
-            case '岸上站点成本':
-              costUpdates.landingStationCost = cost.price
-              break
-            case '施工成本':
-              costUpdates.installationCostPerKm = cost.price
-              break
-          }
-        })
-      }
-      
-      if (Object.keys(costUpdates).length > 0) {
-        settingsStore.updateCostFactors(costUpdates)
-      }
-      
-      // 处理器件库文件（解析并导入器件数据）
+      // 处理器件库文件
       if (params.devices && params.devices.length > 0) {
         const deviceFiles: string[] = []
         let totalFibers = 0, totalAmplifiers = 0, totalBranchingUnits = 0

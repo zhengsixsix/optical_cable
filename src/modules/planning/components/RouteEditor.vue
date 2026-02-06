@@ -163,12 +163,18 @@ function startDrag(pointId: string, event: MouseEvent) {
   if (editMode.value !== 'move') return
   
   const point = points.value.find(p => p.id === pointId)
-  if (point) {
-    isDragging.value = true
-    point.isDragging = true
-    dragStartPos.value = [event.clientX, event.clientY]
-    selectedPointId.value = pointId
+  if (!point) return
+  
+  // 登陆站和分支器位置固定，不允许拖拽
+  if (point.type === 'landing' || point.type === 'branching') {
+    appStore.showNotification({ type: 'warning', message: `${point.type === 'landing' ? '登陆站' : '分支器'}位置固定，不可拖拽` })
+    return
   }
+  
+  isDragging.value = true
+  point.isDragging = true
+  dragStartPos.value = [event.clientX, event.clientY]
+  selectedPointId.value = pointId
 }
 
 function onDrag(event: MouseEvent) {
@@ -247,8 +253,8 @@ function deletePoint(pointId: string) {
   const point = points.value.find(p => p.id === pointId)
   if (!point) return
   
-  if (point.type === 'landing') {
-    appStore.showNotification({ type: 'warning', message: '不能删除登陆站' })
+  if (point.type === 'landing' || point.type === 'branching') {
+    appStore.showNotification({ type: 'warning', message: `不能删除${point.type === 'landing' ? '登陆站' : '分支器'}` })
     return
   }
   

@@ -1,4 +1,4 @@
-﻿﻿<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button, Select, Tooltip, Input } from '@/shared/components/base'
@@ -28,7 +28,7 @@ import type { SpanScanResult, OpticalLink, ModulationFormat, FiberSpan, LinkNode
 import type { SpanScanConfig } from '@/types/systemPlanning'
 import { MODULATION_PARAMS } from '@/types/simulation'
 import { connectorTypeLabels } from '@/types/connector'
-import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target } from 'lucide-vue-next'
+import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -998,9 +998,25 @@ const openLinkAnalysis = () => {
   showLinkAnalysisDialog.value = true
 }
 
+// 器件库为空警告弹窗
+const showDeviceLibraryWarning = ref(false)
+
 // 提交参数并计算 - 打开系统规划链路配置对话框
 const handleSubmit = () => {
+  // 检查器件库是否有数据（光纤类型和放大器类型）
+  const hasFiber = settingsStore.fiberTypes.length > 0
+  const hasAmplifier = settingsStore.amplifierTypes.length > 0
+  if (!hasFiber || !hasAmplifier) {
+    showDeviceLibraryWarning.value = true
+    return
+  }
   showLinkConfigDialog.value = true
+}
+
+// 跳转到工程设置器件库页面
+const goToDeviceLibrarySettings = () => {
+  showDeviceLibraryWarning.value = false
+  router.push({ path: '/settings', query: { tab: 'equipment' } })
 }
 
 // 应用推荐配置
@@ -1691,6 +1707,39 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
     </div>
   </div>
   
+  <!-- 器件库为空警告弹窗 -->
+  <Teleport to="body">
+    <div v-if="showDeviceLibraryWarning" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showDeviceLibraryWarning = false" />
+      <div class="relative bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+        <div class="bg-amber-50 px-6 py-4 border-b border-amber-100">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+              <AlertCircle class="w-5 h-5 text-amber-600" />
+            </div>
+            <h3 class="text-lg font-semibold text-amber-800">器件库数据不完整</h3>
+          </div>
+        </div>
+        <div class="px-6 py-5">
+          <p class="text-gray-600 mb-2">系统规划需要器件库中的光纤类型和放大器类型数据，当前缺少：</p>
+          <ul class="text-sm text-gray-500 mb-5 space-y-1 pl-4">
+            <li v-if="settingsStore.fiberTypes.length === 0" class="list-disc text-amber-600">光纤类型（0 条记录）</li>
+            <li v-if="settingsStore.amplifierTypes.length === 0" class="list-disc text-amber-600">放大器类型（0 条记录）</li>
+          </ul>
+          <div class="flex gap-3">
+            <Button class="flex-1 bg-blue-600 hover:bg-blue-700 text-white" @click="goToDeviceLibrarySettings">
+              <Database class="w-4 h-4 mr-2" />
+              前往器件库配置
+            </Button>
+            <Button variant="outline" class="flex-1" @click="showDeviceLibraryWarning = false">
+              取消
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- BU 配置对话框 -->
   <BUConfigDialog
     :visible="showBuConfigDialog"

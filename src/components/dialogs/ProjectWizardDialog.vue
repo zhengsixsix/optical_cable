@@ -1,6 +1,6 @@
 ﻿﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, DollarSign, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
+import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
 import { useAppStore, useSettingsStore } from '@/stores'
 import { Button, Select } from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
@@ -30,13 +30,6 @@ interface DeviceItem {
   }
 }
 
-interface CostItem {
-  id: string
-  name: string
-  unit: string
-  price: number
-}
-
 type ProjectType = 'use'
 
 const projectTypeOptions = [
@@ -57,8 +50,7 @@ const steps = [
   { id: 1, title: '新建项目', icon: FilePlus, description: '填写项目基本信息' },
   { id: 2, title: '站点位置', icon: MapPin, description: 'GIS设置' },
   { id: 3, title: '器件库管理', icon: Package, description: '可选' },
-  { id: 4, title: '成本参数', icon: DollarSign, description: '可选' },
-  { id: 5, title: '完成', icon: CheckCircle, description: '确认创建' },
+  { id: 4, title: '完成', icon: CheckCircle, description: '确认创建' },
 ]
 
 const currentStep = ref(1)
@@ -298,23 +290,6 @@ const layerList = ref<LayerItem[]>([
 const deviceList = ref<DeviceItem[]>([])
 const deviceFileInputRef = ref<HTMLInputElement | null>(null)
 
-// 步骤4: 成本参数
-// 路径规划成本
-const routeCostList = ref<CostItem[]>([
-  { id: 'r1', name: '轻型海缆单价', unit: '千元/km', price: 0 },
-  { id: 'r2', name: '重型海缆单价', unit: '千元/km', price: 0 },
-  { id: 'r3', name: '施工成本极大值', unit: '千元/km', price: 0 },
-  { id: 'r4', name: '深浅分界值', unit: '米', price: 0 },
-])
-// 系统规划成本
-const systemCostList = ref<CostItem[]>([
-  { id: 's1', name: '光缆成本', unit: '元/km', price: 0 },
-  { id: 's2', name: '放大器成本', unit: '元/个', price: 0 },
-  { id: 's3', name: '分支器成本', unit: '元/个', price: 0 },
-  { id: 's4', name: '岸上站点成本', unit: '元/个', price: 0 },
-  { id: 's5', name: '施工成本', unit: '元/km', price: 0 },
-])
-
 // 重置表单
 const resetForm = () => {
   currentStep.value = 1
@@ -343,19 +318,6 @@ const resetForm = () => {
     item.value = ''
   })
   deviceList.value = []
-  routeCostList.value = [
-    { id: 'r1', name: '轻型海缆单价', unit: '千元/km', price: 0 },
-    { id: 'r2', name: '重型海缆单价', unit: '千元/km', price: 0 },
-    { id: 'r3', name: '施工成本极大值', unit: '千元/km', price: 0 },
-    { id: 'r4', name: '深浅分界值', unit: '米', price: 0 },
-  ]
-  systemCostList.value = [
-    { id: 's1', name: '光缆成本', unit: '元/km', price: 0 },
-    { id: 's2', name: '放大器成本', unit: '元/个', price: 0 },
-    { id: 's3', name: '分支器成本', unit: '元/个', price: 0 },
-    { id: 's4', name: '岸上站点成本', unit: '元/个', price: 0 },
-    { id: 's5', name: '施工成本', unit: '元/km', price: 0 },
-  ]
 }
 
 watch(() => props.visible, (val) => {
@@ -465,9 +427,11 @@ const handleDeviceFileSelected = async (e: Event) => {
             fiberTypes.push({
               id: `fiber-${Date.now()}-${fiberTypes.length}`,
               name: row.name,
+              fiberCategory: row.fiberCategory || '',
               nonlinearCoeff: row.nonlinearCoeff || 0,
               effectiveArea: row.effectiveArea || 0,
               dispersion: row.dispersion || 0,
+              dispersionSlope: row.dispersionSlope || 0,
               nonlinearRefractiveIndex: row.nonlinearRefractiveIndex || 0,
               attenuationCoeff: row.attenuationCoeff || 0,
               secondOrderDispersion: row.secondOrderDispersion || 0,
@@ -483,7 +447,11 @@ const handleDeviceFileSelected = async (e: Event) => {
               noiseFigure: row.noiseFigure || 0,
               pumpPower: row.pumpPower || 0,
               outputPower: row.outputPower || 0,
+              saturationPower: row.saturationPower || 0,
               gainRangePower: row.gainRangePower || 0,
+              operatingMode: row.operatingMode || 'fixed_gain',
+              unitPrice: row.unitPrice || 0,
+              currency: row.currency || 'USD',
             })
           } else if (currentSection === 'BranchingUnitTypes' && row.name) {
             branchingUnitTypes.push({
@@ -492,8 +460,10 @@ const handleDeviceFileSelected = async (e: Event) => {
               portCount: row.portCount || 0,
               trunkInsertionLoss: row.trunkInsertionLoss || 0,
               branchInsertionLoss: row.branchInsertionLoss || 0,
-              insertionLoss: row.insertionLoss || 0,
+              insertionLoss: row.trunkInsertionLoss || row.insertionLoss || 0,
               wavelengthRange: row.wavelengthRange || 0,
+              unitPrice: row.unitPrice || 0,
+              currency: row.currency || 'USD',
             })
           }
         }
@@ -590,8 +560,6 @@ const handleSubmit = async () => {
     },
     layers: layerList.value.filter(l => l.checked),
     devices: deviceList.value,
-    routeCosts: routeCostList.value.filter(c => c.price > 0),
-    systemCosts: systemCostList.value.filter(c => c.price > 0),
   })
   emit('close')
 }
@@ -1323,104 +1291,8 @@ const handleSubmit = async () => {
             </div>
           </div>
 
-          <!-- 步骤4: 成本参数 -->
-          <div v-if="currentStep === 4" class="space-y-6 animate-in slide-in-from-right-4 fade-in duration-300">
-            <div class="max-w-4xl mx-auto">
-              <div class="flex items-center justify-between mb-6">
-                <div>
-                  <h4 class="text-lg font-semibold text-gray-800">成本估算参数</h4>
-                  <p class="text-sm text-gray-500 mt-1">设置基础单价，用于自动计算项目预估成本</p>
-                </div>
-                <Button variant="ghost" size="sm" class="text-gray-500" @click="goNext">
-                  暂不设置，直接下一步
-                </Button>
-              </div>
-
-              <!-- 路径规划成本 -->
-              <div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm mb-6">
-                <div class="px-6 py-3 bg-blue-50 border-b border-blue-100">
-                  <h5 class="font-semibold text-blue-800 flex items-center gap-2">
-                    <span class="w-1.5 h-4 bg-blue-500 rounded"></span>
-                    路径规划成本
-                  </h5>
-                </div>
-                <table class="w-full">
-                  <thead class="bg-gray-50/80 border-b border-gray-200">
-                    <tr>
-                      <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600 w-1/3">费用项目</th>
-                      <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600 w-1/4">计价单位</th>
-                      <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600">预估单价</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-100">
-                    <tr v-for="cost in routeCostList" :key="cost.id" class="hover:bg-gray-50/50 transition-colors">
-                      <td class="px-6 py-3">
-                        <span class="font-medium text-gray-800">{{ cost.name }}</span>
-                      </td>
-                      <td class="px-6 py-3">
-                        <span class="px-2.5 py-1 bg-blue-50 rounded text-xs text-blue-600 font-medium">{{ cost.unit }}</span>
-                      </td>
-                      <td class="px-6 py-3">
-                        <div class="relative max-w-[200px]">
-                          <input
-                            v-model.number="cost.price"
-                            type="number"
-                            min="0"
-                            placeholder="0"
-                            class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-right"
-                          >
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- 系统规划成本 -->
-              <div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                <div class="px-6 py-3 bg-green-50 border-b border-green-100">
-                  <h5 class="font-semibold text-green-800 flex items-center gap-2">
-                    <span class="w-1.5 h-4 bg-green-500 rounded"></span>
-                    系统规划成本
-                  </h5>
-                </div>
-                <table class="w-full">
-                  <thead class="bg-gray-50/80 border-b border-gray-200">
-                    <tr>
-                      <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600 w-1/3">费用项目</th>
-                      <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600 w-1/4">计价单位</th>
-                      <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600">预估单价</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-100">
-                    <tr v-for="cost in systemCostList" :key="cost.id" class="hover:bg-gray-50/50 transition-colors">
-                      <td class="px-6 py-3">
-                        <span class="font-medium text-gray-800">{{ cost.name }}</span>
-                      </td>
-                      <td class="px-6 py-3">
-                        <span class="px-2.5 py-1 bg-green-50 rounded text-xs text-green-600 font-medium">{{ cost.unit }}</span>
-                      </td>
-                      <td class="px-6 py-3">
-                        <div class="relative max-w-[200px]">
-                          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">¥</span>
-                          <input
-                            v-model.number="cost.price"
-                            type="number"
-                            min="0"
-                            placeholder="0"
-                            class="w-full pl-7 pr-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all text-right"
-                          >
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          <!-- 步骤5: 完成 -->
-          <div v-if="currentStep === 5" class="h-full flex flex-col items-center justify-center animate-in zoom-in-95 fade-in duration-500">
+          <!-- 步骤4: 完成 -->
+          <div v-if="currentStep === 4" class="h-full flex flex-col items-center justify-center animate-in zoom-in-95 fade-in duration-500">
             <div class="w-24 h-24 bg-gradient-to-br from-green-100 to-green-50 rounded-full flex items-center justify-center mb-8 shadow-lg shadow-green-100 ring-8 ring-green-50/50">
               <CheckCircle class="w-12 h-12 text-green-600" />
             </div>

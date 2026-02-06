@@ -188,10 +188,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const branchingUnits = ref<BranchingUnit[]>([...defaultSettings.branchingUnits])
   const costFactors = ref<CostFactors>({ ...defaultSettings.costFactors })
   
-  // 新增器件类型 - 使用默认值初始化
-  const fiberTypes = ref<FiberType[]>([...defaultFiberTypes])
-  const amplifierTypes = ref<AmplifierType[]>([...defaultAmplifierTypes])
-  const branchingUnitTypes = ref<BranchingUnitType[]>([...defaultBranchingUnitTypes])
+  // 新增器件类型 - 初始为空，由用户自行添加
+  const fiberTypes = ref<FiberType[]>([])
+  const amplifierTypes = ref<AmplifierType[]>([])
+  const branchingUnitTypes = ref<BranchingUnitType[]>([])
   const currentLibraryFile = ref('')
   
   // 新增配置状态

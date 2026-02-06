@@ -67,8 +67,8 @@ const validateConfig = (): string | null => {
     if (!targetLength || targetLength <= 0) {
       return '目标长度必须大于0'
     }
-    if (targetLength > 10) {
-      return '目标长度建议不超过10km'
+    if (targetLength < 5) {
+      return '目标长度建议不小于5km，实际海缆段通常为25-100km'
     }
   } else {
     const minLen = parseFloat(config.minLength)
@@ -94,11 +94,11 @@ const handleGenerate = () => {
   
   const generateConfig: SegmentGenerateConfig = {
     method: config.method as SegmentMethod,
-    targetLength: parseFloat(config.targetLength) || 2.0,
+    targetLength: parseFloat(config.targetLength) || 50.0,
     highRiskThreshold: highRiskThreshold.value,
     mediumRiskThreshold: mediumRiskThreshold.value,
-    minLength: parseFloat(config.minLength) || 1.0,
-    maxLength: parseFloat(config.maxLength) || 5.0
+    minLength: parseFloat(config.minLength) || 10.0,
+    maxLength: parseFloat(config.maxLength) || 100.0
   }
   
   emit('generate', generateConfig)
@@ -180,7 +180,7 @@ const handleClose = () => {
             <div class="bg-blue-50 rounded-lg p-3 text-xs text-blue-700 mt-3">
               <div class="font-medium mb-1">💡 说明：</div>
               <ul class="list-disc list-inside space-y-0.5 text-blue-600">
-                <li>实际分段长度可能因路径总长而略有调整</li>
+                <li>实际海缆段通常为 25~100 km，建议根据路由总长合理设置</li>
                 <li>缆型根据「工程设置」中的风险映射规则分配</li>
                 <li>余量与埋深由算法自动计算</li>
               </ul>

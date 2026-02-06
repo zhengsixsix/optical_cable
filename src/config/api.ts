@@ -28,6 +28,11 @@ export const API_ENDPOINTS = {
   gis: {
     shared: `${API_BASE_URL}/api/gis/shared`,
   },
+  
+  // 仿真计算服务
+  simulation: {
+    run: `${API_BASE_URL}/api/simulation/run`,
+  },
 } as const
 
 /**

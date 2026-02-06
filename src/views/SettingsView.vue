@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
-import {ref, reactive, computed, watch} from 'vue'
-import {useRouter} from 'vue-router'
+import {ref, reactive, computed, watch, onMounted} from 'vue'
+import {useRouter, useRoute} from 'vue-router'
 import {useSettingsStore, useAppStore} from '@/stores'
 import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
@@ -43,7 +43,16 @@ import {
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 const router = useRouter()
+const route = useRoute()
 const activeTab = ref('equipment')
+
+// 支持通过路由 query 参数切换 tab（如从系统规划跳转过来）
+onMounted(() => {
+  const tabQuery = route.query.tab as string
+  if (tabQuery && ['equipment', 'route', 'transmission', 'monitoring'].includes(tabQuery)) {
+    activeTab.value = tabQuery
+  }
+})
 
 // 折叠面板状态
 const expandedPanels = ref<Record<string, boolean>>({
@@ -51,8 +60,7 @@ const expandedPanels = ref<Record<string, boolean>>({
   buConfig: true,
   armorMapping: true,
   redundancy: true,
-  gisSettings: true,
-  costParams: true
+  gisSettings: true
 })
 
 const togglePanel = (panelId: string) => {
@@ -90,38 +98,68 @@ const cableTypePresetArmor = ref('')  // 预设的铠装类型
 const mapSelectType = ref<'start' | 'end' | 'range'>('start')
 const mapSelectTitle = ref('地图选点')
 
-// 光纤表单
-const newFiber = reactive<Omit<FiberType, 'id'>>({
-  name: '',
-  nonlinearCoeff: 0,
-  effectiveArea: 0,
-  dispersion: 0,
-  nonlinearRefractiveIndex: 0,
-  attenuationCoeff: 0,
-  secondOrderDispersion: 0,
-  simulationModel: 'GN',
+// 模型参数抽屉展开状态
+const fiberDrawerOpen = reactive({ gn: false, egn: false, ssfm: false })
+const ampDrawerOpen = reactive({ simple: false, full: false })
+
+// 选项常量
+const currencyOptions = [
+  { value: 'USD', label: 'USD' },
+  { value: 'CNY', label: 'CNY' },
+  { value: 'EUR', label: 'EUR' },
+]
+const operatingModeOptions = [
+  { value: 'fixed_gain', label: '固定增益' },
+  { value: 'fixed_output', label: '固定输出功率' },
+  { value: 'apc', label: 'APC' },
+]
+const portCountOptions = [2, 3, 4, 5, 6, 7, 8].map(n => ({ value: String(n), label: `${n} 端口` }))
+const operatingModeLabel = (mode?: string) => {
+  const map: Record<string, string> = { fixed_gain: '固定增益', fixed_output: '固定输出功率', apc: 'APC' }
+  return mode ? map[mode] || mode : '-'
+}
+
+// 默认光纤表单值
+const defaultFiberForm = () => ({
+  name: '', fiberCategory: '', attenuationCoeff: 0, dispersion: 0, dispersionSlope: 0,
+  effectiveArea: 0, nonlinearRefractiveIndex: 0, nonlinearCoeff: 0, secondOrderDispersion: 0,
+  modelDrawers: {
+    gnParams: { equivalentNoiseBandwidth: 12.5, coherentAccumulationFactor: 1.0 },
+    egnParams: { equivalentNoiseBandwidth: 12.5, coherentAccumulationFactor: 1.0, higherOrderDispersionFactor: 0.05, xpmEnhancementFactor: 1.1 },
+    ssfmParams: { stepSize: 100, maxIterations: 1000, samplePoints: 4096, nonlinearOrder: 3 },
+  },
 })
+
+// 默认放大器表单值
+const defaultAmplifierForm = () => ({
+  name: '', gain: 0, noiseFigure: 0, outputPower: 0, saturationPower: 0,
+  gainFlatness: 0, operatingMode: 'fixed_gain' as const, unitPrice: 0, currency: 'USD' as const,
+  bandwidth: 0, pumpPower: 0, gainRangePower: 0,
+  modelDrawers: {
+    simpleParams: { fixedGain: true, targetGain: 0 },
+    fullParams: { operatingMode: 'fixed_gain' as const, targetValue: 0, gainFlattening: false, transientTime: 0 },
+  },
+})
+
+// 默认分支器表单值
+const defaultBranchingForm = () => ({
+  name: '', portCount: 2, trunkInsertionLoss: 0, branchInsertionLoss: 0,
+  unitPrice: 0, currency: 'USD' as const, insertionLoss: 0, wavelengthRange: 0,
+})
+
+// 光纤表单
+const newFiber = reactive<Omit<FiberType, 'id'>>(defaultFiberForm())
 
 // 放大器表单
-const newAmplifier = reactive<Omit<AmplifierType, 'id'>>({
-  name: '',
-  gain: 0,
-  bandwidth: 0,
-  gainFlatness: 0,
-  noiseFigure: 0,
-  pumpPower: 0,
-  outputPower: 0,
-  gainRangePower: 0,
-})
+const newAmplifier = reactive<Omit<AmplifierType, 'id'>>(defaultAmplifierForm())
 
 // 分支器表单
-const newBranching = reactive<Omit<BranchingUnitType, 'id'>>({
-  name: '',
-  portCount: 0,
-  trunkInsertionLoss: 0,
-  branchInsertionLoss: 0,
-  insertionLoss: 0,
-  wavelengthRange: 0,
+const newBranching = reactive<Omit<BranchingUnitType, 'id'>>(defaultBranchingForm())
+
+// 端口数 string 桥接（Select 组件仅支持 string value）
+const portCountStr = computed({
+  get: () => String(newBranching.portCount || 2),
+  set: (v: string) => { newBranching.portCount = Number(v) },
 })
 
 // 添加光纤类型
@@ -135,10 +173,7 @@ const handleAddFiber = () => {
     ...newFiber,
   })
   showAddFiberDialog.value = false
-  Object.assign(newFiber, {
-    name: '', nonlinearCoeff: 0, effectiveArea: 0, dispersion: 0,
-    nonlinearRefractiveIndex: 0, attenuationCoeff: 0, secondOrderDispersion: 0, simulationModel: 'GN',
-  })
+  Object.assign(newFiber, defaultFiberForm())
   appStore.showNotification({type: 'success', message: '光纤类型已添加'})
 }
 
@@ -146,6 +181,16 @@ const handleAddFiber = () => {
 const handleDeleteFiber = (id: string) => {
   settingsStore.removeFiberType(id)
   appStore.showNotification({type: 'info', message: '光纤类型已删除'})
+}
+
+// 修改光纤（克隆编辑）
+const handleEditFiber = (fiber: FiberType) => {
+  const { id, ...rest } = fiber
+  Object.assign(newFiber, rest)
+  if (!newFiber.modelDrawers) {
+    newFiber.modelDrawers = defaultFiberForm().modelDrawers
+  }
+  showAddFiberDialog.value = true
 }
 
 // 添加放大器类型
@@ -159,10 +204,7 @@ const handleAddAmplifier = () => {
     ...newAmplifier,
   })
   showAddAmplifierDialog.value = false
-  Object.assign(newAmplifier, {
-    name: '', gain: 0, bandwidth: 0, gainFlatness: 0,
-    noiseFigure: 0, pumpPower: 0, outputPower: 0, gainRangePower: 0,
-  })
+  Object.assign(newAmplifier, defaultAmplifierForm())
   appStore.showNotification({type: 'success', message: '放大器类型已添加'})
 }
 
@@ -170,6 +212,16 @@ const handleAddAmplifier = () => {
 const handleDeleteAmplifier = (id: string) => {
   settingsStore.removeAmplifierType(id)
   appStore.showNotification({type: 'info', message: '放大器类型已删除'})
+}
+
+// 修改放大器（克隆编辑）
+const handleEditAmplifier = (amp: AmplifierType) => {
+  const { id, ...rest } = amp
+  Object.assign(newAmplifier, rest)
+  if (!newAmplifier.modelDrawers) {
+    newAmplifier.modelDrawers = defaultAmplifierForm().modelDrawers
+  }
+  showAddAmplifierDialog.value = true
 }
 
 // 添加分支器类型
@@ -183,7 +235,7 @@ const handleAddBranching = () => {
     ...newBranching,
   })
   showAddBranchingDialog.value = false
-  Object.assign(newBranching, {name: '', portCount: 0, insertionLoss: 0, wavelengthRange: 0})
+  Object.assign(newBranching, defaultBranchingForm())
   appStore.showNotification({type: 'success', message: '分支器类型已添加'})
 }
 
@@ -191,6 +243,13 @@ const handleAddBranching = () => {
 const handleDeleteBranching = (id: string) => {
   settingsStore.removeBranchingUnitType(id)
   appStore.showNotification({type: 'info', message: '分支器类型已删除'})
+}
+
+// 修改分支器（克隆编辑）
+const handleEditBranching = (bu: BranchingUnitType) => {
+  const { id, ...rest } = bu
+  Object.assign(newBranching, rest)
+  showAddBranchingDialog.value = true
 }
 
 // 导入器件库
@@ -240,9 +299,11 @@ const handleImportLibrary = () => {
           fiberTypes.push({
             id: `fiber-${Date.now()}-${fiberTypes.length}`,
             name: row.name,
+            fiberCategory: row.fiberCategory || '',
             nonlinearCoeff: row.nonlinearCoeff || 0,
             effectiveArea: row.effectiveArea || 0,
             dispersion: row.dispersion || 0,
+            dispersionSlope: row.dispersionSlope || 0,
             nonlinearRefractiveIndex: row.nonlinearRefractiveIndex || 0,
             attenuationCoeff: row.attenuationCoeff || 0,
             secondOrderDispersion: row.secondOrderDispersion || 0,
@@ -258,15 +319,23 @@ const handleImportLibrary = () => {
             noiseFigure: row.noiseFigure || 0,
             pumpPower: row.pumpPower || 0,
             outputPower: row.outputPower || 0,
+            saturationPower: row.saturationPower || 0,
             gainRangePower: row.gainRangePower || 0,
+            operatingMode: row.operatingMode || 'fixed_gain',
+            unitPrice: row.unitPrice || 0,
+            currency: row.currency || 'USD',
           })
         } else if (currentSection === 'BranchingUnitTypes' && row.name) {
           branchingUnitTypes.push({
             id: `bu-${Date.now()}-${branchingUnitTypes.length}`,
             name: row.name,
             portCount: row.portCount || 0,
-            insertionLoss: row.insertionLoss || 0,
+            trunkInsertionLoss: row.trunkInsertionLoss || 0,
+            branchInsertionLoss: row.branchInsertionLoss || 0,
+            insertionLoss: row.trunkInsertionLoss || row.insertionLoss || 0,
             wavelengthRange: row.wavelengthRange || 0,
+            unitPrice: row.unitPrice || 0,
+            currency: row.currency || 'USD',
           })
         }
       }
@@ -654,17 +723,6 @@ const routeConfig = reactive({
   // GIS设置
   planningRange: '',
   gridSize: '',
-  // 路径规划成本参数
-  lightCableCost: settingsStore.costFactors.lightCableCost?.toString() || '',
-  heavyCableCost: settingsStore.costFactors.heavyCableCost?.toString() || '',
-  maxConstructionCost: settingsStore.costFactors.maxConstructionCost?.toString() || '',
-  depthThreshold: settingsStore.costFactors.depthThreshold?.toString() || '',
-  // 系统规划成本参数
-  cableCostPerKm: settingsStore.costFactors.cableCostPerKm?.toString() || '',
-  installationCostPerKm: settingsStore.costFactors.installationCostPerKm?.toString() || '',
-  repeaterCost: settingsStore.costFactors.repeaterCost?.toString() || '',
-  branchingUnitCost: settingsStore.costFactors.branchingUnitCost?.toString() || '',
-  landingStationCost: settingsStore.costFactors.landingStationCost?.toString() || '',
 })
 
 // 监听 settingsStore 的变化，同步更新 routeConfig（当导入项目后自动更新）
@@ -719,25 +777,6 @@ watch(
       }
     },
     {deep: true, immediate: true}
-)
-
-// 监听 costFactors 变化，同步更新成本参数
-watch(
-    () => settingsStore.costFactors,
-    (newCostFactors) => {
-      // 路径规划成本
-      routeConfig.lightCableCost = newCostFactors.lightCableCost?.toString() || ''
-      routeConfig.heavyCableCost = newCostFactors.heavyCableCost?.toString() || ''
-      routeConfig.maxConstructionCost = newCostFactors.maxConstructionCost?.toString() || ''
-      routeConfig.depthThreshold = newCostFactors.depthThreshold?.toString() || ''
-      // 系统规划成本
-      routeConfig.cableCostPerKm = newCostFactors.cableCostPerKm?.toString() || ''
-      routeConfig.installationCostPerKm = newCostFactors.installationCostPerKm?.toString() || ''
-      routeConfig.repeaterCost = newCostFactors.repeaterCost?.toString() || ''
-      routeConfig.branchingUnitCost = newCostFactors.branchingUnitCost?.toString() || ''
-      routeConfig.landingStationCost = newCostFactors.landingStationCost?.toString() || ''
-    },
-    {deep: true}
 )
 
 // 地图选点功能
@@ -967,21 +1006,6 @@ const handleSave = () => {
 
   settingsStore.updateFiberSimulationConfig({
     model: fiberConfig.model as 'GN' | 'EGN',
-  })
-
-  // 保存成本参数
-  settingsStore.updateCostFactors({
-    // 路径规划成本
-    lightCableCost: routeConfig.lightCableCost ? parseFloat(routeConfig.lightCableCost) : undefined,
-    heavyCableCost: routeConfig.heavyCableCost ? parseFloat(routeConfig.heavyCableCost) : undefined,
-    maxConstructionCost: routeConfig.maxConstructionCost ? parseFloat(routeConfig.maxConstructionCost) : undefined,
-    depthThreshold: routeConfig.depthThreshold ? parseFloat(routeConfig.depthThreshold) : undefined,
-    // 系统规划成本
-    cableCostPerKm: routeConfig.cableCostPerKm ? parseFloat(routeConfig.cableCostPerKm) : undefined,
-    installationCostPerKm: routeConfig.installationCostPerKm ? parseFloat(routeConfig.installationCostPerKm) : undefined,
-    repeaterCost: routeConfig.repeaterCost ? parseFloat(routeConfig.repeaterCost) : undefined,
-    branchingUnitCost: routeConfig.branchingUnitCost ? parseFloat(routeConfig.branchingUnitCost) : undefined,
-    landingStationCost: routeConfig.landingStationCost ? parseFloat(routeConfig.landingStationCost) : undefined,
   })
 
   settingsStore.saveToLocalStorage()
@@ -1981,7 +2005,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                     增加光纤类型
                   </Button>
                 </div>
-                <div class="border rounded-lg overflow-hidden">
+                <div class="border rounded-lg overflow-x-auto">
                   <table class="w-full text-sm">
                     <thead class="bg-gray-100 dark:bg-white/5">
                     <tr>
@@ -1991,13 +2015,12 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                       <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">色散</th>
                       <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">非线性折射率</th>
                       <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">衰减系数</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">二阶色散</th>
                       <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
                     </tr>
                     </thead>
                     <tbody>
                     <tr v-if="settingsStore.fiberTypes.length === 0">
-                      <td colspan="8" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                      <td colspan="7" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
                     </tr>
                     <tr v-for="fiber in settingsStore.fiberTypes" :key="fiber.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
@@ -2007,9 +2030,9 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                       <td class="px-3 py-2">{{ fiber.dispersion }}</td>
                       <td class="px-3 py-2">{{ fiber.nonlinearRefractiveIndex }} × 10⁻²⁰</td>
                       <td class="px-3 py-2">{{ fiber.attenuationCoeff }}</td>
-                      <td class="px-3 py-2">{{ fiber.secondOrderDispersion }}</td>
                       <td class="px-3 py-2 text-center">
-                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1">修改</button>
+                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1"
+                                @click="handleEditFiber(fiber)">修改</button>
                         <button class="text-red-500 hover:text-red-700 mx-1"
                                 @click="handleDeleteFiber(fiber.id)">删除
                         </button>
@@ -2029,37 +2052,40 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                     增加放大器类型
                   </Button>
                 </div>
-                <div class="border rounded-lg overflow-hidden">
+                <div class="border rounded-lg overflow-x-auto">
                   <table class="w-full text-sm">
                     <thead class="bg-gray-100 dark:bg-white/5">
                     <tr>
                       <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">放大器类型名称</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">带宽</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益平坦度</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">额定增益</th>
                       <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">噪声系数</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">泵浦功率</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">输出功率</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">增益范围功率</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">最大输出功率</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">饱和功率</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">平坦度</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">工作模式</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币</th>
                       <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
                     </tr>
                     </thead>
                     <tbody>
                     <tr v-if="settingsStore.amplifierTypes.length === 0">
-                      <td colspan="9" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                      <td colspan="10" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
                     </tr>
                     <tr v-for="amp in settingsStore.amplifierTypes" :key="amp.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
                       <td class="px-3 py-2">{{ amp.name }}</td>
                       <td class="px-3 py-2">{{ amp.gain }}</td>
-                      <td class="px-3 py-2">{{ amp.bandwidth }}</td>
-                      <td class="px-3 py-2">{{ amp.gainFlatness }}</td>
                       <td class="px-3 py-2">{{ amp.noiseFigure }}</td>
-                      <td class="px-3 py-2">{{ amp.pumpPower }}</td>
                       <td class="px-3 py-2">{{ amp.outputPower }}</td>
-                      <td class="px-3 py-2">{{ amp.gainRangePower }}</td>
+                      <td class="px-3 py-2">{{ amp.saturationPower ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ amp.gainFlatness }}</td>
+                      <td class="px-3 py-2">{{ operatingModeLabel(amp.operatingMode) }}</td>
+                      <td class="px-3 py-2">{{ amp.unitPrice ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ amp.currency ?? '-' }}</td>
                       <td class="px-3 py-2 text-center">
-                        <button class="text-blue-500 hover:text-blue-700 mx-1">修改</button>
+                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1"
+                                @click="handleEditAmplifier(amp)">修改</button>
                         <button class="text-red-500 hover:text-red-700 mx-1"
                                 @click="handleDeleteAmplifier(amp.id)">删除
                         </button>
@@ -2079,29 +2105,34 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                     增加分支器类型
                   </Button>
                 </div>
-                <div class="border rounded-lg overflow-hidden">
+                <div class="border rounded-lg overflow-x-auto">
                   <table class="w-full text-sm">
                     <thead class="bg-gray-100 dark:bg-white/5">
                     <tr>
                       <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">分支器类型名称</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口数量</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口间插损</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">工作波长范围</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口数</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">主干插损</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">分支插损</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币类型</th>
                       <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
                     </tr>
                     </thead>
                     <tbody>
                     <tr v-if="settingsStore.branchingUnitTypes.length === 0">
-                      <td colspan="5" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                      <td colspan="7" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
                     </tr>
                     <tr v-for="bu in settingsStore.branchingUnitTypes" :key="bu.id"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
                       <td class="px-3 py-2">{{ bu.name }}</td>
                       <td class="px-3 py-2">{{ bu.portCount }}</td>
-                      <td class="px-3 py-2">{{ bu.insertionLoss }}</td>
-                      <td class="px-3 py-2">{{ bu.wavelengthRange }}</td>
+                      <td class="px-3 py-2">{{ bu.trunkInsertionLoss }}</td>
+                      <td class="px-3 py-2">{{ bu.branchInsertionLoss }}</td>
+                      <td class="px-3 py-2">{{ bu.unitPrice ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ bu.currency ?? '-' }}</td>
                       <td class="px-3 py-2 text-center">
-                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1">修改</button>
+                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1"
+                                @click="handleEditBranching(bu)">修改</button>
                         <button class="text-red-500 hover:text-red-700 mx-1"
                                 @click="handleDeleteBranching(bu.id)">删除
                         </button>
@@ -2122,50 +2153,139 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
   <Teleport to="body">
     <div v-if="showAddFiberDialog" class="fixed inset-0 z-50 flex items-center justify-center">
       <div class="absolute inset-0 bg-black/50" @click="showAddFiberDialog = false"/>
-      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[450px]">
-        <div class="px-5 py-3 border-b">
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[550px] max-h-[85vh] flex flex-col">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
           <h3 class="font-bold text-gray-800 dark:text-gray-100">新增光纤器件</h3>
+          <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showAddFiberDialog = false">
+            <X class="w-5 h-5"/>
+          </button>
         </div>
-        <div class="p-5 space-y-4">
+        <div class="p-5 space-y-4 overflow-y-auto flex-1">
           <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">光纤类型名称：</label>
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">器件名称：</label>
             <Input v-model="newFiber.name" class="flex-1"/>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">非线性系数 (γ)：</label>
-            <Input v-model="newFiber.nonlinearCoeff" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">W⁻¹·km⁻¹</span>
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">光纤类型：</label>
+            <Input v-model="newFiber.fiberCategory" placeholder="如 G.654.E" class="flex-1"/>
           </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">有效面积 (A_eff)：</label>
-            <Input v-model="newFiber.effectiveArea" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">μm²</span>
+          <div class="border-t pt-3">
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">基础物理参数</h4>
+            <div class="space-y-3">
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">衰减系数 α：</label>
+                <Input v-model="newFiber.attenuationCoeff" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">dB/km</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">色散系数 D：</label>
+                <Input v-model="newFiber.dispersion" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">ps/nm·km</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">色散斜率 S：</label>
+                <Input v-model="newFiber.dispersionSlope" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">ps/nm²·km</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">有效面积 Aeff：</label>
+                <Input v-model="newFiber.effectiveArea" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">μm²</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">非线性折射率 n₂：</label>
+                <Input v-model="newFiber.nonlinearRefractiveIndex" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">×10⁻²⁰ m²/W</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">非线性系数 γ：</label>
+                <Input v-model="newFiber.nonlinearCoeff" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">W⁻¹·km⁻¹</span>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">色散 (Dispersion)：</label>
-            <Input v-model="newFiber.dispersion" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">ps/nm·km</span>
+          <!-- GN 模型参数抽屉 -->
+          <div class="border rounded-lg">
+            <button class="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg"
+                    @click="fiberDrawerOpen.gn = !fiberDrawerOpen.gn">
+              <span>GN 模型参数</span>
+              <ChevronDown v-if="fiberDrawerOpen.gn" class="w-4 h-4"/>
+              <ChevronRight v-else class="w-4 h-4"/>
+            </button>
+            <div v-if="fiberDrawerOpen.gn" class="px-3 pb-3 space-y-3 border-t">
+              <div class="flex items-center gap-3 mt-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">等效噪声带宽：</label>
+                <Input v-model="newFiber.modelDrawers!.gnParams!.equivalentNoiseBandwidth" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">GHz</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">相干累积因子：</label>
+                <Input v-model="newFiber.modelDrawers!.gnParams!.coherentAccumulationFactor" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0"></span>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">非线性折射率 (n_2)：</label>
-            <Input v-model="newFiber.nonlinearRefractiveIndex" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">×10⁻²⁰ m²/W</span>
+          <!-- EGN 模型参数抽屉 -->
+          <div class="border rounded-lg">
+            <button class="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg"
+                    @click="fiberDrawerOpen.egn = !fiberDrawerOpen.egn">
+              <span>EGN 模型参数</span>
+              <ChevronDown v-if="fiberDrawerOpen.egn" class="w-4 h-4"/>
+              <ChevronRight v-else class="w-4 h-4"/>
+            </button>
+            <div v-if="fiberDrawerOpen.egn" class="px-3 pb-3 space-y-3 border-t">
+              <div class="flex items-center gap-3 mt-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">等效噪声带宽：</label>
+                <Input v-model="newFiber.modelDrawers!.egnParams!.equivalentNoiseBandwidth" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">GHz</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">相干累积因子：</label>
+                <Input v-model="newFiber.modelDrawers!.egnParams!.coherentAccumulationFactor" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0"></span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">高阶色散修正：</label>
+                <Input v-model="newFiber.modelDrawers!.egnParams!.higherOrderDispersionFactor" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0"></span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">XPM 增强因子：</label>
+                <Input v-model="newFiber.modelDrawers!.egnParams!.xpmEnhancementFactor" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0"></span>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">衰减系数 (α)：</label>
-            <Input v-model="newFiber.attenuationCoeff" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">dB/km</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">二阶色散 (β₂)：</label>
-            <Input v-model="newFiber.secondOrderDispersion" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">ps²</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">光纤仿真模型偏好：</label>
-            <Select v-model="newFiber.simulationModel"
-                    :options="[{ value: 'GN', label: '高斯噪声模型 (GN Model)' }, { value: 'EGN', label: '增强高斯噪声模型 (EGN Model)' }]"
-                    class="flex-1"/>
+          <!-- SSFM 模型参数抽屉 -->
+          <div class="border rounded-lg">
+            <button class="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg"
+                    @click="fiberDrawerOpen.ssfm = !fiberDrawerOpen.ssfm">
+              <span>SSFM 模型参数</span>
+              <ChevronDown v-if="fiberDrawerOpen.ssfm" class="w-4 h-4"/>
+              <ChevronRight v-else class="w-4 h-4"/>
+            </button>
+            <div v-if="fiberDrawerOpen.ssfm" class="px-3 pb-3 space-y-3 border-t">
+              <div class="flex items-center gap-3 mt-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">步长：</label>
+                <Input v-model="newFiber.modelDrawers!.ssfmParams!.stepSize" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0">m</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">最大迭代次数：</label>
+                <Input v-model="newFiber.modelDrawers!.ssfmParams!.maxIterations" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0"></span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">采样点数：</label>
+                <Input v-model="newFiber.modelDrawers!.ssfmParams!.samplePoints" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0"></span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">非线性项阶数：</label>
+                <Input v-model="newFiber.modelDrawers!.ssfmParams!.nonlinearOrder" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-20 shrink-0"></span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">
@@ -2182,49 +2302,114 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
   <Teleport to="body">
     <div v-if="showAddAmplifierDialog" class="fixed inset-0 z-50 flex items-center justify-center">
       <div class="absolute inset-0 bg-black/50" @click="showAddAmplifierDialog = false"/>
-      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[450px]">
-        <div class="px-5 py-3 border-b">
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[550px] max-h-[85vh] flex flex-col">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
           <h3 class="font-bold text-gray-800 dark:text-gray-100">新增放大器类型</h3>
+          <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showAddAmplifierDialog = false">
+            <X class="w-5 h-5"/>
+          </button>
         </div>
-        <div class="p-5 space-y-4">
+        <div class="p-5 space-y-4 overflow-y-auto flex-1">
           <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">放大器类型名称：</label>
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">器件名称：</label>
             <Input v-model="newAmplifier.name" class="flex-1"/>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益：</label>
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">额定增益：</label>
             <Input v-model="newAmplifier.gain" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">dB</span>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">带宽：</label>
-            <Input v-model="newAmplifier.bandwidth" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">nm</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益平坦度：</label>
-            <Input v-model="newAmplifier.gainFlatness" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">噪声系数：</label>
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">噪声系数 NF：</label>
             <Input v-model="newAmplifier.noiseFigure" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">dB</span>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">泵浦功率：</label>
-            <Input v-model="newAmplifier.pumpPower" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">mW</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">输出功率：</label>
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">最大输出功率：</label>
             <Input v-model="newAmplifier.outputPower" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">dBm</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">dBm</span>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-32 text-sm text-gray-600 dark:text-gray-400 text-right">增益范围功率：</label>
-            <Input v-model="newAmplifier.gainRangePower" type="number" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">饱和功率：</label>
+            <Input v-model="newAmplifier.saturationPower" type="number" class="flex-1"/>
+            <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">dBm</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">平坦度：</label>
+            <Input v-model="newAmplifier.gainFlatness" type="number" class="flex-1"/>
+            <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">dB</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">单价：</label>
+            <Input v-model="newAmplifier.unitPrice" type="number" class="flex-1"/>
+            <select v-model="newAmplifier.currency"
+                    class="shrink-0 w-20 border rounded-md px-2 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                    style="border-color: var(--app-border-color)">
+              <option v-for="opt in currencyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+          <div class="flex items-start gap-3">
+            <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0 mt-1">工作模式：</label>
+            <div class="flex gap-4 flex-1">
+              <label v-for="opt in operatingModeOptions" :key="opt.value" class="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" :value="opt.value" v-model="newAmplifier.operatingMode" class="w-4 h-4 text-primary"/>
+                <span class="text-sm text-gray-700 dark:text-gray-300">{{ opt.label }}</span>
+              </label>
+            </div>
+          </div>
+          <!-- EDFA Simple 模型参数抽屉 -->
+          <div class="border rounded-lg">
+            <button class="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg"
+                    @click="ampDrawerOpen.simple = !ampDrawerOpen.simple">
+              <span>EDFA Simple 模型参数</span>
+              <ChevronDown v-if="ampDrawerOpen.simple" class="w-4 h-4"/>
+              <ChevronRight v-else class="w-4 h-4"/>
+            </button>
+            <div v-if="ampDrawerOpen.simple" class="px-3 pb-3 space-y-3 border-t">
+              <div class="flex items-center gap-3 mt-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">固定增益模式：</label>
+                <input type="checkbox" v-model="newAmplifier.modelDrawers!.simpleParams!.fixedGain" class="w-4 h-4 text-primary"/>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">目标增益：</label>
+                <Input v-model="newAmplifier.modelDrawers!.simpleParams!.targetGain" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">dB</span>
+              </div>
+            </div>
+          </div>
+          <!-- EDFA Full 模型参数抽屉 -->
+          <div class="border rounded-lg">
+            <button class="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg"
+                    @click="ampDrawerOpen.full = !ampDrawerOpen.full">
+              <span>EDFA Full 模型参数</span>
+              <ChevronDown v-if="ampDrawerOpen.full" class="w-4 h-4"/>
+              <ChevronRight v-else class="w-4 h-4"/>
+            </button>
+            <div v-if="ampDrawerOpen.full" class="px-3 pb-3 space-y-3 border-t">
+              <div class="flex items-start gap-3 mt-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0 mt-1">工作模式：</label>
+                <div class="flex gap-4 flex-1">
+                  <label v-for="opt in operatingModeOptions" :key="opt.value" class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" :value="opt.value" v-model="newAmplifier.modelDrawers!.fullParams!.operatingMode" class="w-4 h-4 text-primary"/>
+                    <span class="text-sm text-gray-700 dark:text-gray-300">{{ opt.label }}</span>
+                  </label>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">目标值：</label>
+                <Input v-model="newAmplifier.modelDrawers!.fullParams!.targetValue" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">dB/dBm</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">增益谱平坦化：</label>
+                <input type="checkbox" v-model="newAmplifier.modelDrawers!.fullParams!.gainFlattening" class="w-4 h-4 text-primary"/>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="w-36 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">瞬态响应时间：</label>
+                <Input v-model="newAmplifier.modelDrawers!.fullParams!.transientTime" type="number" class="flex-1"/>
+                <span class="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">ms</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">
@@ -2241,30 +2426,40 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
   <Teleport to="body">
     <div v-if="showAddBranchingDialog" class="fixed inset-0 z-50 flex items-center justify-center">
       <div class="absolute inset-0 bg-black/50" @click="showAddBranchingDialog = false"/>
-      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[400px]">
-        <div class="px-5 py-3 border-b">
-          <h3 class="font-bold text-gray-800 dark:text-gray-100 text-center">增加分支器类型</h3>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[450px]">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100">增加分支器类型</h3>
+          <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showAddBranchingDialog = false">
+            <X class="w-5 h-5"/>
+          </button>
         </div>
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
-            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">分支器类型名称：</label>
+            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">器件名称：</label>
             <Input v-model="newBranching.name" class="flex-1"/>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">端口数量：</label>
-            <Input v-model="newBranching.portCount" type="number" placeholder="请输入端口数量" class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">个</span>
+            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">端口数：</label>
+            <Select v-model="portCountStr" :options="portCountOptions" class="flex-1"/>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">端口间插损：</label>
-            <Input v-model="newBranching.insertionLoss" type="number" placeholder="请输入端口间插损" class="flex-1"/>
+            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">主干插损：</label>
+            <Input v-model="newBranching.trunkInsertionLoss" type="number" class="flex-1"/>
             <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
           </div>
           <div class="flex items-center gap-3">
-            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right">工作波长范围：</label>
-            <Input v-model="newBranching.wavelengthRange" type="number" placeholder="请输入工作波长范围"
-                   class="flex-1"/>
-            <span class="text-xs text-gray-500 dark:text-gray-400">nm</span>
+            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">分支插损：</label>
+            <Input v-model="newBranching.branchInsertionLoss" type="number" class="flex-1"/>
+            <span class="text-xs text-gray-500 dark:text-gray-400">dB</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">单价：</label>
+            <Input v-model="newBranching.unitPrice" type="number" class="flex-1"/>
+            <select v-model="newBranching.currency"
+                    class="shrink-0 w-20 border rounded-md px-2 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                    style="border-color: var(--app-border-color)">
+              <option v-for="opt in currencyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">

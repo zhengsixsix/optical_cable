@@ -144,48 +144,14 @@ export interface AppSettings {
   currentLibraryFile: string
 }
 
-// 默认光纤类型
-export const defaultFiberTypes: FiberType[] = [
-  {
-    id: 'fiber-a',
-    name: 'A',
-    nonlinearCoeff: 1.4,
-    effectiveArea: 60,
-    dispersion: 16,
-    nonlinearRefractiveIndex: 2.6,
-    attenuationCoeff: 0.23,
-    secondOrderDispersion: -20,
-    simulationModel: 'GN',
-  },
-]
+// 默认光纤类型（空数组，由用户自行添加）
+export const defaultFiberTypes: FiberType[] = []
 
-// 默认放大器类型
-export const defaultAmplifierTypes: AmplifierType[] = [
-  {
-    id: 'amp-a',
-    name: 'A',
-    gain: 20,
-    bandwidth: 1550,
-    gainFlatness: 0.5,
-    noiseFigure: 5,
-    pumpPower: 100,
-    outputPower: 10,
-    gainRangePower: 0.1,
-  },
-]
+// 默认放大器类型（空数组，由用户自行添加）
+export const defaultAmplifierTypes: AmplifierType[] = []
 
-// 默认分支器类型
-export const defaultBranchingUnitTypes: BranchingUnitType[] = [
-  {
-    id: 'bu-1',
-    name: 'BU-1',
-    portCount: 3,
-    trunkInsertionLoss: 0.5,
-    branchInsertionLoss: 3.0,
-    insertionLoss: 0.8,
-    wavelengthRange: 1550,
-  },
-]
+// 默认分支器类型（空数组，由用户自行添加）
+export const defaultBranchingUnitTypes: BranchingUnitType[] = []
 
 // 默认设置
 export const defaultSettings: AppSettings = {

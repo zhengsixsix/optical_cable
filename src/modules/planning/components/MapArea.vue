@@ -379,7 +379,8 @@ const handlePointerMove = (evt: any) => {
 
     if (editMode.value === 'drag') {
       if (pointFeature) {
-        mapContainer.value!.style.cursor = 'grab'
+        const ptType = pointFeature.get('pointType')
+        mapContainer.value!.style.cursor = (ptType === 'landing' || ptType === 'branching') ? 'not-allowed' : 'grab'
       } else if (lineFeature) {
         mapContainer.value!.style.cursor = 'grab'  // 线段可拖拽弯曲
       } else {
@@ -424,6 +425,12 @@ const handlePointerDown = (evt: any) => {
   if (editMode.value === 'drag') {
     // 拖拽模式
     if (pointFeature) {
+      // 登陆站和分支器位置固定，不允许拖拽
+      const ptType = pointFeature.get('pointType')
+      if (ptType === 'landing' || ptType === 'branching') {
+        appStore.showNotification({ type: 'warning', message: `${ptType === 'landing' ? '登陆站' : '分支器'}位置固定，不可拖拽` })
+        return
+      }
       // 拖拽已有节点
       selectedPointFeature.value = pointFeature as Feature
       isDraggingPoint.value = true
@@ -456,6 +463,12 @@ const handlePointerDown = (evt: any) => {
       const targetPointFeature = pointFeatures.find(f => f.get('pointIndex') === targetPointIndex)
 
       if (targetPointFeature) {
+        // 登陆站和分支器位置固定，不允许通过线段拖拽
+        const tptType = targetPointFeature.get('pointType')
+        if (tptType === 'landing' || tptType === 'branching') {
+          appStore.showNotification({ type: 'warning', message: `${tptType === 'landing' ? '登陆站' : '分支器'}位置固定，不可拖拽` })
+          return
+        }
         selectedPointFeature.value = targetPointFeature as Feature
         isDraggingPoint.value = true
         mapContainer.value!.style.cursor = 'grabbing'
@@ -632,11 +645,11 @@ const deletePoint = (pointFeature: Feature) => {
   const pointIndex = pointFeature.get('pointIndex') ?? 0
   const pointType = pointFeature.get('pointType')
 
-  // 不允许删除登陆站（起点/终点）
-  if (pointType === 'landing') {
+  // 不允许删除登陆站和分支器
+  if (pointType === 'landing' || pointType === 'branching') {
     appStore.showNotification({
       type: 'warning',
-      message: '不能删除登陆站节点'
+      message: `不能删除${pointType === 'landing' ? '登陆站' : '分支器'}节点`
     })
     return
   }
@@ -886,13 +899,64 @@ const handleCableSegmentConfirm = (segments: CableSegment[]) => {
     message: `海缆段已确认入库，共 ${segments.length} 段，总长 ${segmentSummary.value?.totalLength.toFixed(2)} km` 
   })
   appStore.addLog('INFO', `海缆段入库完成：${segments.length} 段`)
+
+  // 重绘路由以更新分段节点标记
+  drawParetoRoutes()
 }
 
 // 在地图中查看海缆段
 const handleViewSegmentsOnMap = () => {
-  // 保留弹窗打开状态，但缩小到右下角
-  // TODO: 实现地图上高亮显示海缆段
-  appStore.showNotification({ type: 'info', message: '已在地图中高亮显示海缆段' })
+  // 重绘路由显示分段节点标记
+  drawParetoRoutes()
+  appStore.showNotification({ type: 'info', message: '已在地图中显示海缆分段节点标记' })
+}
+
+// 自动生成海缆分段节点（规划完成后自动调用）
+const autoGenerateCableSegments = (): number => {
+  try {
+    // 获取当前选中路由（规划刚完成时默认选中第一条）
+    const selectedRouteId = routeStore.selectedRouteIds[0] || routeStore.paretoRoutes[0]?.id
+    if (!selectedRouteId) {
+      console.warn('autoGenerateCableSegments: 无可用路由')
+      return 0
+    }
+
+    const selectedRoute = routeStore.paretoRoutes.find(r => r.id === selectedRouteId)
+    const routeLength = selectedRoute?.totalLength || 0
+    if (routeLength <= 0) {
+      console.warn('autoGenerateCableSegments: 路由长度为0')
+      return 0
+    }
+
+    // 设置当前路由
+    cableSegmentStore.setCurrentRoute(selectedRouteId)
+
+    // 根据路由长度自动选择合理的分段长度
+    // 短路由(<100km): 每段 ~25km；中路由(100-500km): 每段 ~50km；长路由(>500km): 每段 ~100km
+    const targetLength = routeLength < 100 ? 25 : routeLength < 500 ? 50 : 100
+
+    // 使用固定长度方式自动分段
+    cableSegmentStore.setGenerateConfig({
+      method: 'fixed-length',
+      targetLength
+    })
+
+    // 生成分段（无风险数据，默认低风险）
+    const segments = cableSegmentStore.generateSegments(routeLength, [])
+
+    // 更新预览数据
+    generatedSegments.value = segments
+    segmentSummary.value = cableSegmentStore.summary
+    currentSegmentMethod.value = 'fixed-length'
+    currentSegmentGenerateTime.value = new Date().toLocaleString()
+
+    appStore.addLog('INFO', `自动生成海缆分段：${segments.length} 段，每段约 ${targetLength} km，总长 ${routeLength.toFixed(1)} km`)
+    return segments.length
+  } catch (err: any) {
+    console.error('autoGenerateCableSegments error:', err)
+    appStore.addLog('WARN', `自动生成海缆分段失败: ${err.message}`)
+    return 0
+  }
 }
 
 // 获取当前路由总长度
@@ -934,6 +998,11 @@ const handleSegmentHover = (evt: any) => {
 
   // 检测线段 (LineString)
   const lineFeature = features?.find(f => f.getGeometry()?.getType() === 'LineString')
+
+  // 细粒度海缆段仅用于展示，不参与 hover 交互
+  if (lineFeature && lineFeature.get && lineFeature.get('isFineSegment')) {
+    return
+  }
 
   if (lineFeature && lineFeature !== hoveredFeature.value) {
     // 离开上一个线段，恢复样式
@@ -1161,6 +1230,25 @@ const initMap = () => {
     })
 
     if (features && features.length > 0) {
+      // 优先处理细粒度海缆段（KP-间段）点击，直接打开独立配置
+      const fineFeature = features.find(f => f.get('isFineSegment'))
+      if (fineFeature) {
+        const startKp = fineFeature.get('startKp')
+        const endKp = fineFeature.get('endKp')
+        const segId = fineFeature.get('fineSegmentId')
+        let seg = segId ? cableSegmentStore.segments.find(s => s.id === segId) : undefined
+        if (!seg) {
+          const eps = 1e-6
+          seg = cableSegmentStore.segments.find(s => Math.abs(s.startKp - startKp) < eps && Math.abs(s.endKp - endKp) < eps)
+        }
+        if (seg) {
+          selectedCableSegment.value = seg
+          showCableSegmentConfigDialog.value = true
+          drawParetoRoutes()
+          return
+        }
+      }
+
       const lineFeature = features.find(f => f.getGeometry()?.getType() === 'LineString')
       if (lineFeature) {
         const routeId = lineFeature.get('routeId')
@@ -1864,7 +1952,7 @@ const drawParetoRoutes = async () => {
         if (point.type === 'branching' && (point as any).branchTo) {
           const branchTo = (point as any).branchTo
 
-          // 绘制分支线（用紫色虚线）
+          // 绘制分支线（选中时与主干同样式，未选中时紫色虚线）
           const branchLineFeature = new Feature({
             geometry: new LineString([
               point.coordinates,
@@ -1878,9 +1966,9 @@ const drawParetoRoutes = async () => {
           })
           branchLineFeature.setStyle(new Style({
             stroke: new Stroke({
-              color: '#a855f7',
-              width: 2,
-              lineDash: [6, 4],
+              color: isRouteSelected ? '#ef4444' : '#a855f7',
+              width: isRouteSelected ? 4 : 2,
+              lineDash: isRouteSelected ? undefined : [6, 4],
             }),
           }))
           routeSource!.addFeature(branchLineFeature)
@@ -1913,6 +2001,131 @@ const drawParetoRoutes = async () => {
             }) : undefined,
           }))
           routeSource!.addFeature(branchStationFeature)
+        }
+      }
+    }
+
+    // ========== 绘制海缆分段节点标记 ==========
+    // 沿着每条实际绘制的路由线段放置 KP 标记（包含主干和分支）
+    const cableSegments = cableSegmentStore.segments
+    const selectedRoute = routeStore.selectedRoute || routeStore.paretoRoutes[0]
+    if (cableSegments.length > 0 && selectedRoute && selectedRoute.segments.length > 0) {
+      const routeLength = selectedRoute.totalLength || 0
+      if (routeLength > 0) {
+        // 构建点ID→坐标映射（包含分支登陆站）
+        const ptMap: Record<string, [number, number]> = {}
+        for (const p of selectedRoute.points) {
+          ptMap[p.id] = p.coordinates
+        }
+
+        // 按 route.segments 顺序构建每条线段的 KP 范围和几何
+        let kpOffset = 0
+        const segGeos: Array<{
+          startKp: number; endKp: number;
+          startCoord: [number, number]; endCoord: [number, number];
+        }> = []
+
+        for (const seg of selectedRoute.segments) {
+          const sc = ptMap[seg.startPointId]
+          const ec = ptMap[seg.endPointId]
+          if (!sc || !ec) { kpOffset += (seg.length || 0); continue }
+          const segLen = seg.length || 0
+          segGeos.push({ startKp: kpOffset, endKp: kpOffset + segLen, startCoord: sc, endCoord: ec })
+          kpOffset += segLen
+        }
+
+        // 收集所有分段边界 KP
+        const boundaryKps = new Set<number>()
+        cableSegments.forEach(seg => {
+          if (seg.startKp > 0) boundaryKps.add(seg.startKp)
+          if (seg.endKp < routeLength) boundaryKps.add(seg.endKp)
+        })
+        const sortedKps = Array.from(boundaryKps).sort((a, b) => a - b)
+        const labelInterval = Math.max(1, Math.ceil(sortedKps.length / 30))
+
+        // 在每个分段边界处绘制标记
+        for (let idx = 0; idx < sortedKps.length; idx++) {
+          const kp = sortedKps[idx]
+
+          // 找到该 KP 落在哪条路由线段上
+          const range = segGeos.find(r => kp >= r.startKp && kp <= r.endKp)
+          if (!range) continue
+
+          const segLen = range.endKp - range.startKp
+          const frac = segLen > 0 ? (kp - range.startKp) / segLen : 0
+          const lon = range.startCoord[0] + frac * (range.endCoord[0] - range.startCoord[0])
+          const lat = range.startCoord[1] + frac * (range.endCoord[1] - range.startCoord[1])
+
+          const showLabel = idx % labelInterval === 0
+          const nodeFeature = new Feature({
+            geometry: new Point([lon, lat]),
+            isCableSegmentNode: true,
+            kp: kp,
+          })
+          nodeFeature.setStyle(new Style({
+            image: new CircleStyle({
+              radius: showLabel ? 5 : 3,
+              fill: new Fill({ color: '#f59e0b' }),
+              stroke: new Stroke({ color: '#fff', width: showLabel ? 2 : 1 }),
+            }),
+            text: showLabel ? new Text({
+              text: `KP ${kp.toFixed(0)}`,
+              offsetY: -12,
+              font: '10px sans-serif',
+              fill: new Fill({ color: '#d97706' }),
+              stroke: new Stroke({ color: '#fff', width: 2 }),
+            }) : undefined,
+          }))
+          routeSource!.addFeature(nodeFeature)
+        }
+
+        // ===== 绘制细粒度海缆段（KP 边界之间的一段）=====
+        const boundaries: number[] = [0, ...sortedKps, routeLength]
+        for (let i = 0; i < boundaries.length - 1; i++) {
+          const startKp = boundaries[i]
+          const endKp = boundaries[i + 1]
+          if (endKp <= startKp) continue
+
+          // 在 segGeos 上拼接折线坐标
+          const coords: [number, number][] = []
+          let remainA = startKp
+          let remainB = endKp
+          for (const r of segGeos) {
+            if (remainB <= r.startKp || remainA >= r.endKp) continue // 不相交
+            const segLen = r.endKp - r.startKp
+            const startFrac = Math.max(0, (remainA - r.startKp) / segLen)
+            const endFrac = Math.min(1, (remainB - r.startKp) / segLen)
+            const startLon = r.startCoord[0] + startFrac * (r.endCoord[0] - r.startCoord[0])
+            const startLat = r.startCoord[1] + startFrac * (r.endCoord[1] - r.startCoord[1])
+            const endLon = r.startCoord[0] + endFrac * (r.endCoord[0] - r.startCoord[0])
+            const endLat = r.startCoord[1] + endFrac * (r.endCoord[1] - r.startCoord[1])
+
+            if (coords.length === 0) coords.push([startLon, startLat])
+            coords.push([endLon, endLat])
+          }
+
+          if (coords.length >= 2) {
+            // 查找该段的风险等级/缆型
+            const eps = 1e-6
+            const segInfo = cableSegments.find(s => Math.abs(s.startKp - startKp) < eps && Math.abs(s.endKp - endKp) < eps)
+            const risk = segInfo?.riskLevel || 'low'
+            const color = risk === 'high' ? '#dc2626' : risk === 'medium' ? '#f97316' : '#f59e0b'
+
+            const fineFeature = new Feature({
+              geometry: new LineString(coords),
+              routeId: selectedRoute.id,
+              isFineSegment: true,
+              fineSegmentId: segInfo?.id || `fine-${i}`,
+              startKp,
+              endKp,
+              cableTypeName: segInfo?.cableTypeName || 'LW',
+              riskLevel: risk,
+            })
+            fineFeature.setStyle(new Style({
+              stroke: new Stroke({ color, width: 4 })
+            }))
+            routeSource!.addFeature(fineFeature)
+          }
         }
       }
     }
@@ -2430,19 +2643,21 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
     })
 
     // 生成海缆段（用于配置铠装类型和敷设余量）
+    // 分离主干设备和分支登陆站，以正确生成拓扑
+    const trunkDevices = devices.filter((d: any) => !d.isBranchStation)
+    const branchDevices = devices.filter((d: any) => d.isBranchStation)
+
     const cableSegments: any[] = []
-    for (let i = 0; i < devices.length - 1; i++) {
-      const fromElem = devices[i]
-      const toElem = devices[i + 1]
+    let segIdx = 0
+
+    const makeCableSegment = (fromElem: any, toElem: any) => {
       const segmentLength = Math.abs(toElem.kp - fromElem.kp)
-      
-      // 默认使用轻铠 (LW)，后续可根据风险等级调整
-      cableSegments.push({
-        id: `cable-seg-${Date.now()}-${i}`,
-        name: `海缆段 SEG-${String(i + 1).padStart(3, '0')}`,
+      return {
+        id: `cable-seg-${Date.now()}-${segIdx}`,
+        name: `海缆段 SEG-${String(++segIdx).padStart(3, '0')}`,
         type: 'cable_segment',
-        kp: fromElem.kp,
-        endKp: toElem.kp,
+        kp: Math.min(fromElem.kp, toElem.kp),
+        endKp: Math.max(fromElem.kp, toElem.kp),
         longitude: (fromElem.longitude + toElem.longitude) / 2,
         latitude: (fromElem.latitude + toElem.latitude) / 2,
         depth: (fromElem.depth + toElem.depth) / 2,
@@ -2452,15 +2667,33 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
         fromDeviceId: fromElem.id,
         toDeviceId: toElem.id,
         length: segmentLength,
-        // 海缆段特有属性
         cableTypeId: 'LW',
         cableTypeName: 'LW (轻型)',
         armorType: '轻铠',
-        slack: 3,           // 默认 3% 敷设余量
-        burialDepth: 1.0,   // 默认 1m 埋深
-        riskLevel: 'low',   // 默认低风险
-      })
+        slack: 3,
+        burialDepth: 1.0,
+        riskLevel: 'low',
+      }
     }
+
+    // 1. 主干海缆段：主干设备之间顺序连接
+    for (let i = 0; i < trunkDevices.length - 1; i++) {
+      cableSegments.push(makeCableSegment(trunkDevices[i], trunkDevices[i + 1]))
+    }
+
+    // 2. 分支海缆段：分支登陆站连接到其所属的 BU
+    branchDevices.forEach((branchDev: any) => {
+      // 通过 branchFrom 名称查找对应的 BU 设备
+      const buDevice = branchDev.branchFrom
+          ? trunkDevices.find((d: any) => d.name === branchDev.branchFrom)
+          : null
+      if (buDevice) {
+        cableSegments.push(makeCableSegment(buDevice, branchDev))
+      } else if (trunkDevices.length > 0) {
+        // 找不到匹配 BU 时回退到最近的主干设备
+        cableSegments.push(makeCableSegment(trunkDevices[trunkDevices.length - 1], branchDev))
+      }
+    })
 
     const allElements = [...devices, ...cableSegments]
 
@@ -2687,13 +2920,18 @@ const handleRunPlanning = async () => {
       // 前端生成分支网络拓扑
       routeStore.generateParetoRoutesFromSettings()
     } else {
-      const result = await fetchRoutePlanning(request)
-      
-      // 将后端返回的路由数据设置到 store
-      if (result.routes && result.routes.length > 0) {
-        routeStore.setParetoRoutesFromApi(result.routes, config)
-      } else {
-        // 如果后端没返回路由，使用前端生成
+      try {
+        const result = await fetchRoutePlanning(request)
+        // 将后端返回的路由数据设置到 store
+        if (result.routes && result.routes.length > 0) {
+          routeStore.setParetoRoutesFromApi(result.routes, config)
+        } else {
+          // 如果后端没返回路由，使用前端生成
+          routeStore.generateParetoRoutesFromSettings()
+        }
+      } catch (apiErr: any) {
+        // 后端API失败时，回退到前端生成路由（确保多点规划仍有路由和海缆段）
+        console.warn('后端路由规划API失败，使用前端生成:', apiErr.message)
         routeStore.generateParetoRoutesFromSettings()
       }
     }
@@ -2701,7 +2939,7 @@ const handleRunPlanning = async () => {
     // 在地图上绘制路径
     drawParetoRoutes()
 
-    // 同步到 rplStore
+    // 同步到 rplStore 和 connectorStore（生成设备级海缆段）
     syncRouteToRPL()
 
     // 更新状态

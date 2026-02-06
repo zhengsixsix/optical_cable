@@ -23,6 +23,8 @@ import {
 import type { FiberParams, AmplifierParams } from '@/types/simulation'
 import { getFiberParamsFromLibrary, getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
 import { calculateDistance } from '@/utils/geo'
+import { runSimulation } from '@/services/SimulationApiService'
+import type { SpanScanResult, ScanPoint } from '@/services/SimulationApiService'
 
 const props = defineProps<{
   visible: boolean
@@ -285,6 +287,13 @@ const amplifierTypeOptions = computed(() =>
 const spanStrategy = ref<'auto' | 'fixed'>('auto')
 const fixedSpanLength = ref(70)
 
+// Span 扫描范围配置（auto 模式）
+const spanScanConfig = reactive({
+  min: 40,
+  max: 120,
+  step: 5
+})
+
 // 优化目标
 const optimizationTarget = ref<'min_amplifiers' | 'max_gsnr'>('min_amplifiers')
 
@@ -407,6 +416,8 @@ const buConfigs = computed(() => {
         nextHopUpstream: storedConfig?.buNextHopUpstream || '',
         nextHopDownstream: storedConfig?.buNextHopDownstream || '',
         nextHopBranch1: storedConfig?.buNextHopBranch1 || '',
+        nextHopBranch2: storedConfig?.buNextHopBranch2 || '',
+        nextHopBranch3: storedConfig?.buNextHopBranch3 || '',
         isConfigured,
         deviceName: device?.name || '未选择'
       }
@@ -442,6 +453,8 @@ const buConfigs = computed(() => {
         nextHopUpstream: storedConfig?.buNextHopUpstream || (bu as any).buNextHopUpstream || '',
         nextHopDownstream: storedConfig?.buNextHopDownstream || (bu as any).buNextHopDownstream || '',
         nextHopBranch1: storedConfig?.buNextHopBranch1 || (bu as any).buNextHopBranch1 || '',
+        nextHopBranch2: storedConfig?.buNextHopBranch2 || (bu as any).buNextHopBranch2 || '',
+        nextHopBranch3: storedConfig?.buNextHopBranch3 || (bu as any).buNextHopBranch3 || '',
         isConfigured,
         deviceName: device?.name || '未选择'
       }
@@ -462,7 +475,7 @@ const allNodes = computed(() => {
   const selectedRoute = routeStore.selectedRoute
   if (selectedRoute && selectedRoute.points.length > 0) {
     const existsLandingByName = (name?: string) =>
-      !!name && nodes.some(n => n.type === 'landing' && n.name === name)
+      !!name && nodes.some(n => (n.type === 'landing' || n.type === 'branch-landing') && n.name === name)
     const existsLandingByCoord = (coord?: [number, number]) => {
       if (!coord) return false
       return nodes.some(n => (n as any).coord &&
@@ -475,10 +488,29 @@ const allNodes = computed(() => {
     selectedRoute.points.forEach((p) => {
       if (p.type === 'landing' || p.type === 'branching') {
         const isBranch = (p as any).isBranchStation === true
+        const nodeType = p.type === 'landing' && isBranch ? 'branch-landing' : p.type
+        const nodeName = p.name || (p.type === 'landing' ? '登陆站' : '分支器')
+        
+        // 对 branch-landing 去重：若已存在同名节点则替换（优先保留路由点的真实 ID）
+        if (nodeType === 'branch-landing') {
+          const existingIdx = nodes.findIndex(n => n.type === 'branch-landing' && n.name === nodeName)
+          if (existingIdx !== -1) {
+            nodes[existingIdx] = {
+              id: p.id,
+              name: nodeName,
+              type: 'branch-landing',
+              index: nodes[existingIdx].index,
+              ...(p.type === 'landing' ? { coord: p.coordinates } : {}),
+              ...(isBranch ? { branchFrom: (p as any).branchFrom } : {})
+            }
+            return
+          }
+        }
+        
         nodes.push({
           id: p.id,
-          name: p.name || (p.type === 'landing' ? '登陆站' : '分支器'),
-          type: p.type === 'landing' && isBranch ? 'branch-landing' : p.type,
+          name: nodeName,
+          type: nodeType,
           index: nodeIndex++,
           ...(p.type === 'landing' ? { coord: p.coordinates } : {}),
           ...(isBranch ? { branchFrom: (p as any).branchFrom } : {})
@@ -547,6 +579,9 @@ const updateBuConfig = (buId: string, field: string, value: any) => {
   const fieldMapping: Record<string, keyof import('@/stores').BUConfigData> = {
     'buNextHopUpstream': 'buNextHopUpstream',
     'buNextHopDownstream': 'buNextHopDownstream',
+    'buBranchTarget1': 'buNextHopBranch1',
+    'buBranchTarget2': 'buNextHopBranch2',
+    'buBranchTarget3': 'buNextHopBranch3',
     'buBranchTarget': 'buNextHopBranch1',
     'componentRefId': 'componentRefId',
     'buTrunkLoss': 'buTrunkLoss',
@@ -622,7 +657,11 @@ const getNextHopOptions = (buId: string, direction: 'upstream' | 'downstream' | 
       return n.type === 'branch-landing' && (!branchFrom || branchFrom === currentBuName)
     })
     if (branchNodes.length > 0) {
-      branchNodes.forEach(n => options.push({ value: n.id, label: n.name }))
+      branchNodes.forEach(n => {
+        if (!options.find(o => o.label === n.name)) {
+          options.push({ value: n.id, label: n.name })
+        }
+      })
     } else {
       nodes
         .filter(n => n.type === 'landing')
@@ -776,7 +815,9 @@ interface CalculationResult {
 
 const calculationResult = ref<CalculationResult | null>(null)
 const isCalculating = ref(false)
-const resultViewTab = ref<'overview' | 'performance' | 'amplifier' | 'cost'>('overview')
+const resultViewTab = ref<'overview' | 'performance' | 'amplifier' | 'cost' | 'spanOptimization'>('overview')
+const spanScanData = ref<SpanScanResult | null>(null)
+const calculationError = ref('')
 
 // 性能曲线显示选项
 const performanceChartOptions = reactive({
@@ -794,186 +835,84 @@ const selectedChannelIndex = ref(48) // 默认中心信道
 const selectedAmplifierIndex = ref<number | null>(null)
 
 // 执行计算并跳转到结果页
-const startCalculation = () => {
+const startCalculation = async () => {
   isCalculating.value = true
-  const startTime = Date.now()
+  calculationError.value = ''
+  activeStep.value = 'result'
   
-  // 模拟计算过程
-  setTimeout(() => {
-    const totalLength = linkInfo.value?.totalLength || 512
-    const buCount = buConfigs.value.length
-    const totalBuLoss = buConfigs.value.reduce((sum, bu) => sum + (bu.trunkLoss || 0), 0)
-    const spanLength = spanStrategy.value === 'fixed' ? fixedSpanLength.value : 73
-    const amplifierCount = Math.max(1, Math.ceil(totalLength / spanLength) - 1)
-    const avgSpanLength = totalLength / (amplifierCount + 1)
-    
-    // 生成信道频率列表
-    const channelCount = wdmParams.channelCount
-    const centerFreq = wdmParams.centerFreq
-    const spacing = wdmParams.channelSpacing / 1000 // GHz -> THz
-    const channelFrequencies: number[] = []
-    for (let i = 0; i < channelCount; i++) {
-      const freq = centerFreq - (channelCount - 1) * spacing / 2 + i * spacing
-      channelFrequencies.push(parseFloat(freq.toFixed(3)))
-    }
-    
-    // 生成频谱数据 (模拟抛物线形状，中心信道性能最好)
-    const endOsnrSpectrum: number[] = []
-    const endGsnrSpectrum: number[] = []
-    for (let i = 0; i < channelCount; i++) {
-      const normalized = (i - channelCount / 2) / (channelCount / 2)
-      const baseOsnr = 22.5 - 4 * normalized * normalized + (Math.random() - 0.5) * 0.5
-      const baseGsnr = 20.3 - 3.5 * normalized * normalized + (Math.random() - 0.5) * 0.5
-      endOsnrSpectrum.push(parseFloat(baseOsnr.toFixed(2)))
-      endGsnrSpectrum.push(parseFloat(baseGsnr.toFixed(2)))
-    }
-    
-    // 生成沿程演化数据
-    const positions: number[] = [0]
-    const positionNames: string[] = ['Tx']
-    const osnrEvolution: number[] = [32]
-    const gsnrEvolution: number[] = [30]
-    
-    let currentPos = 0
-    let ampIndex = 1
-    let buIndex = 0
-    const buPositions = buConfigs.value.map(b => b.kp || 0).sort((a, b) => a - b)
-    
-    // 生成放大器位置和性能演化
-    for (let i = 0; i < amplifierCount; i++) {
-      currentPos += avgSpanLength
-      
-      // 检查是否有 BU 在这个位置附近
-      while (buIndex < buPositions.length && buPositions[buIndex] < currentPos) {
-        positions.push(buPositions[buIndex])
-        positionNames.push(`BU-${buIndex + 1}`)
-        const decay = buPositions[buIndex] / totalLength * 15
-        osnrEvolution.push(parseFloat((32 - decay - 0.8).toFixed(1)))
-        gsnrEvolution.push(parseFloat((30 - decay - 1.2).toFixed(1)))
-        buIndex++
+  try {
+    const devices: Array<{ id: string; name: string; type: string; kp: number }> = []
+    const info = linkInfo.value
+    if (info) {
+      if (info.landingList) {
+        info.landingList.forEach(lp => devices.push({ id: lp.id, name: lp.name, type: 'landing', kp: lp.kp }))
       }
-      
-      positions.push(parseFloat(currentPos.toFixed(1)))
-      positionNames.push(`AMP-${ampIndex}`)
-      const decay = currentPos / totalLength * 15
-      osnrEvolution.push(parseFloat((32 - decay + (Math.random() - 0.5)).toFixed(1)))
-      gsnrEvolution.push(parseFloat((30 - decay + (Math.random() - 0.5) * 2).toFixed(1)))
-      ampIndex++
+      if (info.buList) {
+        info.buList.forEach(bu => devices.push({ id: bu.id, name: bu.name, type: 'bu', kp: bu.kp }))
+      }
     }
-    
-    // 添加剩余的 BU
-    while (buIndex < buPositions.length) {
-      positions.push(buPositions[buIndex])
-      positionNames.push(`BU-${buIndex + 1}`)
-      const decay = buPositions[buIndex] / totalLength * 15
-      osnrEvolution.push(parseFloat((32 - decay - 0.8).toFixed(1)))
-      gsnrEvolution.push(parseFloat((30 - decay - 1.2).toFixed(1)))
-      buIndex++
-    }
-    
-    // 添加终点
-    positions.push(totalLength)
-    positionNames.push('Rx')
-    osnrEvolution.push(parseFloat((20.1 + (Math.random() - 0.5)).toFixed(1)))
-    gsnrEvolution.push(parseFloat((18.4 + (Math.random() - 0.5)).toFixed(1)))
-    
-    // 找最差信道
-    const worstChannelIndex = endGsnrSpectrum.indexOf(Math.min(...endGsnrSpectrum))
-    
-    // 生成放大器详情
-    const amplifiers: AmplifierInfo[] = []
-    let prevPos = 0
-    for (let i = 0; i < amplifierCount; i++) {
-      const pos = (i + 1) * avgSpanLength
-      amplifiers.push({
-        id: `amp-${i + 1}`,
-        name: `AMP-${String(i + 1).padStart(2, '0')}`,
-        position: parseFloat(pos.toFixed(1)),
-        precedingSpan: parseFloat((pos - prevPos).toFixed(1)),
-        gain: parseFloat((12 + Math.random() * 4).toFixed(1)),
-        noiseFigure: parseFloat((4.5 + Math.random() * 0.5).toFixed(1)),
-        outputPower: parseFloat((18 + Math.random() * 1).toFixed(1)),
-        inputPower: parseFloat((6 + Math.random() * 2).toFixed(1))
-      })
-      prevPos = pos
-    }
-    
-    // 获取器件单价
+
+    const spanStrategyPayload = spanStrategy.value === 'fixed'
+      ? { mode: 'fixed' as const, fixedLength: fixedSpanLength.value }
+      : { mode: 'scan' as const, scanRange: { min: spanScanConfig.min, max: spanScanConfig.max, step: spanScanConfig.step } }
+
     const fiberType = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
     const ampType = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
-    const fiberPrice = 28000 // $/km (海缆成本需从 costFactors 获取)
-    const ampPrice = ampType?.unitPrice || 850000 // $/台
-    const buPrice = 180000 // $/台
-    
-    // 计算成本
-    const cableCost = totalLength * fiberPrice
-    const amplifierCost = amplifierCount * ampPrice
-    const buCostTotal = buCount * buPrice
-    const totalCost = cableCost + amplifierCost + buCostTotal
-    
-    const costItems: CostItem[] = [
-      { category: '海缆', model: fiberType?.name || 'G.654.E ULL', quantity: `${totalLength.toFixed(0)}km`, unit: 'km', unitPrice: fiberPrice, subtotal: cableCost },
-      { category: '放大器', model: ampType?.name || 'EDFA-RPT-96ch-18dB', quantity: amplifierCount, unit: '台', unitPrice: ampPrice, subtotal: amplifierCost },
-      { category: '分支器', model: 'BU-3Port-Standard', quantity: buCount, unit: '台', unitPrice: buPrice, subtotal: buCostTotal }
-    ]
-    
-    // 计算 OSNR/GSNR 统计值
-    const osnrMin = Math.min(...endOsnrSpectrum)
-    const osnrMax = Math.max(...endOsnrSpectrum)
-    const osnrAvg = endOsnrSpectrum.reduce((a, b) => a + b, 0) / endOsnrSpectrum.length
-    const gsnrMin = Math.min(...endGsnrSpectrum)
-    const gsnrMax = Math.max(...endGsnrSpectrum)
-    const gsnrAvg = endGsnrSpectrum.reduce((a, b) => a + b, 0) / endGsnrSpectrum.length
-    
-    calculationResult.value = {
-      linkName: `${linkInfo.value?.startStation || '起点'} ⇄ ${linkInfo.value?.endStation || '终点'}`,
-      totalLength,
-      calculatedAt: new Date().toLocaleString('zh-CN'),
-      calculationTime: (Date.now() - startTime) / 1000,
-      status: 'success',
-      metrics: {
-        osnr: { min: parseFloat(osnrMin.toFixed(1)), max: parseFloat(osnrMax.toFixed(1)), avg: parseFloat(osnrAvg.toFixed(1)) },
-        gsnr: { min: parseFloat(gsnrMin.toFixed(1)), max: parseFloat(gsnrMax.toFixed(1)), avg: parseFloat(gsnrAvg.toFixed(1)) },
-        power: { min: -2.1, max: -0.8, avg: -1.5 },
-        qFactor: { min: 8.2, max: 10.1, avg: 9.0 }
+
+    const response = await runSimulation({
+      linkId: selectedRouteId.value,
+      linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
+      totalLengthKm: info?.totalLength || 512,
+      fiberModel: selectedFiberModel.value,
+      amplifierModel: selectedAmplifierModel.value,
+      fiberParams: {
+        attenuation: fiberParams.attenuation,
+        effectiveArea: fiberParams.effectiveArea,
+        dispersion: fiberParams.dispersion,
+        dispersionSlope: fiberParams.dispersionSlope,
+        nonlinearIndex: fiberParams.nonlinearIndex,
+        nonlinearCoeff: fiberParams.nonlinearCoeff,
+        fiberName: fiberType?.name,
       },
-      systemConfig: {
-        amplifierCount,
-        avgSpanLength: parseFloat(avgSpanLength.toFixed(1)),
-        buCount,
-        totalBuLoss: parseFloat(totalBuLoss.toFixed(1)),
+      amplifierParams: {
+        gain: amplifierParams.gain,
+        noiseFigure: amplifierParams.noiseFigure,
+        maxOutputPower: amplifierParams.maxOutputPower,
+        saturationPower: amplifierParams.saturationPower,
+        unitPrice: ampType?.unitPrice,
+        amplifierName: ampType?.name,
+      },
+      wdmParams: {
         channelCount: wdmParams.channelCount,
-        modulation: wdmParams.modulation
+        centerFreq: wdmParams.centerFreq,
+        channelSpacing: wdmParams.channelSpacing,
+        baudRate: wdmParams.baudRate,
+        modulation: wdmParams.modulation,
+        launchPower: uniformLaunchPower.value,
+        launchPowerMode: launchPowerMode.value,
+        launchPowerVector: launchPowerMode.value === 'per_channel' ? perChannelPowers.value : undefined,
       },
-      margin: {
-        targetOsnr: constraints.targetOSNR,
-        worstMargin: parseFloat((gsnrMin - constraints.targetGSNR).toFixed(1)),
-        avgMargin: parseFloat((gsnrAvg - constraints.targetGSNR).toFixed(1)),
-        meetsRequirement: gsnrMin >= constraints.targetGSNR
-      },
-      performanceData: {
-        channelFrequencies,
-        endOsnrSpectrum,
-        endGsnrSpectrum,
-        positions,
-        positionNames,
-        osnrEvolution,
-        gsnrEvolution,
-        worstChannelIndex
-      },
-      amplifiers,
-      costData: {
-        cableCost,
-        amplifierCost,
-        buCost: buCostTotal,
-        totalCost,
-        costItems
-      }
-    }
-    
+      spanStrategy: spanStrategyPayload,
+      constraints: { ...constraints },
+      buConfigs: buConfigs.value.map(bu => ({
+        id: bu.id,
+        name: bu.name,
+        kp: bu.kp,
+        portCount: bu.portCount,
+        trunkLoss: bu.trunkLoss,
+        branchLoss: bu.branchLoss,
+      })),
+      deviceSequence: devices,
+    })
+
+    spanScanData.value = response.spanScanResult
+    calculationResult.value = response.detailedResult as CalculationResult
+  } catch (err: any) {
+    console.error('仿真计算失败:', err)
+    calculationError.value = err.message || '仿真计算失败，请检查后端服务是否启动'
+  } finally {
     isCalculating.value = false
-    activeStep.value = 'result'
-  }, 1500)
+  }
 }
 
 // 格式化成本显示
@@ -1011,6 +950,59 @@ const gsnrEvolutionPath = computed(() => {
   const data = calculationResult.value.performanceData.gsnrEvolution
   const len = data.length - 1
   return data.map((v, i) => `${50 + i * (630 / len)},${150 - (v - 5) * 4}`).join(' ')
+})
+
+// ============ Span 优化图表计算属性 ============
+const spanGsnrArray = computed(() => spanScanData.value?.scanPoints.map((p: ScanPoint) => p.avgGsnrDb) ?? [])
+const spanOsnrArray = computed(() => spanScanData.value?.scanPoints.map((p: ScanPoint) => p.avgOsnrDb) ?? [])
+
+const spanChartBounds = computed(() => {
+  if (!spanScanData.value) return { xMin: 40, xMax: 120, yMin: 5, yMax: 35 }
+  const xs = spanScanData.value.spanLengthsKm
+  const allY = [...spanGsnrArray.value, ...spanOsnrArray.value]
+  const yMin = Math.floor(Math.min(...allY) - 2)
+  const yMax = Math.ceil(Math.max(...allY) + 2)
+  return { xMin: xs[0], xMax: xs[xs.length - 1], yMin, yMax }
+})
+
+const spanChartX = (spanLen: number) => {
+  const { xMin, xMax } = spanChartBounds.value
+  return 50 + (spanLen - xMin) / ((xMax - xMin) || 1) * 610
+}
+const spanChartY = (val: number) => {
+  const { yMin, yMax } = spanChartBounds.value
+  return 190 - (val - yMin) / ((yMax - yMin) || 1) * 170
+}
+
+const spanChartYTicks = computed(() => {
+  const { yMin, yMax } = spanChartBounds.value
+  const step = Math.max(1, Math.round((yMax - yMin) / 5))
+  const ticks: number[] = []
+  for (let v = yMin; v <= yMax; v += step) ticks.push(v)
+  return ticks
+})
+
+const spanGsnrPath = computed(() => {
+  if (!spanScanData.value) return ''
+  return spanScanData.value.spanLengthsKm
+    .map((s: number, i: number) => `${spanChartX(s)},${spanChartY(spanGsnrArray.value[i])}`)
+    .join(' ')
+})
+const spanOsnrPath = computed(() => {
+  if (!spanScanData.value) return ''
+  return spanScanData.value.spanLengthsKm
+    .map((s: number, i: number) => `${spanChartX(s)},${spanChartY(spanOsnrArray.value[i])}`)
+    .join(' ')
+})
+
+const spanFeasibleRange = computed(() => {
+  if (!spanScanData.value) return null
+  const spans = spanScanData.value.spanLengthsKm
+  const gsnrs = spanGsnrArray.value
+  const target = constraints.targetGSNR
+  const feasible = spans.filter((_: number, i: number) => gsnrs[i] >= target)
+  if (feasible.length === 0) return null
+  return { min: feasible[0], max: feasible[feasible.length - 1] }
 })
 
 // 重新计算
@@ -1173,11 +1165,123 @@ const applyAndClose = async () => {
     }
     
     const route = routeStore.selectedRoute
-  
-
-  
-
-  
+    if (!route) {
+      emit('close')
+      return
+    }
+    
+    // 获取 RPL 记录用于经纬度计算
+    const rplTable = rplStore.tables.find(t => t.id === selectedRplId.value)
+    const rplRecords = rplTable?.records || []
+    const configTotalLength = linkInfo.value?.totalLength || 0
+    
+    // 预先计算主干路径坐标序列（避免每个放大器都重复计算）
+    const pathCoords = buildPathCoords(route, rplRecords)
+    
+    // 计算路径总长和线段长度（复用 getCoordinateByKP 的逻辑）
+    let actualTotalLength = 0
+    const segmentLengths: number[] = []
+    for (let i = 0; i < pathCoords.length - 1; i++) {
+      const segLen = calculateDistance(pathCoords[i], pathCoords[i + 1])
+      segmentLengths.push(segLen)
+      actualTotalLength += segLen
+    }
+    const totalLen = configTotalLength || actualTotalLength
+    
+    // 快速 KP → 经纬度 插值函数
+    const kpToCoord = (targetKP: number) => {
+      if (pathCoords.length < 2) return { longitude: 0, latitude: 0 }
+      const ratio = Math.min(targetKP / totalLen, 1)
+      const targetActualKP = ratio * actualTotalLength
+      let cumKP = 0
+      for (let i = 0; i < segmentLengths.length; i++) {
+        if (cumKP + segmentLengths[i] >= targetActualKP) {
+          const p1 = pathCoords[i], p2 = pathCoords[i + 1]
+          const lr = segmentLengths[i] > 0 ? (targetActualKP - cumKP) / segmentLengths[i] : 0
+          return {
+            longitude: p1[0] + (p2[0] - p1[0]) * lr,
+            latitude: p1[1] + (p2[1] - p1[1]) * lr
+          }
+        }
+        cumKP += segmentLengths[i]
+      }
+      const last = pathCoords[pathCoords.length - 1]
+      return { longitude: last[0], latitude: last[1] }
+    }
+    
+    // 1) 清除旧的放大器和光纤段
+    connectorStore.deleteElementsByType(['ola', 'amplifier_e', 'amplifier_w', 'fiber'])
+    
+    // 2) 构建放大器 + 光纤段接线元
+    const amplifiers = calculationResult.value.amplifiers
+    const ampType = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
+    const fiberType = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
+    
+    const newElements: Omit<import('@/types').ConnectorElement, 'id'>[] = []
+    
+    for (let i = 0; i < amplifiers.length; i++) {
+      const amp = amplifiers[i]
+      const coord = kpToCoord(amp.position)
+      
+      // 放大器接线元
+      newElements.push({
+        name: amp.name,
+        type: 'ola',
+        kp: amp.position,
+        longitude: coord.longitude,
+        latitude: coord.latitude,
+        depth: 0,
+        status: 'planned',
+        specifications: ampType ? `${ampType.name} | G=${amp.gain}dB NF=${amp.noiseFigure}dB` : `G=${amp.gain}dB`,
+        componentRefId: selectedAmplifierTypeId.value,
+        remarks: `系统规划自动生成 | 跨段${amp.precedingSpan}km`
+      })
+      
+      // 光纤段接线元（当前放大器到下一个放大器之间）
+      const nextKp = (i < amplifiers.length - 1) ? amplifiers[i + 1].position : configTotalLength
+      const spanLen = nextKp - amp.position
+      if (spanLen > 0) {
+        newElements.push({
+          name: `光纤段 ${amp.name}-${i < amplifiers.length - 1 ? amplifiers[i + 1].name : 'Rx'}`,
+          type: 'fiber',
+          kp: amp.position,
+          endKp: nextKp,
+          longitude: coord.longitude,
+          latitude: coord.latitude,
+          depth: 0,
+          status: 'planned',
+          specifications: fiberType?.name || '',
+          fiberRefId: selectedFiberTypeId.value,
+          fromDeviceId: amp.id,
+          toDeviceId: i < amplifiers.length - 1 ? amplifiers[i + 1].id : '',
+          length: spanLen,
+          remarks: ''
+        })
+      }
+    }
+    
+    // 第一段光纤（Tx 到第一个放大器）
+    if (amplifiers.length > 0 && amplifiers[0].position > 0) {
+      const startCoord = kpToCoord(0)
+      newElements.unshift({
+        name: `光纤段 Tx-${amplifiers[0].name}`,
+        type: 'fiber',
+        kp: 0,
+        endKp: amplifiers[0].position,
+        longitude: startCoord.longitude,
+        latitude: startCoord.latitude,
+        depth: 0,
+        status: 'planned',
+        specifications: fiberType?.name || '',
+        fiberRefId: selectedFiberTypeId.value,
+        length: amplifiers[0].position,
+        remarks: ''
+      })
+    }
+    
+    // 3) 批量添加（一次性响应式更新，避免页面卡顿）
+    connectorStore.addElements(newElements)
+    
     emit('close')
   } finally {
     isApplying.value = false
@@ -1292,7 +1396,7 @@ watch(() => props.visible, (visible) => {
           </div>
           
           <!-- 右侧内容区 -->
-          <div class="flex-1 flex flex-col min-h-0">
+          <div class="flex-1 flex flex-col min-h-0 min-w-0">
             <div class="flex-1 overflow-auto p-6">
               <!-- Step 1: 链路选择 -->
               <div v-if="activeStep === 'link'" class="space-y-6">
@@ -1527,9 +1631,29 @@ watch(() => props.visible, (visible) => {
                       />
                       <span class="text-sm">自动优化（推荐）</span>
                     </label>
-                    <p v-if="spanStrategy === 'auto'" class="text-xs text-gray-500 ml-6">
-                      系统自动迭代求解最优 span 长度
-                    </p>
+                    <div v-if="spanStrategy === 'auto'" class="ml-6 space-y-2">
+                      <p class="text-xs text-gray-500">系统在指定范围内迭代求解最优 span 长度</p>
+                      <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-1">
+                          <span class="text-xs text-gray-500">最小:</span>
+                          <Input v-model.number="spanScanConfig.min" type="number" class="w-16" />
+                          <span class="text-xs text-gray-500">km</span>
+                        </div>
+                        <div class="flex items-center gap-1">
+                          <span class="text-xs text-gray-500">最大:</span>
+                          <Input v-model.number="spanScanConfig.max" type="number" class="w-16" />
+                          <span class="text-xs text-gray-500">km</span>
+                        </div>
+                        <div class="flex items-center gap-1">
+                          <span class="text-xs text-gray-500">步长:</span>
+                          <Input v-model.number="spanScanConfig.step" type="number" class="w-16" />
+                          <span class="text-xs text-gray-500">km</span>
+                        </div>
+                      </div>
+                      <p class="text-xs text-gray-400">
+                        共 {{ Math.floor((spanScanConfig.max - spanScanConfig.min) / spanScanConfig.step) + 1 }} 个扫描点
+                      </p>
+                    </div>
                     
                     <label class="flex items-center gap-2 cursor-pointer">
                       <input 
@@ -1854,7 +1978,7 @@ watch(() => props.visible, (visible) => {
                       </div>
                       
                       <div class="text-xs text-gray-500">
-                        端口数：{{ bu.portCount }}（主干{{ bu.portCount > 3 ? 2 : 2 }} + 分支{{ bu.portCount - 2 }}）
+                        端口数：{{ bu.portCount }}（主干2 + 分支{{ bu.portCount - 2 }}）
                       </div>
                       
                       <!-- 下一跳配置 -->
@@ -1894,14 +2018,18 @@ watch(() => props.visible, (visible) => {
                                 </td>
                                 <td class="px-3 py-2 font-mono">{{ (bu.trunkLoss || 0).toFixed(1) }} dB</td>
                               </tr>
-                              <tr v-if="bu.portCount >= 3" class="border-t">
-                                <td class="px-3 py-2">分支1</td>
+                              <tr 
+                                v-for="brIdx in Math.max(0, bu.portCount - 2)" 
+                                :key="'branch-' + brIdx" 
+                                class="border-t"
+                              >
+                                <td class="px-3 py-2">分支{{ brIdx }}</td>
                                 <td class="px-3 py-2">
                                   <Select 
-                                    :model-value="bu.nextHopBranch1 || PLACEHOLDER_VALUE"
+                                    :model-value="(bu as any)['nextHopBranch' + brIdx] || PLACEHOLDER_VALUE"
                                     :options="getNextHopOptions(bu.id, 'branch')"
                                     class="w-32"
-                                    @update:model-value="updateBuConfig(bu.id, 'buBranchTarget', $event === PLACEHOLDER_VALUE ? '' : $event)"
+                                    @update:model-value="updateBuConfig(bu.id, 'buBranchTarget' + brIdx, $event === PLACEHOLDER_VALUE ? '' : $event)"
                                   />
                                 </td>
                                 <td class="px-3 py-2 font-mono">{{ (bu.branchLoss || 0).toFixed(1) }} dB</td>
@@ -1979,7 +2107,7 @@ watch(() => props.visible, (visible) => {
                 </div>
                 
                 <!-- 计算结果内容 -->
-                <div v-else-if="calculationResult" class="space-y-4" style="width: 45%">
+                <div v-else-if="calculationResult" class="space-y-4">
                   <!-- 结果视图切换 -->
                   <div class="flex items-center gap-2 border-b pb-2">
                     <button
@@ -1987,7 +2115,8 @@ watch(() => props.visible, (visible) => {
                         { id: 'overview', label: '概览', icon: Activity },
                         { id: 'performance', label: '性能曲线', icon: TrendingUp },
                         { id: 'amplifier', label: '放大器详情', icon: Radio },
-                        { id: 'cost', label: '链路成本', icon: DollarSign }
+                        { id: 'cost', label: '链路成本', icon: DollarSign },
+                        ...(spanScanData ? [{ id: 'spanOptimization', label: 'Span优化', icon: TrendingUp }] : [])
                       ]"
                       :key="tab.id"
                       class="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg transition-colors"
@@ -2277,9 +2406,9 @@ watch(() => props.visible, (visible) => {
                   </div>
                   
                   <!-- 放大器详情视图 -->
-                  <div v-else-if="resultViewTab === 'amplifier'" class="space-y-4 overflow-hidden">
+                  <div v-else-if="resultViewTab === 'amplifier'" class="space-y-4">
                     <!-- 链路放大器布局示意图 -->
-                    <div class="bg-gray-50 rounded-lg p-4 overflow-hidden">
+                    <div class="bg-gray-50 rounded-lg p-4">
                       <div class="text-sm font-medium text-gray-700 mb-3">放大器布局 ({{ calculationResult.amplifiers.length }} 台)</div>
                       <div class="overflow-x-auto pb-2">
                         <div class="flex items-center py-2" style="min-width: 400px;">
@@ -2312,7 +2441,7 @@ watch(() => props.visible, (visible) => {
                     </div>
                     
                     <!-- 放大器列表 -->
-                    <div class="bg-gray-50 rounded-lg p-4 overflow-hidden">
+                    <div class="bg-gray-50 rounded-lg p-4">
                       <div class="text-sm font-medium text-gray-700 mb-3">放大器列表</div>
                       <div class="overflow-x-auto overflow-y-auto max-h-48">
                         <table class="text-sm" style="min-width: 500px;width: 100%">
@@ -2461,10 +2590,112 @@ watch(() => props.visible, (visible) => {
                       </div>
                     </div>
                   </div>
+
+                  <!-- Span 优化视图 -->
+                  <div v-else-if="resultViewTab === 'spanOptimization' && spanScanData" class="space-y-4">
+                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <div class="text-sm font-medium text-green-700 mb-2 flex items-center gap-2">
+                        <CheckCircle2 class="w-4 h-4" /> 推荐 Span 长度
+                      </div>
+                      <div class="grid grid-cols-3 gap-4 text-sm">
+                        <div class="text-center">
+                          <div class="text-2xl font-bold text-green-700">{{ spanScanData.recommendedSpanKm }} km</div>
+                          <div class="text-xs text-gray-500 mt-1">推荐 Span</div>
+                        </div>
+                        <div class="text-center">
+                          <div class="text-lg font-bold text-blue-700">
+                            {{ spanGsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)]?.toFixed(1) || '-' }} dB
+                          </div>
+                          <div class="text-xs text-gray-500 mt-1">对应末端 GSNR</div>
+                        </div>
+                        <div class="text-center">
+                          <div class="text-lg font-bold text-purple-700">
+                            {{ spanOsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)]?.toFixed(1) || '-' }} dB
+                          </div>
+                          <div class="text-xs text-gray-500 mt-1">对应末端 OSNR</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="bg-gray-50 rounded-lg p-4">
+                      <div class="text-sm font-medium text-gray-700 mb-3">Span 长度 vs GSNR / OSNR</div>
+                      <div class="relative h-56 bg-white border rounded">
+                        <svg class="w-full h-full" viewBox="0 0 700 220" preserveAspectRatio="xMidYMid meet">
+                          <g stroke="#e5e7eb" stroke-width="1">
+                            <line v-for="y in [30, 60, 90, 120, 150, 180]" :key="'sg'+y" x1="50" :y1="y" x2="660" :y2="y" stroke-dasharray="4,4" />
+                          </g>
+                          <line x1="50" :y1="spanChartY(constraints.targetGSNR)" x2="660" :y2="spanChartY(constraints.targetGSNR)" stroke="#f97316" stroke-width="1.5" stroke-dasharray="6,3" />
+                          <text x="665" :y="spanChartY(constraints.targetGSNR) + 4" class="text-[10px] fill-orange-500">GSNR目标</text>
+                          <rect v-if="spanFeasibleRange" :x="spanChartX(spanFeasibleRange.min)" y="20" :width="spanChartX(spanFeasibleRange.max) - spanChartX(spanFeasibleRange.min)" height="175" fill="#dcfce7" opacity="0.5" />
+                          <polyline :points="spanOsnrPath" fill="none" stroke="#22c55e" stroke-width="2" />
+                          <polyline :points="spanGsnrPath" fill="none" stroke="#3b82f6" stroke-width="2" />
+                          <g v-for="(spanLen, i) in spanScanData.spanLengthsKm" :key="'sp'+i">
+                            <circle :cx="spanChartX(spanLen)" :cy="spanChartY(spanGsnrArray[i])" r="3" fill="#3b82f6" />
+                            <circle :cx="spanChartX(spanLen)" :cy="spanChartY(spanOsnrArray[i])" r="3" fill="#22c55e" />
+                          </g>
+                          <line :x1="spanChartX(spanScanData.recommendedSpanKm)" y1="20" :x2="spanChartX(spanScanData.recommendedSpanKm)" y2="195" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,2" />
+                          <text :x="spanChartX(spanScanData.recommendedSpanKm)" y="15" class="text-[10px] fill-red-500 font-bold" text-anchor="middle">推荐 {{ spanScanData.recommendedSpanKm }}km</text>
+                          <line x1="50" y1="195" x2="660" y2="195" stroke="#9ca3af" stroke-width="1" />
+                          <text x="355" y="215" class="text-[10px] fill-gray-500" text-anchor="middle">Span 长度 (km)</text>
+                          <g v-for="(spanLen, i) in spanScanData.spanLengthsKm" :key="'sx'+i">
+                            <text v-if="i % Math.max(1, Math.floor(spanScanData.spanLengthsKm.length / 10)) === 0" :x="spanChartX(spanLen)" y="208" class="text-[9px] fill-gray-500" text-anchor="middle">{{ spanLen }}</text>
+                          </g>
+                          <line x1="50" y1="20" x2="50" y2="195" stroke="#9ca3af" stroke-width="1" />
+                          <text v-for="v in spanChartYTicks" :key="'sy'+v" x="45" :y="spanChartY(v) + 4" class="text-[10px] fill-gray-500" text-anchor="end">{{ v }}</text>
+                        </svg>
+                      </div>
+                      <div class="flex items-center gap-4 text-xs mt-2">
+                        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-blue-500"></span> GSNR</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-green-500"></span> OSNR</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-orange-500" style="border-top:1px dashed #f97316"></span> GSNR 目标</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-red-500" style="border-top:1px dashed #ef4444"></span> 推荐 Span</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-green-100 border border-green-300 rounded-sm"></span> 可行域</span>
+                      </div>
+                    </div>
+
+                    <div class="bg-gray-50 rounded-lg p-4">
+                      <div class="text-sm font-medium text-gray-700 mb-3">扫描明细</div>
+                      <div class="max-h-48 overflow-auto">
+                        <table class="w-full text-sm">
+                          <thead class="bg-gray-100 sticky top-0">
+                            <tr>
+                              <th class="px-3 py-2 text-left text-gray-600">Span (km)</th>
+                              <th class="px-3 py-2 text-right text-gray-600">GSNR (dB)</th>
+                              <th class="px-3 py-2 text-right text-gray-600">OSNR (dB)</th>
+                              <th class="px-3 py-2 text-center text-gray-600">状态</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="(spanLen, i) in spanScanData.spanLengthsKm" :key="'st'+i" class="border-t" :class="spanLen === spanScanData.recommendedSpanKm ? 'bg-green-50 font-medium' : ''">
+                              <td class="px-3 py-1.5 font-mono">
+                                {{ spanLen }}
+                                <span v-if="spanLen === spanScanData.recommendedSpanKm" class="text-green-600 text-xs ml-1">★ 推荐</span>
+                              </td>
+                              <td class="px-3 py-1.5 text-right font-mono">{{ spanGsnrArray[i]?.toFixed(2) }}</td>
+                              <td class="px-3 py-1.5 text-right font-mono">{{ spanOsnrArray[i]?.toFixed(2) }}</td>
+                              <td class="px-3 py-1.5 text-center">
+                                <span class="text-xs px-2 py-0.5 rounded" :class="spanGsnrArray[i] >= constraints.targetGSNR ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+                                  {{ spanGsnrArray[i] >= constraints.targetGSNR ? '✅ 可行' : '❌ 不满足' }}
+                                </span>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 
+                <!-- 计算错误提示 -->
+                <div v-if="calculationError && !isCalculating" class="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div class="flex items-center gap-2 text-red-700 text-sm">
+                    <AlertCircle class="w-4 h-4 flex-shrink-0" />
+                    <span>{{ calculationError }}</span>
+                  </div>
+                </div>
+
                 <!-- 未计算状态 -->
-                <div v-else class="text-center py-12">
+                <div v-if="!calculationResult && !isCalculating && !calculationError" class="text-center py-12">
                   <BarChart2 class="w-12 h-12 mx-auto mb-4 text-gray-300" />
                   <p class="text-gray-500">请点击"开始计算"执行性能仿真</p>
                 </div>
@@ -2472,7 +2703,7 @@ watch(() => props.visible, (visible) => {
             </div>
             
             <!-- 底部导航按钮 -->
-            <div class="flex items-center justify-between px-6 py-4 border-t bg-gray-50" style="width: 45%">
+            <div class="flex items-center justify-between px-6 py-4 border-t bg-gray-50">
               <Button 
                 variant="outline"
                 :disabled="activeStep === 'link'"

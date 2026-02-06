@@ -13,6 +13,8 @@ export interface BUConfigData {
   buNextHopUpstream: string
   buNextHopDownstream: string
   buNextHopBranch1: string
+  buNextHopBranch2?: string
+  buNextHopBranch3?: string
 }
 
 export const useBUConfigStore = defineStore('buConfig', () => {
@@ -47,6 +49,8 @@ export const useBUConfigStore = defineStore('buConfig', () => {
         buNextHopUpstream: '',
         buNextHopDownstream: '',
         buNextHopBranch1: '',
+        buNextHopBranch2: '',
+        buNextHopBranch3: '',
         ...updates
       }
     }

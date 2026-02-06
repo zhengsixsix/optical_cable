@@ -107,7 +107,7 @@ export const useCableSegmentStore = defineStore('cableSegment', () => {
 
     if (config.method === 'fixed-length') {
       // 固定长度分段
-      const targetLength = config.targetLength || 2.0
+      const targetLength = config.targetLength || 50.0
       let currentKp = 0
       let segmentIndex = 0
 
@@ -153,8 +153,8 @@ export const useCableSegmentStore = defineStore('cableSegment', () => {
       }
     } else {
       // 风险等级分段
-      const minLength = config.minLength || 1.0
-      const maxLength = config.maxLength || 5.0
+      const minLength = config.minLength || 10.0
+      const maxLength = config.maxLength || 100.0
 
       // 按风险等级变化点分段
       if (riskData.length > 0) {

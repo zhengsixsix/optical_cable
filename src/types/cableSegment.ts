@@ -11,12 +11,12 @@ export type SegmentMethod = 'fixed-length' | 'risk-based'
 export interface SegmentGenerateConfig {
   method: SegmentMethod
   // 固定长度分段参数
-  targetLength?: number  // 目标海缆段长度(km)，默认 2.0
+  targetLength?: number  // 目标海缆段长度(km)，默认 50.0
   // 风险等级分段参数
   highRiskThreshold?: number    // 高风险阈值，默认 3
   mediumRiskThreshold?: number  // 中风险阈值，默认 2
-  minLength?: number  // 最小长度(km)，默认 1.0
-  maxLength?: number  // 最大长度(km)，默认 5.0
+  minLength?: number  // 最小长度(km)，默认 10.0
+  maxLength?: number  // 最大长度(km)，默认 100.0
 }
 
 // 海缆段记录
@@ -57,9 +57,9 @@ export interface CableSegmentSummary {
 // 默认分段配置
 export const defaultSegmentGenerateConfig: SegmentGenerateConfig = {
   method: 'fixed-length',
-  targetLength: 2.0,
+  targetLength: 50.0,
   highRiskThreshold: 3,
   mediumRiskThreshold: 2,
-  minLength: 1.0,
-  maxLength: 5.0,
+  minLength: 10.0,
+  maxLength: 100.0,
 }
