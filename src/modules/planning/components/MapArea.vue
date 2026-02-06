@@ -2148,6 +2148,67 @@ watch(() => routeStore.paretoRoutes.length, (newLen) => {
   }
 }, {immediate: true})
 
+// 根据 segments 构建主干路径点序列（用于 RPL 同步）
+const buildOrderedRoutePoints = (route: any) => {
+  if (!route || !route.points || route.points.length === 0) return []
+
+  const pointsById = new globalThis.Map<string, any>()
+  route.points.forEach((p: any) => pointsById.set(p.id, p))
+
+  // 选择主干起终点（优先非分支登陆站）
+  const landingPoints = route.points.filter((p: any) => p.type === 'landing')
+  const mainLandings = landingPoints.filter((p: any) => !(p as any).isBranchStation)
+  const startPoint = mainLandings[0] || landingPoints[0] || route.points[0]
+  const endPoint = mainLandings[mainLandings.length - 1] || landingPoints[landingPoints.length - 1] || route.points[route.points.length - 1]
+
+  if (!startPoint || !endPoint) return route.points
+  if (startPoint.id === endPoint.id) return [startPoint]
+
+  if (route.segments && route.segments.length > 0) {
+    // 构建无向图
+    const adj = new globalThis.Map<string, string[]>()
+    route.segments.forEach((seg: any) => {
+      if (!adj.has(seg.startPointId)) adj.set(seg.startPointId, [])
+      if (!adj.has(seg.endPointId)) adj.set(seg.endPointId, [])
+      adj.get(seg.startPointId)!.push(seg.endPointId)
+      adj.get(seg.endPointId)!.push(seg.startPointId)
+    })
+
+    // BFS 寻径
+    const queue: string[] = [startPoint.id]
+    const visited = new Set<string>([startPoint.id])
+    const prev = new globalThis.Map<string, string | null>()
+    prev.set(startPoint.id, null)
+
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      if (current === endPoint.id) break
+      const neighbors = adj.get(current) || []
+      for (const n of neighbors) {
+        if (!visited.has(n)) {
+          visited.add(n)
+          prev.set(n, current)
+          queue.push(n)
+        }
+      }
+    }
+
+    if (visited.has(endPoint.id)) {
+      const pathIds: string[] = []
+      let cur: string | null = endPoint.id
+      while (cur) {
+        pathIds.push(cur)
+        cur = prev.get(cur) || null
+      }
+      pathIds.reverse()
+      const ordered = pathIds.map(id => pointsById.get(id)).filter(Boolean)
+      if (ordered.length > 0) return ordered
+    }
+  }
+
+  return route.points
+}
+
 // 同步路由数据到 rplStore（供系统规划使用）
 const syncRouteToRPL = () => {
   // 获取当前选中的路由（默认选中均衡路线）
@@ -2165,11 +2226,13 @@ const syncRouteToRPL = () => {
   let repeaterIndex = 0
   let branchingIndex = 0
 
-  selectedRoute.points.forEach((point, index) => {
+  const orderedPoints = buildOrderedRoutePoints(selectedRoute)
+
+  orderedPoints.forEach((point: any, index: number) => {
     // 计算段长度
     let segmentLength = 0
     if (index > 0) {
-      const prevPoint = selectedRoute.points[index - 1]
+      const prevPoint = orderedPoints[index - 1]
       segmentLength = calculateDistanceFromCoords(
           prevPoint.coordinates,
           point.coordinates
@@ -2246,6 +2309,16 @@ const syncRouteToRPL = () => {
   let branchRecordIndex = records.length
   selectedRoute.points.forEach((point) => {
     if (point.branchTo) {
+      const branchTo = point.branchTo
+      const hasSameLanding = records.some(r => 
+        r.pointType === 'landing' && (
+          (r.longitude === branchTo.coord[0] && r.latitude === branchTo.coord[1]) ||
+          (r.pointName && r.pointName === branchTo.name) ||
+          (r.remarks && r.remarks === branchTo.name)
+        )
+      )
+      if (hasSameLanding) return
+      
       // 计算分支线长度
       const branchLength = calculateDistanceFromCoords(
           point.coordinates,
@@ -2797,8 +2870,8 @@ onUnmounted(() => {
 
       <!-- 坐标显示 -->
       <div class="absolute bottom-3 left-3 bg-white/90 px-3 py-1.5 rounded text-xs text-gray-600 shadow z-10">
-        <span class="mr-4">经度: {{ coordinates.lon.toFixed(4) }}°</span>
-        <span>纬度: {{ coordinates.lat.toFixed(4) }}°</span>
+        <span class="mr-4">经度: {{ (coordinates.lon ?? 0).toFixed(4) }}°</span>
+        <span>纬度: {{ (coordinates.lat ?? 0).toFixed(4) }}°</span>
       </div>
 
       <!-- Pareto路径列表面板 -->

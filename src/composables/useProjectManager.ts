@@ -31,6 +31,14 @@ export interface CreateProjectParams {
     name: string
     longitude: number
     latitude: number
+    depth?: number
+  }>
+  buConfigs?: Array<{
+    id: string
+    name: string
+    longitude: number
+    latitude: number
+    portLimit: number
   }>
   gisConfig?: {
     planningRange: string
@@ -309,7 +317,7 @@ export function useProjectManager() {
    * 新建项目
    */
   async function createProject(params: CreateProjectParams): Promise<boolean> {
-    const { projectType, projectName, allowOtherUsers, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig } = params
+    const { projectType, projectName, allowOtherUsers, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig, buConfigs } = params
     
     // 检查当前是否有未保存的项目
     if (hasOpenProject.value && isDirty.value) {
@@ -364,7 +372,15 @@ export function useProjectManager() {
             id: wp.id,
             name: wp.name,
             lon: wp.longitude,
-            lat: wp.latitude
+            lat: wp.latitude,
+            depth: wp.depth ?? 0
+          })) : [],
+          buList: buConfigs ? buConfigs.map(bu => ({
+            id: bu.id,
+            name: bu.name,
+            lon: bu.longitude,
+            lat: bu.latitude,
+            portLimit: bu.portLimit
           })) : [],
           isConfigured: true
         })

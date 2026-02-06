@@ -1,12 +1,23 @@
 ﻿<script setup lang="ts">
+/**
+ * 器件库管理界面
+ * 
+ * 按甲方需求实现：
+ * - 光纤类型管理（含模型参数抽屉）
+ * - 放大器类型管理（含工作模式、单价）
+ * - 分支器类型管理（含主干/分支插损、单价）
+ */
 import { ref, computed } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
-import { Card, CardHeader, CardContent, Button, Tooltip, Input, Select } from '@/shared/components/base'
+import { Card, CardHeader, CardContent, Button, Tooltip, Input } from '@/shared/components/base'
 import DeviceImportDialog from '@/components/dialogs/DeviceImportDialog.vue'
+import FiberTypeDialog from '@/components/dialogs/FiberTypeDialog.vue'
+import AmplifierTypeDialog from '@/components/dialogs/AmplifierTypeDialog.vue'
+import BranchingUnitTypeDialog from '@/components/dialogs/BranchingUnitTypeDialog.vue'
 import { useSettingsStore, useAppStore } from '@/stores'
 import { 
-  Database, Upload, Plus, Edit2, Trash2, RefreshCw, 
-  Zap, Radio, GitBranch, Download, Search, Filter
+  Database, Upload, Plus, Edit2, Trash2, 
+  Zap, Radio, GitBranch, Download, Search, Save, RotateCcw
 } from 'lucide-vue-next'
 import type { FiberType, AmplifierType, BranchingUnitType } from '@/types/settings'
 
@@ -22,9 +33,14 @@ const activeTab = ref<'fiber' | 'amplifier' | 'branching'>('fiber')
 // 搜索关键词
 const searchKeyword = ref('')
 
-// 编辑状态
-const editingItem = ref<any>(null)
-const showEditDialog = ref(false)
+// 编辑状态 - 分类型管理
+const showFiberDialog = ref(false)
+const showAmplifierDialog = ref(false)
+const showBranchingDialog = ref(false)
+const editingFiber = ref<FiberType | null>(null)
+const editingAmplifier = ref<AmplifierType | null>(null)
+const editingBranching = ref<BranchingUnitType | null>(null)
+const isNewItem = ref(false)
 
 // 过滤后的数据
 const filteredFiberTypes = computed(() => {
@@ -72,76 +88,87 @@ const deleteItem = (type: string, id: string) => {
   appStore.showNotification({ type: 'success', message: '已删除' })
 }
 
-// 编辑器件
-const editItem = (type: string, item: any) => {
-  editingItem.value = { ...item, _type: type }
-  showEditDialog.value = true
+// 编辑光纤
+const editFiber = (fiber: FiberType) => {
+  editingFiber.value = fiber
+  isNewItem.value = false
+  showFiberDialog.value = true
 }
 
-// 保存编辑
-const saveEdit = () => {
-  if (!editingItem.value) return
-  
-  const { _type, ...data } = editingItem.value
-  
-  if (_type === 'fiber') {
-    settingsStore.updateFiberType(data.id, data)
-  } else if (_type === 'amplifier') {
-    settingsStore.updateAmplifierType(data.id, data)
-  } else if (_type === 'branching') {
-    settingsStore.updateBranchingUnitType(data.id, data)
+// 编辑放大器
+const editAmplifier = (amp: AmplifierType) => {
+  editingAmplifier.value = amp
+  isNewItem.value = false
+  showAmplifierDialog.value = true
+}
+
+// 编辑分支器
+const editBranching = (bu: BranchingUnitType) => {
+  editingBranching.value = bu
+  isNewItem.value = false
+  showBranchingDialog.value = true
+}
+
+// 保存光纤
+const saveFiber = (fiber: FiberType) => {
+  if (isNewItem.value) {
+    settingsStore.addFiberType(fiber)
+  } else {
+    settingsStore.updateFiberType(fiber.id, fiber)
   }
-  
-  showEditDialog.value = false
-  editingItem.value = null
-  appStore.showNotification({ type: 'success', message: '已保存' })
+  showFiberDialog.value = false
+  editingFiber.value = null
+  appStore.showNotification({ type: 'success', message: '光纤类型已保存' })
+}
+
+// 保存放大器
+const saveAmplifier = (amp: AmplifierType) => {
+  if (isNewItem.value) {
+    settingsStore.addAmplifierType(amp)
+  } else {
+    settingsStore.updateAmplifierType(amp.id, amp)
+  }
+  showAmplifierDialog.value = false
+  editingAmplifier.value = null
+  appStore.showNotification({ type: 'success', message: '放大器类型已保存' })
+}
+
+// 保存分支器
+const saveBranching = (bu: BranchingUnitType) => {
+  if (isNewItem.value) {
+    settingsStore.addBranchingUnitType(bu)
+  } else {
+    settingsStore.updateBranchingUnitType(bu.id, bu)
+  }
+  showBranchingDialog.value = false
+  editingBranching.value = null
+  appStore.showNotification({ type: 'success', message: '分支器类型已保存' })
 }
 
 // 添加新器件
 const addNewItem = () => {
-  const timestamp = Date.now()
+  isNewItem.value = true
   
   if (activeTab.value === 'fiber') {
-    const newFiber: FiberType = {
-      id: `fiber-${timestamp}`,
-      name: '新光纤类型',
-      nonlinearCoeff: 1.4,
-      effectiveArea: 80,
-      dispersion: 17,
-      nonlinearRefractiveIndex: 2.6,
-      attenuationCoeff: 0.2,
-      secondOrderDispersion: -21,
-      simulationModel: 'GN'
-    }
-    settingsStore.addFiberType(newFiber)
-    editItem('fiber', newFiber)
+    editingFiber.value = null
+    showFiberDialog.value = true
   } else if (activeTab.value === 'amplifier') {
-    const newAmp: AmplifierType = {
-      id: `amp-${timestamp}`,
-      name: '新放大器类型',
-      gain: 20,
-      bandwidth: 1550,
-      gainFlatness: 0.5,
-      noiseFigure: 5,
-      pumpPower: 100,
-      outputPower: 17,
-      gainRangePower: 0.1
-    }
-    settingsStore.addAmplifierType(newAmp)
-    editItem('amplifier', newAmp)
+    editingAmplifier.value = null
+    showAmplifierDialog.value = true
   } else {
-    const newBU: BranchingUnitType = {
-      id: `bu-${timestamp}`,
-      name: '新分支器类型',
-      portCount: 3,
-      trunkInsertionLoss: 0.5,
-      branchInsertionLoss: 3.0,
-      insertionLoss: 0.5,
-      wavelengthRange: 1550
-    }
-    settingsStore.addBranchingUnitType(newBU)
-    editItem('branching', newBU)
+    editingBranching.value = null
+    showBranchingDialog.value = true
   }
+}
+
+// 获取工作模式显示文本
+const getOperatingModeLabel = (mode?: string) => {
+  const labels: Record<string, string> = {
+    'fixed_gain': '固定增益',
+    'fixed_output': '固定输出',
+    'apc': 'APC'
+  }
+  return labels[mode || ''] || '固定增益'
 }
 
 // 导出器件库
@@ -312,18 +339,19 @@ const clearLibrary = () => {
         </CardHeader>
         
         <CardContent class="flex-1 overflow-auto p-0">
-          <!-- 光纤类型表格 -->
+          <!-- 光纤类型表格 - 按甲方需求格式 -->
           <div v-if="activeTab === 'fiber'" class="overflow-auto">
             <table class="w-full text-sm">
               <thead class="bg-gray-50 sticky top-0">
                 <tr>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">名称</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">非线性系数</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">有效面积</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">色散</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">衰减</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">仿真模型</th>
-                  <th class="px-4 py-2 text-center font-medium text-gray-600">操作</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">名称</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">非线性系数<br/><span class="text-xs text-gray-400">W⁻¹·km⁻¹</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">有效面积<br/><span class="text-xs text-gray-400">μm²</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">色散<br/><span class="text-xs text-gray-400">ps/nm·km</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">非线性折射率<br/><span class="text-xs text-gray-400">×10⁻²⁰ m²/W</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">衰减系数<br/><span class="text-xs text-gray-400">dB/km</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">二阶色散<br/><span class="text-xs text-gray-400">ps²/km</span></th>
+                  <th class="px-3 py-2 text-center font-medium text-gray-600">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -332,19 +360,16 @@ const clearLibrary = () => {
                   :key="fiber.id"
                   class="border-b border-gray-100 hover:bg-gray-50"
                 >
-                  <td class="px-4 py-3 font-medium">{{ fiber.name }}</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ fiber.nonlinearCoeff }}</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ fiber.effectiveArea }} μm²</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ fiber.dispersion }} ps/nm·km</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ fiber.attenuationCoeff }} dB/km</td>
-                  <td class="px-4 py-3">
-                    <span class="px-2 py-0.5 text-xs rounded bg-blue-100 text-blue-700">
-                      {{ fiber.simulationModel }}
-                    </span>
-                  </td>
-                  <td class="px-4 py-3 text-center">
+                  <td class="px-3 py-3 font-medium">{{ fiber.name }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ fiber.nonlinearCoeff }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ fiber.effectiveArea }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ fiber.dispersion }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ fiber.nonlinearRefractiveIndex }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ fiber.attenuationCoeff }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ fiber.secondOrderDispersion }}</td>
+                  <td class="px-3 py-3 text-center">
                     <div class="flex items-center justify-center gap-1">
-                      <button class="p-1 hover:bg-gray-100 rounded" @click="editItem('fiber', fiber)">
+                      <button class="p-1 hover:bg-gray-100 rounded" @click="editFiber(fiber)">
                         <Edit2 class="w-4 h-4 text-gray-500" />
                       </button>
                       <button class="p-1 hover:bg-red-100 rounded" @click="deleteItem('fiber', fiber.id)">
@@ -354,7 +379,7 @@ const clearLibrary = () => {
                   </td>
                 </tr>
                 <tr v-if="filteredFiberTypes.length === 0">
-                  <td colspan="7" class="px-4 py-8 text-center text-gray-400">
+                  <td colspan="8" class="px-4 py-8 text-center text-gray-400">
                     暂无数据，请导入或添加
                   </td>
                 </tr>
@@ -362,17 +387,21 @@ const clearLibrary = () => {
             </table>
           </div>
           
-          <!-- 放大器类型表格 -->
+          <!-- 放大器类型表格 - 按甲方需求格式 -->
           <div v-if="activeTab === 'amplifier'" class="overflow-auto">
             <table class="w-full text-sm">
               <thead class="bg-gray-50 sticky top-0">
                 <tr>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">名称</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">增益</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">噪声系数</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">输出功率</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">增益平坦度</th>
-                  <th class="px-4 py-2 text-center font-medium text-gray-600">操作</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">名称</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">额定增益<br/><span class="text-xs text-gray-400">dB</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">噪声系数<br/><span class="text-xs text-gray-400">dB</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">最大输出功率<br/><span class="text-xs text-gray-400">dBm</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">饱和功率<br/><span class="text-xs text-gray-400">dBm</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">平坦度<br/><span class="text-xs text-gray-400">dB</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">工作模式</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">单价</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">货币</th>
+                  <th class="px-3 py-2 text-center font-medium text-gray-600">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -381,14 +410,22 @@ const clearLibrary = () => {
                   :key="amp.id"
                   class="border-b border-gray-100 hover:bg-gray-50"
                 >
-                  <td class="px-4 py-3 font-medium">{{ amp.name }}</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ amp.gain }} dB</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ amp.noiseFigure }} dB</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ amp.outputPower }} dBm</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ amp.gainFlatness }} dB</td>
-                  <td class="px-4 py-3 text-center">
+                  <td class="px-3 py-3 font-medium">{{ amp.name }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ amp.gain }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ amp.noiseFigure }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ amp.outputPower }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ amp.saturationPower || '-' }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ amp.gainFlatness }}</td>
+                  <td class="px-3 py-3">
+                    <span class="px-2 py-0.5 text-xs rounded bg-purple-100 text-purple-700">
+                      {{ getOperatingModeLabel(amp.operatingMode) }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ amp.unitPrice || '-' }}</td>
+                  <td class="px-3 py-3 text-gray-600">{{ amp.currency || '-' }}</td>
+                  <td class="px-3 py-3 text-center">
                     <div class="flex items-center justify-center gap-1">
-                      <button class="p-1 hover:bg-gray-100 rounded" @click="editItem('amplifier', amp)">
+                      <button class="p-1 hover:bg-gray-100 rounded" @click="editAmplifier(amp)">
                         <Edit2 class="w-4 h-4 text-gray-500" />
                       </button>
                       <button class="p-1 hover:bg-red-100 rounded" @click="deleteItem('amplifier', amp.id)">
@@ -398,7 +435,7 @@ const clearLibrary = () => {
                   </td>
                 </tr>
                 <tr v-if="filteredAmplifierTypes.length === 0">
-                  <td colspan="6" class="px-4 py-8 text-center text-gray-400">
+                  <td colspan="10" class="px-4 py-8 text-center text-gray-400">
                     暂无数据，请导入或添加
                   </td>
                 </tr>
@@ -406,16 +443,18 @@ const clearLibrary = () => {
             </table>
           </div>
           
-          <!-- 分支器类型表格 -->
+          <!-- 分支器类型表格 - 按甲方需求格式 -->
           <div v-if="activeTab === 'branching'" class="overflow-auto">
             <table class="w-full text-sm">
               <thead class="bg-gray-50 sticky top-0">
                 <tr>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">名称</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">端口数</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">插入损耗</th>
-                  <th class="px-4 py-2 text-left font-medium text-gray-600">波长范围</th>
-                  <th class="px-4 py-2 text-center font-medium text-gray-600">操作</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">名称</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">端口数</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">主干插损<br/><span class="text-xs text-gray-400">dB</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">分支插损<br/><span class="text-xs text-gray-400">dB</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">单价</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">货币</th>
+                  <th class="px-3 py-2 text-center font-medium text-gray-600">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -424,13 +463,15 @@ const clearLibrary = () => {
                   :key="bu.id"
                   class="border-b border-gray-100 hover:bg-gray-50"
                 >
-                  <td class="px-4 py-3 font-medium">{{ bu.name }}</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ bu.portCount }}</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ bu.insertionLoss }} dB</td>
-                  <td class="px-4 py-3 font-mono text-gray-600">{{ bu.wavelengthRange }} nm</td>
-                  <td class="px-4 py-3 text-center">
+                  <td class="px-3 py-3 font-medium">{{ bu.name }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ bu.portCount }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ bu.trunkInsertionLoss }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ bu.branchInsertionLoss }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ bu.unitPrice || '-' }}</td>
+                  <td class="px-3 py-3 text-gray-600">{{ bu.currency || '-' }}</td>
+                  <td class="px-3 py-3 text-center">
                     <div class="flex items-center justify-center gap-1">
-                      <button class="p-1 hover:bg-gray-100 rounded" @click="editItem('branching', bu)">
+                      <button class="p-1 hover:bg-gray-100 rounded" @click="editBranching(bu)">
                         <Edit2 class="w-4 h-4 text-gray-500" />
                       </button>
                       <button class="p-1 hover:bg-red-100 rounded" @click="deleteItem('branching', bu.id)">
@@ -440,7 +481,7 @@ const clearLibrary = () => {
                   </td>
                 </tr>
                 <tr v-if="filteredBranchingUnitTypes.length === 0">
-                  <td colspan="5" class="px-4 py-8 text-center text-gray-400">
+                  <td colspan="7" class="px-4 py-8 text-center text-gray-400">
                     暂无数据，请导入或添加
                   </td>
                 </tr>
@@ -459,90 +500,30 @@ const clearLibrary = () => {
     @imported="showImportDialog = false"
   />
   
-  <!-- 编辑弹窗 -->
-  <div v-if="showEditDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
-    <Card class="w-[500px] max-h-[80vh] flex flex-col bg-white shadow-2xl">
-      <CardHeader class="flex items-center justify-between border-b">
-        <span class="font-semibold">编辑器件参数</span>
-        <button class="p-1 hover:bg-gray-100 rounded" @click="showEditDialog = false">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </CardHeader>
-      <CardContent v-if="editingItem" class="flex-1 overflow-auto p-4 space-y-4">
-        <!-- 通用字段 -->
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">名称</label>
-          <Input v-model="editingItem.name" class="w-full" />
-        </div>
-        
-        <!-- 光纤字段 -->
-        <template v-if="editingItem._type === 'fiber'">
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">非线性系数 (W⁻¹·km⁻¹)</label>
-              <Input v-model="editingItem.nonlinearCoeff" type="number" class="w-full" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">有效面积 (μm²)</label>
-              <Input v-model="editingItem.effectiveArea" type="number" class="w-full" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">色散 (ps/nm·km)</label>
-              <Input v-model="editingItem.dispersion" type="number" class="w-full" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">衰减系数 (dB/km)</label>
-              <Input v-model="editingItem.attenuationCoeff" type="number" class="w-full" />
-            </div>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">仿真模型</label>
-            <Select v-model="editingItem.simulationModel" :options="[{ value: 'GN', label: 'GN Model' }, { value: 'EGN', label: 'EGN Model' }]" class="w-full" />
-          </div>
-        </template>
-        
-        <!-- 放大器字段 -->
-        <template v-if="editingItem._type === 'amplifier'">
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">增益 (dB)</label>
-              <Input v-model="editingItem.gain" type="number" class="w-full" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">噪声系数 (dB)</label>
-              <Input v-model="editingItem.noiseFigure" type="number" class="w-full" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">输出功率 (dBm)</label>
-              <Input v-model="editingItem.outputPower" type="number" class="w-full" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">增益平坦度 (dB)</label>
-              <Input v-model="editingItem.gainFlatness" type="number" class="w-full" />
-            </div>
-          </div>
-        </template>
-        
-        <!-- 分支器字段 -->
-        <template v-if="editingItem._type === 'branching'">
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">端口数</label>
-              <Input v-model="editingItem.portCount" type="number" class="w-full" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">插入损耗 (dB)</label>
-              <Input v-model="editingItem.insertionLoss" type="number" class="w-full" />
-            </div>
-          </div>
-        </template>
-      </CardContent>
-      <div class="p-4 border-t flex justify-end gap-2">
-        <Button variant="outline" @click="showEditDialog = false">取消</Button>
-        <Button @click="saveEdit">保存</Button>
-      </div>
-    </Card>
-  </div>
+  <!-- 光纤类型编辑弹窗 -->
+  <FiberTypeDialog
+    :visible="showFiberDialog"
+    :fiber="editingFiber"
+    :is-new="isNewItem"
+    @close="showFiberDialog = false"
+    @save="saveFiber"
+  />
+  
+  <!-- 放大器类型编辑弹窗 -->
+  <AmplifierTypeDialog
+    :visible="showAmplifierDialog"
+    :amplifier="editingAmplifier"
+    :is-new="isNewItem"
+    @close="showAmplifierDialog = false"
+    @save="saveAmplifier"
+  />
+  
+  <!-- 分支器类型编辑弹窗 -->
+  <BranchingUnitTypeDialog
+    :visible="showBranchingDialog"
+    :branchingUnit="editingBranching"
+    :is-new="isNewItem"
+    @close="showBranchingDialog = false"
+    @save="saveBranching"
+  />
 </template>

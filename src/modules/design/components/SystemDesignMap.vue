@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouteStore, useRPLStore, useMonitorStore } from '@/stores'
 import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
+import { calculateDistance } from '@/utils/geo'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
@@ -42,7 +43,7 @@ const monitorStore = useMonitorStore()
 
 const emit = defineEmits<{
   (e: 'point-click', pointId: string): void
-  (e: 'point-moved', pointId: string, longitude: number, latitude: number): void
+  (e: 'bu-dblclick', buId: string): void  // 双击 BU 节点打开配置对话框
   (e: 'line-click'): void
   (e: 'segment-click', segmentIndex: number): void
   (e: 'context-menu', type: 'point' | 'line' | 'segment', id: string | null, x: number, y: number): void
@@ -67,9 +68,7 @@ let routeLayer: VectorLayer<VectorSource> | null = null
 let pointSource: VectorSource | null = null
 let pointLayer: VectorLayer<VectorSource> | null = null
 
-let isDraggingPoint = false
-let selectedFeature: Feature | null = null
-let dragPanInteraction: DragPan | null = null
+// 拖拽功能已移除，改为双击 BU 节点打开配置
 
 // 根据点类型、选中状态和高程获取图标路径
 // elevation < 0 表示在海平面以下（水下）
@@ -127,13 +126,10 @@ const sortedPoints = computed(() => {
   if (selectedRoute && selectedRoute.points.length > 0) {
     let cumulativeKp = 0
     const mainPoints = selectedRoute.points.map((point, index) => {
-      // 计算 KP
+      // 计算 KP（使用 Haversine 公式）
       if (index > 0) {
         const prevPoint = selectedRoute.points[index - 1]
-        const dist = Math.sqrt(
-          Math.pow(point.coordinates[0] - prevPoint.coordinates[0], 2) +
-          Math.pow(point.coordinates[1] - prevPoint.coordinates[1], 2)
-        ) * 111 // 粗略转换为 km
+        const dist = calculateDistance(prevPoint.coordinates, point.coordinates)
         cumulativeKp += dist
       }
       
@@ -162,10 +158,10 @@ const sortedPoints = computed(() => {
     // 添加分支登陆站
     selectedRoute.points.forEach((point) => {
       if (point.branchTo) {
-        cumulativeKp += Math.sqrt(
-          Math.pow(point.branchTo.coord[0] - point.coordinates[0], 2) +
-          Math.pow(point.branchTo.coord[1] - point.coordinates[1], 2)
-        ) * 111
+        cumulativeKp += calculateDistance(
+          point.coordinates,
+          point.branchTo.coord as [number, number]
+        )
         mainPoints.push({
           id: `branch-${point.id}`,
           name: point.branchTo.name,
@@ -222,102 +218,108 @@ const getAllRoutePoints = computed(() => {
   return []
 })
 
-// 绘制路径线（使用所有点保持弯曲形状）
+// 绘制路径线（使用 segments 拓扑数据绘制，与路由规划地图一致）
 const drawRouteLine = () => {
   if (!routeSource) return
   routeSource.clear()
   
-  // 优先使用路由规划的所有点（保持弯曲）
-  const allPoints = getAllRoutePoints.value
-  if (allPoints.length < 2) {
-    // 如果没有路由数据，尝试使用 sortedPoints
-    if (sortedPoints.value.length < 2) return
+  const selectedRoute = routeStore.selectedRoute
+  
+  // 优先使用路由的 segments 数据绘制（基于实际拓扑连接）
+  if (selectedRoute && selectedRoute.segments && selectedRoute.segments.length > 0) {
+    // 构建点 ID 到坐标的映射
+    const pointMap: Record<string, [number, number]> = {}
+    for (const p of selectedRoute.points) {
+      pointMap[p.id] = p.coordinates
+    }
     
-    const mainTrunkPoints = sortedPoints.value.filter((p: any) => 
-      !p.isBranchStation && !p.isBranchRepeater
-    )
-    
-    for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
-      const startPoint = mainTrunkPoints[i]
-      const endPoint = mainTrunkPoints[i + 1]
-      const isSelected = selectedSegmentIndex.value === i
+    // 根据 segments 绘制线段
+    selectedRoute.segments.forEach((segment, i) => {
+      const startCoords = pointMap[segment.startPointId]
+      const endCoords = pointMap[segment.endPointId]
+      
+      if (!startCoords || !endCoords) return
       
       const segmentFeature = new Feature({
-        geometry: new LineString([
-          [startPoint.longitude, startPoint.latitude],
-          [endPoint.longitude, endPoint.latitude]
-        ]),
+        geometry: new LineString([startCoords, endCoords]),
         featureType: 'segment',
         segmentIndex: i,
-        fromId: startPoint.id,
-        toId: endPoint.id
+        fromId: segment.startPointId,
+        toId: segment.endPointId
       })
       
+      // 使用红色实线，与路由规划选中状态一致
       segmentFeature.setStyle(new Style({
         stroke: new Stroke({
-          color: isSelected ? '#f59e0b' : '#3b82f6',
-          width: isSelected ? 5 : 3,
-          lineDash: isSelected ? undefined : [8, 4]
+          color: '#ef4444',  // 红色
+          width: 4
         })
       }))
       
-      routeSource.addFeature(segmentFeature)
-    }
+      routeSource!.addFeature(segmentFeature)
+    })
     return
   }
   
-  // 主干线包含所有点（包括 waypoint、landing、branching）
-  // 分支线仅从分支器到分支登陆站
-  const mainTrunkPoints = allPoints  // 所有点都在主干线上
-  const branchingPoints = allPoints.filter((p: any) => p.type === 'branching' && p.branchTo)
+  // 回退：如果没有 segments，使用原始路由点绘制（不包括放大器）
+  if (!selectedRoute || selectedRoute.points.length < 2) return
   
-  // 绘制主干线（连接所有主干点，包括 waypoint，保持弯曲）
-  if (mainTrunkPoints.length >= 2) {
-    const coords = mainTrunkPoints.map(p => [p.longitude, p.latitude])
+  // 使用原始路由点绘制线路，不使用 sortedPoints（避免放大器参与绘制）
+  const routePoints = selectedRoute.points
+  
+  for (let i = 0; i < routePoints.length - 1; i++) {
+    const startPoint = routePoints[i]
+    const endPoint = routePoints[i + 1]
+    const isSelected = selectedSegmentIndex.value === i
     
-    const lineFeature = new Feature({
-      geometry: new LineString(coords),
-      featureType: 'mainTrunk'
+    const segmentFeature = new Feature({
+      geometry: new LineString([
+        startPoint.coordinates,
+        endPoint.coordinates
+      ]),
+      featureType: 'segment',
+      segmentIndex: i,
+      fromId: startPoint.id,
+      toId: endPoint.id
     })
     
-    lineFeature.setStyle(new Style({
+    segmentFeature.setStyle(new Style({
       stroke: new Stroke({
-        color: '#3b82f6',
-        width: 3,
-        lineDash: [8, 4]
+        color: isSelected ? '#f59e0b' : '#ef4444',
+        width: isSelected ? 5 : 4
       })
     }))
     
-    routeSource.addFeature(lineFeature)
+    routeSource.addFeature(segmentFeature)
   }
   
-  // 绘制分支线（从分支器到分支登陆站）
-  branchingPoints.forEach((branchPoint: any) => {
-    if (branchPoint.branchTo) {
+  // 绘制分支线路
+  routePoints.forEach((point) => {
+    if (point.branchTo && routeSource) {
       const branchFeature = new Feature({
         geometry: new LineString([
-          [branchPoint.longitude, branchPoint.latitude],
-          branchPoint.branchTo.coord
+          point.coordinates,
+          point.branchTo.coord as [number, number]
         ]),
         featureType: 'branch',
-        fromId: branchPoint.id
+        fromId: point.id
       })
       
       branchFeature.setStyle(new Style({
         stroke: new Stroke({
-          color: '#a855f7',
+          color: '#8b5cf6',  // 紫色表示分支
           width: 3,
           lineDash: [6, 4]
         })
       }))
       
-      routeSource!.addFeature(branchFeature)
+      routeSource.addFeature(branchFeature)
     }
   })
 }
 
 // 绘制设备节点 - 只显示系统设备（登陆站、放大器、分支器），不显示 waypoint
-const drawPoints = async () => {
+const drawPoints = () => {
   if (!pointSource) return
   pointSource.clear()
   
@@ -331,22 +333,6 @@ const drawPoints = async () => {
     systemDeviceTypes.includes(point.type) || (point as any).isBranchStation
   )
   
-  // 通过 Node 后端 API 查询所有 landing 类型站点的高程
-  const demAvailable = await checkDemService()
-  
-  if (demAvailable) {
-    for (const point of systemDevices) {
-      if (point.type === 'landing' && !elevationCache.value[point.id]) {
-        try {
-          const result = await fetchDemPoint(point.longitude, point.latitude)
-          elevationCache.value[point.id] = result.elevation
-        } catch (e) {
-          console.warn(`查询高程失败 (${point.longitude}, ${point.latitude}):`, e)
-        }
-      }
-    }
-  }
-  
   systemDevices.forEach(point => {
     const feature = new Feature({
       geometry: new Point([point.longitude, point.latitude]),
@@ -356,7 +342,7 @@ const drawPoints = async () => {
     })
     
     const isSelected = point.id === props.selectedPointId
-    // 优先使用缓存的高程数据来判断岸上/水下站点
+    // 使用缓存的高程数据来判断岸上/水下站点
     const elevation = elevationCache.value[point.id]
     const iconUrl = getPointIcon(point.type, isSelected, elevation)
     
@@ -395,72 +381,22 @@ const flyToPoint = (pointId: string) => {
   })
 }
 
-// 处理指针移动
+// 处理指针移动 - 显示鼠标样式
 const handlePointerMove = (evt: any) => {
-  if (isDraggingPoint && selectedFeature) {
-    const geom = selectedFeature.getGeometry() as Point
-    geom.setCoordinates(evt.coordinate)
-    updateRouteLineFromPoints()
-  } else {
-    const features = map?.getFeaturesAtPixel(evt.pixel, {
-      layerFilter: layer => layer === pointLayer
-    })
-    
-    if (features && features.length > 0) {
-      const pointId = features[0].get('pointId')
-      // 选中的设备显示可拖动样式
-      if (pointId === props.selectedPointId) {
-        mapContainer.value!.style.cursor = 'grab'
-      } else {
-        mapContainer.value!.style.cursor = 'pointer'
-      }
-    } else {
-      mapContainer.value!.style.cursor = 'default'
-    }
-  }
-}
-
-// 处理指针按下
-const handlePointerDown = (evt: any) => {
   const features = map?.getFeaturesAtPixel(evt.pixel, {
     layerFilter: layer => layer === pointLayer
   })
   
   if (features && features.length > 0) {
-    const pointId = features[0].get('pointId')
-    // 只有选中的设备才能拖动
-    if (pointId === props.selectedPointId) {
-      selectedFeature = features[0] as Feature
-      isDraggingPoint = true
-      mapContainer.value!.style.cursor = 'grabbing'
-      
-      if (dragPanInteraction) {
-        dragPanInteraction.setActive(false)
-      }
+    const pointType = features[0].get('pointType')
+    // BU 节点显示可点击样式
+    if (pointType === 'bu' || pointType === 'branching') {
+      mapContainer.value!.style.cursor = 'pointer'
+    } else {
+      mapContainer.value!.style.cursor = 'default'
     }
-  }
-}
-
-// 处理指针抬起
-const handlePointerUp = () => {
-  if (isDraggingPoint && selectedFeature) {
-    const geom = selectedFeature.getGeometry() as Point
-    const coords = geom.getCoordinates()
-    const pointId = selectedFeature.get('pointId')
-    
-    if (pointId) {
-      emit('point-moved', pointId, coords[0], coords[1])
-    }
-  }
-  
-  if (dragPanInteraction) {
-    dragPanInteraction.setActive(true)
-  }
-  
-  isDraggingPoint = false
-  selectedFeature = null
-  if (mapContainer.value) {
-    mapContainer.value.style.cursor = 'default'
+  } else {
+    mapContainer.value!.style.cursor = 'default'
   }
 }
 
@@ -594,22 +530,33 @@ const initMap = () => {
     })
   })
   
-  // 获取 DragPan 交互
-  map.getInteractions().forEach(interaction => {
-    if (interaction instanceof DragPan) {
-      dragPanInteraction = interaction
-    }
-  })
-  
   // 鼠标移动显示坐标
   map.on('pointermove', (evt) => {
     coordinates.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
     handlePointerMove(evt)
   })
   
+  // 双击事件 - BU 节点打开配置对话框
+  map.on('dblclick', (evt) => {
+    const pointFeatures = map!.getFeaturesAtPixel(evt.pixel, {
+      layerFilter: layer => layer === pointLayer
+    })
+    
+    if (pointFeatures && pointFeatures.length > 0) {
+      const pointId = pointFeatures[0].get('pointId')
+      const pointType = pointFeatures[0].get('pointType')
+      
+      // 只有 BU/branching 类型才弹出配置对话框
+      if (pointType === 'bu' || pointType === 'branching') {
+        emit('bu-dblclick', pointId)
+        evt.preventDefault()
+        evt.stopPropagation()
+      }
+    }
+  })
+  
   // 点击事件
   map.on('click', (evt) => {
-    if (isDraggingPoint) return
     contextMenu.value.visible = false
     
     // 检查是否点击了设备点
@@ -685,10 +632,6 @@ const initMap = () => {
     }
   })
   
-  // 拖拽事件 - 始终启用，选中后可拖动
-  ;(map as any).on('pointerdown', handlePointerDown)
-  ;(map as any).on('pointerup', handlePointerUp)
-  
   // 绘制初始数据
   drawRouteLine()
   drawPoints()
@@ -744,58 +687,62 @@ const updatePointStyles = () => {
   })
 }
 
-// 监听数据变化
-watch(() => props.routePoints, () => {
-  drawRouteLine()
-  drawPoints()
-}, { deep: true })
-
 // 选中节点变化时只更新样式，不重新绘制（避免覆盖拖拽修改）
 watch(() => props.selectedPointId, () => {
   updatePointStyles()
 })
 
-// 监听 monitorStore 设备数据变化（包括长度和内容）
-watch(() => monitorStore.devices.length, () => {
-  drawRouteLine()
-  drawPoints()
-  
-  // 自适应显示
-  if (map && routeSource && routeSource.getFeatures().length > 0) {
-    const extent = routeSource.getExtent()
-    if (extent[0] !== Infinity) {
-      map.getView().fit(extent, { 
-        padding: [80, 80, 80, 80],
-        duration: 500
-      })
+// 防抖重绘，避免 apply 时频繁刷新导致卡死
+let redrawTimer: ReturnType<typeof setTimeout> | null = null
+let lastDeviceCount = -1
+let lastRouteId: string | null = null
+
+const scheduleRedraw = (fitView = false, drawRoute = true) => {
+  if (!map) return
+  if (redrawTimer) {
+    clearTimeout(redrawTimer)
+  }
+  redrawTimer = setTimeout(() => {
+    if (drawRoute) {
+      drawRouteLine()
     }
-  }
-}, { immediate: true })
-
-watch(() => monitorStore.devices, () => {
-  if (monitorStore.devices.length > 0) {
-    drawRouteLine()
     drawPoints()
-  }
-}, { deep: true })
-
-// 监听 Pareto 选中路线变化
-watch(() => routeStore.selectedRoute, (newRoute) => {
-  if (newRoute && newRoute.points.length > 0) {
-    drawRouteLine()
-    drawPoints()
-    // 自适应显示路线
-    if (map && routeSource && routeSource.getFeatures().length > 0) {
+    if (fitView && routeSource && routeSource.getFeatures().length > 0) {
       const extent = routeSource.getExtent()
-      if (extent[0] !== Infinity) {
-        map.getView().fit(extent, { 
+      if (extent && extent[0] !== Infinity) {
+        map!.getView().fit(extent, { 
           padding: [80, 80, 80, 80],
           duration: 500
         })
       }
     }
+    redrawTimer = null
+  }, 200)
+}
+
+// 监听 monitorStore 设备数量变化 - 放大器添加后重绘
+watch(
+  () => monitorStore.devices.length,
+  (newLen) => {
+    if (newLen !== lastDeviceCount && map) {
+      lastDeviceCount = newLen
+      // 设备变化仅重绘，避免频繁 fit 造成卡顿
+      // 设备变化只更新点位，不重绘线路
+      scheduleRedraw(false, false)
+    }
   }
-}, { deep: true, immediate: true })
+)
+
+// 监听 Pareto 选中路线变化
+watch(
+  () => routeStore.selectedRoute?.id,
+  (newRouteId) => {
+    if (newRouteId && newRouteId !== lastRouteId && map) {
+      lastRouteId = newRouteId
+      scheduleRedraw(true, true)
+    }
+  }
+)
 
 // editable 属性不再控制拖动，选中即可拖动
 

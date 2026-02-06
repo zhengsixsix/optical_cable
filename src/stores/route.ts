@@ -493,11 +493,7 @@ export const useRouteStore = defineStore('route', () => {
     let totalLength = 0
     let segIndex = 1
     
-    // 添加所有 BU 点
-    allPoints.push(...buPoints)
-    
-    // 添加所有登陆站点
-    allPoints.push(...landingPoints)
+    // 后续按主干/分支顺序构建 points
     
     let totalCost = 0
     
@@ -505,14 +501,70 @@ export const useRouteStore = defineStore('route', () => {
     if (buPoints.length === 1) {
       const bu = buPoints[0]
       
-      for (const landing of landingPoints) {
+      // 主干端点：使用用户输入顺序的首/尾登陆站
+      const trunkStart = landingPoints[0]
+      const trunkEnd = landingPoints.length > 1 ? landingPoints[landingPoints.length - 1] : landingPoints[0]
+      const branchLandings = landingPoints.filter(l => l.id !== trunkStart?.id && l.id !== trunkEnd?.id)
+      
+      // 标记分支登陆站（用于配置界面区分）
+      branchLandings.forEach(l => {
+        ;(l as any).isBranchStation = true
+        ;(l as any).branchFrom = bu.name
+      })
+      
+      // 构建 points 顺序：起点 -> BU -> 终点 -> 分支登陆站
+      if (trunkStart) allPoints.push(trunkStart)
+      allPoints.push(bu)
+      if (trunkEnd && trunkEnd.id !== trunkStart?.id) allPoints.push(trunkEnd)
+      allPoints.push(...branchLandings)
+      
+      // 主干段
+      if (trunkStart) {
+        const segLength = calculateDistance(bu.coordinates, trunkStart.coordinates)
+        totalLength += segLength
+        const depth = 1000 + Math.random() * 3000
+        const riskLevel = getRiskLevelByDepth(depth)
+        const segCost = calculateSegmentCost(segLength, riskLevel)
+        totalCost += segCost
+        segments.push({
+          id: `trunk-s${segIndex++}`,
+          startPointId: trunkStart.id,
+          endPointId: bu.id,
+          length: Math.round(segLength),
+          depth: Math.round(depth),
+          cableType: getCableTypeByRisk(riskLevel),
+          riskLevel,
+          cost: segCost
+        })
+      }
+      
+      if (trunkEnd && trunkEnd.id !== trunkStart?.id) {
+        const segLength = calculateDistance(bu.coordinates, trunkEnd.coordinates)
+        totalLength += segLength
+        const depth = 1000 + Math.random() * 3000
+        const riskLevel = getRiskLevelByDepth(depth)
+        const segCost = calculateSegmentCost(segLength, riskLevel)
+        totalCost += segCost
+        segments.push({
+          id: `trunk-s${segIndex++}`,
+          startPointId: bu.id,
+          endPointId: trunkEnd.id,
+          length: Math.round(segLength),
+          depth: Math.round(depth),
+          cableType: getCableTypeByRisk(riskLevel),
+          riskLevel,
+          cost: segCost
+        })
+      }
+      
+      // 分支段
+      for (const landing of branchLandings) {
         const segLength = calculateDistance(bu.coordinates, landing.coordinates)
         totalLength += segLength
         const depth = 1000 + Math.random() * 3000
         const riskLevel = getRiskLevelByDepth(depth)
         const segCost = calculateSegmentCost(segLength, riskLevel)
         totalCost += segCost
-        
         segments.push({
           id: `branch-s${segIndex++}`,
           startPointId: bu.id,
@@ -523,17 +575,20 @@ export const useRouteStore = defineStore('route', () => {
           riskLevel,
           cost: segCost
         })
-        
-        // 设置分支目标（用于地图绘制分支线）
+      }
+      
+      // 设置单一分支目标（默认取第一个分支登陆站）
+      const firstBranch = branchLandings[0]
+      if (firstBranch) {
         ;(bu as any).branchTo = {
-          coord: landing.coordinates,
-          name: landing.name,
-          depth: landing.depth || 0
+          coord: firstBranch.coordinates,
+          name: firstBranch.name,
+          depth: firstBranch.depth || 0
         }
       }
     } else if (buPoints.length >= 2) {
       // 多个 BU：主干线连接 BU，每个 BU 连接最近的登陆站
-      
+
       // 1. BU 之间形成主干线
       for (let i = 0; i < buPoints.length - 1; i++) {
         const segLength = calculateDistance(buPoints[i].coordinates, buPoints[i + 1].coordinates)
@@ -542,7 +597,7 @@ export const useRouteStore = defineStore('route', () => {
         const riskLevel = getRiskLevelByDepth(depth)
         const segCost = calculateSegmentCost(segLength, riskLevel)
         totalCost += segCost
-        
+
         segments.push({
           id: `trunk-s${segIndex++}`,
           startPointId: buPoints[i].id,
@@ -554,13 +609,16 @@ export const useRouteStore = defineStore('route', () => {
           cost: segCost
         })
       }
-      
+
       // 2. 每个登陆站连接到最近的 BU
+      const landingToNearestBU = new Map<string, RoutePoint>()
+      const buToBranchLandings = new Map<string, RoutePoint[]>()
+
       for (const landing of landingPoints) {
         // 找到最近的 BU
         let nearestBU = buPoints[0]
         let minDist = calculateDistance(landing.coordinates, buPoints[0].coordinates)
-        
+
         for (const bu of buPoints) {
           const dist = calculateDistance(landing.coordinates, bu.coordinates)
           if (dist < minDist) {
@@ -568,14 +626,20 @@ export const useRouteStore = defineStore('route', () => {
             nearestBU = bu
           }
         }
-        
+
+        landingToNearestBU.set(landing.id, nearestBU)
+        if (!buToBranchLandings.has(nearestBU.id)) {
+          buToBranchLandings.set(nearestBU.id, [])
+        }
+        buToBranchLandings.get(nearestBU.id)!.push(landing)
+
         const segLength = minDist
         totalLength += segLength
         const depth = 1000 + Math.random() * 3000
         const riskLevel = getRiskLevelByDepth(depth)
         const segCost = calculateSegmentCost(segLength, riskLevel)
         totalCost += segCost
-        
+
         segments.push({
           id: `branch-s${segIndex++}`,
           startPointId: nearestBU.id,
@@ -587,6 +651,40 @@ export const useRouteStore = defineStore('route', () => {
           cost: segCost
         })
       }
+
+      // 3. 构建 points 顺序：起点 -> BU链 -> 终点 -> 分支登陆站
+      const trunkStart = landingPoints[0]
+      const trunkEnd = landingPoints.length > 1 ? landingPoints[landingPoints.length - 1] : landingPoints[0]
+      const branchLandings = landingPoints.filter(l => l.id !== trunkStart?.id && l.id !== trunkEnd?.id)
+
+      // 标记分支登陆站并关联 BU
+      branchLandings.forEach(l => {
+        ;(l as any).isBranchStation = true
+        const nearestBU = landingToNearestBU.get(l.id)
+        if (nearestBU) {
+          ;(l as any).branchFrom = nearestBU.name
+        }
+      })
+
+      // 为每个 BU 设置一个分支目标（用于 UI 展示）
+      buPoints.forEach(bu => {
+        const candidates = (buToBranchLandings.get(bu.id) || []).filter(
+          l => l.id !== trunkStart?.id && l.id !== trunkEnd?.id
+        )
+        const firstBranch = candidates[0]
+        if (firstBranch) {
+          ;(bu as any).branchTo = {
+            coord: firstBranch.coordinates,
+            name: firstBranch.name,
+            depth: firstBranch.depth || 0
+          }
+        }
+      })
+
+      if (trunkStart) allPoints.push(trunkStart)
+      allPoints.push(...buPoints)
+      if (trunkEnd && trunkEnd.id !== trunkStart?.id) allPoints.push(trunkEnd)
+      allPoints.push(...branchLandings)
     }
     
     const route: Route = {
@@ -838,8 +936,10 @@ export const useRouteStore = defineStore('route', () => {
       // 多点模式 - 登陆站
       if (config.mode === 'multi-point' && config.waypoints) {
         config.waypoints.forEach((wp: any) => {
-          if (wp.lon !== 0 || wp.lat !== 0) {
-            const key = `${wp.lon.toFixed(4)},${wp.lat.toFixed(4)}`
+          if (wp && (wp.lon !== 0 || wp.lat !== 0)) {
+            const lon = wp.lon ?? 0
+            const lat = wp.lat ?? 0
+            const key = `${lon.toFixed(4)},${lat.toFixed(4)}`
             coordToInfo[key] = { 
               name: wp.name || '登陆站', 
               type: 'landing',
@@ -849,9 +949,13 @@ export const useRouteStore = defineStore('route', () => {
         })
       }
       // 点对点模式
-      if (config.mode === 'point-to-point') {
-        const startKey = `${config.startPoint.lon.toFixed(4)},${config.startPoint.lat.toFixed(4)}`
-        const endKey = `${config.endPoint.lon.toFixed(4)},${config.endPoint.lat.toFixed(4)}`
+      if (config.mode === 'point-to-point' && config.startPoint && config.endPoint) {
+        const startLon = config.startPoint.lon ?? 0
+        const startLat = config.startPoint.lat ?? 0
+        const endLon = config.endPoint.lon ?? 0
+        const endLat = config.endPoint.lat ?? 0
+        const startKey = `${startLon.toFixed(4)},${startLat.toFixed(4)}`
+        const endKey = `${endLon.toFixed(4)},${endLat.toFixed(4)}`
         coordToInfo[startKey] = { 
           name: config.startPoint.name || '起点', 
           type: 'landing',
@@ -868,7 +972,9 @@ export const useRouteStore = defineStore('route', () => {
     const convertedRoutes: Route[] = apiRoutes.map((apiRoute, index) => {
       // 将 API 返回的路由转换为内部 Route 类型
       const points: RoutePoint[] = apiRoute.coordinates?.map((coord: [number, number], i: number) => {
-        const key = `${coord[0].toFixed(4)},${coord[1].toFixed(4)}`
+        const coordLon = coord?.[0] ?? 0
+        const coordLat = coord?.[1] ?? 0
+        const key = `${coordLon.toFixed(4)},${coordLat.toFixed(4)}`
         const matched = coordToInfo[key]
         const isFirst = i === 0
         const isLast = i === apiRoute.coordinates.length - 1

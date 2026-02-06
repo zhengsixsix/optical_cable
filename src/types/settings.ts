@@ -57,6 +57,10 @@ export interface AmplifierType {
   gainRangePower: number          // 增益范围功率 (dB)
   /** 工作模式 */
   operatingMode?: 'fixed_gain' | 'fixed_output' | 'apc'
+  /** 单价 */
+  unitPrice?: number
+  /** 币种 */
+  currency?: 'USD' | 'CNY' | 'EUR'
   /** 模型参数抽屉 - 按计算模型分层的额外参数 */
   modelDrawers?: EDFAModelDrawers
 }

@@ -47,11 +47,11 @@ const variantStyles = computed(() => {
     case 'default':
       return { backgroundColor: 'var(--app-primary-color)', color: '#ffffff' }
     case 'outline':
-      return { backgroundColor: 'var(--app-card-bg)', color: 'var(--app-text-color)', borderColor: 'var(--app-border-color)' }
+      return { backgroundColor: 'var(--app-card-bg)', borderColor: 'var(--app-border-color)' }
     case 'secondary':
-      return { backgroundColor: 'var(--app-bg-secondary)', color: 'var(--app-text-color)' }
+      return { backgroundColor: 'var(--app-bg-secondary)' }
     case 'ghost':
-      return { color: 'var(--app-text-color)' }
+      return {}  // 不设置 color，让 class 生效
     case 'link':
       return { color: 'var(--app-primary-color)' }
     default:

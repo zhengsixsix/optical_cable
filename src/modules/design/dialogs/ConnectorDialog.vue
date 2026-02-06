@@ -48,17 +48,23 @@ const isFiberType = computed(() => formData.value.type === 'fiber')
 const componentOptions = computed(() => {
   const type = formData.value.type
   if (type === 'amplifier_e' || type === 'amplifier_w') {
-    return settingsStore.amplifierTypes.map(a => ({ value: a.id, label: a.name }))
+    return settingsStore.amplifierTypes
+      .filter(a => a.id)
+      .map(a => ({ value: a.id, label: a.name }))
   }
   if (type === 'bu') {
-    return settingsStore.branchingUnitTypes.map(b => ({ value: b.id, label: b.name }))
+    return settingsStore.branchingUnitTypes
+      .filter(b => b.id)
+      .map(b => ({ value: b.id, label: b.name }))
   }
   return []
 })
 
 // 光纤类型选项
 const fiberOptions = computed(() => {
-  return settingsStore.fiberTypes.map(f => ({ value: f.id, label: f.name }))
+  return settingsStore.fiberTypes
+    .filter(f => f.id)
+    .map(f => ({ value: f.id, label: f.name }))
 })
 
 // 是否显示器件选择

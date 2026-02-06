@@ -40,9 +40,14 @@ const selectedValue = computed({
   set: (value) => emit('update:modelValue', value)
 })
 
+// 过滤空值选项，防止 radix-vue SelectItem 报错
+const filteredOptions = computed(() => {
+  return props.options.filter(o => o.value !== '' && o.value != null)
+})
+
 const selectedLabel = computed(() => {
   if (!selectedValue.value) return undefined
-  const option = props.options.find(o => o.value === selectedValue.value)
+  const option = filteredOptions.value.find(o => o.value === selectedValue.value)
   return option?.label
 })
 </script>
@@ -81,7 +86,7 @@ const selectedLabel = computed(() => {
       >
         <SelectViewport class="p-1 max-h-[300px] overflow-y-auto">
           <SelectItem
-            v-for="option in options"
+            v-for="option in filteredOptions"
             :key="option.value"
             :value="option.value"
             :disabled="option.disabled"

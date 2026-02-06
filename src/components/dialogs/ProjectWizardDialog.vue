@@ -103,10 +103,12 @@ const riskToArmorType: Record<string, string[]> = {
 const getFilteredCableOptions = (riskLevel: string) => {
   const armorTypes = riskToArmorType[riskLevel] || ['SA']
   const filteredCables = settingsStore.getCableTypesByArmor(armorTypes)
-  return filteredCables.map(c => ({
-    value: c.name,
-    label: `${c.name} - ¥${c.unitPrice}千元/km`
-  }))
+  return filteredCables
+    .filter(c => c.name) // 过滤空 name
+    .map(c => ({
+      value: c.name,
+      label: `${c.name} - ¥${c.unitPrice}千元/km`
+    }))
 }
 
 // 新建缆型弹窗状态
@@ -546,17 +548,18 @@ const handleSubmit = async () => {
     waypoints: waypoints.value.map(wp => ({
       id: wp.id,
       name: wp.name,
-      coords: [wp.longitude, wp.latitude] as [number, number],
+      longitude: wp.longitude,
+      latitude: wp.latitude,
       // depth 字段用于区分水下/岸上站点
-      depth: wp.isUnderwater ? 100 : 0,
-      properties: {}
+      depth: wp.isUnderwater ? 100 : 0
     })),
     // USE文件规范: imported_bu_nodes
     buConfigs: buConfigs.value.map(bu => ({
       id: bu.id,
       name: bu.name,
-      coords: [bu.longitude, bu.latitude] as [number, number],
-      max_ports: Math.min(8, Math.max(2, bu.max_ports || 3))
+      longitude: bu.longitude,
+      latitude: bu.latitude,
+      portLimit: Math.min(8, Math.max(2, bu.max_ports || 3))
     })),
     armorMappings: armorMappings.value.map(m => ({
       riskLevel: m.riskLevel,
@@ -969,12 +972,22 @@ const handleSubmit = async () => {
                           </button>
                         </div>
                         <div class="w-20 flex justify-center gap-1">
-                          <Button size="sm" variant="ghost" class="h-7 w-7 p-0 text-blue-600" title="地图选点" @click="handleMapSelect('multi-point', wp.id)">
+                          <button 
+                            type="button"
+                            class="h-7 w-7 p-0 flex items-center justify-center text-blue-600 hover:bg-blue-50 rounded transition-colors" 
+                            title="地图选点" 
+                            @click="handleMapSelect('multi-point', wp.id)"
+                          >
                             <MapPin class="w-4 h-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" class="h-7 w-7 p-0 text-red-500" title="删除站点" @click="removeWaypoint(wp.id)">
+                          </button>
+                          <button 
+                            type="button"
+                            class="h-7 w-7 p-0 flex items-center justify-center text-red-500 hover:bg-red-50 rounded transition-colors" 
+                            title="删除站点" 
+                            @click="removeWaypoint(wp.id)"
+                          >
                             <Trash2 class="w-4 h-4" />
-                          </Button>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1025,12 +1038,22 @@ const handleSubmit = async () => {
                             <input v-model.number="bu.max_ports" type="number" min="2" max="8" class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:border-orange-500 outline-none" />
                           </div>
                           <div class="w-16 flex justify-center gap-1">
-                            <Button size="sm" variant="ghost" class="h-6 w-6 p-0 text-orange-600" title="地图选点" @click="handleBuMapSelect(bu.id)">
+                            <button 
+                              type="button"
+                              class="h-6 w-6 p-0 flex items-center justify-center text-orange-600 hover:bg-orange-50 rounded transition-colors" 
+                              title="地图选点" 
+                              @click="handleBuMapSelect(bu.id)"
+                            >
                               <MapPin class="w-3.5 h-3.5" />
-                            </Button>
-                            <Button size="sm" variant="ghost" class="h-6 w-6 p-0 text-red-500" title="删除" @click="removeBU(bu.id)">
+                            </button>
+                            <button 
+                              type="button"
+                              class="h-6 w-6 p-0 flex items-center justify-center text-red-500 hover:bg-red-50 rounded transition-colors" 
+                              title="删除" 
+                              @click="removeBU(bu.id)"
+                            >
                               <Trash2 class="w-3.5 h-3.5" />
-                            </Button>
+                            </button>
                           </div>
                         </div>
                       </div>

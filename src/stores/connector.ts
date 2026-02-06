@@ -110,6 +110,57 @@ export const useConnectorStore = defineStore('connector', () => {
     return true
   }
 
+  // 批量添加接线元（一次性添加，只触发一次更新）
+  function addElements(elementsToAdd: Omit<ConnectorElement, 'id'>[], emitLink = false) {
+    if (!currentTable.value) return []
+    
+    const ids: string[] = []
+    const baseTime = Date.now()
+    
+    const newElements: ConnectorElement[] = elementsToAdd.map((element, index) => {
+      const newElement: ConnectorElement = {
+        ...element,
+        id: `elem-${baseTime}-${index}`
+      }
+      ids.push(newElement.id)
+      return newElement
+    })
+    
+    // 一次性替换数组，避免大量 push 触发多次响应式更新
+    currentTable.value.elements = currentTable.value.elements.concat(newElements)
+    currentTable.value.updatedAt = new Date().toISOString()
+    
+    // 可选：触发数据联动
+    if (emitLink) {
+      newElements.forEach(newElement => {
+        dataLinkService.emit({
+          source: 'connector',
+          action: 'add',
+          data: newElement,
+          kp: newElement.kp,
+        })
+      })
+    }
+    
+    return ids
+  }
+
+  // 批量删除接线元（根据类型删除，只触发一次更新）
+  function deleteElementsByType(types: ConnectorType[], emitLink = false) {
+    if (!currentTable.value) return 0
+    
+    const before = currentTable.value.elements.length
+    currentTable.value.elements = currentTable.value.elements.filter(
+      e => !types.includes(e.type)
+    )
+    const deleted = before - currentTable.value.elements.length
+    
+    if (deleted > 0) {
+      currentTable.value.updatedAt = new Date().toISOString()
+    }
+    return deleted
+  }
+
   // 按类型筛选
   function getElementsByType(type: ConnectorType) {
     return elements.value.filter(e => e.type === type)
@@ -190,8 +241,10 @@ export const useConnectorStore = defineStore('connector', () => {
     createTable,
     selectTable,
     addElement,
+    addElements,
     updateElement,
     deleteElement,
+    deleteElementsByType,
     getElementsByType,
     deleteTable,
     // 项目数据管理

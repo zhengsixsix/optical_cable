@@ -119,11 +119,11 @@ const stats = computed(() => {
           </div>
           <div>
             <span class="text-gray-500">长度:</span>
-            <span class="ml-1 font-medium">{{ hoveredSegment.length.toFixed(1) }} km</span>
+            <span class="ml-1 font-medium">{{ (hoveredSegment.length ?? 0).toFixed(1) }} km</span>
           </div>
           <div>
             <span class="text-gray-500">水深:</span>
-            <span class="ml-1 font-medium">{{ hoveredSegment.depth.toFixed(0) }} m</span>
+            <span class="ml-1 font-medium">{{ (hoveredSegment.depth ?? 0).toFixed(0) }} m</span>
           </div>
           <div>
             <span class="text-gray-500">海缆类型:</span>
@@ -132,13 +132,13 @@ const stats = computed(() => {
           <div class="col-span-2">
             <span class="text-gray-500">起点:</span>
             <span class="ml-1 font-mono text-[10px]">
-              {{ hoveredSegment.startPoint.lon.toFixed(4) }}°, {{ hoveredSegment.startPoint.lat.toFixed(4) }}°
+              {{ (hoveredSegment.startPoint?.lon ?? 0).toFixed(4) }}°, {{ (hoveredSegment.startPoint?.lat ?? 0).toFixed(4) }}°
             </span>
           </div>
           <div class="col-span-2">
             <span class="text-gray-500">终点:</span>
             <span class="ml-1 font-mono text-[10px]">
-              {{ hoveredSegment.endPoint.lon.toFixed(4) }}°, {{ hoveredSegment.endPoint.lat.toFixed(4) }}°
+              {{ (hoveredSegment.endPoint?.lon ?? 0).toFixed(4) }}°, {{ (hoveredSegment.endPoint?.lat ?? 0).toFixed(4) }}°
             </span>
           </div>
         </div>

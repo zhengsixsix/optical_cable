@@ -38,6 +38,8 @@ export interface ConnectorElement {
   buTrunkLoss?: number        // 主干插损 (dB)
   buBranchLoss?: number       // 分支插损 (dB)
   buBranchTarget?: string     // 分支目标站点/名称
+  buNextHopUpstream?: string  // 上行方向下一跳节点ID
+  buNextHopDownstream?: string // 下行方向下一跳节点ID
   // 光纤段/海缆段 特有属性
   fromDeviceId?: string       // 起始设备ID
   toDeviceId?: string         // 终止设备ID

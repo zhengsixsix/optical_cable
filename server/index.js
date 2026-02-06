@@ -23,10 +23,10 @@ const PORT = process.env.PORT || 3001
 app.use(cors())
 app.use(express.json())
 
-// DEM文件路径（相对于server目录）
-const DEM_DIR = path.join(__dirname, '..', 'public', 'dem')
+// DEM文件路径（相对于 dist/server 目录）
+const DEM_DIR = path.join(__dirname, '..', 'dem')
 const DEM_FILES = ['1.tif', '2.tif', '3.tif', '4.tif', '5.tif', '6.tif']
-const SHARED_DATA_DIR = path.join(__dirname, '..', 'public', 'data')
+const SHARED_DATA_DIR = path.join(__dirname, '..', 'data')
 const SHARED_EXTENSIONS = new Set(['.tif', '.tiff', '.shp', '.geojson', '.json', '.kml'])
 
 // 全局缓存：存储tif元数据、image对象和完整数据

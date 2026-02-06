@@ -38,7 +38,7 @@ export interface BUConfig {
   name: string
   lon: number
   lat: number
-  portLimit: 3 | 4  // 对应 USE 规范的 max_ports
+  portLimit: number  // 对应 USE 规范的 max_ports，范围 2-8
 }
 
 // 海缆铠装映射规则（新增）
@@ -188,10 +188,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const branchingUnits = ref<BranchingUnit[]>([...defaultSettings.branchingUnits])
   const costFactors = ref<CostFactors>({ ...defaultSettings.costFactors })
   
-  // 新增器件类型 - 初始为空，需要导入器件库
-  const fiberTypes = ref<FiberType[]>([])
-  const amplifierTypes = ref<AmplifierType[]>([])
-  const branchingUnitTypes = ref<BranchingUnitType[]>([])
+  // 新增器件类型 - 使用默认值初始化
+  const fiberTypes = ref<FiberType[]>([...defaultFiberTypes])
+  const amplifierTypes = ref<AmplifierType[]>([...defaultAmplifierTypes])
+  const branchingUnitTypes = ref<BranchingUnitType[]>([...defaultBranchingUnitTypes])
   const currentLibraryFile = ref('')
   
   // 新增配置状态

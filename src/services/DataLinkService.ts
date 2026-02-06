@@ -290,17 +290,27 @@ class DataLinkService {
 
   // 从RPL点位同步创建接线元数据
   rplToConnectorElement(record: RPLRecord): Omit<ConnectorElement, 'id'> | null {
-    if (record.pointType === 'waypoint' || record.pointType === 'landing') return null
+    // waypoint 不同步到接线元表
+    if (record.pointType === 'waypoint') return null
 
     const typeMap: Record<string, ConnectorElement['type']> = {
-      repeater: 'ola',
-      branching: 'bu',
-      joint: 'joint',
+      landing: 'landing',        // 登陆站
+      repeater: 'amplifier_e',   // 放大器（默认使用东向）
+      branching: 'bu',           // 分支器
+      joint: 'joint',            // 接头盒
+    }
+
+    const type = typeMap[record.pointType] || 'joint'
+    const typeLabels: Record<string, string> = {
+      landing: '登陆站',
+      amplifier_e: '放大器',
+      bu: '分支器',
+      joint: '接头',
     }
 
     return {
-      name: record.remarks || `${record.pointType}-KP${record.kp}`,
-      type: typeMap[record.pointType] || 'joint',
+      name: record.remarks || `${typeLabels[type] || record.pointType}-KP${record.kp}`,
+      type,
       kp: record.kp,
       longitude: record.longitude,
       latitude: record.latitude,

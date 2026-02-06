@@ -41,10 +41,12 @@ const originalData = ref<{
 // 缆型选项
 const cableTypeOptions = computed(() => {
   const armorMappings = settingsStore.routePlanningConfig.armorMappings || []
-  return armorMappings.map(m => ({
-    value: m.cableTypeId,
-    label: m.cableTypeName
-  }))
+  return armorMappings
+    .filter(m => m.cableTypeId) // 过滤空 id
+    .map(m => ({
+      value: m.cableTypeId,
+      label: m.cableTypeName
+    }))
 })
 
 // 风险等级标签

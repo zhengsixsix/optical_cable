@@ -303,7 +303,7 @@ export const mockEditableRoutePoints = [
 ]
 
 // ============================================
-// 放大器配置 - 用于 RepeaterConfigPanel/Dialog
+// 放大器配置 - 用于 RepeaterConfigDialog
 // ============================================
 export const mockRepeaterConfigs = [
   { name: 'REP-01', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, model: 'EREP-C+L', gain: 15, powerConsumption: 45 },
@@ -437,7 +437,7 @@ export const mockRouteStats = {
 // 通用选项数据 - 电缆类型、点类型等
 // ============================================
 
-// 电缆类型选项 (完整版 - 用于 SegmentConfigPanel)
+// 电缆类型选项 (完整版 - 用于 CableSegmentConfigDialog)
 export const cableTypeOptions = [
   { value: 'LW', label: 'LW - 轻型无铠装' },
   { value: 'LWS', label: 'LWS - 轻型加强' },

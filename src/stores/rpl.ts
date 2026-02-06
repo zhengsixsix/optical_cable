@@ -217,6 +217,7 @@ export const useRPLStore = defineStore('rpl', () => {
       }
     }
 
+    const effectiveRecords = records.filter(r => !(r as any).isBranchStation)
     const depths = records.map(r => r.depth)
     const totalLength = records.reduce((sum, r) => sum + r.segmentLength, 0)
     const totalSlack = records.reduce((sum, r) => sum + r.segmentLength * (r.slack / 100), 0)
@@ -224,10 +225,10 @@ export const useRPLStore = defineStore('rpl', () => {
     return {
       totalLength,
       totalCableLength: totalLength + totalSlack,
-      landingStations: records.filter(r => r.pointType === 'landing').length,
-      repeaters: records.filter(r => r.pointType === 'repeater').length,
-      branchingUnits: records.filter(r => r.pointType === 'branching').length,
-      joints: records.filter(r => r.pointType === 'joint').length,
+      landingStations: effectiveRecords.filter(r => r.pointType === 'landing').length,
+      repeaters: effectiveRecords.filter(r => r.pointType === 'repeater').length,
+      branchingUnits: effectiveRecords.filter(r => r.pointType === 'branching').length,
+      joints: effectiveRecords.filter(r => r.pointType === 'joint').length,
       averageDepth: depths.reduce((a, b) => a + b, 0) / depths.length,
       maxDepth: Math.max(...depths),
       minDepth: Math.min(...depths),

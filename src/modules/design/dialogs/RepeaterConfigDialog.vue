@@ -4,9 +4,12 @@ import { Button } from '@/shared/components/base'
 import { useAppStore, useRPLStore, useSettingsStore, useRouteStore } from '@/stores'
 import { repeaterPlacementService } from '@/services'
 import type { RoutePoint } from '@/types'
+import type { ComponentModelParamsConfig } from '@/types/useFile'
 import { 
-  X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio 
+  X, Save, Plus, Trash2, MoveVertical, AlertTriangle, CheckCircle, RotateCcw, Radio, Cpu 
 } from 'lucide-vue-next'
+import ModelParamsDrawer from '@/shared/components/forms/ModelParamsDrawer.vue'
+import { useDerivedDevice, isDerivedInstance } from '@/composables'
 
 const props = defineProps<{
   visible: boolean
@@ -21,6 +24,11 @@ const appStore = useAppStore()
 const rplStore = useRPLStore()
 const settingsStore = useSettingsStore()
 const routeStore = useRouteStore()
+const { createDerivedComponent } = useDerivedDevice()
+
+// 模型参数抽屉状态
+const showModelParamsDrawer = ref(false)
+const currentEditingRepeater = ref<RepeaterConfig | null>(null)
 
 // 从器件库获取放大器类型选项
 const repeaterTypeOptions = computed(() =>
@@ -763,6 +771,45 @@ function handleSave() {
 function handleClose() {
   emit('close')
 }
+
+// 打开模型参数配置抽屉
+function openModelParams(rep: RepeaterConfig) {
+  currentEditingRepeater.value = rep
+  showModelParamsDrawer.value = true
+}
+
+// 获取 EDFA 支持的模型列表
+function getEdfaSupportedModels(): string[] {
+  // 从器件库获取，如果没有则使用默认
+  const amps = amplifierTypes.value
+  if (amps.length > 0 && (amps[0] as any).supported_models) {
+    return (amps[0] as any).supported_models
+  }
+  return ['edfa_gain_model']
+}
+
+// 获取 EDFA 的模型参数
+function getEdfaModelParams(): Record<string, ComponentModelParamsConfig> {
+  const amps = amplifierTypes.value
+  if (amps.length > 0 && (amps[0] as any).model_params) {
+    return (amps[0] as any).model_params
+  }
+  return {}
+}
+
+// 保存模型参数
+function handleModelParamsSave(params: Record<string, ComponentModelParamsConfig>) {
+  if (!currentEditingRepeater.value) return
+  
+  // 在实际应用中，这里会创建派生实例并更新放大器的引用
+  appStore.showNotification({ 
+    type: 'success', 
+    message: `已保存 ${currentEditingRepeater.value.name} 的模型参数` 
+  })
+  
+  showModelParamsDrawer.value = false
+  currentEditingRepeater.value = null
+}
 </script>
 
 <template>
@@ -1008,6 +1055,13 @@ function handleClose() {
                 <td class="px-3 py-2 text-center border-b">
                   <div class="flex items-center justify-center gap-1">
                     <button 
+                      class="p-1 hover:bg-purple-100 rounded" 
+                      title="模型参数"
+                      @click.stop="openModelParams(rep)"
+                    >
+                      <Cpu class="w-3.5 h-3.5 text-purple-500" />
+                    </button>
+                    <button 
                       class="p-1 hover:bg-gray-200 rounded" 
                       title="向前移动1km"
                       @click.stop="moveRepeater(rep.id, -1)"
@@ -1067,4 +1121,16 @@ function handleClose() {
       </div>
     </div>
   </Teleport>
+  
+  <!-- 模型参数配置抽屉 -->
+  <ModelParamsDrawer
+    v-if="currentEditingRepeater"
+    :visible="showModelParamsDrawer"
+    domain="EDFA"
+    :supported-models="getEdfaSupportedModels()"
+    :model-params="getEdfaModelParams()"
+    :device-name="currentEditingRepeater.name"
+    @close="showModelParamsDrawer = false; currentEditingRepeater = null"
+    @save="handleModelParamsSave"
+  />
 </template>

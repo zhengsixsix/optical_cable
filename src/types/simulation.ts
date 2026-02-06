@@ -381,6 +381,157 @@ export const DEFAULT_AMPLIFIER_PARAMS: AmplifierParams = {
   band: 'C+L',
 }
 
+// ========== 仿真输入构建 (Step 3) ==========
+
+/** 仿真输入 - 器件序列中的器件 */
+export interface SimDeviceBase {
+  id: string
+  name: string
+  type: 'landing' | 'amplifier' | 'bu'
+  kp: number
+  longitude: number
+  latitude: number
+}
+
+export interface SimAmplifierDevice extends SimDeviceBase {
+  type: 'amplifier'
+  componentRefId: string
+  gain: number
+  noiseFigure: number
+  maxOutputPower: number
+  saturationPower: number
+  operatingMode: 'AGC' | 'APC'
+}
+
+export interface SimBUDevice extends SimDeviceBase {
+  type: 'bu'
+  componentRefId: string
+  portCount: number
+  trunkLoss: number
+  branchLoss: number
+  nextHopUpstream?: string
+  nextHopDownstream?: string
+}
+
+export interface SimLandingDevice extends SimDeviceBase {
+  type: 'landing'
+}
+
+export type SimDevice = SimLandingDevice | SimAmplifierDevice | SimBUDevice
+
+/** 仿真输入 - 光纤段 */
+export interface SimFiberSegment {
+  id: string
+  fromDeviceId: string
+  toDeviceId: string
+  length: number
+  fiberTypeId: string
+  attenuation: number
+  dispersion: number
+  effectiveArea: number
+  nonlinearIndex: number
+}
+
+/** Span 扫描策略 */
+export interface SimSpanStrategy {
+  mode: 'fixed' | 'scan'
+  fixedLength?: number
+  scanRange?: {
+    min: number
+    max: number
+    step: number
+  }
+}
+
+/** 约束条件 */
+export interface SimConstraints {
+  minOsnrDb: number
+  minGsnrDb: number
+  maxSpanLossDb: number
+  targetBer: number
+}
+
+/** 标准化仿真输入结构 (Step 3 输出) */
+export interface SimulationInput {
+  // 基本信息
+  linkId: string
+  linkName: string
+  totalLengthKm: number
+  
+  // 器件序列（按KP排序）
+  deviceSequence: SimDevice[]
+  
+  // 光纤段序列
+  fiberSegments: SimFiberSegment[]
+  
+  // 光纤模型参数
+  fiberModel: {
+    type: SimulationModel
+    params: FiberParams
+  }
+  
+  // 放大器模型参数
+  amplifierModel: {
+    type: 'EDFA_GAIN' | 'EDFA_POWER' | 'RAMAN'
+    params: AmplifierParams
+  }
+  
+  // WDM 配置
+  wdm: WDMSystemParams & {
+    launchPowerMode: 'uniform' | 'per_channel'
+    launchPowerVector?: number[]
+    initialAseMode: 'zero' | 'custom'
+    initialAseValue?: number
+    initialNliMode: 'zero' | 'custom'
+    initialNliValue?: number
+  }
+  
+  // Span 策略
+  spanStrategy: SimSpanStrategy
+  
+  // 约束条件
+  constraints: SimConstraints
+  
+  // BU 配置
+  buConfigs: Array<{
+    id: string
+    name: string
+    kp: number
+    portCount: number
+    trunkLoss: number
+    branchLoss: number
+  }>
+  
+  // 元数据
+  createdAt: string
+  version: string
+}
+
+// ========== 仿真进度回调 ==========
+
+/** 仿真阶段 */
+export type SimulationPhase = 
+  | 'building'     // 构建输入
+  | 'validating'   // 校验参数
+  | 'computing'    // 计算中
+  | 'analyzing'    // 分析结果
+  | 'completed'    // 完成
+  | 'failed'       // 失败
+
+/** 仿真进度 */
+export interface SimulationProgress {
+  phase: SimulationPhase
+  phaseLabel: string
+  progress: number           // 0-100
+  currentSpan?: number
+  totalSpans?: number
+  message?: string
+  error?: string
+}
+
+/** 进度回调函数 */
+export type ProgressCallback = (progress: SimulationProgress) => void
+
 /** 调制格式参数表 */
 export const MODULATION_PARAMS: Record<ModulationFormat, ModulationParams> = {
   'QPSK': {
