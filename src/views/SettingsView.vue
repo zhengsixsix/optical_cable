@@ -267,9 +267,12 @@ const handleImportLibrary = () => {
 
       let currentSection = ''
       let headers: string[] = []
-      const fiberTypes: any[] = []
-      const amplifierTypes: any[] = []
-      const branchingUnitTypes: any[] = []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fiberTypes: Record<string, any>[] = []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const amplifierTypes: Record<string, any>[] = []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const branchingUnitTypes: Record<string, any>[] = []
 
       for (const line of lines) {
         // 检测分区标记
@@ -288,6 +291,7 @@ const handleImportLibrary = () => {
         }
 
         // 解析数据行
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const row: Record<string, any> = {}
         headers.forEach((h, i) => {
           const val = values[i] || ''
@@ -341,9 +345,12 @@ const handleImportLibrary = () => {
       }
 
       // 更新 store
-      fiberTypes.forEach(f => settingsStore.addFiberType(f))
-      amplifierTypes.forEach(a => settingsStore.addAmplifierType(a))
-      branchingUnitTypes.forEach(b => settingsStore.addBranchingUnitType(b))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      fiberTypes.forEach(f => settingsStore.addFiberType(f as any))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      amplifierTypes.forEach(a => settingsStore.addAmplifierType(a as any))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      branchingUnitTypes.forEach(b => settingsStore.addBranchingUnitType(b as any))
       settingsStore.currentLibraryFile = file.name
 
       const total = fiberTypes.length + amplifierTypes.length + branchingUnitTypes.length

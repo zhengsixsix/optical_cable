@@ -28,6 +28,7 @@ interface RoutePoint {
   longitude: number
   latitude: number
   kp?: number
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any
 }
 
@@ -95,8 +96,8 @@ const getRouteLineCoords = (): [number, number][] => {
   }
   // 回退：使用 sortedPoints
   return sortedPoints.value
-    .filter((p: any) => !p.isBranchStation)
-    .map((p: any) => [p.longitude, p.latitude] as [number, number])
+    .filter((p) => !p.isBranchStation)
+    .map((p) => [p.longitude, p.latitude] as [number, number])
 }
 
 /** 将点投影到最近的路由线段上（snap to route） */
@@ -158,7 +159,7 @@ const setupTranslateInteraction = () => {
     const geom = feature.getGeometry() as Point
     dragStartCoord = geom.getCoordinates() as [number, number]
     // 找到当前 KP
-    const device = sortedPoints.value.find((p: any) => p.id === dragPointId)
+    const device = sortedPoints.value.find((p) => p.id === dragPointId)
     dragStartKp = device?.kp || 0
     dragTooltip.value.visible = true
   })
@@ -606,7 +607,7 @@ const drawPoints = () => {
   
   // 过滤只显示系统设备，排除 waypoint
   const systemDevices = sortedPoints.value.filter(point => 
-    systemDeviceTypes.includes(point.type) || (point as any).isBranchStation
+    systemDeviceTypes.includes(point.type) || point.isBranchStation
   )
   
   systemDevices.forEach(point => {
@@ -655,7 +656,8 @@ const flyToPoint = (pointId: string) => {
 }
 
   // 处理指针移动 - 显示鼠标样式
-const handlePointerMove = (evt: any) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handlePointerMove = (evt: Record<string, any>) => {
   const features = map?.getFeaturesAtPixel(evt.pixel, {
     layerFilter: layer => layer === pointLayer
   })
@@ -685,8 +687,8 @@ const updateRouteLineFromPoints = () => {
   if (pointFeatures.length < 2) return
   
   // 分离主干点和分支登陆站
-  const mainTrunkPoints = sortedPoints.value.filter((p: any) => !p.isBranchStation)
-  const branchStations = sortedPoints.value.filter((p: any) => p.isBranchStation)
+  const mainTrunkPoints = sortedPoints.value.filter((p) => !p.isBranchStation)
+  const branchStations = sortedPoints.value.filter((p) => p.isBranchStation)
   
   // 绘制主幹线（分段）
   for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
@@ -722,9 +724,9 @@ const updateRouteLineFromPoints = () => {
   }
   
   // 绘制分支线（从分支器到分支登陆站）
-  branchStations.forEach((branchStation: any) => {
+  branchStations.forEach((branchStation) => {
     const branchFromName = branchStation.branchFrom
-    const branchingUnit = mainTrunkPoints.find((p: any) => p.name === branchFromName)
+    const branchingUnit = mainTrunkPoints.find((p) => p.name === branchFromName)
     
     if (branchingUnit) {
       // 从 pointFeatures 中获取当前坐标

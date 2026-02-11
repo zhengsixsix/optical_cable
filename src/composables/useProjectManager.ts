@@ -50,15 +50,17 @@ export interface CreateProjectParams {
     checked: boolean
     value: string
   }>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   devices?: Array<{
     id: string
     name: string
     type: string
     file?: string
+    /** 解析后的器件数据（来自外部文件，结构不固定） */
     parsedData?: {
-      fiberTypes?: any[]
-      amplifierTypes?: any[]
-      branchingUnitTypes?: any[]
+      fiberTypes?: Record<string, unknown>[]
+      amplifierTypes?: Record<string, unknown>[]
+      branchingUnitTypes?: Record<string, unknown>[]
     }
   }>
 }
@@ -387,15 +389,18 @@ export function useProjectManager() {
             const { fiberTypes, amplifierTypes, branchingUnitTypes } = device.parsedData
             
             if (fiberTypes && fiberTypes.length > 0) {
-              fiberTypes.forEach((f: any) => settingsStore.addFiberType(f))
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              fiberTypes.forEach((f) => settingsStore.addFiberType(f as any))
               totalFibers += fiberTypes.length
             }
             if (amplifierTypes && amplifierTypes.length > 0) {
-              amplifierTypes.forEach((a: any) => settingsStore.addAmplifierType(a))
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              amplifierTypes.forEach((a) => settingsStore.addAmplifierType(a as any))
               totalAmplifiers += amplifierTypes.length
             }
             if (branchingUnitTypes && branchingUnitTypes.length > 0) {
-              branchingUnitTypes.forEach((b: any) => settingsStore.addBranchingUnitType(b))
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              branchingUnitTypes.forEach((b) => settingsStore.addBranchingUnitType(b as any))
               totalBranchingUnits += branchingUnitTypes.length
             }
           }
@@ -507,7 +512,8 @@ export function useProjectManager() {
             }
             
             if (connectorStore.currentTable) {
-              const newElements: any[] = []
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const newElements: Record<string, any>[] = []
               let deviceIndex = 0
               
               records.forEach((record) => {
@@ -551,11 +557,13 @@ export function useProjectManager() {
                 })
               }
               
-              connectorStore.currentTable.elements = newElements
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              connectorStore.currentTable.elements = newElements as any
             }
             
             // 4. 同步到 monitorStore 以便实时监控视图显示
-            const newDevices: any[] = []
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const newDevices: Record<string, any>[] = []
             let deviceIdx = 0
             
             records.forEach((record) => {
@@ -587,8 +595,8 @@ export function useProjectManager() {
             // 设备数据通过 connectorStore 管理，monitorStore.devices 是 computed 属性
             if (connectorStore.currentTable) {
               // 将设备数据转换为 connectorStore 格式
-              const connectorElements = newDevices.map((d: any) => ({
-                id: d.id,
+              const connectorElements = newDevices.map((d) => ({
+                id: d.id as string,
                 name: d.name,
                 type: d.type,
                 longitude: d.longitude,
@@ -599,7 +607,8 @@ export function useProjectManager() {
                 specifications: '',
                 remarks: d.name,
               }))
-              connectorStore.currentTable.elements = connectorElements
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              connectorStore.currentTable.elements = connectorElements as any
             }
             
             appStore.addLog('INFO', `导入 RPL 文件: ${rplFileData.name}, ${records.length} 条记录, ${newDevices.length} 个设备`)

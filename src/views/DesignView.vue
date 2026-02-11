@@ -651,7 +651,8 @@ const calculateGSNRData = () => {
 }
 
 // WDM配置变更处理
-const handleWDMConfigChange = (config: any) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handleWDMConfigChange = (config: Record<string, any>) => {
   // WDM参数变化时重新计算GSNR
   if (gsnrData.value.length > 0) {
     gsnrData.value = calculateGSNRData()
@@ -716,6 +717,7 @@ const openModelSelectDialog = () => {
 }
 
 // Step 4 确认后: 执行 Span 扫描计算
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const handleModelConfirm = (config: { fiberModel: string; [key: string]: any }) => {
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
   
@@ -849,8 +851,8 @@ const handleAmplifierMoved = (data: { id: string; newKp: number; longitude: numb
   // 3. 更新自动落位结果
   if (autoPlacementResult.value) {
     const posIdx = autoPlacementResult.value.positions.findIndex(
-      (p: any) => Math.abs(p.longitude - data.longitude) < 0.01 || 
-                  connectorStore.elements.find(e => e.id === data.id)
+      (p: { longitude: number }) => Math.abs(p.longitude - data.longitude) < 0.01 || 
+             connectorStore.elements.find(e => e.id === data.id)
     )
     // 重新从 connectorStore 拉取最新位置
     autoPlacementResult.value = {
@@ -1002,7 +1004,8 @@ const currentOpticalLink = computed<OpticalLink | null>(() => {
 })
 
 // 生成光纤段数据（连接相邻节点）
-const generateFiberSpans = (sortedRepeaters: any[]) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const generateFiberSpans = (sortedRepeaters: Record<string, any>[]) => {
   // 删除现有的光纤段
   const existingFibers = connectorStore.elements.filter(e => e.type === 'fiber')
   existingFibers.forEach(f => connectorStore.deleteElement(f.id))
@@ -1014,6 +1017,7 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
   const fiberCategory = defaultFiber?.fiberCategory || 'G.654.E'
   
   // 获取主干线节点（排除分支登陆站）按 KP 排序
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mainTrunkNodes = connectorStore.elements
     .filter(e => e.type !== 'fiber' && !(e as any).isBranchStation)
     .sort((a, b) => a.kp - b.kp)
@@ -1039,9 +1043,11 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
   }
   
   // 为分支登陆站创建分支光纤段（从分支器到分支登陆站）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const branchStations = connectorStore.elements.filter(e => (e as any).isBranchStation)
   let branchFiberIndex = mainTrunkNodes.length
   branchStations.forEach(branchStation => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const branchFromName = (branchStation as any).branchFrom
     // 找到对应的分支器
     const branchingUnit = mainTrunkNodes.find(n => n.name === branchFromName && n.type === 'bu')
@@ -1067,7 +1073,8 @@ const generateFiberSpans = (sortedRepeaters: any[]) => {
 }
 
 // 处理放大器配置保存
-const handleRepeatersSaved = (repeaters: any[]) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handleRepeatersSaved = (repeaters: Record<string, any>[]) => {
   // 从器件库获取默认参数
   const defaultAmpParams = getAmplifierParamsFromLibrary()
   
@@ -1299,7 +1306,8 @@ const handleWizardStartCalculation = (config: WizardConfig) => {
 }
 
 // 处理链路配置应用结果 - 更新性能概览面板
-const handleLinkConfigApplyResult = (result: any) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handleLinkConfigApplyResult = (result: Record<string, any>) => {
   // 使用 setTimeout 延迟执行，避免响应式更新循环
   setTimeout(() => {
     const avgSpan = result.avgSpanLength || 72.5
@@ -1313,10 +1321,13 @@ const handleLinkConfigApplyResult = (result: any) => {
         scannedAt: new Date(),
         model: 'GN' as const,
         targetGsnrDb: sd.targetGsnrDb || 15,
-        spanLengthsKm: sd.spanLengthsKm,
-        gsnrPerSpanDb: sd.scanPoints.map((p: any) => p.gsnrPerChannelDb || [p.avgGsnrDb]),
-        osnrPerSpanDb: sd.scanPoints.map((p: any) => p.osnrPerChannelDb || [p.avgOsnrDb]),
-        scanPoints: sd.scanPoints.map((p: any) => ({
+      spanLengthsKm: sd.spanLengthsKm,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        gsnrPerSpanDb: sd.scanPoints.map((p: Record<string, any>) => p.gsnrPerChannelDb || [p.avgGsnrDb]),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        osnrPerSpanDb: sd.scanPoints.map((p: Record<string, any>) => p.osnrPerChannelDb || [p.avgOsnrDb]),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        scanPoints: sd.scanPoints.map((p: Record<string, any>) => ({
           spanLengthKm: p.spanLengthKm,
           gsnrPerChannelDb: p.gsnrPerChannelDb || [p.avgGsnrDb],
           osnrPerChannelDb: p.osnrPerChannelDb || [p.avgOsnrDb],

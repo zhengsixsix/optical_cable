@@ -31,23 +31,26 @@ export interface DerivedInstanceInfo {
 /**
  * 检查两个对象的值是否相等 (深度比较)
  */
-function deepEqual(a: any, b: any): boolean {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (typeof a !== typeof b) return false
   if (typeof a !== 'object' || a === null || b === null) return false
   
-  const keysA = Object.keys(a)
-  const keysB = Object.keys(b)
+  const keysA = Object.keys(a as Record<string, unknown>)
+  const keysB = Object.keys(b as Record<string, unknown>)
   
   if (keysA.length !== keysB.length) return false
   
-  return keysA.every(key => deepEqual(a[key], b[key]))
+  const objA = a as Record<string, unknown>
+  const objB = b as Record<string, unknown>
+  return keysA.every(key => deepEqual(objA[key], objB[key]))
 }
 
 /**
  * 比较两个对象，返回不同的字段名
  */
-function findDifferentFields(original: Record<string, any>, modified: Record<string, any>): string[] {
+function findDifferentFields(original: Record<string, unknown>, modified: Record<string, unknown>): string[] {
   const allKeys = new Set([...Object.keys(original), ...Object.keys(modified)])
   const differentFields: string[] = []
   

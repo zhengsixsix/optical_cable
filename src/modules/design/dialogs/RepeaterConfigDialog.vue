@@ -577,7 +577,8 @@ function generateFixedSpacing() {
 }
 
 // 根据 KP 插值计算路由位置
-function interpolateRoutePosition(routeData: any[] | undefined, targetKp: number): { longitude: number; latitude: number; depth: number; isBranch?: boolean; branchId?: string } {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function interpolateRoutePosition(routeData: Record<string, any>[] | undefined, targetKp: number): { longitude: number; latitude: number; depth: number; isBranch?: boolean; branchId?: string } {
   // 获取当前路由（包含分支信息）
   const currentRoute = routeStore.selectedRoute
   
@@ -626,7 +627,8 @@ function interpolateRoutePosition(routeData: any[] | undefined, targetKp: number
 }
 
 // 构建包含分支线的完整路由数据
-function buildFullRouteData(routePoints: any[]) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildFullRouteData(routePoints: Record<string, any>[]) {
   const result: Array<{ kp: number; longitude: number; latitude: number; depth: number; isBranch?: boolean }> = []
   let kp = 0
   
@@ -650,10 +652,12 @@ function buildFullRouteData(routePoints: any[]) {
 }
 
 // 在分支线上插值
-function interpolateOnBranchLine(routePoints: any[], targetKp: number): { longitude: number; latitude: number; depth: number; isBranch: boolean; branchId: string } | null {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function interpolateOnBranchLine(routePoints: Record<string, any>[], targetKp: number): { longitude: number; latitude: number; depth: number; isBranch: boolean; branchId: string } | null {
   // 计算每个分支器的 KP
   let kp = 0
-  const branchingUnits: Array<{ point: any; kp: number }> = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const branchingUnits: Array<{ point: Record<string, any>; kp: number }> = []
   
   for (let i = 0; i < routePoints.length; i++) {
     const point = routePoints[i]
@@ -695,7 +699,8 @@ function interpolateOnBranchLine(routePoints: any[], targetKp: number): { longit
 }
 
 // 在主干线上插值
-function interpolateOnMainTrunk(routeData: any[], targetKp: number): { longitude: number; latitude: number; depth: number } {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function interpolateOnMainTrunk(routeData: Record<string, any>[], targetKp: number): { longitude: number; latitude: number; depth: number } {
   const sorted = [...routeData].sort((a, b) => (a.kp || 0) - (b.kp || 0))
   
   let before = sorted[0]

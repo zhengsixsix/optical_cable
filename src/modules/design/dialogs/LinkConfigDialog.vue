@@ -33,7 +33,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'start-calculation', config: LinkConfig): void
-  (e: 'apply-result', result: any): void  // 传递计算结果给父组件
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (e: 'apply-result', result: Record<string, any>): void  // 传递计算结果给父组件
 }>()
 
 // 链路配置输出
@@ -152,7 +153,9 @@ const linkInfo = computed(() => {
   })
   
   const landingPointsAll = pointsWithKp.filter(p => p.type === 'landing')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const branchLandingPoints = landingPointsAll.filter(p => (p as any).isBranchStation)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const landingPoints = landingPointsAll.filter(p => !(p as any).isBranchStation)
   const buPoints = pointsWithKp.filter(p => p.type === 'branching')
   
@@ -574,7 +577,8 @@ const linkEndpoints = computed(() => {
 })
 
 // 更新 BU 配置 - 同时更新共享 store 和 connectorStore
-const updateBuConfig = (buId: string, field: string, value: any) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const updateBuConfig = (buId: string, field: string, value: string | number | boolean) => {
   // 更新共享的 buConfigStore
   const fieldMapping: Record<string, keyof import('@/stores').BUConfigData> = {
     'buNextHopUpstream': 'buNextHopUpstream',
@@ -1164,11 +1168,12 @@ const restoreRecommendedSpan = () => {
 }
 
 // 根据 KP 计算线路上的经纬度（优先使用 RPL 路径，其次使用 segments 拓扑路径）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getCoordinateByKP = (
   targetKP: number,
-  route: any,
+  route: Record<string, any>,
   configTotalLength?: number,
-  rplRecords?: any[]
+  rplRecords?: Record<string, any>[]
 ): { longitude: number, latitude: number } => {
   if (!route || !route.points || route.points.length < 2) {
     return { longitude: 0, latitude: 0 }
@@ -1290,7 +1295,8 @@ const getCoordinateByKP = (
 }
 
 // 构建主干路径坐标序列（使用 BFS 沿 segments 寻径，包含所有 waypoint 拐点）
-const buildPathCoords = (route: any, rplRecords: any[]) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const buildPathCoords = (route: Record<string, any>, rplRecords: Record<string, any>[]) => {
   // 1) 优先使用 RPL — 但仅当有足够中间点描述弯曲路径时
   if (rplRecords && rplRecords.length >= 3) {
     const usableRecords = rplRecords.filter((r: any) => !(r as any).isBranchStation)
