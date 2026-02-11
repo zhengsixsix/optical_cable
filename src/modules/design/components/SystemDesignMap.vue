@@ -486,110 +486,149 @@ const drawRouteLine = () => {
 // 绘制光纤段（放大器之间的连线，参考路由规划的海缆段显示）
 const drawFiberLines = () => {
   if (!routeSource) return
-  
+
   // 从 connectorStore 获取光纤段元素
   const fibers = connectorStore.elements.filter(e => e.type === 'fiber')
   if (fibers.length === 0) return
-  
+
   const selectedRoute = routeStore.selectedRoute
   if (!selectedRoute || !selectedRoute.segments || selectedRoute.segments.length === 0) return
-  
-  // 构建点 ID 到坐标的映射
+
+  // 构建点 ID → 坐标映射 & 无向图（遵循实际拓扑）
   const pointMap: Record<string, [number, number]> = {}
-  for (const p of selectedRoute.points) {
-    pointMap[p.id] = p.coordinates
-  }
-  
-  // 构建 segGeos（KP 范围与坐标的映射）
-  let kpOff = 0
-  const segGeos: Array<{ startKp: number; endKp: number; startCoord: [number, number]; endCoord: [number, number] }> = []
-  for (const seg of selectedRoute.segments) {
-    const sc = pointMap[seg.startPointId]
-    const ec = pointMap[seg.endPointId]
-    if (!sc || !ec) { kpOff += (seg.length || 0); continue }
-    segGeos.push({ startKp: kpOff, endKp: kpOff + (seg.length || 0), startCoord: sc, endCoord: ec })
-    kpOff += (seg.length || 0)
-  }
-  
-  if (segGeos.length === 0) return
-  
-  // 光纤段交替配色，相邻段视觉可区分
-  const fiberColors = ['#f59e0b', '#fb923c']  // 琥珀色 / 橘色交替
-  
-  // 为每条光纤沿路由路径插值绘制
-  fibers.forEach((fiber, idx) => {
-    const sKp = fiber.kp || 0
-    const eKp = fiber.endKp || sKp
-    if (eKp <= sKp) return
-    
-    const coords: [number, number][] = []
-    for (const r of segGeos) {
-      if (eKp <= r.startKp || sKp >= r.endKp) continue
-      const segLen = r.endKp - r.startKp
-      if (segLen === 0) continue
-      const sf = Math.max(0, (sKp - r.startKp) / segLen)
-      const ef = Math.min(1, (eKp - r.startKp) / segLen)
-      const sLon = r.startCoord[0] + sf * (r.endCoord[0] - r.startCoord[0])
-      const sLat = r.startCoord[1] + sf * (r.endCoord[1] - r.startCoord[1])
-      const eLon = r.startCoord[0] + ef * (r.endCoord[0] - r.startCoord[0])
-      const eLat = r.startCoord[1] + ef * (r.endCoord[1] - r.startCoord[1])
-      if (coords.length === 0) coords.push([sLon, sLat])
-      coords.push([eLon, eLat])
+  for (const p of selectedRoute.points) pointMap[p.id] = p.coordinates
+  const adj = new Map<string, string[]>()
+  selectedRoute.segments.forEach(seg => {
+    if (!adj.has(seg.startPointId)) adj.set(seg.startPointId, [])
+    if (!adj.has(seg.endPointId)) adj.set(seg.endPointId, [])
+    adj.get(seg.startPointId)!.push(seg.endPointId)
+    adj.get(seg.endPointId)!.push(seg.startPointId)
+  })
+
+  // 计算点到线段的投影（返回最近线段与投影坐标）
+  const projectToNearestSegment = (coord: [number, number]) => {
+    let best: { seg: any; t: number; snapped: [number, number] } | null = null
+    for (const seg of selectedRoute.segments) {
+      const a = pointMap[seg.startPointId]
+      const b = pointMap[seg.endPointId]
+      if (!a || !b) continue
+      const ax = a[0], ay = a[1], bx = b[0], by = b[1]
+      const dx = bx - ax, dy = by - ay
+      const len2 = dx * dx + dy * dy
+      if (len2 === 0) continue
+      let t = ((coord[0] - ax) * dx + (coord[1] - ay) * dy) / len2
+      t = Math.max(0, Math.min(1, t))
+      const sx = ax + t * dx, sy = ay + t * dy
+      const dist2 = (coord[0] - sx) * (coord[0] - sx) + (coord[1] - sy) * (coord[1] - sy)
+      if (!best || dist2 < ((best.snapped[0]-coord[0])**2 + (best.snapped[1]-coord[1])**2)) {
+        best = { seg, t, snapped: [sx, sy] }
+      }
     }
-    if (coords.length < 2) return
-    
+    return best
+  }
+
+  // BFS 寻找两点间的拓扑路径（以路由点为节点）
+  const bfsPath = (startId: string, endId: string): string[] => {
+    if (startId === endId) return [startId]
+    const q: string[] = [startId]
+    const prev = new Map<string, string | null>([[startId, null]])
+    while (q.length) {
+      const cur = q.shift()!
+      for (const nb of (adj.get(cur) || [])) {
+        if (!prev.has(nb)) {
+          prev.set(nb, cur)
+          if (nb === endId) {
+            const path: string[] = []
+            let p: string | null = nb
+            while (p) { path.push(p); p = prev.get(p) || null }
+            path.reverse()
+            return path
+          }
+          q.push(nb)
+        }
+      }
+    }
+    return []
+  }
+
+  // 光纤段交替配色
+  const fiberColors = ['#f59e0b', '#fb923c']
+
+  fibers.forEach((fiber, idx) => {
+    // 获取起止设备坐标
+    const fromDev = connectorStore.elements.find(e => e.id === fiber.fromDeviceId)
+    const toDev = connectorStore.elements.find(e => e.id === fiber.toDeviceId)
+    if (!fromDev || !toDev) return
+
+    const startProj = projectToNearestSegment([fromDev.longitude, fromDev.latitude])
+    const endProj = projectToNearestSegment([toDev.longitude, toDev.latitude])
+    if (!startProj || !endProj) return
+
+    // 选择起/终端靠近的端点作为 BFS 的起止节点
+    const startA = startProj.seg.startPointId, startB = startProj.seg.endPointId
+    const endA = endProj.seg.startPointId, endB = endProj.seg.endPointId
+
+    const choosePath = (s: string, t: string) => bfsPath(s, t)
+    const paths: Array<{ path: string[]; score: number; sId: string; tId: string }> = []
+    const cands = [
+      [startA, endA], [startA, endB], [startB, endA], [startB, endB]
+    ] as Array<[string, string]>
+    for (const [s, t] of cands) {
+      const p = choosePath(s, t)
+      if (p.length) {
+        // 粗略评分：路径节点数 + 与投影端点的距离
+        const sPt = pointMap[s]; const tPt = pointMap[t]
+        const sDist = Math.hypot(startProj.snapped[0]-sPt[0], startProj.snapped[1]-sPt[1])
+        const tDist = Math.hypot(endProj.snapped[0]-tPt[0], endProj.snapped[1]-tPt[1])
+        paths.push({ path: p, score: p.length + sDist + tDist, sId: s, tId: t })
+      }
+    }
+    if (paths.length === 0) return
+    paths.sort((a, b) => a.score - b.score)
+    const best = paths[0]
+
+    // 组装坐标：起点投影 → 路由点序列 → 终点投影
+    const coords: [number, number][] = []
+    coords.push(startProj.snapped)
+    for (const pid of best.path) coords.push(pointMap[pid])
+    coords.push(endProj.snapped)
+
+    // 去重相邻重复点
+    const clean: [number, number][] = []
+    for (const c of coords) {
+      if (clean.length === 0) clean.push(c)
+      else {
+        const last = clean[clean.length-1]
+        if (Math.hypot(c[0]-last[0], c[1]-last[1]) > 1e-8) clean.push(c)
+      }
+    }
+    if (clean.length < 2) return
+
     const displayName = fiber.name || `F-${String(idx + 1).padStart(2, '0')}`
     const color = fiberColors[idx % 2]
-    
-    // 绘制光纤线条（不带文字）
+
     const fiberFeature = new Feature({
-      geometry: new LineString(coords),
+      geometry: new LineString(clean),
       featureType: 'fiber',
       fiberName: fiber.name,
       fiberIndex: idx,
       segmentIndex: idx
     })
-    fiberFeature.setStyle(new Style({
-      stroke: new Stroke({ color, width: 5 })
-    }))
+    fiberFeature.setStyle(new Style({ stroke: new Stroke({ color, width: 5 }) }))
     routeSource!.addFeature(fiberFeature)
-    
-    // 用实际设备坐标计算中点（而不是插值坐标）
-    const devices = connectorStore.elements.filter(e => e.type !== 'fiber' && e.type !== 'cable_segment')
-    const startDev = devices.find(d => Math.abs(d.kp - sKp) < 0.5)
-    const endDev = devices.find(d => Math.abs(d.kp - eKp) < 0.5)
-    
-    const midLon = startDev && endDev
-      ? (startDev.longitude + endDev.longitude) / 2
-      : (coords[0][0] + coords[coords.length - 1][0]) / 2
-    const midLat = startDev && endDev
-      ? (startDev.latitude + endDev.latitude) / 2
-      : (coords[0][1] + coords[coords.length - 1][1]) / 2
-    
-    // 计算方向角度，确保文字始终可读（不会倒置）
-    const dx = startDev && endDev
-      ? endDev.longitude - startDev.longitude
-      : coords[coords.length - 1][0] - coords[0][0]
-    const dy = startDev && endDev
-      ? endDev.latitude - startDev.latitude
-      : coords[coords.length - 1][1] - coords[0][1]
+
+    // 文字标签：使用起止设备中点与方向
+    const midLon = (fromDev.longitude + toDev.longitude) / 2
+    const midLat = (fromDev.latitude + toDev.latitude) / 2
+    const dx = toDev.longitude - fromDev.longitude
+    const dy = toDev.latitude - fromDev.latitude
     let rotation = -Math.atan2(dy, dx)
-    // 保证文字不会倒置（角度限制在 -90° ~ 90°）
     if (rotation > Math.PI / 2) rotation -= Math.PI
     if (rotation < -Math.PI / 2) rotation += Math.PI
-    
-    const labelFeature = new Feature({
-      geometry: new Point([midLon, midLat]),
-      featureType: 'fiber-label'
-    })
+
+    const labelFeature = new Feature({ geometry: new Point([midLon, midLat]), featureType: 'fiber-label' })
     labelFeature.setStyle(new Style({
-      text: new Text({
-        text: displayName,
-        font: 'bold 10px sans-serif',
-        fill: new Fill({ color: '#fff' }),
-        stroke: new Stroke({ color, width: 3 }),
-        rotation
-      })
+      text: new Text({ text: displayName, font: 'bold 10px sans-serif', fill: new Fill({ color: '#fff' }), stroke: new Stroke({ color, width: 3 }), rotation })
     }))
     routeSource!.addFeature(labelFeature)
   })
