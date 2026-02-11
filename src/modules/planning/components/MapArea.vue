@@ -1346,13 +1346,22 @@ const drawParetoRoutes = async () => {
         pointMap[p.id] = p.coordinates
       }
 
-      // ====== 以单条连续 LineString 绘制主干路线（GeoJSON 风格） ======
-      // 按 segments 顺序收集坐标，构建完整折线
+      // ====== 过滤分支段：分支登陆站的连线由 branchTo 单独绘制，避免重复 ======
+      const branchLandingIds = new Set<string>()
+      route.points.forEach(p => {
+        if ((p as any).isBranchStation) branchLandingIds.add(p.id)
+      })
+      const trunkSegments = route.segments.filter(seg =>
+        !branchLandingIds.has(seg.startPointId) && !branchLandingIds.has(seg.endPointId)
+      )
+      const hasBranching = route.points.some(p => p.type === 'branching')
+
+      // 按 segments 顺序收集坐标，构建完整折线（仅主干段）
       const allCoords: [number, number][] = []
-      for (let i = 0; i < route.segments.length; i++) {
-        const seg = route.segments[i]
-        const sc = pointMap[seg.startPointId] || route.points[i]?.coordinates
-        const ec = pointMap[seg.endPointId] || route.points[i + 1]?.coordinates
+      for (let i = 0; i < trunkSegments.length; i++) {
+        const seg = trunkSegments[i]
+        const sc = pointMap[seg.startPointId]
+        const ec = pointMap[seg.endPointId]
         if (!sc || !ec) continue
         if (allCoords.length === 0) allCoords.push(sc)
         allCoords.push(ec)
@@ -1370,10 +1379,10 @@ const drawParetoRoutes = async () => {
           const cableSegs = cableSegmentStore.segments
           const routeLen = route.totalLength || 0
 
-          // 构建 segGeos
+          // 构建 segGeos（仅主干段，排除分支登陆站连线）
           let kpOff = 0
           const segGeos: Array<{ startKp: number; endKp: number; startCoord: [number, number]; endCoord: [number, number] }> = []
-          for (const seg of route.segments) {
+          for (const seg of trunkSegments) {
             const sc = pointMap[seg.startPointId]
             const ec = pointMap[seg.endPointId]
             if (!sc || !ec) { kpOff += (seg.length || 0); continue }
@@ -1444,19 +1453,39 @@ const drawParetoRoutes = async () => {
             routeSource!.addFeature(segFeature)
           }
         } else {
-          // ====== 无海缆段，画单条完整主干线 ======
-          const routeLineFeature = new Feature({
-            geometry: new LineString(allCoords),
-            routeId: route.id,
-            isRouteLine: true,
-          })
-          routeLineFeature.setStyle(new Style({
-            stroke: new Stroke({ color: lineColor, width: lineWidth, lineDash }),
-          }))
-          routeSource!.addFeature(routeLineFeature)
+          // ====== 无海缆段，画主干线 ======
+          if (hasBranching) {
+            // 多点规划：逐段绘制（拓扑是树形，不能串联成单条折线）
+            trunkSegments.forEach((seg, i) => {
+              const sc = pointMap[seg.startPointId]
+              const ec = pointMap[seg.endPointId]
+              if (!sc || !ec) return
+              const segFeature = new Feature({
+                geometry: new LineString([sc, ec]),
+                routeId: route.id,
+                isRouteLine: true,
+                segmentIndex: i,
+              })
+              segFeature.setStyle(new Style({
+                stroke: new Stroke({ color: lineColor, width: lineWidth, lineDash }),
+              }))
+              routeSource!.addFeature(segFeature)
+            })
+          } else {
+            // 点对点规划：单条连续折线
+            const routeLineFeature = new Feature({
+              geometry: new LineString(allCoords),
+              routeId: route.id,
+              isRouteLine: true,
+            })
+            routeLineFeature.setStyle(new Style({
+              stroke: new Stroke({ color: lineColor, width: lineWidth, lineDash }),
+            }))
+            routeSource!.addFeature(routeLineFeature)
 
-          if (isRouteSelected && isEditingRoute.value) {
-            editableFeatures.push(routeLineFeature as any)
+            if (isRouteSelected && isEditingRoute.value) {
+              editableFeatures.push(routeLineFeature as any)
+            }
           }
         }
       }
@@ -1580,7 +1609,11 @@ const drawParetoRoutes = async () => {
           ptMap[p.id] = p.coordinates
         }
 
-        // 按 route.segments 顺序构建每条线段的 KP 范围和几何
+        // 按 route.segments 顺序构建每条线段的 KP 范围和几何（排除分支登陆站连线）
+        const branchIds = new Set<string>()
+        selectedRoute.points.forEach(p => {
+          if ((p as any).isBranchStation) branchIds.add(p.id)
+        })
         let kpOffset = 0
         const segGeos: Array<{
           startKp: number; endKp: number;
@@ -1588,6 +1621,8 @@ const drawParetoRoutes = async () => {
         }> = []
 
         for (const seg of selectedRoute.segments) {
+          // 跳过分支登陆站连线
+          if (branchIds.has(seg.startPointId) || branchIds.has(seg.endPointId)) continue
           const sc = ptMap[seg.startPointId]
           const ec = ptMap[seg.endPointId]
           if (!sc || !ec) { kpOffset += (seg.length || 0); continue }
