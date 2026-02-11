@@ -687,7 +687,7 @@ const stepStatus = computed(() => ({
   fiber: !!selectedFiberTypeId.value,
   amplifier: !!selectedAmplifierTypeId.value,
   wdm: wdmParams.channelCount > 0,
-  bu: true, // BU 配置为可选
+  bu: buConfigs.value.length === 0 || buConfigs.value.every(b => b.isConfigured),
   result: calculationResult.value !== null // 计算结果
 }))
 
