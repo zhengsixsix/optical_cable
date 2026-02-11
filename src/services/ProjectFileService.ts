@@ -18,9 +18,12 @@ import type {
   USEProjectSettings,
   LayerRegistryItem,
   ImportedLandingPoint,
+  ImportedBUNode,
   FiberSpec,
   CableTypeSpec,
   ComponentSpec,
+  EDFASpecs,
+  BUSpecs,
   GeometryPoint,
   KeyEvent,
   RouteSegment,
@@ -31,6 +34,7 @@ import type {
   ModelDefinition,
   SystemPlanningCache,
   SimulationCache,
+  RedundancyConfig as USERedundancyConfig,
 } from '@/types/useFile'
 import { 
   generateUUID, 
@@ -41,6 +45,15 @@ import {
   createDefaultBUSpec,
   createDefaultWDMConfig,
 } from '@/types/useFile'
+
+// Store 类型别名
+type SettingsStore = ReturnType<typeof useSettingsStore>
+type LayerStore = ReturnType<typeof useLayerStore>
+type RPLStore = ReturnType<typeof useRPLStore>
+type SLDStore = ReturnType<typeof useSLDStore>
+type MonitorStore = ReturnType<typeof useMonitorStore>
+type ConnectorStore = ReturnType<typeof useConnectorStore>
+type RouteStore = ReturnType<typeof useRouteStore>
 
 // 项目类型
 export type ProjectType = 'use'
@@ -261,6 +274,7 @@ class ProjectFileService {
     projectData.transmissionPlanning = {
       sldTables: JSON.parse(JSON.stringify(sldStore.tables)),
       transmissionConfig: settingsStore.transmissionConfig,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       repeaterConfigs: (settingsStore as any).repeaterPlacements || []
     }
 
@@ -288,7 +302,7 @@ class ProjectFileService {
    * 收集工程设置模块
    * 包含：规划模式、规划范围、成本参数、仿真模型配置
    */
-  private collectProjectSettings(settingsStore: any): USEProjectSettings {
+  private collectProjectSettings(settingsStore: SettingsStore): USEProjectSettings {
     const routeConfig = settingsStore.routePlanningConfig || {}
     const costFactors = settingsStore.costFactors || {}
     const fiberConfig = settingsStore.fiberSimulationConfig || {}
@@ -341,7 +355,7 @@ class ProjectFileService {
    * 收集环境上下文模块
    * 符合 PDF 规范: layer_registry 必须包含 integrity
    */
-  private collectEnvironmentContext(layerStore: any, rplStore: any): USEEnvironmentContext {
+  private collectEnvironmentContext(layerStore: LayerStore, rplStore: RPLStore): USEEnvironmentContext {
     // 图层内容类型映射
     const layerContentTypeMap: Record<string, LayerContentType> = {
       'elevation': 'BATHYMETRY',
@@ -363,7 +377,7 @@ class ProjectFileService {
     }
 
     // 图层注册表 - 必须包含 integrity
-    const layer_registry: LayerRegistryItem[] = layerStore.layers.map((layer: any) => {
+    const layer_registry: LayerRegistryItem[] = layerStore.layers.map((layer) => {
       const fileFormat = layerFileFormatMap[layer.id] || 'GeoTIFF'
       const ext = fileFormat === 'GeoTIFF' ? '.tif' : fileFormat === 'Shapefile' ? '.shp' : '.geojson'
       return {
@@ -374,7 +388,7 @@ class ProjectFileService {
         content_type: layerContentTypeMap[layer.id] || 'BATHYMETRY',
         integrity: {
           checksum: `sha256:${this.generateMockChecksum()}`,
-          size_bytes: layer.size_bytes || 0
+          size_bytes: 0
         }
       }
     })
@@ -396,34 +410,34 @@ class ProjectFileService {
 
     // 从 settingsStore 获取配置
     const settingsStore = useSettingsStore()
-    const routeConfig = settingsStore.routePlanningConfig || {}
+    const routeConfig = settingsStore.routePlanningConfig
 
     // 规划模式转换 - 甲方规范要求大写
     const planning_mode: 'POINT_TO_POINT' | 'MULTI_NODE_NETWORK' = 
       routeConfig.mode === 'multi-point' ? 'MULTI_NODE_NETWORK' : 'POINT_TO_POINT'
 
     // 冗余配置
-    const redundancyConfig = (routeConfig as any).redundancyConfig || {}
-    const redundancy_config: any = {
-      enabled: (redundancyConfig as any).enabled || false
+    const redundancyConfig = routeConfig.redundancyConfig
+    const redundancy_config: USERedundancyConfig = {
+      enabled: redundancyConfig?.enabled || false
     }
-    if ((redundancyConfig as any).enabled) {
-      if ((redundancyConfig as any).costLimitType === 'absolute') {
+    if (redundancyConfig?.enabled) {
+      if (redundancyConfig.costLimitType === 'absolute') {
         redundancy_config.cost_constraint_mode = 'ABSOLUTE'
         redundancy_config.absolute_cost_limit = {
-          value: (redundancyConfig as any).absoluteCostLimit || 0,
+          value: redundancyConfig.absoluteCostLimit || 0,
           unit: '万元'
         }
       } else {
         redundancy_config.cost_constraint_mode = 'PREMIUM_RATIO'
         redundancy_config.premium_ratio = {
-          ratio: ((redundancyConfig as any).relativeCostPercent || 30) / 100
+          ratio: (redundancyConfig.relativeCostPercent || 30) / 100
         }
       }
     }
 
     // BU 节点列表 - 甲方规范
-    const imported_bu_nodes: any[] = ((routeConfig as any).buList || []).map((bu: any) => ({
+    const imported_bu_nodes: ImportedBUNode[] = (routeConfig.buList || []).map((bu) => ({
       id: bu.id,
       name: bu.name,
       coords: [bu.lon, bu.lat] as [number, number],
@@ -431,28 +445,28 @@ class ProjectFileService {
     }))
 
     // 铠装映射规则 - 甲方规范
-    const armorMappings = (routeConfig as any).armorMappings || []
-    const highRisk: any = armorMappings.find((m: any) => m.riskLevel === 'high') || {}
-    const mediumRisk: any = armorMappings.find((m: any) => m.riskLevel === 'medium') || {}
-    const lowRisk: any = armorMappings.find((m: any) => m.riskLevel === 'low') || {}
+    const armorMappings = routeConfig.armorMappings || []
+    const highRisk = armorMappings.find((m) => m.riskLevel === 'high')
+    const mediumRisk = armorMappings.find((m) => m.riskLevel === 'medium')
+    const lowRisk = armorMappings.find((m) => m.riskLevel === 'low')
 
     const cable_armor_mapping = {
       high_risk: {
-        threshold: highRisk.riskThreshold || 3.0,
-        cable_type_ref: highRisk.cableTypeId || 'struct_da_01'
+        threshold: highRisk?.riskThreshold || 3.0,
+        cable_type_ref: highRisk?.cableTypeId || 'struct_da_01'
       },
       medium_risk: {
-        threshold: mediumRisk.riskThreshold || 2.0,
-        cable_type_ref: mediumRisk.cableTypeId || 'struct_sa_01'
+        threshold: mediumRisk?.riskThreshold || 2.0,
+        cable_type_ref: mediumRisk?.cableTypeId || 'struct_sa_01'
       },
       low_risk: {
-        threshold: lowRisk.riskThreshold || 0,
-        cable_type_ref: lowRisk.cableTypeId || 'struct_lw_01'
+        threshold: lowRisk?.riskThreshold || 0,
+        cable_type_ref: lowRisk?.cableTypeId || 'struct_lw_01'
       }
     }
 
     // 算法配置 - 甲方规范
-    const planningRange = routeConfig.planningRange || {}
+    const planningRange = routeConfig.planningRange
     const hasManualBounds = planningRange.northwest?.lon !== 0 || planningRange.northwest?.lat !== 0
     const algorithm_config = {
       planning_bounds: {
@@ -490,7 +504,7 @@ class ProjectFileService {
    * 收集器件库模块
    * 符合文档规范: fibers/components 包含 supported_models 和 model_params
    */
-  private collectLibraries(settingsStore: any): USELibraries {
+  private collectLibraries(settingsStore: SettingsStore): USELibraries {
     // 计算模型库 - 从 store 获取或使用默认值
     const models: ModelDefinition[] = settingsStore.models || createDefaultModels()
 
@@ -533,7 +547,8 @@ class ProjectFileService {
     const components: ComponentSpec[] = []
     
     // 放大器
-    for (const amp of (settingsStore.amplifierTypes || [])) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const amp of (settingsStore.amplifierTypes || []) as any[]) {
       components.push({
         id: amp.id,
         name: amp.name,
@@ -560,7 +575,8 @@ class ProjectFileService {
     }
 
     // 分支器
-    for (const bu of (settingsStore.branchingUnitTypes || [])) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const bu of (settingsStore.branchingUnitTypes || []) as any[]) {
       components.push({
         id: bu.id,
         name: bu.name,
@@ -595,7 +611,7 @@ class ProjectFileService {
    * 收集路由工程模块
    * 符合甲方规范: 包含 route_status, segmentation_config, geometry_pool, key_events, segments, spans
    */
-  private collectRouteEngineering(rplStore: any): USERouteEngineering {
+  private collectRouteEngineering(rplStore: RPLStore): USERouteEngineering {
     const settingsStore = useSettingsStore()
     const now = new Date().toISOString()
     const geometry_pool: GeometryPoint[] = []
@@ -604,15 +620,15 @@ class ProjectFileService {
     const spans: Span[] = []
 
     // 路由状态 - 甲方规范
-    const route_status: any = {
-      is_segmented: rplStore.tables.some((t: any) => t.records && t.records.length > 0),
+    const route_status = {
+      is_segmented: rplStore.tables.some((t) => t.records && t.records.length > 0),
       is_adjusted: false,
       last_modified: now
     }
 
     // 分段配置 - 甲方规范
-    const segmentation_config: any = {
-      method: 'RISK_BASED',
+    const segmentation_config = {
+      method: 'RISK_BASED' as const,
       fixed_length_km: 2.0,
       risk_based: {
         min_length_km: 1.0,
@@ -621,7 +637,7 @@ class ProjectFileService {
     }
 
     // 检查 RPL 表是否为空，如果为空则使用 routePlanningConfig 中的起点/终点配置
-    const hasRPLData = rplStore.tables.some((table: any) => table.records && table.records.length > 0)
+    const hasRPLData = rplStore.tables.some((table) => table.records && table.records.length > 0)
     
     if (!hasRPLData && settingsStore.routePlanningConfig.isConfigured) {
       // 从工程设置中获取起点/终点坐标
@@ -691,7 +707,8 @@ class ProjectFileService {
       let spanIndex = 0
 
       for (let i = 0; i < records.length; i++) {
-        const record = records[i]
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const record = records[i] as any
         const geoIndex = geometry_pool.length
 
         // 添加到几何池
@@ -797,10 +814,12 @@ class ProjectFileService {
    * 收集系统工程模块
    * 符合文档规范: 包含 wdm_config, simulation_cache, system_planning_cache
    */
-  private collectSystemEngineering(settingsStore: any, sldStore: any): USESystemEngineering {
-    const tc = settingsStore.transmissionConfig || {}
+  private collectSystemEngineering(settingsStore: SettingsStore, sldStore: SLDStore): USESystemEngineering {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tc = settingsStore.transmissionConfig as any || {}
     const sldTable = sldStore.currentTable
-    const tp = sldTable?.transmissionParams || {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tp = (sldTable?.transmissionParams || {}) as any
     const channelCount = tc.channelCount || tp.wavelengths || 96
 
     // 从 store 获取缓存数据
@@ -828,17 +847,20 @@ class ProjectFileService {
    * 收集健康监控模块
    * 符合 PDF 规范: collector_config, device_mapping, view_settings
    */
-  private collectHealthMonitoring(settingsStore: any, monitorStore: any): USEHealthMonitoring {
-    const mc = settingsStore.monitoringConfig || {}
+  private collectHealthMonitoring(settingsStore: SettingsStore, monitorStore: MonitorStore): USEHealthMonitoring {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mc = settingsStore.monitoringConfig as any || {}
 
     // 从 monitorStore 收集设备映射
     const device_mapping: DeviceMapping[] = []
     if (monitorStore.devices) {
       for (const device of monitorStore.devices) {
-        if (device.eventId && device.externalId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const d = device as any
+        if (d.eventId && d.externalId) {
           device_mapping.push({
-            event_id: device.eventId,
-            external_index: device.externalId
+            event_id: d.eventId,
+            external_index: d.externalId
           })
         }
       }
@@ -846,8 +868,10 @@ class ProjectFileService {
 
     // 收集节点位置
     const node_positions: Record<string, [number, number]> = {}
-    if (monitorStore.nodePositions) {
-      for (const [nodeId, pos] of Object.entries(monitorStore.nodePositions as Record<string, any>)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((monitorStore as any).nodePositions) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const [nodeId, pos] of Object.entries((monitorStore as any).nodePositions as Record<string, any>)) {
         node_positions[nodeId] = [pos.x || 0, pos.y || 0]
       }
     }
@@ -1018,6 +1042,7 @@ class ProjectFileService {
       
       // 尝试作为纯 JSON 读取 (向后兼容旧格式)
       const textContent = new TextDecoder().decode(arrayBuffer)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const legacyProject = JSON.parse(textContent) as any
       
       // 检查是否是旧版格式
@@ -1085,6 +1110,7 @@ class ProjectFileService {
   /**
    * 处理旧版格式项目 (向后兼容)
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private handleLegacyProject(project: any, file: File): OpenProjectResult {
     // 加载旧版项目数据到 stores
     this.loadLegacyProjectToStores(project)
@@ -1163,6 +1189,7 @@ class ProjectFileService {
     // 5. 恢复放大器规格 - 包含 supported_models 和 model_params
     const edfaComponents = projectData.libraries.components.filter(c => c.type === 'EDFA')
     settingsStore.amplifierTypes = edfaComponents.map(amp => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const specs = amp.specs as any
       return {
         id: amp.id,
@@ -1180,6 +1207,7 @@ class ProjectFileService {
     // 6. 恢复分支器规格 - 包含 supported_models 和 model_params
     const buComponents = projectData.libraries.components.filter(c => c.type === 'BU')
     settingsStore.branchingUnitTypes = buComponents.map(bu => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const specs = bu.specs as any
       return {
         id: bu.id,
@@ -1207,7 +1235,8 @@ class ProjectFileService {
       }
       
       // 辅助函数：从 segment 获取 geometry_range 的起止索引（兼容新旧格式）
-      const getGeometryRange = (seg: any): { start: number; end: number } => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getGeometryRange = (seg: Record<string, any>): { start: number; end: number } => {
         if (Array.isArray(seg.geometry_range)) {
           // 旧格式: [start_index, end_index]
           return { start: seg.geometry_range[0], end: seg.geometry_range[1] }
@@ -1219,16 +1248,16 @@ class ProjectFileService {
       }
       
       // 创建 geometry_range 到 segment 的映射（兼容新旧格式）
-      const getSegmentForIndex = (geoIndex: number): any => {
-        return segments.find((s: any) => {
+      const getSegmentForIndex = (geoIndex: number) => {
+        return segments.find((s) => {
           const range = getGeometryRange(s)
           return geoIndex >= range.start && geoIndex <= range.end
         })
       }
       
       // 创建 geometry_range 到 span 的映射（获取光纤类型）
-      const getSpanForIndex = (geoIndex: number): any => {
-        return spans.find((s: any) => {
+      const getSpanForIndex = (geoIndex: number) => {
+        return spans.find((s) => {
           const range = getGeometryRange(s)
           return geoIndex >= range.start && geoIndex <= range.end
         })
@@ -1255,7 +1284,8 @@ class ProjectFileService {
         
         // 获取电缆类型（兼容新旧字段名 cable_type_ref / cable_struct_ref）
         let cableType: 'LW' | 'LWS' | 'SA' | 'DA' | 'SAS' = 'LW'
-        const cableRef = segment?.cable_type_ref || segment?.cable_struct_ref
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cableRef = segment?.cable_type_ref || (segment as any)?.cable_struct_ref
         if (cableRef) {
           const ref = cableRef.toUpperCase()
           if (ref.includes('DA')) cableType = 'DA'
@@ -1296,9 +1326,9 @@ class ProjectFileService {
         metadata: {
           totalLength,
           totalCableLength: totalLength * 1.025, // 加上约2.5%余量
-          landingStations: records.filter((r: any) => r.pointType === 'landing').length,
-          repeaters: records.filter((r: any) => r.pointType === 'repeater').length,
-          branchingUnits: records.filter((r: any) => r.pointType === 'branching').length,
+          landingStations: records.filter((r) => (r.pointType as string) === 'landing').length,
+          repeaters: records.filter((r) => (r.pointType as string) === 'repeater').length,
+          branchingUnits: records.filter((r) => (r.pointType as string) === 'branching').length,
           joints: 0,
           averageDepth: depths.length > 0 ? depths.reduce((a, b) => a + b, 0) / depths.length : 0,
           maxDepth: depths.length > 0 ? Math.max(...depths) : 0,
@@ -1362,6 +1392,7 @@ class ProjectFileService {
       }
       
       // 使用setParetoRoutes方法确保响应式更新
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       routeStore.setParetoRoutes([mainRoute as any])
       
       // 8. 同步路线数据到 connectorStore 以便系统设计视图显示
@@ -1378,6 +1409,7 @@ class ProjectFileService {
       // 清空并重新添加接线元
       if (connectorStore.currentTable) {
         // 使用新数组替换以确保响应式
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const newElements: any[] = []
         
         // 只添加关键点作为接线元（登陆站、放大器、分支器）
@@ -1401,12 +1433,13 @@ class ProjectFileService {
         })
         
         // 根据 .use 文件中的 spans 数据生成光纤段
-        const eventIdToElement = new Map<string, any>()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const eventIdToElement = new Map<string, Record<string, any>>()
         newElements.forEach(elem => {
           eventIdToElement.set(elem.id, elem)
         })
         
-        spans.forEach((span: any, index: number) => {
+        spans.forEach((span, index) => {
           const fromElement = eventIdToElement.get(span.from_event_id)
           const toElement = eventIdToElement.get(span.to_event_id)
           
@@ -1437,6 +1470,7 @@ class ProjectFileService {
       }
       
       // 9. 同步设备数据到 monitorStore 以便实时监控视图显示
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const newDevices: any[] = []
       
       records.forEach((record, index) => {
@@ -1497,6 +1531,7 @@ class ProjectFileService {
           updatedAt: new Date(),
         }
         
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         routeStore.setParetoRoutes([mainRoute as any])
       }
     }
@@ -1511,6 +1546,7 @@ class ProjectFileService {
         calculationModels: ['GN'],
       }
       // 存储完整 WDM 配置到扩展字段
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(settingsStore as any).wdmExtendedConfig = {
         centerFreqThz: wdm.center_freq_thz,
         baudRate: wdm.baud_rate_gbaud,
@@ -1543,6 +1579,7 @@ class ProjectFileService {
         berThreshold: '1e-6',
       }
       // 存储扩展监控配置
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(settingsStore as any).monitoringExtendedConfig = {
         gatewayName: projectData.health_monitoring.collector_config.gateway_name,
         pollingInterval: projectData.health_monitoring.collector_config.polling_interval,
@@ -1551,9 +1588,11 @@ class ProjectFileService {
 
     // 12. 恢复设备映射和视图设置 - 存储到扩展字段
     if (projectData.health_monitoring.device_mapping) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(monitorStore as any).deviceMappingData = projectData.health_monitoring.device_mapping
     }
     if (projectData.health_monitoring.view_settings) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(monitorStore as any).viewSettingsData = projectData.health_monitoring.view_settings
     }
 
@@ -1570,16 +1609,17 @@ class ProjectFileService {
    */
   private restoreExtensionData(
     projectData: USEProjectData,
-    rplStore: any,
-    sldStore: any,
-    connectorStore: any,
-    monitorStore: any,
-    routeStore: any,
-    layerStore: any
+    rplStore: RPLStore,
+    sldStore: SLDStore,
+    connectorStore: ConnectorStore,
+    monitorStore: MonitorStore,
+    routeStore: RouteStore,
+    layerStore: LayerStore
   ): void {
     // 14.1 恢复 RPL 原始数据 (如果扩展字段存在)
     if (projectData.routePlanning?.rplTables && projectData.routePlanning.rplTables.length > 0) {
-      rplStore.tables = projectData.routePlanning.rplTables
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rplStore.tables = projectData.routePlanning.rplTables as any
       if (rplStore.tables.length > 0) {
         rplStore.currentTableId = rplStore.tables[0].id
       }
@@ -1587,14 +1627,16 @@ class ProjectFileService {
 
     // 14.2 恢复路由数据 (如果扩展字段存在)
     if (projectData.routePlanning?.routes && projectData.routePlanning.routes.length > 0) {
-      routeStore.setParetoRoutes(projectData.routePlanning.routes)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      routeStore.setParetoRoutes(projectData.routePlanning.routes as any)
     }
     
     // 14.2.1 恢复缆型数据库 (如果扩展字段存在)
     if (projectData.routePlanning?.cableTypeDatabase && projectData.routePlanning.cableTypeDatabase.length > 0) {
       const settingsStore = useSettingsStore()
       // 替换现有的缆型数据库
-      settingsStore.cableTypeDatabase.splice(0, settingsStore.cableTypeDatabase.length, ...projectData.routePlanning.cableTypeDatabase)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      settingsStore.cableTypeDatabase.splice(0, settingsStore.cableTypeDatabase.length, ...(projectData.routePlanning.cableTypeDatabase as any))
     }
     
     // 14.2.2 恢复完整的路径规划配置 (包含 armorMappings, waypoints, buList 等)
@@ -1605,7 +1647,8 @@ class ProjectFileService {
 
     // 14.3 恢复 SLD 原始数据 (如果扩展字段存在) - 这是最重要的修复!
     if (projectData.transmissionPlanning?.sldTables && projectData.transmissionPlanning.sldTables.length > 0) {
-      sldStore.tables = projectData.transmissionPlanning.sldTables
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      sldStore.tables = projectData.transmissionPlanning.sldTables as any
       if (sldStore.tables.length > 0) {
         sldStore.currentTableId = sldStore.tables[0].id
       }
@@ -1613,7 +1656,8 @@ class ProjectFileService {
 
     // 14.4 恢复接线元数据 (如果扩展字段存在)
     if (projectData.connectorTables && projectData.connectorTables.length > 0) {
-      connectorStore.tables = projectData.connectorTables
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      connectorStore.tables = projectData.connectorTables as any
       if (connectorStore.tables.length > 0) {
         connectorStore.currentTableId = connectorStore.tables[0].id
       }
@@ -1621,7 +1665,8 @@ class ProjectFileService {
 
     // 14.5 恢复监控数据 (如果扩展字段存在)
     if (projectData.monitorData?.devices && projectData.monitorData.devices.length > 0) {
-      monitorStore.$patch({ 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(monitorStore as any).$patch({
         devices: projectData.monitorData.devices,
         alarmHistory: projectData.monitorData.alarmHistory || []
       })
@@ -1643,7 +1688,7 @@ class ProjectFileService {
    * 从项目数据中提取起点/终点坐标并更新路径规划配置
    * 包括从 environment_context 和 route_engineering 恢复甲方规范的新字段
    */
-  private extractRoutePlanningConfig(projectData: USEProjectData, settingsStore: any): void {
+  private extractRoutePlanningConfig(projectData: USEProjectData, settingsStore: SettingsStore): void {
     const envContext = projectData.environment_context
     const routeEng = projectData.route_engineering
     const keyEvents = routeEng?.key_events || []
@@ -1653,29 +1698,26 @@ class ProjectFileService {
     
     // 1.1 恢复 planning_mode
     if (envContext?.planning_mode) {
-      const mode = envContext.planning_mode === 'MULTI_NODE_NETWORK' ? 'multi-point' : 'two-point'
+      const mode = envContext.planning_mode === 'MULTI_NODE_NETWORK' ? 'multi-point' : 'point-to-point'
       settingsStore.updateRoutePlanningConfig({ mode })
     }
     
     // 1.2 恢复 redundancy_config
     if (envContext?.redundancy_config) {
       const rc = envContext.redundancy_config
-      const redundancyConfig: any = {
+      const redundancyConfig = {
         enabled: rc.enabled || false,
         costLimitType: rc.cost_constraint_mode === 'ABSOLUTE' ? 'absolute' : 'relative',
+        absoluteCostLimit: rc.absolute_cost_limit?.value,
+        relativeCostPercent: rc.premium_ratio ? (rc.premium_ratio.ratio || 0.3) * 100 : undefined
       }
-      if (rc.absolute_cost_limit) {
-        redundancyConfig.absoluteCostLimit = rc.absolute_cost_limit.value
-      }
-      if (rc.premium_ratio) {
-        redundancyConfig.relativeCostPercent = (rc.premium_ratio.ratio || 0.3) * 100
-      }
-      settingsStore.updateRoutePlanningConfig({ redundancyConfig })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      settingsStore.updateRoutePlanningConfig({ redundancyConfig } as any)
     }
     
     // 1.3 恢复 imported_bu_nodes
     if (envContext?.imported_bu_nodes && envContext.imported_bu_nodes.length > 0) {
-      const buList = envContext.imported_bu_nodes.map((bu: any) => ({
+      const buList = envContext.imported_bu_nodes.map((bu) => ({
         id: bu.id,
         name: bu.name,
         lon: bu.coords?.[0] || 0,
@@ -1714,7 +1756,8 @@ class ProjectFileService {
             cableTypeId: cam.low_risk.cable_type_ref
           })
         }
-        settingsStore.updateRoutePlanningConfig({ armorMappings })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        settingsStore.updateRoutePlanningConfig({ armorMappings } as any)
       }
       
       // 1.4.2 算法配置 (规划范围)
@@ -1736,6 +1779,7 @@ class ProjectFileService {
     // 2.1 恢复 route_status
     if (routeEng?.route_status) {
       // route_status 信息可以存储到 settingsStore 扩展字段
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(settingsStore as any).routeStatus = {
         isSegmented: routeEng.route_status.is_segmented,
         isAdjusted: routeEng.route_status.is_adjusted,
@@ -1746,6 +1790,7 @@ class ProjectFileService {
     // 2.2 恢复 segmentation_config
     if (routeEng?.segmentation_config) {
       const sc = routeEng.segmentation_config
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(settingsStore as any).segmentationConfig = {
         method: sc.method,
         fixedLengthKm: sc.fixed_length_km,
@@ -1801,7 +1846,7 @@ class ProjectFileService {
   /**
    * 恢复工程设置配置
    */
-  private restoreProjectSettings(settings: USEProjectSettings, settingsStore: any): void {
+  private restoreProjectSettings(settings: USEProjectSettings, settingsStore: SettingsStore): void {
     // 1. 恢复路径规划配置
     if (settings.route_planning) {
       const rp = settings.route_planning
@@ -1892,6 +1937,7 @@ class ProjectFileService {
   /**
    * 加载旧版项目数据到 stores (向后兼容)
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private loadLegacyProjectToStores(project: any): void {
     const routeStore = useRouteStore()
     const rplStore = useRPLStore()
@@ -1934,6 +1980,7 @@ class ProjectFileService {
             updatedAt: new Date(),
           }
           
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           routeStore.setParetoRoutes([mainRoute as any])
         }
       }, 100)
