@@ -90,7 +90,7 @@ export function getWDMParamsFromSettings(): Partial<WDMSystemParams> {
     channelCount: wdmConfig?.channelCount ?? transmissionConfig?.channelCount ?? 96,
     channelSpacing: wdmConfig?.channelSpacingGHz ?? transmissionConfig?.channelBandwidth ?? 50,
     launchPowerPerChannel: wdmConfig?.launchPower ?? 0,
-    modulationFormat: (wdmConfig?.modulation ?? 'DP-16QAM') as any,
+    modulationFormat: (wdmConfig?.modulation ?? 'DP-16QAM') as import('@/types/simulation').ModulationFormat,
   }
 }
 

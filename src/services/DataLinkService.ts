@@ -33,6 +33,7 @@ export interface DeviceLink {
 export type DataChangeEvent = {
   source: 'rpl' | 'sld' | 'connector' | 'monitor' | 'route'
   action: 'add' | 'update' | 'delete'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any
   kp?: number
 }

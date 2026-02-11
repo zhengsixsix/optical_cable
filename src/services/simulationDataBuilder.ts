@@ -19,7 +19,7 @@ export interface LinkCalcSummaryInput {
   metrics?: {
     osnr: { min: number; max: number; avg: number }
     gsnr: { min: number; max: number; avg: number }
-    [key: string]: any
+    [key: string]: unknown
   }
   systemConfig?: {
     amplifierCount: number
@@ -27,7 +27,7 @@ export interface LinkCalcSummaryInput {
     buCount: number
     channelCount: number
     modulation: string
-    [key: string]: any
+    [key: string]: unknown
   }
   margin?: {
     targetOsnr: number

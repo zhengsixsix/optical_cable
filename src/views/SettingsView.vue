@@ -597,7 +597,6 @@ const handleWaypointMapLocate = (id: string) => {
   const wp = waypoints.value.find(w => w.id === id)
   if (wp && wp.coord) {
     appStore.showNotification({type: 'info', message: `定位到登陆站: ${wp.name} (${wp.coord})`})
-    // TODO: 实际跳转到地图并定位
   } else {
     appStore.showNotification({type: 'warning', message: '该登陆站尚未设置坐标'})
   }

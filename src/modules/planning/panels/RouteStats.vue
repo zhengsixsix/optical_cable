@@ -55,7 +55,6 @@ const stats = computed(() => {
   return {
     project: appStore.currentProjectName || table.name,
     totalLength: Math.round(metadata.totalLength),
-    countries: ['中国', '日本'], // TODO: 从数据中推断
     landingStations: metadata.landingStations,
     branchingUnits: metadata.branchingUnits,
     sections
@@ -85,7 +84,6 @@ const stats = computed(() => {
       <ul v-if="stats" class="list-disc pl-5 space-y-1.5">
         <li><strong class="text-gray-800">项目:</strong> {{ stats.project }}</li>
         <li><strong class="text-gray-800">总长度:</strong> {{ stats.totalLength }} km</li>
-        <li><strong class="text-gray-800">涉及国家:</strong> {{ stats.countries.join(', ') }}</li>
         <li><strong class="text-gray-800">登陆站数量:</strong> {{ stats.landingStations }}</li>
         <li><strong class="text-gray-800">分支器数量:</strong> {{ stats.branchingUnits }}</li>
         <li><strong class="text-gray-800">路由分段:</strong></li>

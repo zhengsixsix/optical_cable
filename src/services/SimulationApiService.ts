@@ -89,7 +89,7 @@ export interface SimulationResponse {
   spanScanResult: Omit<SpanScanResult, 'linkId' | 'scannedAt' | 'model' | 'gsnrPerSpanDb' | 'osnrPerSpanDb'> & {
     channelFrequencies?: number[]
   }
-  detailedResult: any
+  detailedResult: unknown
 }
 
 // ========== API 调用 ==========

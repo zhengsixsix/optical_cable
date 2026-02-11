@@ -7,7 +7,7 @@ import GeoJSON from 'ol/format/GeoJSON'
  */
 export class ShpLoader {
     private worker: Worker
-    private pendingRequests: Map<string, { resolve: (data: any) => void, reject: (err: any) => void }>
+    private pendingRequests: Map<string, { resolve: (data: unknown) => void, reject: (err: Error) => void }>
     private geoJSONFormat: GeoJSON
 
     constructor() {
@@ -36,7 +36,7 @@ export class ShpLoader {
      * 加载 SHP/ZIP 文件
      * @param url 文件 URL
      */
-    async load(url: string): Promise<any> {
+    async load(url: string): Promise<unknown> {
         const id = Math.random().toString(36).substring(7)
         // 转换为绝对 URL，避免 Worker 中解析相对路径出错
         const absoluteUrl = new URL(url, window.location.origin).href
@@ -51,7 +51,7 @@ export class ShpLoader {
      * 将 GeoJSON 数据转换为 OpenLayers Features
      * @param geojsonData GeoJSON 数据
      */
-    parseFeatures(geojsonData: any): Feature[] {
+    parseFeatures(geojsonData: unknown): Feature[] {
         const collections = Array.isArray(geojsonData) ? geojsonData : [geojsonData]
 
         return collections.flatMap(collection => {

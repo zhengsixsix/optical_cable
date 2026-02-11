@@ -7,9 +7,11 @@
 import type { 
   SLDTable, 
   SLDEquipment, 
+  SLDEquipmentType,
   SLDFiberSegment,
   SLDTransmissionParams,
-  SLDGlobalInfo 
+  SLDGlobalInfo,
+  FiberPairType
 } from '@/types'
 
 // ========== XML工具函数 ==========
@@ -64,7 +66,7 @@ const EQUIPMENT_TYPE_FULL_NAME: Record<string, string> = {
 /**
  * 生成设备配置参数XML (9.2格式使用 Config_Params 和 key 属性)
  */
-function generateConfigParamsXML(params: Record<string, any> | undefined, level: number): string {
+function generateConfigParamsXML(params: Record<string, string | number | boolean> | undefined, level: number): string {
   if (!params || Object.keys(params).length === 0) return ''
   
   let xml = `${indent(level)}<Config_Params>\n`
@@ -86,7 +88,7 @@ function generateElementXML(
   upstreamId: string | number | null,
   downstreamId: string | number | null,
   branchId: string | number | null,
-  configParams: Record<string, any>,
+  configParams: Record<string, string | number | boolean>,
   level: number
 ): string {
   let xml = `${indent(level)}<Element>\n`
@@ -526,7 +528,7 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
             id: `eq-${Date.now()}-${equipmentSequence}`,
             sequence: equipmentSequence++,
             name: configParams['Name'] || configParams['StationName'] || `${elementType}-${equipmentSequence}`,
-            type: internalType as any,
+            type: internalType as SLDEquipmentType,
             location: '',
             kp: routeKM,
             routeKM: routeKM,
@@ -573,7 +575,7 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
           id: eqEl.getAttribute('id') || `eq-${Date.now()}`,
           sequence: parseInt(eqEl.querySelector('Sequence')?.textContent || '0'),
           name: eqEl.querySelector('Name')?.textContent || '',
-          type: (eqEl.querySelector('Type')?.getAttribute('code') || 'JOINT') as any,
+          type: (eqEl.querySelector('Type')?.getAttribute('code') || 'JOINT') as SLDEquipmentType,
           location: eqEl.querySelector('Location')?.textContent || '',
           kp: parseFloat(eqEl.querySelector('Position > KP')?.textContent || '0'),
           routeKM: parseFloat(eqEl.querySelector('Position > RouteKM')?.textContent || '0'),
@@ -616,7 +618,7 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
           toName: segEl.querySelector('ToEquipment')?.textContent || '',
           length: parseFloat(segEl.querySelector('Length')?.textContent || '0'),
           fiberPairs: parseInt(segEl.querySelector('FiberPairs')?.getAttribute('count') || '0'),
-          fiberPairType: (segEl.querySelector('FiberPairs')?.getAttribute('type') || 'working') as any,
+          fiberPairType: (segEl.querySelector('FiberPairs')?.getAttribute('type') || 'working') as FiberPairType,
           cableType: segEl.querySelector('CableType')?.textContent || '',
           attenuation: parseFloat(segEl.querySelector('OpticalParams > Attenuation')?.textContent || '0'),
           totalLoss: parseFloat(segEl.querySelector('OpticalParams > TotalLoss')?.textContent || '0'),

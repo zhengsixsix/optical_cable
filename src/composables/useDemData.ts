@@ -8,6 +8,7 @@ import * as GeoTIFF from 'geotiff'
 export interface TifMeta {
   url: string
   bbox: [number, number, number, number]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   image: any
   pixelWidth: number
   pixelHeight: number

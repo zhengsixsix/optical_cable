@@ -201,10 +201,10 @@ export async function buildSimulationInput(
         type: fiberType?.name || 'G.654.E',
         attenuation: config.fiberParams.attenuation,
         dispersion: config.fiberParams.dispersion,
-        dispersionSlope: (config.fiberParams as any).dispersionSlope || 0.06,
+        dispersionSlope: config.fiberParams['dispersionSlope'] ?? 0.06,
         effectiveArea: config.fiberParams.effectiveArea,
         nonlinearIndex: config.fiberParams.nonlinearIndex,
-        nonlinearCoeff: (config.fiberParams as any).nonlinearCoeff || 0.8
+        nonlinearCoeff: config.fiberParams['nonlinearCoeff'] ?? 0.8
       }
     },
     amplifierModel: {

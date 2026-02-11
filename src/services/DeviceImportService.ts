@@ -103,7 +103,7 @@ export class DeviceImportService {
     const errors: ImportError[] = []
     const warnings: string[] = []
     
-    let data: any
+    let data: { fiberTypes?: unknown[]; amplifierTypes?: unknown[]; branchingUnitTypes?: unknown[] }
     try {
       data = JSON.parse(content)
     } catch (e) {
@@ -125,7 +125,7 @@ export class DeviceImportService {
     // 解析光纤类型
     if (Array.isArray(data.fiberTypes)) {
       for (let i = 0; i < data.fiberTypes.length; i++) {
-        const fiber = this.parseFiberType(data.fiberTypes[i], i + 1, errors)
+        const fiber = this.parseFiberType(data.fiberTypes[i] as Record<string, unknown>, i + 1, errors)
         if (fiber) fiberTypes.push(fiber)
       }
     }
@@ -133,7 +133,7 @@ export class DeviceImportService {
     // 解析放大器类型
     if (Array.isArray(data.amplifierTypes)) {
       for (let i = 0; i < data.amplifierTypes.length; i++) {
-        const amp = this.parseAmplifierType(data.amplifierTypes[i], i + 1, errors)
+        const amp = this.parseAmplifierType(data.amplifierTypes[i] as Record<string, unknown>, i + 1, errors)
         if (amp) amplifierTypes.push(amp)
       }
     }
@@ -141,12 +141,12 @@ export class DeviceImportService {
     // 解析分支器类型
     if (Array.isArray(data.branchingUnitTypes)) {
       for (let i = 0; i < data.branchingUnitTypes.length; i++) {
-        const bu = this.parseBranchingUnitType(data.branchingUnitTypes[i], i + 1, errors)
+        const bu = this.parseBranchingUnitType(data.branchingUnitTypes[i] as Record<string, unknown>, i + 1, errors)
         if (bu) branchingUnitTypes.push(bu)
       }
     }
 
-    const totalRows = (data.fiberTypes?.length || 0) + (data.amplifierTypes?.length || 0) + (data.branchingUnitTypes?.length || 0)
+    const totalRows = (data.fiberTypes?.length ?? 0) + (data.amplifierTypes?.length ?? 0) + (data.branchingUnitTypes?.length ?? 0)
     const successCount = fiberTypes.length + amplifierTypes.length + branchingUnitTypes.length
 
     return {
@@ -286,64 +286,64 @@ export class DeviceImportService {
   /**
    * 解析光纤类型
    */
-  private parseFiberType(data: any, row: number, errors: ImportError[]): FiberType | null {
-    if (!data.name && !data.id) {
+  private parseFiberType(data: Record<string, unknown>, row: number, errors: ImportError[]): FiberType | null {
+    if (!data['name'] && !data['id']) {
       errors.push({ row, message: '光纤类型缺少名称或ID', type: 'error' })
       return null
     }
 
     return {
-      id: data.id || `fiber-${Date.now()}-${row}`,
-      name: data.name || data.id,
-      nonlinearCoeff: this.parseNumber(data.nonlinearCoeff, 1.4),
-      effectiveArea: this.parseNumber(data.effectiveArea, 80),
-      dispersion: this.parseNumber(data.dispersion, 17),
-      nonlinearRefractiveIndex: this.parseNumber(data.nonlinearRefractiveIndex, 2.6),
-      attenuationCoeff: this.parseNumber(data.attenuationCoeff, 0.2),
-      secondOrderDispersion: this.parseNumber(data.secondOrderDispersion, -21),
-      simulationModel: data.simulationModel || 'GN'
+      id: String(data['id'] || `fiber-${Date.now()}-${row}`),
+      name: String(data['name'] || data['id']),
+      nonlinearCoeff: this.parseNumber(data['nonlinearCoeff'], 1.4),
+      effectiveArea: this.parseNumber(data['effectiveArea'], 80),
+      dispersion: this.parseNumber(data['dispersion'], 17),
+      nonlinearRefractiveIndex: this.parseNumber(data['nonlinearRefractiveIndex'], 2.6),
+      attenuationCoeff: this.parseNumber(data['attenuationCoeff'], 0.2),
+      secondOrderDispersion: this.parseNumber(data['secondOrderDispersion'], -21),
+      simulationModel: (data['simulationModel'] as 'GN' | 'EGN') || 'GN'
     }
   }
 
   /**
    * 解析放大器类型
    */
-  private parseAmplifierType(data: any, row: number, errors: ImportError[]): AmplifierType | null {
-    if (!data.name && !data.id) {
+  private parseAmplifierType(data: Record<string, unknown>, row: number, errors: ImportError[]): AmplifierType | null {
+    if (!data['name'] && !data['id']) {
       errors.push({ row, message: '放大器类型缺少名称或ID', type: 'error' })
       return null
     }
 
     return {
-      id: data.id || `amp-${Date.now()}-${row}`,
-      name: data.name || data.id,
-      gain: this.parseNumber(data.gain, 20),
-      bandwidth: this.parseNumber(data.bandwidth, 1550),
-      gainFlatness: this.parseNumber(data.gainFlatness, 0.5),
-      noiseFigure: this.parseNumber(data.noiseFigure, 5),
-      pumpPower: this.parseNumber(data.pumpPower, 100),
-      outputPower: this.parseNumber(data.outputPower, 17),
-      gainRangePower: this.parseNumber(data.gainRangePower, 0.1)
+      id: String(data['id'] || `amp-${Date.now()}-${row}`),
+      name: String(data['name'] || data['id']),
+      gain: this.parseNumber(data['gain'], 20),
+      bandwidth: this.parseNumber(data['bandwidth'], 1550),
+      gainFlatness: this.parseNumber(data['gainFlatness'], 0.5),
+      noiseFigure: this.parseNumber(data['noiseFigure'], 5),
+      pumpPower: this.parseNumber(data['pumpPower'], 100),
+      outputPower: this.parseNumber(data['outputPower'], 17),
+      gainRangePower: this.parseNumber(data['gainRangePower'], 0.1)
     }
   }
 
   /**
    * 解析分支器类型
    */
-  private parseBranchingUnitType(data: any, row: number, errors: ImportError[]): BranchingUnitType | null {
-    if (!data.name && !data.id) {
+  private parseBranchingUnitType(data: Record<string, unknown>, row: number, errors: ImportError[]): BranchingUnitType | null {
+    if (!data['name'] && !data['id']) {
       errors.push({ row, message: '分支器类型缺少名称或ID', type: 'error' })
       return null
     }
 
     return {
-      id: data.id || `bu-${Date.now()}-${row}`,
-      name: data.name || data.id,
-      portCount: this.parseNumber(data.portCount, 3),
-      trunkInsertionLoss: this.parseNumber(data.trunkInsertionLoss, 0.5),
-      branchInsertionLoss: this.parseNumber(data.branchInsertionLoss, 3.0),
-      insertionLoss: this.parseNumber(data.insertionLoss, 0.5),
-      wavelengthRange: this.parseNumber(data.wavelengthRange, 1550)
+      id: String(data['id'] || `bu-${Date.now()}-${row}`),
+      name: String(data['name'] || data['id']),
+      portCount: this.parseNumber(data['portCount'], 3),
+      trunkInsertionLoss: this.parseNumber(data['trunkInsertionLoss'], 0.5),
+      branchInsertionLoss: this.parseNumber(data['branchInsertionLoss'], 3.0),
+      insertionLoss: this.parseNumber(data['insertionLoss'], 0.5),
+      wavelengthRange: this.parseNumber(data['wavelengthRange'], 1550)
     }
   }
 
@@ -417,7 +417,7 @@ export class DeviceImportService {
   /**
    * 解析数字，带默认值
    */
-  private parseNumber(value: any, defaultValue: number): number {
+  private parseNumber(value: unknown, defaultValue: number): number {
     if (value === undefined || value === null || value === '') {
       return defaultValue
     }
