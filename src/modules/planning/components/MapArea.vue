@@ -391,16 +391,6 @@ const handleSelectRoute = (routeId: string) => {
   drawParetoRoutes()
 }
 
-/** 计算路由主干段总长度（排除分支登陆站连线段，用于海缆段 KP 范围计算） */
-const getTrunkOnlyLength = (route: any): number => {
-  if (!route?.points?.some((p: any) => p.type === 'branching')) return route?.totalLength || 0
-  const branchIds = new Set<string>()
-  route.points.forEach((p: any) => { if (p.isBranchStation) branchIds.add(p.id) })
-  return route.segments
-    .filter((seg: any) => !branchIds.has(seg.startPointId) && !branchIds.has(seg.endPointId))
-    .reduce((sum: number, seg: any) => sum + (seg.length || 0), 0)
-}
-
 // ========== 海缆段生成相关函数 ==========
 
 // 打开海缆段生成对话框
@@ -426,9 +416,9 @@ const handleCableSegmentGenerate = (config: SegmentGenerateConfig) => {
   currentSegmentMethod.value = config.method
   currentSegmentGenerateTime.value = new Date().toLocaleString()
   
-  // 获取当前选中路由的长度（使用主干段长度，排除分支段）
+  // 获取当前选中路由的长度
     const selectedRoute = routeStore.paretoRoutes.find(r => r.id === currentSelectedRouteId)
-    const routeLength = selectedRoute ? getTrunkOnlyLength(selectedRoute) : 100
+    const routeLength = selectedRoute?.totalLength || 100
   
   // 生成分段（暂无风险数据，使用空数组）
   const segments = cableSegmentStore.generateSegments(routeLength, [])
@@ -478,7 +468,7 @@ const autoGenerateCableSegments = (): number => {
     }
 
     const selectedRoute = routeStore.paretoRoutes.find(r => r.id === selectedRouteId)
-    const routeLength = selectedRoute ? getTrunkOnlyLength(selectedRoute) : 0
+    const routeLength = selectedRoute?.totalLength || 0
     if (routeLength <= 0) {
       return 0
     }
@@ -518,7 +508,7 @@ const autoGenerateCableSegments = (): number => {
 const getCurrentRouteLength = (): number => {
   const currentSelectedRouteId = routeStore.selectedRouteIds[0]
   const selectedRoute = routeStore.paretoRoutes.find(r => r.id === currentSelectedRouteId)
-  return selectedRoute ? getTrunkOnlyLength(selectedRoute) : 0
+  return selectedRoute?.totalLength || 0
 }
 
 // 保存海缆段配置
@@ -1388,26 +1378,26 @@ const drawParetoRoutes = async () => {
           // ====== 有海缆段且非编辑模式，直接按段画主干线（每段自带颜色、标签） ======
           const cableSegs = cableSegmentStore.segments
 
-          // 构建 segGeos（仅主干段，排除分支登陆站连线）
+          // 构建 segGeos（包含所有段，per-segGeo 绘制方式确保不会跨分支跳线）
           let kpOff = 0
           const segGeos: Array<{ startKp: number; endKp: number; startCoord: [number, number]; endCoord: [number, number] }> = []
-          for (const seg of trunkSegments) {
+          for (const seg of route.segments) {
             const sc = pointMap[seg.startPointId]
             const ec = pointMap[seg.endPointId]
             if (!sc || !ec) { kpOff += (seg.length || 0); continue }
             segGeos.push({ startKp: kpOff, endKp: kpOff + (seg.length || 0), startCoord: sc, endCoord: ec })
             kpOff += (seg.length || 0)
           }
-          const trunkTotalKp = kpOff  // 主干段总 KP（不含分支段）
+          const routeTotalKp = kpOff  // 全路由总 KP
 
-          // 收集分段边界 KP（限定在主干 KP 范围内）
+          // 收集分段边界 KP
           const bKps = new Set<number>()
           cableSegs.forEach(s => {
-            if (s.startKp > 0 && s.startKp < trunkTotalKp) bKps.add(s.startKp)
-            if (s.endKp > 0 && s.endKp < trunkTotalKp) bKps.add(s.endKp)
+            if (s.startKp > 0 && s.startKp < routeTotalKp) bKps.add(s.startKp)
+            if (s.endKp > 0 && s.endKp < routeTotalKp) bKps.add(s.endKp)
           })
           const sortedBKps = Array.from(bKps).sort((a, b) => a - b)
-          const boundaries = [0, ...sortedBKps, trunkTotalKp]
+          const boundaries = [0, ...sortedBKps, routeTotalKp]
 
           // 创建海缆段 feature 的辅助函数
           const makeFineFeature = (coords: [number, number][], sKp: number, eKp: number, idx: number) => {
@@ -1580,27 +1570,29 @@ const drawParetoRoutes = async () => {
         if (point.type === 'branching' && (point as any).branchTo) {
           const branchTo = (point as any).branchTo
 
-          // 绘制分支线（海缆段模式下用橙色主干样式，否则选中红色/未选中紫色虚线）
-          const useBranchFineStyle = isRouteSelected && cableSegmentStore.segments.length > 0 && !isEditingRoute.value
-          const branchLineFeature = new Feature({
-            geometry: new LineString([
-              point.coordinates,
-              branchTo.coord
-            ]),
-            routeId: route.id,
-            isBranchLine: true,
-            branchFromPointIndex: pointIndex, // 分支器的点索引
-            branchToName: branchTo.name, // 分支登陆站名称
-            fromPointId: point.id,
-          })
-          branchLineFeature.setStyle(new Style({
-            stroke: new Stroke({
-              color: useBranchFineStyle ? '#f59e0b' : (isRouteSelected ? '#ef4444' : '#a855f7'),
-              width: useBranchFineStyle ? 5 : (isRouteSelected ? 4 : 2),
-              lineDash: useBranchFineStyle ? undefined : (isRouteSelected ? undefined : [6, 4]),
-            }),
-          }))
-          routeSource!.addFeature(branchLineFeature)
+        // 绘制分支线（海缆段模式下已由 segGeos 包含绘制，无需重复画线）
+          const branchHasFine = isRouteSelected && cableSegmentStore.segments.length > 0 && !isEditingRoute.value
+          if (!branchHasFine) {
+            const branchLineFeature = new Feature({
+              geometry: new LineString([
+                point.coordinates,
+                branchTo.coord
+              ]),
+              routeId: route.id,
+              isBranchLine: true,
+              branchFromPointIndex: pointIndex,
+              branchToName: branchTo.name,
+              fromPointId: point.id,
+            })
+            branchLineFeature.setStyle(new Style({
+              stroke: new Stroke({
+                color: isRouteSelected ? '#ef4444' : '#a855f7',
+                width: isRouteSelected ? 4 : 2,
+                lineDash: isRouteSelected ? undefined : [6, 4],
+              }),
+            }))
+            routeSource!.addFeature(branchLineFeature)
+          }
 
           // 绘制分支目标登陆站
           const branchStationFeature = new Feature({
@@ -1638,7 +1630,7 @@ const drawParetoRoutes = async () => {
     const cableSegments = cableSegmentStore.segments
     const selectedRoute = routeStore.selectedRoute || routeStore.paretoRoutes[0]
     if (cableSegments.length > 0 && selectedRoute && selectedRoute.segments.length > 0 && !isEditingRoute.value) {
-      const routeLength = getTrunkOnlyLength(selectedRoute)
+      const routeLength = selectedRoute.totalLength || 0
       if (routeLength > 0) {
         // 构建点ID→坐标映射（包含分支登陆站）
         const ptMap: Record<string, [number, number]> = {}
@@ -1646,11 +1638,7 @@ const drawParetoRoutes = async () => {
           ptMap[p.id] = p.coordinates
         }
 
-        // 按 route.segments 顺序构建每条线段的 KP 范围和几何（排除分支登陆站连线）
-        const branchIds = new Set<string>()
-        selectedRoute.points.forEach(p => {
-          if ((p as any).isBranchStation) branchIds.add(p.id)
-        })
+        // 按 route.segments 顺序构建每条线段的 KP 范围和几何（包含所有段）
         let kpOffset = 0
         const segGeos: Array<{
           startKp: number; endKp: number;
@@ -1658,8 +1646,6 @@ const drawParetoRoutes = async () => {
         }> = []
 
         for (const seg of selectedRoute.segments) {
-          // 跳过分支登陆站连线
-          if (branchIds.has(seg.startPointId) || branchIds.has(seg.endPointId)) continue
           const sc = ptMap[seg.startPointId]
           const ec = ptMap[seg.endPointId]
           if (!sc || !ec) { kpOffset += (seg.length || 0); continue }
