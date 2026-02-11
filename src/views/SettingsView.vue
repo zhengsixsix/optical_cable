@@ -1005,7 +1005,7 @@ const handleSave = () => {
   })
 
   settingsStore.updateFiberSimulationConfig({
-    model: fiberConfig.model as 'GN' | 'EGN',
+    model: fiberConfig.model as 'GN' | 'EGN' | 'SSFM',
   })
 
   settingsStore.saveToLocalStorage()

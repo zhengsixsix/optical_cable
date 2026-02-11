@@ -506,8 +506,9 @@ export const equipmentTypeOptions = [
 
 // 光纤仿真模型选项
 export const fiberModelOptions = [
-  { value: 'GN', label: 'GN Model (高斯噪声模型)', desc: '适用于计算速度要求高、精度要求一般的场景' },
-  { value: 'EGN', label: 'EGN Model (增强型高斯噪声模型)', desc: '适用于仿真精度要求高、可容忍较长计算时间的场景' },
+  { value: 'GN', label: 'GN Model (高斯噪声模型)', desc: '解析近似，计算速度快，NLI 偏悲观' },
+  { value: 'EGN', label: 'EGN Model (增强型高斯噪声模型)', desc: '考虑调制格式修正，精度更高，GSNR 比 GN 高 2-3 dB' },
+  { value: 'SSFM', label: 'SSFM (分步傅里叶数值仿真)', desc: '全数值求解，精度最高，计算耗时较长' },
 ]
 
 // 规划模式选项

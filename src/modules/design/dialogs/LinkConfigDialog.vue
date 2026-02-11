@@ -759,6 +759,7 @@ interface CalculationResult {
     osnr: { min: number; max: number; avg: number }
     gsnr: { min: number; max: number; avg: number }
     power: { min: number; max: number; avg: number }
+    nli: { min: number; max: number; avg: number }
     qFactor: { min: number; max: number; avg: number }
   }
   
@@ -788,6 +789,10 @@ interface CalculationResult {
     endOsnrSpectrum: number[]
     // 末端 GSNR 分布 (dB)
     endGsnrSpectrum: number[]
+    // 末端信号功率分布 (dBm)
+    endPowerSpectrum: number[]
+    // 末端 NLI 噪声功率分布 (dBm)
+    endNliSpectrum: number[]
     // 沿程位置 (km)
     positions: number[]
     // 位置名称
@@ -928,12 +933,38 @@ const getCostPercent = (cost: number): string => {
   return ((cost / calculationResult.value.costData.totalCost) * 100).toFixed(1)
 }
 
+// SVG 路径计算属性 - OSNR 频谱曲线
+const osnrSpectrumPath = computed(() => {
+  if (!calculationResult.value) return ''
+  const data = calculationResult.value.performanceData.endOsnrSpectrum
+  const len = data.length - 1
+  return data.map((v, i) => `${50 + i * (630 / len)},${150 - (v - 10) * 6}`).join(' ')
+})
+
 // SVG 路径计算属性 - GSNR 频谱曲线
 const gsnrSpectrumPath = computed(() => {
   if (!calculationResult.value) return ''
   const data = calculationResult.value.performanceData.endGsnrSpectrum
   const len = data.length - 1
   return data.map((v, i) => `${50 + i * (630 / len)},${150 - (v - 10) * 6}`).join(' ')
+})
+
+// SVG 路径计算属性 - 功率频谱曲线 (dBm, 缩放: 0 dBm 对应 y=90, 每 1dB = 10px)
+const powerSpectrumPath = computed(() => {
+  if (!calculationResult.value) return ''
+  const data = calculationResult.value.performanceData.endPowerSpectrum
+  if (!data || data.length === 0) return ''
+  const len = data.length - 1
+  return data.map((v, i) => `${50 + i * (630 / len)},${90 - v * 10}`).join(' ')
+})
+
+// SVG 路径计算属性 - NLI 噪声频谱曲线 (dBm, 缩放: -20 dBm 对应 y=90)
+const nliSpectrumPath = computed(() => {
+  if (!calculationResult.value) return ''
+  const data = calculationResult.value.performanceData.endNliSpectrum
+  if (!data || data.length === 0) return ''
+  const len = data.length - 1
+  return data.map((v, i) => `${50 + i * (630 / len)},${150 - (v + 40) * 4}`).join(' ')
 })
 
 // SVG 路径计算属性 - OSNR 沿程演化曲线
@@ -1008,7 +1039,129 @@ const spanFeasibleRange = computed(() => {
 // 重新计算
 const recalculate = () => {
   calculationResult.value = null
+  spanCursorSpan.value = null
+  spanUserSelectedSpan.value = null
   startCalculation()
+}
+
+// ============ Span 优化交互调整 (Step 6.1) ============
+const spanChartSvgRef = ref<SVGSVGElement | null>(null)
+const spanCursorSpan = ref<number | null>(null)  // 游标当前指向的 Span
+const spanIsDragging = ref(false)
+const spanUserSelectedSpan = ref<number | null>(null)  // 用户最终确认的 Span
+
+// 自动初始化游标到推荐 Span
+watch(() => spanScanData.value?.recommendedSpanKm, (rec) => {
+  if (rec != null && spanCursorSpan.value == null) {
+    spanCursorSpan.value = rec
+  }
+}, { immediate: true })
+
+// 坐标转换: 屏幕X -> SVG X
+const spanClientToSvgX = (clientX: number) => {
+  if (!spanChartSvgRef.value) return null
+  const rect = spanChartSvgRef.value.getBoundingClientRect()
+  return (clientX - rect.left) / rect.width * 700  // viewBox width = 700
+}
+
+// SVG X -> Span 值
+const spanSvgXToSpan = (svgX: number) => {
+  if (!spanScanData.value) return null
+  const spans = spanScanData.value.spanLengthsKm
+  if (spans.length < 2) return null
+  const xMin = spans[0]
+  const xMax = spans[spans.length - 1]
+  const ratio = (svgX - 50) / 610  // plotLeft=50, plotWidth=610
+  if (ratio < 0 || ratio > 1) return null
+  return xMin + ratio * (xMax - xMin)
+}
+
+// 游标 SVG X 坐标
+const spanCursorSvgX = computed(() => {
+  if (spanCursorSpan.value == null || !spanScanData.value) return null
+  return spanChartX(spanCursorSpan.value)
+})
+
+// 游标插值数据
+const spanCursorData = computed(() => {
+  if (spanCursorSpan.value == null || !spanScanData.value) return null
+  const spanKm = spanCursorSpan.value
+  const spans = spanScanData.value.spanLengthsKm
+  const gsnrs = spanGsnrArray.value
+  const osnrs = spanOsnrArray.value
+  const pts = spanScanData.value.scanPoints
+  if (spans.length === 0) return null
+  // 边界
+  if (spanKm <= spans[0]) return { gsnr: gsnrs[0], osnr: osnrs[0], margin: pts[0]?.gsnrMarginDb ?? 0, amps: pts[0]?.numAmplifiers ?? 0 }
+  if (spanKm >= spans[spans.length - 1]) return { gsnr: gsnrs[gsnrs.length - 1], osnr: osnrs[osnrs.length - 1], margin: pts[pts.length - 1]?.gsnrMarginDb ?? 0, amps: pts[pts.length - 1]?.numAmplifiers ?? 0 }
+  // 线性插值
+  for (let i = 0; i < spans.length - 1; i++) {
+    if (spanKm >= spans[i] && spanKm <= spans[i + 1]) {
+      const t = (spanKm - spans[i]) / (spans[i + 1] - spans[i])
+      const lerp = (a: number, b: number) => a + (b - a) * t
+      return {
+        gsnr: lerp(gsnrs[i], gsnrs[i + 1]),
+        osnr: lerp(osnrs[i], osnrs[i + 1]),
+        margin: lerp(pts[i]?.gsnrMarginDb ?? 0, pts[i + 1]?.gsnrMarginDb ?? 0),
+        amps: Math.round(lerp(pts[i]?.numAmplifiers ?? 0, pts[i + 1]?.numAmplifiers ?? 0)),
+      }
+    }
+  }
+  return null
+})
+
+// 点击图表选择 Span
+const handleSpanChartClick = (e: MouseEvent) => {
+  if (spanIsDragging.value) return
+  const svgX = spanClientToSvgX(e.clientX)
+  if (svgX == null) return
+  const span = spanSvgXToSpan(svgX)
+  if (span == null) return
+  const spans = spanScanData.value!.spanLengthsKm
+  const clamped = Math.max(spans[0], Math.min(spans[spans.length - 1], Math.round(span)))
+  spanCursorSpan.value = clamped
+  spanUserSelectedSpan.value = clamped
+}
+
+// 拖拽事件
+const handleSpanCursorDragStart = (e: MouseEvent | TouchEvent) => {
+  e.preventDefault()
+  e.stopPropagation()
+  spanIsDragging.value = true
+  document.addEventListener('mousemove', handleSpanCursorDragMove)
+  document.addEventListener('mouseup', handleSpanCursorDragEnd)
+  document.addEventListener('touchmove', handleSpanCursorDragMove)
+  document.addEventListener('touchend', handleSpanCursorDragEnd)
+}
+
+const handleSpanCursorDragMove = (e: MouseEvent | TouchEvent) => {
+  if (!spanIsDragging.value || !spanScanData.value) return
+  const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+  const svgX = spanClientToSvgX(clientX)
+  if (svgX == null) return
+  const span = spanSvgXToSpan(svgX)
+  if (span == null) return
+  const spans = spanScanData.value.spanLengthsKm
+  spanCursorSpan.value = Math.max(spans[0], Math.min(spans[spans.length - 1], Math.round(span)))
+}
+
+const handleSpanCursorDragEnd = () => {
+  spanIsDragging.value = false
+  document.removeEventListener('mousemove', handleSpanCursorDragMove)
+  document.removeEventListener('mouseup', handleSpanCursorDragEnd)
+  document.removeEventListener('touchmove', handleSpanCursorDragMove)
+  document.removeEventListener('touchend', handleSpanCursorDragEnd)
+  if (spanCursorSpan.value != null) {
+    spanUserSelectedSpan.value = spanCursorSpan.value
+  }
+}
+
+// 恢复推荐方案
+const restoreRecommendedSpan = () => {
+  if (spanScanData.value) {
+    spanCursorSpan.value = spanScanData.value.recommendedSpanKm
+    spanUserSelectedSpan.value = null
+  }
 }
 
 // 根据 KP 计算线路上的经纬度（优先使用 RPL 路径，其次使用 segments 拓扑路径）
@@ -1137,17 +1290,72 @@ const getCoordinateByKP = (
   }
 }
 
-// 构建主干路径坐标序列（优先 RPL）
+// 构建主干路径坐标序列（使用 BFS 沿 segments 寻径，包含所有 waypoint 拐点）
 const buildPathCoords = (route: any, rplRecords: any[]) => {
-  // 优先使用 RPL（已排除分支登陆站）
-  if (rplRecords && rplRecords.length >= 2) {
-    const orderedRecords = [...rplRecords].sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+  // 1) 优先使用 RPL — 但仅当有足够中间点描述弯曲路径时
+  if (rplRecords && rplRecords.length >= 3) {
+    const usableRecords = rplRecords.filter((r: any) => !(r as any).isBranchStation)
+    const orderedRecords = [...usableRecords].sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
     const coords = orderedRecords
       .map(r => [r.longitude, r.latitude] as [number, number])
       .filter(c => typeof c[0] === 'number' && typeof c[1] === 'number')
-    if (coords.length >= 2) return coords
+    if (coords.length >= 3) return coords
   }
-  // 回退：使用 getCoordinateByKP 里相同的主干寻径逻辑
+
+  // 2) 使用 segments 做 BFS 寻径（包含所有 waypoint，描述真实路径弯曲）
+  if (route?.segments?.length > 0 && route?.points?.length >= 2) {
+    const pointMap: Record<string, [number, number]> = {}
+    for (const p of route.points) {
+      pointMap[p.id] = p.coordinates
+    }
+
+    const landingPoints = route.points.filter((p: any) => p.type === 'landing')
+    const mainLandings = landingPoints.filter((p: any) => !(p as any).isBranchStation)
+    const startPoint = mainLandings[0] || landingPoints[0] || route.points[0]
+    const endPoint = mainLandings[mainLandings.length - 1] || landingPoints[landingPoints.length - 1] || route.points[route.points.length - 1]
+
+    if (startPoint && endPoint && startPoint.id !== endPoint.id) {
+      const adj = new Map<string, string[]>()
+      route.segments.forEach((seg: any) => {
+        if (!adj.has(seg.startPointId)) adj.set(seg.startPointId, [])
+        if (!adj.has(seg.endPointId)) adj.set(seg.endPointId, [])
+        adj.get(seg.startPointId)!.push(seg.endPointId)
+        adj.get(seg.endPointId)!.push(seg.startPointId)
+      })
+
+      const queue: string[] = [startPoint.id]
+      const visited = new Set<string>([startPoint.id])
+      const prev = new Map<string, string | null>()
+      prev.set(startPoint.id, null)
+
+      while (queue.length > 0) {
+        const current = queue.shift()!
+        if (current === endPoint.id) break
+        const neighbors = adj.get(current) || []
+        for (const n of neighbors) {
+          if (!visited.has(n)) {
+            visited.add(n)
+            prev.set(n, current)
+            queue.push(n)
+          }
+        }
+      }
+
+      if (visited.has(endPoint.id)) {
+        const pathIds: string[] = []
+        let cur: string | null = endPoint.id
+        while (cur) {
+          pathIds.push(cur)
+          cur = prev.get(cur) || null
+        }
+        pathIds.reverse()
+        const bfsCoords = pathIds.map(id => pointMap[id]).filter(Boolean)
+        if (bfsCoords.length >= 2) return bfsCoords
+      }
+    }
+  }
+
+  // 3) 最终回退：直接使用 points 数组顺序
   const fallback = route?.points?.map((p: any) => p.coordinates) || []
   return fallback
 }
@@ -1160,15 +1368,22 @@ const applyAndClose = async () => {
   isApplying.value = true
   try {
     if (!calculationResult.value || !calculationResult.value.amplifiers) {
+      console.warn('[applyAndClose] 无计算结果或无放大器数据')
       emit('close')
       return
     }
     
-    const route = routeStore.selectedRoute
+    console.log('[applyAndClose] 放大器数量:', calculationResult.value.amplifiers.length)
+    
+    // 优先使用 selectedRoute，回退到 paretoRoutes[0]
+    const route = routeStore.selectedRoute || routeStore.paretoRoutes[0] || null
     if (!route) {
+      console.warn('[applyAndClose] 无可用路由, selectedRoute:', routeStore.selectedRoute, 'paretoRoutes:', routeStore.paretoRoutes.length)
       emit('close')
       return
     }
+    
+    console.log('[applyAndClose] 使用路由:', route.name, 'points:', route.points.length)
     
     // 获取 RPL 记录用于经纬度计算
     const rplTable = rplStore.tables.find(t => t.id === selectedRplId.value)
@@ -1177,6 +1392,7 @@ const applyAndClose = async () => {
     
     // 预先计算主干路径坐标序列（避免每个放大器都重复计算）
     const pathCoords = buildPathCoords(route, rplRecords)
+    console.log('[applyAndClose] pathCoords点数:', pathCoords.length, 'rplRecords:', rplRecords.length, 'configTotalLength:', configTotalLength)
     
     // 计算路径总长和线段长度（复用 getCoordinateByKP 的逻辑）
     let actualTotalLength = 0
@@ -1207,6 +1423,12 @@ const applyAndClose = async () => {
       }
       const last = pathCoords[pathCoords.length - 1]
       return { longitude: last[0], latitude: last[1] }
+    }
+    
+    // 0) 确保接线元表格存在（若无则自动创建）
+    if (!connectorStore.currentTable) {
+      const routeName = route.name || '链路'
+      connectorStore.createTable(`${routeName}_接线元`, route.id)
     }
     
     // 1) 清除旧的放大器和光纤段
@@ -1280,8 +1502,24 @@ const applyAndClose = async () => {
     }
     
     // 3) 批量添加（一次性响应式更新，避免页面卡顿）
-    connectorStore.addElements(newElements)
+    console.log('[applyAndClose] 准备添加元素:', newElements.length, 'OLA:', newElements.filter(e => e.type === 'ola').length)
+    console.log('[applyAndClose] connectorStore.currentTable:', !!connectorStore.currentTable)
+    const addedIds = connectorStore.addElements(newElements)
+    console.log('[applyAndClose] 已添加元素IDs:', addedIds.length, '当前总元素数:', connectorStore.elements.length)
     
+    // 传递计算结果给父组件（包含完整 Span 扫描数据和用户选择）
+    const activeSpan = spanUserSelectedSpan.value ?? spanScanData.value?.recommendedSpanKm
+    emit('apply-result', {
+      linkName: calculationResult.value.linkName,
+      amplifierCount: calculationResult.value.amplifiers.length,
+      avgSpanLength: activeSpan ?? calculationResult.value.systemConfig.avgSpanLength,
+      metrics: calculationResult.value.metrics,
+      margin: calculationResult.value.margin,
+      systemConfig: calculationResult.value.systemConfig,
+      costData: calculationResult.value.costData,
+      userSelectedSpan: spanUserSelectedSpan.value,
+      spanScanData: spanScanData.value,  // 完整的多点扫描数据
+    })
     emit('close')
   } finally {
     isApplying.value = false
@@ -2294,6 +2532,14 @@ watch(() => props.visible, (visible) => {
                           <input type="checkbox" v-model="performanceChartOptions.showGsnr" class="rounded" />
                           <span class="text-blue-600">GSNR</span>
                         </label>
+                        <label class="flex items-center gap-1 text-sm cursor-pointer">
+                          <input type="checkbox" v-model="performanceChartOptions.showPower" class="rounded" />
+                          <span class="text-purple-600">Power</span>
+                        </label>
+                        <label class="flex items-center gap-1 text-sm cursor-pointer">
+                          <input type="checkbox" v-model="performanceChartOptions.showNli" class="rounded" />
+                          <span class="text-red-600">NLI</span>
+                        </label>
                       </div>
                       <div class="flex items-center gap-2">
                         <span class="text-sm text-gray-500">信道：</span>
@@ -2318,8 +2564,36 @@ watch(() => props.visible, (visible) => {
                       </div>
                     </div>
                     
+                    <!-- OSNR 频谱曲线 (末端) -->
+                    <div v-if="performanceChartOptions.showOsnr" class="bg-gray-50 rounded-lg p-4">
+                      <div class="text-sm font-medium text-gray-700 mb-3">OSNR 频谱分布 (末端)</div>
+                      <div class="relative h-48 bg-white border rounded">
+                        <svg class="w-full h-full" viewBox="0 0 700 180" preserveAspectRatio="xMidYMid meet">
+                          <g stroke="#e5e7eb" stroke-width="1">
+                            <line v-for="y in [30, 60, 90, 120, 150]" :key="'osy'+y" x1="50" :y1="y" x2="680" :y2="y" stroke-dasharray="4,4" />
+                          </g>
+                          <!-- 目标门限线 -->
+                          <line x1="50" :y1="150 - (constraints.targetGSNR - 10) * 6" x2="680" :y2="150 - (constraints.targetGSNR - 10) * 6" stroke="#f97316" stroke-width="1" stroke-dasharray="6,3" />
+                          <text x="685" :y="150 - (constraints.targetGSNR - 10) * 6 + 4" class="text-[10px] fill-orange-500">目标</text>
+                          <!-- OSNR 曲线 -->
+                          <polyline :points="osnrSpectrumPath" fill="none" stroke="#22c55e" stroke-width="2" />
+                          <!-- X轴 -->
+                          <line x1="50" y1="160" x2="680" y2="160" stroke="#9ca3af" stroke-width="1" />
+                          <text x="365" y="175" class="text-[10px] fill-gray-500" text-anchor="middle">频率 (THz)</text>
+                          <!-- Y轴 -->
+                          <line x1="50" y1="20" x2="50" y2="160" stroke="#9ca3af" stroke-width="1" />
+                          <text v-for="(v, i) in [25, 20, 15, 10]" :key="'osv'+i" x="45" :y="150 - (v - 10) * 6 + 4" class="text-[10px] fill-gray-500" text-anchor="end">{{ v }}</text>
+                        </svg>
+                      </div>
+                      <div class="flex justify-between text-xs text-gray-500 mt-2">
+                        <span>最小: {{ calculationResult.metrics.osnr.min }} dB</span>
+                        <span>最大: {{ calculationResult.metrics.osnr.max }} dB</span>
+                        <span>裕量: {{ (calculationResult.metrics.osnr.min - constraints.targetGSNR) >= 0 ? '+' : '' }}{{ (calculationResult.metrics.osnr.min - constraints.targetGSNR).toFixed(1) }} dB</span>
+                      </div>
+                    </div>
+                    
                     <!-- GSNR 频谱曲线 (末端) -->
-                    <div class="bg-gray-50 rounded-lg p-4">
+                    <div v-if="performanceChartOptions.showGsnr" class="bg-gray-50 rounded-lg p-4">
                       <div class="text-sm font-medium text-gray-700 mb-3">GSNR 频谱分布 (末端)</div>
                       <div class="relative h-48 bg-white border rounded">
                         <svg class="w-full h-full" viewBox="0 0 700 180" preserveAspectRatio="xMidYMid meet">
@@ -2347,6 +2621,56 @@ watch(() => props.visible, (visible) => {
                         <span>最小: {{ calculationResult.metrics.gsnr.min }} dB (Ch{{ calculationResult.performanceData.worstChannelIndex + 1 }})</span>
                         <span>最大: {{ calculationResult.metrics.gsnr.max }} dB</span>
                         <span>裕量: {{ calculationResult.margin.worstMargin >= 0 ? '+' : '' }}{{ calculationResult.margin.worstMargin }} dB</span>
+                      </div>
+                    </div>
+                    
+                    <!-- 功率频谱曲线 (末端) -->
+                    <div v-if="performanceChartOptions.showPower" class="bg-gray-50 rounded-lg p-4">
+                      <div class="text-sm font-medium text-gray-700 mb-3">信号功率频谱分布 (末端)</div>
+                      <div class="relative h-48 bg-white border rounded">
+                        <svg class="w-full h-full" viewBox="0 0 700 180" preserveAspectRatio="xMidYMid meet">
+                          <g stroke="#e5e7eb" stroke-width="1">
+                            <line v-for="y in [30, 60, 90, 120, 150]" :key="'py'+y" x1="50" :y1="y" x2="680" :y2="y" stroke-dasharray="4,4" />
+                          </g>
+                          <!-- 功率曲线 -->
+                          <polyline :points="powerSpectrumPath" fill="none" stroke="#8b5cf6" stroke-width="2" />
+                          <!-- X轴 -->
+                          <line x1="50" y1="160" x2="680" y2="160" stroke="#9ca3af" stroke-width="1" />
+                          <text x="365" y="175" class="text-[10px] fill-gray-500" text-anchor="middle">频率 (THz)</text>
+                          <!-- Y轴 -->
+                          <line x1="50" y1="20" x2="50" y2="160" stroke="#9ca3af" stroke-width="1" />
+                          <text v-for="(v, i) in [5, 0, -5]" :key="'pv'+i" x="45" :y="90 - v * 10 + 4" class="text-[10px] fill-gray-500" text-anchor="end">{{ v }}</text>
+                        </svg>
+                      </div>
+                      <div class="flex justify-between text-xs text-gray-500 mt-2">
+                        <span>最小: {{ calculationResult.metrics.power.min }} dBm</span>
+                        <span>最大: {{ calculationResult.metrics.power.max }} dBm</span>
+                        <span>平均: {{ calculationResult.metrics.power.avg }} dBm</span>
+                      </div>
+                    </div>
+                    
+                    <!-- NLI 噪声频谱曲线 (末端) -->
+                    <div v-if="performanceChartOptions.showNli" class="bg-gray-50 rounded-lg p-4">
+                      <div class="text-sm font-medium text-gray-700 mb-3">NLI 噪声功率频谱分布 (末端)</div>
+                      <div class="relative h-48 bg-white border rounded">
+                        <svg class="w-full h-full" viewBox="0 0 700 180" preserveAspectRatio="xMidYMid meet">
+                          <g stroke="#e5e7eb" stroke-width="1">
+                            <line v-for="y in [30, 60, 90, 120, 150]" :key="'ny'+y" x1="50" :y1="y" x2="680" :y2="y" stroke-dasharray="4,4" />
+                          </g>
+                          <!-- NLI 曲线 -->
+                          <polyline :points="nliSpectrumPath" fill="none" stroke="#ef4444" stroke-width="2" />
+                          <!-- X轴 -->
+                          <line x1="50" y1="160" x2="680" y2="160" stroke="#9ca3af" stroke-width="1" />
+                          <text x="365" y="175" class="text-[10px] fill-gray-500" text-anchor="middle">频率 (THz)</text>
+                          <!-- Y轴 -->
+                          <line x1="50" y1="20" x2="50" y2="160" stroke="#9ca3af" stroke-width="1" />
+                          <text v-for="(v, i) in [-10, -20, -30, -40]" :key="'nv'+i" x="45" :y="150 - (v + 40) * 4 + 4" class="text-[10px] fill-gray-500" text-anchor="end">{{ v }}</text>
+                        </svg>
+                      </div>
+                      <div class="flex justify-between text-xs text-gray-500 mt-2">
+                        <span>最小: {{ calculationResult.metrics.nli.min }} dBm</span>
+                        <span>最大: {{ calculationResult.metrics.nli.max }} dBm</span>
+                        <span>平均: {{ calculationResult.metrics.nli.avg }} dBm</span>
                       </div>
                     </div>
                     
@@ -2593,24 +2917,37 @@ watch(() => props.visible, (visible) => {
 
                   <!-- Span 优化视图 -->
                   <div v-else-if="resultViewTab === 'spanOptimization' && spanScanData" class="space-y-4">
-                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
-                      <div class="text-sm font-medium text-green-700 mb-2 flex items-center gap-2">
-                        <CheckCircle2 class="w-4 h-4" /> 推荐 Span 长度
+                    <div 
+                      class="border rounded-lg p-4"
+                      :class="spanUserSelectedSpan != null && spanUserSelectedSpan !== spanScanData.recommendedSpanKm
+                        ? 'bg-purple-50 border-purple-200'
+                        : 'bg-green-50 border-green-200'"
+                    >
+                      <div class="text-sm font-medium mb-2 flex items-center gap-2"
+                        :class="spanUserSelectedSpan != null && spanUserSelectedSpan !== spanScanData.recommendedSpanKm
+                          ? 'text-purple-700' : 'text-green-700'"
+                      >
+                        <CheckCircle2 class="w-4 h-4" />
+                        {{ spanUserSelectedSpan != null && spanUserSelectedSpan !== spanScanData.recommendedSpanKm ? '当前选择 Span 长度（用户调整）' : '推荐 Span 长度' }}
                       </div>
                       <div class="grid grid-cols-3 gap-4 text-sm">
                         <div class="text-center">
-                          <div class="text-2xl font-bold text-green-700">{{ spanScanData.recommendedSpanKm }} km</div>
-                          <div class="text-xs text-gray-500 mt-1">推荐 Span</div>
+                          <div class="text-2xl font-bold" :class="spanUserSelectedSpan != null && spanUserSelectedSpan !== spanScanData.recommendedSpanKm ? 'text-purple-700' : 'text-green-700'">
+                            {{ spanUserSelectedSpan ?? spanScanData.recommendedSpanKm }} km
+                          </div>
+                          <div class="text-xs text-gray-500 mt-1">
+                            {{ spanUserSelectedSpan != null && spanUserSelectedSpan !== spanScanData.recommendedSpanKm ? '用户选择' : '推荐' }} Span
+                          </div>
                         </div>
                         <div class="text-center">
                           <div class="text-lg font-bold text-blue-700">
-                            {{ spanGsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)]?.toFixed(1) || '-' }} dB
+                            {{ (spanCursorData?.gsnr ?? spanGsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)])?.toFixed(1) || '-' }} dB
                           </div>
                           <div class="text-xs text-gray-500 mt-1">对应末端 GSNR</div>
                         </div>
                         <div class="text-center">
                           <div class="text-lg font-bold text-purple-700">
-                            {{ spanOsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)]?.toFixed(1) || '-' }} dB
+                            {{ (spanCursorData?.osnr ?? spanOsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)])?.toFixed(1) || '-' }} dB
                           </div>
                           <div class="text-xs text-gray-500 mt-1">对应末端 OSNR</div>
                         </div>
@@ -2618,9 +2955,15 @@ watch(() => props.visible, (visible) => {
                     </div>
 
                     <div class="bg-gray-50 rounded-lg p-4">
-                      <div class="text-sm font-medium text-gray-700 mb-3">Span 长度 vs GSNR / OSNR</div>
+                      <div class="flex items-center justify-between mb-3">
+                        <div class="text-sm font-medium text-gray-700">Span 长度 vs GSNR / OSNR</div>
+                        <div class="text-xs text-purple-500 flex items-center gap-1">
+                          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20" stroke-linecap="round"/></svg>
+                          拖拽紫色游标或点击图表调整 Span
+                        </div>
+                      </div>
                       <div class="relative h-56 bg-white border rounded">
-                        <svg class="w-full h-full" viewBox="0 0 700 220" preserveAspectRatio="xMidYMid meet">
+                        <svg ref="spanChartSvgRef" class="w-full h-full" viewBox="0 0 700 220" preserveAspectRatio="xMidYMid meet" @click="handleSpanChartClick">
                           <g stroke="#e5e7eb" stroke-width="1">
                             <line v-for="y in [30, 60, 90, 120, 150, 180]" :key="'sg'+y" x1="50" :y1="y" x2="660" :y2="y" stroke-dasharray="4,4" />
                           </g>
@@ -2635,6 +2978,18 @@ watch(() => props.visible, (visible) => {
                           </g>
                           <line :x1="spanChartX(spanScanData.recommendedSpanKm)" y1="20" :x2="spanChartX(spanScanData.recommendedSpanKm)" y2="195" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,2" />
                           <text :x="spanChartX(spanScanData.recommendedSpanKm)" y="15" class="text-[10px] fill-red-500 font-bold" text-anchor="middle">推荐 {{ spanScanData.recommendedSpanKm }}km</text>
+                          <!-- 拖拽游标 -->
+                          <g v-if="spanCursorSvgX != null">
+                            <line :x1="spanCursorSvgX" y1="20" :x2="spanCursorSvgX" y2="195" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="4,3" opacity="0.7" />
+                            <rect :x="spanCursorSvgX - 16" y="180" width="32" height="18" rx="4" fill="#8b5cf6" class="cursor-grab" :class="{ 'cursor-grabbing': spanIsDragging }" @mousedown="handleSpanCursorDragStart" @touchstart="handleSpanCursorDragStart" />
+                            <text :x="spanCursorSvgX" y="193" class="text-[9px] fill-white font-bold" text-anchor="middle" style="pointer-events:none">{{ spanCursorSpan }}</text>
+                            <g v-if="spanCursorData">
+                              <rect :x="Math.min(spanCursorSvgX + 10, 570)" y="22" width="120" height="50" rx="4" fill="white" stroke="#8b5cf6" stroke-width="1" opacity="0.95" />
+                              <text :x="Math.min(spanCursorSvgX + 16, 576)" y="37" class="text-[10px] fill-gray-700">Span: {{ spanCursorSpan }} km</text>
+                              <text :x="Math.min(spanCursorSvgX + 16, 576)" y="51" class="text-[10px] fill-blue-600">GSNR: {{ spanCursorData.gsnr.toFixed(2) }} dB</text>
+                              <text :x="Math.min(spanCursorSvgX + 16, 576)" y="65" class="text-[10px]" :class="spanCursorData.margin >= 0 ? 'fill-green-600' : 'fill-red-600'">余量: {{ spanCursorData.margin.toFixed(2) }} dB</text>
+                            </g>
+                          </g>
                           <line x1="50" y1="195" x2="660" y2="195" stroke="#9ca3af" stroke-width="1" />
                           <text x="355" y="215" class="text-[10px] fill-gray-500" text-anchor="middle">Span 长度 (km)</text>
                           <g v-for="(spanLen, i) in spanScanData.spanLengthsKm" :key="'sx'+i">
@@ -2649,7 +3004,53 @@ watch(() => props.visible, (visible) => {
                         <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-green-500"></span> OSNR</span>
                         <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-orange-500" style="border-top:1px dashed #f97316"></span> GSNR 目标</span>
                         <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-red-500" style="border-top:1px dashed #ef4444"></span> 推荐 Span</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-purple-500"></span> 游标</span>
                         <span class="flex items-center gap-1"><span class="w-3 h-3 bg-green-100 border border-green-300 rounded-sm"></span> 可行域</span>
+                      </div>
+                    </div>
+
+                    <!-- 方案对比面板 -->
+                    <div v-if="spanUserSelectedSpan != null && spanUserSelectedSpan !== spanScanData.recommendedSpanKm" class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                      <div class="text-sm font-medium text-purple-700 mb-3">方案对比：系统推荐 vs 用户选择</div>
+                      <div class="grid grid-cols-4 gap-3 text-sm">
+                        <div class="text-center">
+                          <div class="text-xs text-gray-500 mb-1">指标</div>
+                          <div class="font-medium text-gray-600">Span</div>
+                          <div class="font-medium text-gray-600 mt-1">GSNR</div>
+                          <div class="font-medium text-gray-600 mt-1">OSNR</div>
+                        </div>
+                        <div class="text-center bg-green-50 rounded-lg p-2">
+                          <div class="text-xs text-green-600 mb-1">推荐方案</div>
+                          <div class="font-mono font-bold text-green-700">{{ spanScanData.recommendedSpanKm }} km</div>
+                          <div class="font-mono mt-1">{{ spanGsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)]?.toFixed(1) }} dB</div>
+                          <div class="font-mono mt-1">{{ spanOsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)]?.toFixed(1) }} dB</div>
+                        </div>
+                        <div class="text-center bg-purple-100 rounded-lg p-2">
+                          <div class="text-xs text-purple-600 mb-1">用户选择</div>
+                          <div class="font-mono font-bold text-purple-700">{{ spanUserSelectedSpan }} km</div>
+                          <div class="font-mono mt-1">{{ spanCursorData?.gsnr?.toFixed(1) ?? '-' }} dB</div>
+                          <div class="font-mono mt-1">{{ spanCursorData?.osnr?.toFixed(1) ?? '-' }} dB</div>
+                        </div>
+                        <div class="text-center p-2">
+                          <div class="text-xs text-gray-500 mb-1">差异</div>
+                          <div class="font-mono" :class="(spanUserSelectedSpan ?? 0) > spanScanData.recommendedSpanKm ? 'text-blue-600' : 'text-amber-600'">{{ ((spanUserSelectedSpan ?? 0) - spanScanData.recommendedSpanKm) > 0 ? '+' : '' }}{{ (spanUserSelectedSpan ?? 0) - spanScanData.recommendedSpanKm }} km</div>
+                          <div class="font-mono mt-1" :class="(spanCursorData?.gsnr ?? 0) < (spanGsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)] ?? 0) ? 'text-red-600' : 'text-green-600'">{{ ((spanCursorData?.gsnr ?? 0) - (spanGsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)] ?? 0)).toFixed(1) }} dB</div>
+                          <div class="font-mono mt-1">{{ ((spanCursorData?.osnr ?? 0) - (spanOsnrArray[spanScanData.spanLengthsKm.indexOf(spanScanData.recommendedSpanKm)] ?? 0)).toFixed(1) }} dB</div>
+                        </div>
+                      </div>
+                      <!-- 风险提示 -->
+                      <div v-if="spanCursorData && spanCursorData.margin < 0" class="mt-3 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700 flex items-center gap-2">
+                        <AlertCircle class="w-4 h-4 flex-shrink-0" />
+                        ⚠ GSNR 余量不足，该 Span 配置不满足性能要求
+                      </div>
+                      <div v-else-if="spanCursorData && spanCursorData.margin < 2" class="mt-3 p-2 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700 flex items-center gap-2">
+                        <AlertCircle class="w-4 h-4 flex-shrink-0" />
+                        ⚠ GSNR 余量较低 ({{ spanCursorData.margin.toFixed(1) }} dB)，建议保持 ≥ 2 dB 余量
+                      </div>
+                      <div class="flex gap-2 mt-3">
+                        <Button size="sm" variant="outline" @click="restoreRecommendedSpan">
+                          恢复推荐
+                        </Button>
                       </div>
                     </div>
 

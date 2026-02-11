@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
-import { useRouteStore, useRPLStore, useMonitorStore } from '@/stores'
+import { useRouteStore, useRPLStore, useMonitorStore, useConnectorStore } from '@/stores'
 import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
 import { calculateDistance } from '@/utils/geo'
 import Map from 'ol/Map'
@@ -14,8 +14,8 @@ import OSM from 'ol/source/OSM'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
-import { Style, Stroke, Icon, Text, Fill } from 'ol/style'
-import { DragPan } from 'ol/interaction'
+import { Style, Stroke, Icon, Text, Fill, Circle as CircleStyle } from 'ol/style'
+import { DragPan, Translate } from 'ol/interaction'
 import 'ol/ol.css'
 
 // 站点高程缓存（用于判断岸上/水下）
@@ -35,11 +35,16 @@ const props = withDefaults(defineProps<{
   routePoints: RoutePoint[]
   selectedPointId?: string | null
   editable?: boolean
-}>(), {})
+  /** Step 6.2: 启用放大器沿路由拖拽 */
+  draggableAmplifiers?: boolean
+}>(), {
+  draggableAmplifiers: false
+})
 
 const routeStore = useRouteStore()
 const rplStore = useRPLStore()
 const monitorStore = useMonitorStore()
+const connectorStore = useConnectorStore()
 
 const emit = defineEmits<{
   (e: 'point-click', pointId: string): void
@@ -49,6 +54,8 @@ const emit = defineEmits<{
   (e: 'context-menu', type: 'point' | 'line' | 'segment', id: string | null, x: number, y: number): void
   (e: 'edit', type: 'point' | 'line' | 'segment', id: string | null): void
   (e: 'delete', type: 'point' | 'line' | 'segment', id: string | null): void
+  /** Step 6.2: 放大器拖拽完成 */
+  (e: 'amplifier-moved', data: { id: string; newKp: number; longitude: number; latitude: number }): void
 }>()
 
 // 右键菜单状态
@@ -68,7 +75,159 @@ let routeLayer: VectorLayer<VectorSource> | null = null
 let pointSource: VectorSource | null = null
 let pointLayer: VectorLayer<VectorSource> | null = null
 
-// 拖拽功能已移除，改为双击 BU 节点打开配置
+// ========== Step 6.2: 放大器沿路由拖拽 ==========
+let translateInteraction: Translate | null = null
+const dragTooltip = ref<{ visible: boolean; x: number; y: number; text: string }>({
+  visible: false, x: 0, y: 0, text: ''
+})
+
+/** 判断 feature 是否是放大器类型 */
+const isAmplifierFeature = (feature: Feature) => {
+  const ptype = feature.get('pointType')
+  return ptype === 'ola' || ptype === 'amplifier_e' || ptype === 'amplifier_w'
+}
+
+/** 获取路由线段坐标序列（主干线） */
+const getRouteLineCoords = (): [number, number][] => {
+  const selectedRoute = routeStore.selectedRoute
+  if (selectedRoute?.points?.length) {
+    return selectedRoute.points.map(p => p.coordinates as [number, number])
+  }
+  // 回退：使用 sortedPoints
+  return sortedPoints.value
+    .filter((p: any) => !p.isBranchStation)
+    .map((p: any) => [p.longitude, p.latitude] as [number, number])
+}
+
+/** 将点投影到最近的路由线段上（snap to route） */
+const snapToRoute = (coord: [number, number]): { coord: [number, number]; kp: number } | null => {
+  const routeCoords = getRouteLineCoords()
+  if (routeCoords.length < 2) return null
+
+  let bestDist = Infinity
+  let bestPoint: [number, number] = coord
+  let bestKp = 0
+
+  let cumulativeKp = 0
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const [ax, ay] = routeCoords[i]
+    const [bx, by] = routeCoords[i + 1]
+    // 线段长度
+    const segLen = Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2) * 111 // 粗略 km
+    // 点到线段投影
+    const dx = bx - ax, dy = by - ay
+    const lenSq = dx * dx + dy * dy
+    if (lenSq === 0) { cumulativeKp += segLen; continue }
+    let t = ((coord[0] - ax) * dx + (coord[1] - ay) * dy) / lenSq
+    t = Math.max(0, Math.min(1, t))
+    const px = ax + t * dx, py = ay + t * dy
+    const dist = Math.sqrt((coord[0] - px) ** 2 + (coord[1] - py) ** 2)
+    if (dist < bestDist) {
+      bestDist = dist
+      bestPoint = [px, py]
+      bestKp = cumulativeKp + t * segLen
+    }
+    cumulativeKp += segLen
+  }
+  return { coord: bestPoint, kp: bestKp }
+}
+
+/** 初始化/更新 Translate 交互 */
+const setupTranslateInteraction = () => {
+  // 清除旧的
+  if (translateInteraction && map) {
+    map.removeInteraction(translateInteraction)
+    translateInteraction = null
+  }
+  if (!props.draggableAmplifiers || !map || !pointSource) return
+
+  // 使用 filter 函数：只允许拖拽放大器类型的 feature，每次只拖动被点击的那一个
+  translateInteraction = new Translate({
+    layers: [pointLayer!],
+    filter: (feature) => isAmplifierFeature(feature as Feature),
+  })
+
+  let dragStartCoord: [number, number] | null = null
+  let dragPointId: string | null = null
+  let dragStartKp: number = 0
+
+  translateInteraction.on('translatestart', (evt) => {
+    const feature = evt.features.item(0)
+    if (!feature) return
+    dragPointId = feature.get('pointId')
+    const geom = feature.getGeometry() as Point
+    dragStartCoord = geom.getCoordinates() as [number, number]
+    // 找到当前 KP
+    const device = sortedPoints.value.find((p: any) => p.id === dragPointId)
+    dragStartKp = device?.kp || 0
+    dragTooltip.value.visible = true
+  })
+
+  translateInteraction.on('translating', (evt) => {
+    const feature = evt.features.item(0)
+    if (!feature) return
+    const geom = feature.getGeometry() as Point
+    const rawCoord = geom.getCoordinates() as [number, number]
+
+    // Snap 到路由
+    const snapped = snapToRoute(rawCoord)
+    if (snapped) {
+      geom.setCoordinates(snapped.coord)
+      // 更新 tooltip
+      if (map) {
+        const pixel = map.getPixelFromCoordinate(snapped.coord)
+        dragTooltip.value = {
+          visible: true,
+          x: pixel[0] + 20,
+          y: pixel[1] - 30,
+          text: `KP: ${snapped.kp.toFixed(1)} km (原 ${dragStartKp.toFixed(1)})`
+        }
+      }
+    }
+    // 注意：拖拽过程中不重绘线路，路由底线是固定的海缆路径不会变
+    // 拖拽结束后由 amplifier-moved 事件触发正常的数据更新流程重绘光纤段
+  })
+
+  translateInteraction.on('translateend', (evt) => {
+    const feature = evt.features.item(0)
+    dragTooltip.value.visible = false
+    if (!feature || !dragPointId) return
+
+    const geom = feature.getGeometry() as Point
+    const finalCoord = geom.getCoordinates() as [number, number]
+    const snapped = snapToRoute(finalCoord)
+    const newLon = snapped ? snapped.coord[0] : finalCoord[0]
+    const newLat = snapped ? snapped.coord[1] : finalCoord[1]
+    const newKp = snapped ? snapped.kp : dragStartKp
+
+    emit('amplifier-moved', {
+      id: dragPointId,
+      newKp,
+      longitude: newLon,
+      latitude: newLat
+    })
+
+    dragPointId = null
+    dragStartCoord = null
+
+    // 拖拽结束后主动重绘线路（使用路由拓扑 + 光纤段的正确绘制方式）
+    scheduleRedraw(false, true)
+  })
+
+  map.addInteraction(translateInteraction)
+}
+
+// 监听 draggableAmplifiers 属性变化
+watch(() => props.draggableAmplifiers, () => {
+  setupTranslateInteraction()
+})
+
+// 当点位重绘后重新挂载 translate
+watch(() => monitorStore.devices.length, () => {
+  if (props.draggableAmplifiers) {
+    setTimeout(() => setupTranslateInteraction(), 300)
+  }
+})
 
 // 根据点类型、选中状态和高程获取图标路径
 // elevation < 0 表示在海平面以下（水下）
@@ -85,6 +244,7 @@ const getPointIcon = (type: string, isSelected: boolean, elevation?: number) => 
   }
   
   switch (type) {
+    case 'ola':
     case 'amplifier_e':
       return `/image/amplifier-e${suffix}.png`
     case 'amplifier_w':
@@ -248,16 +408,20 @@ const drawRouteLine = () => {
         toId: segment.endPointId
       })
       
-      // 使用红色实线，与路由规划选中状态一致
+      // 使用灰色底线（光纤段存在时作为背景）
+      const hasFibers = connectorStore.elements.some(e => e.type === 'fiber')
       segmentFeature.setStyle(new Style({
         stroke: new Stroke({
-          color: '#ef4444',  // 红色
-          width: 4
+          color: hasFibers ? '#d1d5db' : '#ef4444',
+          width: hasFibers ? 2 : 4
         })
       }))
       
       routeSource!.addFeature(segmentFeature)
     })
+    
+    // 绘制光纤段覆盖线
+    drawFiberLines()
     return
   }
   
@@ -318,6 +482,118 @@ const drawRouteLine = () => {
   })
 }
 
+// 绘制光纤段（放大器之间的连线，参考路由规划的海缆段显示）
+const drawFiberLines = () => {
+  if (!routeSource) return
+  
+  // 从 connectorStore 获取光纤段元素
+  const fibers = connectorStore.elements.filter(e => e.type === 'fiber')
+  if (fibers.length === 0) return
+  
+  const selectedRoute = routeStore.selectedRoute
+  if (!selectedRoute || !selectedRoute.segments || selectedRoute.segments.length === 0) return
+  
+  // 构建点 ID 到坐标的映射
+  const pointMap: Record<string, [number, number]> = {}
+  for (const p of selectedRoute.points) {
+    pointMap[p.id] = p.coordinates
+  }
+  
+  // 构建 segGeos（KP 范围与坐标的映射）
+  let kpOff = 0
+  const segGeos: Array<{ startKp: number; endKp: number; startCoord: [number, number]; endCoord: [number, number] }> = []
+  for (const seg of selectedRoute.segments) {
+    const sc = pointMap[seg.startPointId]
+    const ec = pointMap[seg.endPointId]
+    if (!sc || !ec) { kpOff += (seg.length || 0); continue }
+    segGeos.push({ startKp: kpOff, endKp: kpOff + (seg.length || 0), startCoord: sc, endCoord: ec })
+    kpOff += (seg.length || 0)
+  }
+  
+  if (segGeos.length === 0) return
+  
+  // 光纤段交替配色，相邻段视觉可区分
+  const fiberColors = ['#f59e0b', '#fb923c']  // 琥珀色 / 橘色交替
+  
+  // 为每条光纤沿路由路径插值绘制
+  fibers.forEach((fiber, idx) => {
+    const sKp = fiber.kp || 0
+    const eKp = fiber.endKp || sKp
+    if (eKp <= sKp) return
+    
+    const coords: [number, number][] = []
+    for (const r of segGeos) {
+      if (eKp <= r.startKp || sKp >= r.endKp) continue
+      const segLen = r.endKp - r.startKp
+      if (segLen === 0) continue
+      const sf = Math.max(0, (sKp - r.startKp) / segLen)
+      const ef = Math.min(1, (eKp - r.startKp) / segLen)
+      const sLon = r.startCoord[0] + sf * (r.endCoord[0] - r.startCoord[0])
+      const sLat = r.startCoord[1] + sf * (r.endCoord[1] - r.startCoord[1])
+      const eLon = r.startCoord[0] + ef * (r.endCoord[0] - r.startCoord[0])
+      const eLat = r.startCoord[1] + ef * (r.endCoord[1] - r.startCoord[1])
+      if (coords.length === 0) coords.push([sLon, sLat])
+      coords.push([eLon, eLat])
+    }
+    if (coords.length < 2) return
+    
+    const displayName = fiber.name || `F-${String(idx + 1).padStart(2, '0')}`
+    const color = fiberColors[idx % 2]
+    
+    // 绘制光纤线条（不带文字）
+    const fiberFeature = new Feature({
+      geometry: new LineString(coords),
+      featureType: 'fiber',
+      fiberName: fiber.name,
+      fiberIndex: idx,
+      segmentIndex: idx
+    })
+    fiberFeature.setStyle(new Style({
+      stroke: new Stroke({ color, width: 5 })
+    }))
+    routeSource!.addFeature(fiberFeature)
+    
+    // 用实际设备坐标计算中点（而不是插值坐标）
+    const devices = connectorStore.elements.filter(e => e.type !== 'fiber' && e.type !== 'cable_segment')
+    const startDev = devices.find(d => Math.abs(d.kp - sKp) < 0.5)
+    const endDev = devices.find(d => Math.abs(d.kp - eKp) < 0.5)
+    
+    const midLon = startDev && endDev
+      ? (startDev.longitude + endDev.longitude) / 2
+      : (coords[0][0] + coords[coords.length - 1][0]) / 2
+    const midLat = startDev && endDev
+      ? (startDev.latitude + endDev.latitude) / 2
+      : (coords[0][1] + coords[coords.length - 1][1]) / 2
+    
+    // 计算方向角度，确保文字始终可读（不会倒置）
+    const dx = startDev && endDev
+      ? endDev.longitude - startDev.longitude
+      : coords[coords.length - 1][0] - coords[0][0]
+    const dy = startDev && endDev
+      ? endDev.latitude - startDev.latitude
+      : coords[coords.length - 1][1] - coords[0][1]
+    let rotation = -Math.atan2(dy, dx)
+    // 保证文字不会倒置（角度限制在 -90° ~ 90°）
+    if (rotation > Math.PI / 2) rotation -= Math.PI
+    if (rotation < -Math.PI / 2) rotation += Math.PI
+    
+    const labelFeature = new Feature({
+      geometry: new Point([midLon, midLat]),
+      featureType: 'fiber-label'
+    })
+    labelFeature.setStyle(new Style({
+      text: new Text({
+        text: displayName,
+        font: 'bold 10px sans-serif',
+        fill: new Fill({ color: '#fff' }),
+        stroke: new Stroke({ color, width: 3 }),
+        rotation
+      })
+    }))
+    routeSource!.addFeature(labelFeature)
+  })
+}
+
 // 绘制设备节点 - 只显示系统设备（登陆站、放大器、分支器），不显示 waypoint
 const drawPoints = () => {
   if (!pointSource) return
@@ -326,7 +602,7 @@ const drawPoints = () => {
   const source = pointSource
   
   // 系统设备类型（需要显示的）
-  const systemDeviceTypes = ['landing', 'amplifier_e', 'amplifier_w', 'bu', 'branching', 'underwater']
+  const systemDeviceTypes = ['landing', 'amplifier_e', 'amplifier_w', 'ola', 'bu', 'branching', 'underwater']
   
   // 过滤只显示系统设备，排除 waypoint
   const systemDevices = sortedPoints.value.filter(point => 
@@ -341,25 +617,22 @@ const drawPoints = () => {
       pointType: point.type
     })
     
-    const isSelected = point.id === props.selectedPointId
     // 使用缓存的高程数据来判断岸上/水下站点
     const elevation = elevationCache.value[point.id]
-    const iconUrl = getPointIcon(point.type, isSelected, elevation)
+    const iconUrl = getPointIcon(point.type, false, elevation)
     
     feature.setStyle(new Style({
       image: new Icon({
         src: iconUrl,
-        scale: isSelected ? 0.22 : 0.18,
+        scale: 0.18,
         anchor: [0.5, 0.5]
       }),
       text: new Text({
         text: point.name,
         offsetY: 16,
-        font: isSelected ? 'bold 10px sans-serif' : '9px sans-serif',
+        font: '9px sans-serif',
         fill: new Fill({ color: '#374151' }),
-        stroke: new Stroke({ color: '#fff', width: 3 }),
-        backgroundFill: isSelected ? new Fill({ color: 'rgba(59, 130, 246, 0.1)' }) : undefined,
-        padding: isSelected ? [2, 4, 2, 4] : undefined
+        stroke: new Stroke({ color: '#fff', width: 3 })
       })
     }))
     
@@ -381,7 +654,7 @@ const flyToPoint = (pointId: string) => {
   })
 }
 
-// 处理指针移动 - 显示鼠标样式
+  // 处理指针移动 - 显示鼠标样式
 const handlePointerMove = (evt: any) => {
   const features = map?.getFeaturesAtPixel(evt.pixel, {
     layerFilter: layer => layer === pointLayer
@@ -392,6 +665,8 @@ const handlePointerMove = (evt: any) => {
     // BU 节点显示可点击样式
     if (pointType === 'bu' || pointType === 'branching') {
       mapContainer.value!.style.cursor = 'pointer'
+    } else if (props.draggableAmplifiers && isAmplifierFeature(features[0] as Feature)) {
+      mapContainer.value!.style.cursor = 'grab'
     } else {
       mapContainer.value!.style.cursor = 'default'
     }
@@ -535,6 +810,11 @@ const initMap = () => {
     coordinates.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
     handlePointerMove(evt)
   })
+
+  // Step 6.2: 初始化拖拽交互
+  if (props.draggableAmplifiers) {
+    setTimeout(() => setupTranslateInteraction(), 200)
+  }
   
   // 双击事件 - BU 节点打开配置对话框
   map.on('dblclick', (evt) => {
@@ -655,42 +935,6 @@ const initMap = () => {
   }
 }
 
-// 更新点样式（不重新创建，只更新选中状态）
-const updatePointStyles = () => {
-  if (!pointSource) return
-  
-  pointSource.getFeatures().forEach(feature => {
-    const pointId = feature.get('pointId')
-    const pointType = feature.get('pointType')
-    const pointName = feature.get('pointName')
-    const isSelected = pointId === props.selectedPointId
-    // 使用缓存的高程数据
-    const elevation = elevationCache.value[pointId]
-    const iconUrl = getPointIcon(pointType, isSelected, elevation)
-    
-    feature.setStyle(new Style({
-      image: new Icon({
-        src: iconUrl,
-        scale: isSelected ? 0.22 : 0.18,
-        anchor: [0.5, 0.5]
-      }),
-      text: new Text({
-        text: pointName,
-        offsetY: 16,
-        font: isSelected ? 'bold 10px sans-serif' : '9px sans-serif',
-        fill: new Fill({ color: '#374151' }),
-        stroke: new Stroke({ color: '#fff', width: 3 }),
-        backgroundFill: isSelected ? new Fill({ color: 'rgba(59, 130, 246, 0.1)' }) : undefined,
-        padding: isSelected ? [2, 4, 2, 4] : undefined
-      })
-    }))
-  })
-}
-
-// 选中节点变化时只更新样式，不重新绘制（避免覆盖拖拽修改）
-watch(() => props.selectedPointId, () => {
-  updatePointStyles()
-})
 
 // 防抖重绘，避免 apply 时频繁刷新导致卡死
 let redrawTimer: ReturnType<typeof setTimeout> | null = null
@@ -740,6 +984,16 @@ watch(
     if (newRouteId && newRouteId !== lastRouteId && map) {
       lastRouteId = newRouteId
       scheduleRedraw(true, true)
+    }
+  }
+)
+
+// 监听光纤段变化 - 重绘线路显示光纤
+watch(
+  () => connectorStore.elements.filter(e => e.type === 'fiber').length,
+  () => {
+    if (map) {
+      scheduleRedraw(false, true)
     }
   }
 )
@@ -811,10 +1065,15 @@ onUnmounted(() => {
       </button>
     </div>
     
-    <!-- 编辑模式提示 -->
-    <div v-if="editable" class="absolute top-3 left-3 bg-blue-500 text-white px-3 py-1.5 rounded text-xs shadow z-10">
-      编辑模式：可拖拽调整放大器位置
+    <!-- 拖拽放大器 tooltip -->
+    <div
+      v-if="dragTooltip.visible"
+      class="absolute bg-purple-600 text-white px-3 py-1.5 rounded-lg text-xs shadow-lg z-20 pointer-events-none whitespace-nowrap"
+      :style="{ left: dragTooltip.x + 'px', top: dragTooltip.y + 'px' }"
+    >
+      {{ dragTooltip.text }}
     </div>
+
     
     <!-- 坐标显示 -->
     <div class="absolute bottom-3 left-3 bg-white/90 px-3 py-1.5 rounded text-xs text-gray-600 shadow z-10">
@@ -845,6 +1104,10 @@ onUnmounted(() => {
         <div class="flex items-center gap-2">
           <img src="/image/underwater.png" class="w-4 h-4 object-contain" />
           <span class="text-gray-600">水下站点</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="w-4 h-0.5 bg-amber-400 rounded"></span>
+          <span class="text-gray-600">光纤段</span>
         </div>
       </div>
     </div>

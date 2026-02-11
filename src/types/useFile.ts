@@ -502,14 +502,47 @@ export interface SimulationMetricsMatrix {
   snr_nli_matrix_db: number[][]  // 非线性信噪比矩阵
 }
 
+/** 终端 GSNR 统计 */
+export interface FinalGsnrStats {
+  avg_db: number                 // 平均 GSNR (dB)
+  min_db: number                 // 最差 GSNR (dB)
+  max_db: number                 // 最佳 GSNR (dB)
+  worst_channel: string          // 最差信道编号
+  best_channel: string           // 最佳信道编号
+}
+
+/** 终端 OSNR 统计 */
+export interface FinalOsnrStats {
+  avg_db: number                 // 平均 OSNR (dB)
+  min_db: number                 // 最差 OSNR (dB)
+}
+
 /** 链路性能汇总 */
 export interface SimulationSummary {
   total_length_km: number        // 链路总长度 (km)
   total_span_count: number       // Span 总数
-  final_gsnr_avg_db: number      // 终端平均 GSNR (dB)
-  final_gsnr_min_db: number      // 终端最差 GSNR (dB)
-  final_osnr_avg_db: number      // 终端平均 OSNR (dB)
+  final_gsnr: FinalGsnrStats     // 终端 GSNR 统计
+  final_osnr: FinalOsnrStats     // 终端 OSNR 统计
   system_capacity_tbps: number   // 系统总容量 (Tbps)
+  // 兼容旧字段
+  final_gsnr_avg_db: number
+  final_gsnr_min_db: number
+  final_osnr_avg_db: number
+}
+
+/** 仿真位置维度 */
+export interface SimulationPositions {
+  count: number                  // 测量位置点数量
+  names: string[]                // 位置名称 ["Tx", "AMP-1", ...]
+  distances_km: number[]         // 各位置距离 (km)
+  span_ids: string[]             // Span ID 序列
+}
+
+/** 仿真信道维度 */
+export interface SimulationChannels {
+  count: number                  // 信道数量
+  ids: string[]                  // 信道编号 ["Ch1", "Ch2", ...]
+  frequencies_thz: number[]      // 各信道中心频率 (THz)
 }
 
 /** 仿真结果缓存 */
@@ -518,10 +551,13 @@ export interface SimulationCache {
   timestamp: string              // 仿真完成的时间戳 (ISO 8601)
   route_ref: RouteRef            // 本次仿真对应的链路标识
   model_selection: ModelSelection  // 本次仿真使用的计算模型
-  span_sequence: string[]        // Span 序列，记录计算顺序
-  channel_count: number          // 信道数量
-  metrics: SimulationMetricsMatrix  // 仿真结果指标集合
+  positions: SimulationPositions  // 位置维度信息
+  channels: SimulationChannels   // 信道维度信息
+  metrics: SimulationMetricsMatrix  // 仿真结果指标集合（矩阵）
   summary: SimulationSummary     // 链路性能汇总
+  // 兼容旧字段
+  span_sequence?: string[]
+  channel_count?: number
 }
 
 // ---------- 5.2 系统规划缓存 (system_planning_cache) ----------

@@ -6,9 +6,8 @@ import ConnectorPanel from '@/modules/design/panels/ConnectorPanel.vue'
 // BUConfigPanel 已移除，BU 配置统一在系统规划弹窗中完成
 import WDMConfigDialog from '@/modules/design/dialogs/WDMConfigDialog.vue'
 import ConnectorDialog from '@/modules/design/dialogs/ConnectorDialog.vue'
-import RepeaterConfigDialog from '@/modules/design/dialogs/RepeaterConfigDialog.vue'
 import SimulationModelSelectDialog from '@/modules/design/dialogs/SimulationModelSelectDialog.vue'
-import LinkAnalysisDialog from '@/modules/design/dialogs/LinkAnalysisDialog.vue'
+import SimulationAnalysisDialog from '@/modules/design/dialogs/SimulationAnalysisDialog.vue'
 import SystemPlanningWizard from '@/modules/design/dialogs/SystemPlanningWizard.vue'
 import type { WizardConfig } from '@/modules/design/dialogs/SystemPlanningWizard.vue'
 import LinkConfigDialog from '@/modules/design/dialogs/LinkConfigDialog.vue'
@@ -28,7 +27,7 @@ import type { SpanScanResult, OpticalLink, ModulationFormat, FiberSpan, LinkNode
 import type { SpanScanConfig } from '@/types/systemPlanning'
 import { MODULATION_PARAMS } from '@/types/simulation'
 import { connectorTypeLabels } from '@/types/connector'
-import { Cable, Radio, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle } from 'lucide-vue-next'
+import { Cable, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle, DollarSign, Activity } from 'lucide-vue-next'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -243,8 +242,33 @@ const initLandingStationsFromRoute = () => {
   }
 }
 
-// 监听 elements 变化
-watch(() => connectorStore.elements.length, (newLen) => {
+// 监听 elements 变化 — 检测 OLA 添加后自动更新性能面板
+let prevOlaCount = 0
+watch(() => connectorStore.elements.length, () => {
+  const olaElements = connectorStore.elements.filter(e => e.type === 'ola')
+  if (olaElements.length > 0 && olaElements.length !== prevOlaCount) {
+    const newOlaCount = olaElements.length
+    prevOlaCount = newOlaCount
+    // 延迟更新性能面板，等待响应式更新稳定
+    setTimeout(() => {
+      const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+      const ampCount = newOlaCount
+      const avgSpan = totalLength > 0 ? totalLength / (ampCount + 1) : 72.5
+      
+      autoPlacementResult.value = {
+        positions: olaElements.map(e => ({ kp: e.kp, longitude: e.longitude, latitude: e.latitude })),
+        count: ampCount
+      }
+      
+      currentLinkName.value = routeStore.selectedRoute?.name || '链路'
+      centerViewMode.value = 'map'
+      
+      appStore.showNotification({
+        type: 'success',
+        message: `已应用配置，放大器数量: ${ampCount}，平均 Span: ${avgSpan.toFixed(1)}km`
+      })
+    }, 300)
+  }
 })
 
 // 本地编辑状态
@@ -361,12 +385,6 @@ const costConfigForPanel = computed(() => {
   }
 })
 
-// 导出报告
-const handleExportReport = () => {
-  appStore.showNotification({ type: 'info', message: '报告导出功能开发中...' })
-  appStore.addLog('INFO', '用户请求导出系统规划报告')
-}
-
 // 跳转到工程设置页面
 const goToProjectSettings = () => {
   router.push('/settings')
@@ -472,11 +490,10 @@ const handleReset = () => {
 }
 
 // 弹框状态
-const showRepeaterDialog = ref(false)
 const showConnectorDialog = ref(false)
 const showWDMConfigDialog = ref(false)
 const showModelSelectDialog = ref(false)
-const showLinkAnalysisDialog = ref(false)
+const showSimulationAnalysisDialog = ref(false)
 const showPlanningWizard = ref(false)  // 一站式配置向导
 const showLinkConfigDialog = ref(false)  // 系统规划链路配置对话框
 const currentLinkName = ref('')  // 当前计算的链路名称
@@ -501,8 +518,59 @@ onUnmounted(() => {
 
 // Span 扫描结果 (Step 6/7)
 const spanScanResult = ref<SpanScanResult | null>(null)
-const recommendedSpan = ref<number | null>(null)// 自动落位结果
+const recommendedSpan = ref<number | null>(null)
+// Step 6.1: 用户交互调整 Span
+const userSelectedSpan = ref<number | null>(null)
+// 自动落位结果
 const autoPlacementResult = ref<any>(null)
+
+// 链路计算结果摘要（来自系统规划链路配置对话框）
+const linkCalcSummary = ref<{
+  linkName: string
+  metrics: {
+    osnr: { min: number; max: number; avg: number }
+    gsnr: { min: number; max: number; avg: number }
+    power: { min: number; max: number; avg: number }
+    nli: { min: number; max: number; avg: number }
+    qFactor: { min: number; max: number; avg: number }
+  }
+  systemConfig: {
+    amplifierCount: number
+    avgSpanLength: number
+    buCount: number
+    totalBuLoss: number
+    channelCount: number
+    modulation: string
+  }
+  margin: {
+    targetOsnr: number
+    worstMargin: number
+    avgMargin: number
+    meetsRequirement: boolean
+  }
+  costData: {
+    cableCost: number
+    amplifierCost: number
+    buCost: number
+    totalCost: number
+    costItems: Array<{ category: string; model: string; quantity: number | string; unit: string; unitPrice: number; subtotal: number }>
+  }
+} | null>(null)
+
+// 设备统计（优先使用计算结果，否则从接线元统计）
+const deviceStats = computed(() => {
+  if (linkCalcSummary.value?.systemConfig) {
+    return linkCalcSummary.value.systemConfig
+  }
+  return {
+    amplifierCount: connectorStore.elements.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w').length,
+    buCount: connectorStore.elements.filter(e => e.type === 'bu').length,
+    avgSpanLength: 0,
+    channelCount: 0,
+    modulation: '-',
+    totalBuLoss: 0,
+  }
+})
 
 // 放大器配置数据（用于联动链路分析等）
 const savedRepeaterConfigs = ref<Array<{
@@ -613,11 +681,6 @@ const handleCalculateGSNR = () => {
     appStore.showNotification({ type: 'success', message: 'GSNR计算完成' })
     appStore.addLog('INFO', `GSNR计算完成，共${gsnrData.value.length}个数据点`)
   }, 500)
-}
-
-// 打开放大器配置弹框
-const openRepeaterPanel = () => {
-  showRepeaterDialog.value = true
 }
 
 // 打开SLD管理
@@ -745,6 +808,101 @@ const handleSpanSelect = (spanLength: number) => {
   )
   
   appStore.showNotification({ type: 'info', message: `已选择 Span 长度: ${spanLength}km` })
+}
+
+// Step 6.1: 用户交互调整 - 应用用户选择的 Span
+const handleApplyUserSelection = (spanKm: number) => {
+  userSelectedSpan.value = spanKm
+  handleSpanSelect(spanKm)
+  handleApplyRecommendation(spanKm)
+  appStore.addLog('INFO', `用户交互调整: 应用 Span=${spanKm}km`)
+}
+
+// Step 6.1: 恢复系统推荐
+const handleRestoreRecommended = () => {
+  const recSpan = recommendedSpan.value ?? spanScanResult.value?.recommendedSpanKm
+  if (recSpan) {
+    userSelectedSpan.value = null
+    handleSpanSelect(recSpan)
+    handleApplyRecommendation(recSpan)
+    appStore.showNotification({ type: 'info', message: `已恢复系统推荐 Span: ${recSpan}km` })
+  }
+}
+
+// Step 6.2: 地图拖拽放大器后的回调
+const handleAmplifierMoved = (data: { id: string; newKp: number; longitude: number; latitude: number }) => {
+  // 1. 更新 connectorStore
+  const success = connectorStore.updateElement(data.id, {
+    kp: data.newKp,
+    longitude: data.longitude,
+    latitude: data.latitude
+  })
+  
+  if (!success) {
+    appStore.showNotification({ type: 'warning', message: '未找到对应放大器，无法更新' })
+    return
+  }
+  
+  // 2. 同步更新 savedRepeaterConfigs
+  const cfgIdx = savedRepeaterConfigs.value.findIndex(r => r.id === data.id)
+  if (cfgIdx >= 0) {
+    savedRepeaterConfigs.value[cfgIdx].kp = data.newKp
+  }
+  
+  // 3. 更新自动落位结果
+  if (autoPlacementResult.value) {
+    const posIdx = autoPlacementResult.value.positions.findIndex(
+      (p: any) => Math.abs(p.longitude - data.longitude) < 0.01 || 
+                  connectorStore.elements.find(e => e.id === data.id)
+    )
+    // 重新从 connectorStore 拉取最新位置
+    autoPlacementResult.value = {
+      ...autoPlacementResult.value,
+      positions: connectorStore.elements
+        .filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
+        .map(e => ({ kp: e.kp, longitude: e.longitude, latitude: e.latitude }))
+    }
+  }
+  
+  // 4. 重新计算性能指标
+  if (gsnrData.value.length > 0) {
+    gsnrData.value = calculateGSNRData()
+  }
+  
+  // 5. 检测跨段过长风险
+  const allAmps = connectorStore.elements
+    .filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
+    .sort((a, b) => a.kp - b.kp)
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  let maxSpacing = 0
+  let prevKp = 0
+  for (const amp of allAmps) {
+    const spacing = amp.kp - prevKp
+    if (spacing > maxSpacing) maxSpacing = spacing
+    prevKp = amp.kp
+  }
+  // 最后一个放大器到终点
+  if (allAmps.length > 0) {
+    const lastSpacing = totalLength - allAmps[allAmps.length - 1].kp
+    if (lastSpacing > maxSpacing) maxSpacing = lastSpacing
+  }
+  
+  const device = connectorStore.elements.find(e => e.id === data.id)
+  const deviceName = device?.name || data.id
+  
+  if (maxSpacing > 100) {
+    appStore.showNotification({
+      type: 'warning',
+      message: `${deviceName} 已移至 KP ${data.newKp.toFixed(1)}km。⚠️ 最大跨段 ${maxSpacing.toFixed(1)}km 超过 100km，可能导致增益超限！`
+    })
+  } else {
+    appStore.showNotification({
+      type: 'success',
+      message: `${deviceName} 已移至 KP ${data.newKp.toFixed(1)}km`
+    })
+  }
+  
+  appStore.addLog('INFO', `Step 6.2 地图拖拽调整: ${deviceName} → KP ${data.newKp.toFixed(1)}km`)
 }
 
 // 构建当前链路数据 (供链路分析使用)
@@ -984,18 +1142,18 @@ const handleRepeatersSaved = (repeaters: any[]) => {
     gsnrData.value = calculateGSNRData()
   }
   
-  showRepeaterDialog.value = false
   appStore.showNotification({ type: 'success', message: `已保存 ${repeaters.length} 个放大器配置` })
   appStore.addLog('INFO', `放大器配置已更新: ${repeaters.length} 个放大器`)
 }
 
-// 打开链路分析 (Step 9)
+// 打开链路仿真分析
 const openLinkAnalysis = () => {
-  if (!currentOpticalLink.value) {
-    appStore.showNotification({ type: 'warning', message: '请先导入路由数据' })
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  if (totalLength === 0 && connectorStore.elements.length === 0) {
+    appStore.showNotification({ type: 'warning', message: '请先导入路由数据或配置链路' })
     return
   }
-  showLinkAnalysisDialog.value = true
+  showSimulationAnalysisDialog.value = true
 }
 
 // 器件库为空警告弹窗
@@ -1147,45 +1305,85 @@ const handleWizardStartCalculation = (config: WizardConfig) => {
 const handleLinkConfigApplyResult = (result: any) => {
   // 使用 setTimeout 延迟执行，避免响应式更新循环
   setTimeout(() => {
-    // 将 LinkConfigDialog 的计算结果转换为 spanScanResult 格式
     const avgSpan = result.avgSpanLength || 72.5
     const amplifierCount = result.amplifierCount || 0
-    const channelCount = 96 // 默认波道数
     
-    // 生成每个信道的 GSNR/OSNR 数据
-    const gsnrPerChannel = Array(channelCount).fill(result.metrics?.gsnr?.avg || 18)
-    const osnrPerChannel = Array(channelCount).fill(result.metrics?.osnr?.avg || 25)
-    
-    // 更新性能概览数据 - 使用正确的 SpanScanResult 类型
-    spanScanResult.value = {
-      linkId: routeStore.selectedRoute?.id || '',
-      scannedAt: new Date(),
-      model: 'GN' as const,
-      targetGsnrDb: result.margin?.targetOsnr || 15,
-      spanLengthsKm: [avgSpan],
-      gsnrPerSpanDb: [gsnrPerChannel],
-      osnrPerSpanDb: [osnrPerChannel],
-      scanPoints: [{
-        spanLengthKm: avgSpan,
-        gsnrPerChannelDb: gsnrPerChannel,
-        osnrPerChannelDb: osnrPerChannel,
-        avgGsnrDb: result.metrics?.gsnr?.avg || 18,
-        minGsnrDb: result.metrics?.gsnr?.min || 15,
-        avgOsnrDb: result.metrics?.osnr?.avg || 25,
-        gsnrMarginDb: result.margin?.avgMargin || 3,
-        meetTarget: result.margin?.meetsRequirement ?? true
-      }],
-      feasibleRange: [avgSpan, avgSpan],
-      recommendedSpanKm: avgSpan
+    // 优先使用对话框传递的完整 Span 扫描数据（多点）
+    if (result.spanScanData && result.spanScanData.spanLengthsKm?.length > 1) {
+      const sd = result.spanScanData
+      spanScanResult.value = {
+        linkId: routeStore.selectedRoute?.id || '',
+        scannedAt: new Date(),
+        model: 'GN' as const,
+        targetGsnrDb: sd.targetGsnrDb || 15,
+        spanLengthsKm: sd.spanLengthsKm,
+        gsnrPerSpanDb: sd.scanPoints.map((p: any) => p.gsnrPerChannelDb || [p.avgGsnrDb]),
+        osnrPerSpanDb: sd.scanPoints.map((p: any) => p.osnrPerChannelDb || [p.avgOsnrDb]),
+        scanPoints: sd.scanPoints.map((p: any) => ({
+          spanLengthKm: p.spanLengthKm,
+          gsnrPerChannelDb: p.gsnrPerChannelDb || [p.avgGsnrDb],
+          osnrPerChannelDb: p.osnrPerChannelDb || [p.avgOsnrDb],
+          avgGsnrDb: p.avgGsnrDb,
+          minGsnrDb: p.minGsnrDb ?? p.avgGsnrDb,
+          avgOsnrDb: p.avgOsnrDb,
+          gsnrMarginDb: p.gsnrMarginDb ?? 0,
+          meetTarget: p.meetTarget ?? true,
+        })),
+        feasibleRange: sd.feasibleRange,
+        recommendedSpanKm: sd.recommendedSpanKm,
+      }
+      recommendedSpan.value = sd.recommendedSpanKm
+    } else {
+      // 回退：构造单点结果（不显示图表游标）
+      const channelCount = 96
+      const gsnrPerChannel = Array(channelCount).fill(result.metrics?.gsnr?.avg || 18)
+      const osnrPerChannel = Array(channelCount).fill(result.metrics?.osnr?.avg || 25)
+      spanScanResult.value = {
+        linkId: routeStore.selectedRoute?.id || '',
+        scannedAt: new Date(),
+        model: 'GN' as const,
+        targetGsnrDb: result.margin?.targetOsnr || 15,
+        spanLengthsKm: [avgSpan],
+        gsnrPerSpanDb: [gsnrPerChannel],
+        osnrPerSpanDb: [osnrPerChannel],
+        scanPoints: [{
+          spanLengthKm: avgSpan,
+          gsnrPerChannelDb: gsnrPerChannel,
+          osnrPerChannelDb: osnrPerChannel,
+          avgGsnrDb: result.metrics?.gsnr?.avg || 18,
+          minGsnrDb: result.metrics?.gsnr?.min || 15,
+          avgOsnrDb: result.metrics?.osnr?.avg || 25,
+          gsnrMarginDb: result.margin?.avgMargin || 3,
+          meetTarget: result.margin?.meetsRequirement ?? true
+        }],
+        feasibleRange: [avgSpan, avgSpan],
+        recommendedSpanKm: avgSpan,
+      }
+      recommendedSpan.value = avgSpan
     }
     
-    recommendedSpan.value = avgSpan
+    // 传递用户选择的 Span
+    if (result.userSelectedSpan != null) {
+      userSelectedSpan.value = result.userSelectedSpan
+    }
+    
     currentLinkName.value = result.linkName || routeStore.selectedRoute?.name || '链路'
+    
+    // 存储计算结果摘要（链路成本 + 性能指标）
+    if (result.metrics || result.costData || result.systemConfig) {
+      linkCalcSummary.value = {
+        linkName: result.linkName || '',
+        metrics: result.metrics || { osnr: { min: 0, max: 0, avg: 0 }, gsnr: { min: 0, max: 0, avg: 0 }, power: { min: 0, max: 0, avg: 0 }, nli: { min: 0, max: 0, avg: 0 }, qFactor: { min: 0, max: 0, avg: 0 } },
+        systemConfig: result.systemConfig || { amplifierCount: amplifierCount, avgSpanLength: avgSpan, buCount: 0, totalBuLoss: 0, channelCount: 0, modulation: '-' },
+        margin: result.margin || { targetOsnr: 0, worstMargin: 0, avgMargin: 0, meetsRequirement: false },
+        costData: result.costData || { cableCost: 0, amplifierCost: 0, buCost: 0, totalCost: 0, costItems: [] },
+      }
+    }
     
     // 更新自动放置结果
     autoPlacementResult.value = {
       positions: connectorStore.elements
-        .filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w')
+        .filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
         .map(e => ({ kp: e.kp, longitude: e.longitude, latitude: e.latitude })),
       count: amplifierCount
     }
@@ -1223,7 +1421,7 @@ const routePoints = computed(() => connectorStore.elements)
 const toggleEditMode = () => {
   isEditMode.value = !isEditMode.value
   if (isEditMode.value) {
-    appStore.showNotification({ type: 'info', message: '已开启编辑模式，可拖拽调整放大器位置' })
+    appStore.showNotification({ type: 'info', message: '已开启编辑模式' })
   } else {
     appStore.showNotification({ type: 'info', message: '已关闭编辑模式' })
   }
@@ -1390,28 +1588,6 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
         <div class="flex items-center gap-3 flex-wrap">
           <span class="text-sm font-medium text-gray-700">传输系统规划</span>
           <span class="text-xs text-gray-400">| 配置 → 仿真 → 分析</span>
-          <div class="flex items-center gap-2 ml-2">
-            <span class="text-xs text-gray-500">路由</span>
-            <Select
-              v-if="routeOptions.length > 0"
-              :model-value="routeStore.currentRouteId || ''"
-              :options="routeOptions"
-              class="w-44"
-              @update:model-value="handleRouteSelect"
-            />
-            <span v-else class="text-xs text-gray-400">暂无路由</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-gray-500">RPL</span>
-            <Select
-              v-if="rplOptions.length > 0"
-              :model-value="rplStore.currentTableId || ''"
-              :options="rplOptions"
-              class="w-44"
-              @update:model-value="handleRplSelect"
-            />
-            <span v-else class="text-xs text-gray-400">暂无表格</span>
-          </div>
         </div>
         <div class="flex items-center gap-2">
           <!-- 系统规划 - 主入口 -->
@@ -1422,11 +1598,6 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
           </Tooltip>
           <div class="w-px h-5 bg-gray-300" />
           <!-- 快捷配置按钮 -->
-          <Tooltip content="放大器位置与参数微调">
-            <Button variant="outline" size="sm" @click="openRepeaterPanel">
-              <Radio class="w-4 h-4 mr-1" /> 放大器
-            </Button>
-          </Tooltip>
           <Tooltip content="链路精细仿真分析">
             <Button variant="outline" size="sm" @click="openLinkAnalysis">
               <BarChart2 class="w-4 h-4 mr-1" /> 链路分析
@@ -1461,37 +1632,60 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
     </template>
 
     <template #left>
-      <!-- 3.1.1 电缆/放大器配置 -->
+      <!-- 链路成本 - 联动系统规划链路配置数据 -->
       <Card class="flex-shrink-0">
         <CardHeader class="pb-2">
           <span class="font-semibold text-sm flex items-center gap-2">
-            <Cable class="w-4 h-4 text-primary" />
-            电缆配置
+            <DollarSign class="w-4 h-4 text-green-600" />
+            链路成本
           </span>
         </CardHeader>
         <CardContent class="pt-0">
-          <div class="space-y-3">
-            <div>
-              <label class="block text-xs text-gray-500 mb-1 font-medium">电缆类型</label>
-              <Select v-model="selectedCableType" :options="cableTypeOptions" />
+          <div v-if="linkCalcSummary?.costData" class="space-y-2">
+            <!-- 总成本 -->
+            <div class="p-2.5 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
+              <div class="text-[10px] text-green-600 mb-0.5">链路总成本</div>
+              <div class="text-lg font-bold text-green-800">{{ formatCost(linkCalcSummary.costData.totalCost) }}</div>
             </div>
-            <div>
-              <label class="block text-xs text-gray-500 mb-1 font-medium">放大器类型</label>
-              <Select v-model="selectedRepeaterType" :options="repeaterTypeOptions" />
-            </div>
-            <div>
-              <div class="flex justify-between items-center mb-1">
-                <label class="text-xs text-gray-500 font-medium">放大器间距</label>
-                <span class="text-xs font-bold text-primary">{{ repeaterSpacing }} km</span>
+            <!-- 成本明细 -->
+            <div class="divide-y rounded-lg border overflow-hidden">
+              <div class="flex justify-between px-3 py-1.5 text-xs hover:bg-gray-50">
+                <span class="text-gray-600">海缆</span>
+                <span class="font-mono font-medium">{{ formatCost(linkCalcSummary.costData.cableCost) }}</span>
               </div>
-              <input v-model.number="repeaterSpacing" type="range" min="40" max="120" step="5"
-                class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary" />
+              <div class="flex justify-between px-3 py-1.5 text-xs hover:bg-gray-50">
+                <span class="text-gray-600">放大器</span>
+                <span class="font-mono font-medium">{{ formatCost(linkCalcSummary.costData.amplifierCost) }}</span>
+              </div>
+              <div v-if="linkCalcSummary.costData.buCost > 0" class="flex justify-between px-3 py-1.5 text-xs hover:bg-gray-50">
+                <span class="text-gray-600">分支器</span>
+                <span class="font-mono font-medium">{{ formatCost(linkCalcSummary.costData.buCost) }}</span>
+              </div>
             </div>
+            <!-- 成本构成条 -->
+            <div v-if="linkCalcSummary.costData.totalCost > 0" class="space-y-1">
+              <div class="text-[10px] text-gray-400">成本构成</div>
+              <div class="h-2 bg-gray-100 rounded-full overflow-hidden flex">
+                <div class="h-full bg-blue-500" :style="{ width: (linkCalcSummary.costData.cableCost / linkCalcSummary.costData.totalCost * 100) + '%' }" />
+                <div class="h-full bg-purple-500" :style="{ width: (linkCalcSummary.costData.amplifierCost / linkCalcSummary.costData.totalCost * 100) + '%' }" />
+                <div class="h-full bg-green-500" :style="{ width: (linkCalcSummary.costData.buCost / linkCalcSummary.costData.totalCost * 100) + '%' }" />
+              </div>
+              <div class="flex gap-3 text-[10px] text-gray-400">
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500" />海缆</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-500" />放大器</span>
+                <span v-if="linkCalcSummary.costData.buCost > 0" class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500" />BU</span>
+              </div>
+            </div>
+          </div>
+          <div v-else class="text-center py-4">
+            <DollarSign class="w-8 h-8 mx-auto mb-1.5 text-gray-300" />
+            <div class="text-xs text-gray-400">点击「系统规划」完成计算后</div>
+            <div class="text-xs text-gray-400">成本数据将在此显示</div>
           </div>
         </CardContent>
       </Card>
 
-      <!-- 3.1.2 接线元管理 -->
+      <!-- 接线元管理 -->
       <ConnectorPanel class="flex-1 mt-2 min-h-0" @add="openConnectorAdd" @edit="openConnectorEdit" />
     </template>
 
@@ -1504,39 +1698,23 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
               <Calculator class="w-4 h-4" />
               {{ centerViewMode === 'map' ? '系统布局图' : centerViewMode === 'span' ? 'Span 性能扫描' : 'GSNR沿路由演化' }}
             </span>
-            <div class="flex gap-1">
-              <button 
-                class="px-2 py-1 text-xs rounded transition-colors"
-                :class="centerViewMode === 'map' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'"
-                @click="centerViewMode = 'map'"
-              >
-                布局图
-              </button>
-              <button 
-                class="px-2 py-1 text-xs rounded transition-colors"
-                :class="centerViewMode === 'span' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'"
-                @click="centerViewMode = 'span'"
-              >
-                <Target class="w-3 h-3 inline mr-1" />
-                Span扫描
-              </button>
-              <button 
-                class="px-2 py-1 text-xs rounded transition-colors"
-                :class="centerViewMode === 'gsnr' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'"
-                @click="centerViewMode = 'gsnr'"
-              >
-                <TrendingUp class="w-3 h-3 inline mr-1" />
-                GSNR演化
-              </button>
-            </div>
           </div>
         </CardHeader>
         <CardContent class="flex-1 flex flex-col overflow-hidden p-0">
           <!-- 地图视图 -->
           <div v-show="centerViewMode === 'map'" class="flex-1 min-h-[300px]">
-            <SystemDesignMap ref="systemDesignMapRef" :route-points="routePoints" :selected-point-id="selectedPointId"
-              @point-click="handlePointClick" @bu-dblclick="handleBuDblclick"
-              @line-click="handleLineClick" @edit="handleEdit" @delete="handleDelete" />
+            <SystemDesignMap
+              ref="systemDesignMapRef"
+              :route-points="routePoints"
+              :selected-point-id="selectedPointId"
+              :draggable-amplifiers="!!autoPlacementResult"
+              @point-click="handlePointClick"
+              @bu-dblclick="handleBuDblclick"
+              @line-click="handleLineClick"
+              @edit="handleEdit"
+              @delete="handleDelete"
+              @amplifier-moved="handleAmplifierMoved"
+            />
           </div>
           
           <!-- Span 性能曲线图 (Step 7) -->
@@ -1546,7 +1724,10 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
               :scan-result="spanScanResult"
               :height="320"
               :show-osnr="true"
+              :user-selected-span="userSelectedSpan"
+              :recommended-span="recommendedSpan ?? undefined"
               @select-span="handleSpanSelect"
+              @update:user-selected-span="(v: number | null) => userSelectedSpan = v"
             />
             <div v-else class="flex items-center justify-center h-full text-gray-400">
               <div class="text-center">
@@ -1597,27 +1778,137 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
     </template>
 
     <template #right>
-      <!-- 3.1.5 结果反馈展示 - 使用新的综合结果面板 -->
+      <!-- 性能概览 -->
       <Card class="flex-1 flex flex-col overflow-hidden">
-        <SystemPlanningResultPanel
-          :scan-result="spanScanResult"
-          :total-length="rplStore.currentTable?.metadata?.totalLength ?? 0"
-          :recommended-span="recommendedSpan ?? undefined"
-          :edfa-placement="autoPlacementResult"
-          :cost-config="costConfigForPanel"
-          :link-name="currentLinkName || routeStore.selectedRoute?.name"
-          @apply-recommendation="handleApplyRecommendation"
-          @export-report="handleExportReport"
-          @recalculate="handleSubmit"
-        />
+        <CardHeader class="flex-shrink-0 pb-2 border-b bg-gray-50">
+          <div class="flex items-center justify-between w-full">
+            <span class="font-semibold text-sm flex items-center gap-2 text-gray-700">
+              <Activity class="w-4 h-4 text-blue-500" />
+              {{ currentLinkName || routeStore.selectedRoute?.name || '链路' }}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent class="flex-1 overflow-auto pt-3">
+          <!-- 有计算结果 -->
+          <div v-if="linkCalcSummary" class="space-y-3">
+            <!-- 设备统计 -->
+            <div class="grid grid-cols-2 gap-2">
+              <div class="p-2.5 bg-purple-50 rounded-lg border border-purple-200">
+                <div class="text-[10px] text-purple-600 mb-0.5">放大器</div>
+                <div class="text-xl font-bold text-purple-800">{{ deviceStats.amplifierCount }}</div>
+                <div v-if="deviceStats.avgSpanLength > 0" class="text-[10px] text-purple-500 mt-0.5">均跨 {{ deviceStats.avgSpanLength.toFixed(1) }} km</div>
+              </div>
+              <div class="p-2.5 bg-blue-50 rounded-lg border border-blue-200">
+                <div class="text-[10px] text-blue-600 mb-0.5">分支器 (BU)</div>
+                <div class="text-xl font-bold text-blue-800">{{ deviceStats.buCount }}</div>
+                <div v-if="linkCalcSummary.systemConfig.totalBuLoss > 0" class="text-[10px] text-blue-500 mt-0.5">总损耗 {{ linkCalcSummary.systemConfig.totalBuLoss.toFixed(1) }} dB</div>
+              </div>
+            </div>
+
+            <!-- WDM 配置摘要 -->
+            <div v-if="deviceStats.channelCount > 0" class="flex gap-3 px-1 text-[10px] text-gray-500">
+              <span>{{ deviceStats.channelCount }} 波道</span>
+              <span>{{ deviceStats.modulation }}</span>
+            </div>
+
+            <!-- OSNR 指标 -->
+            <div class="border rounded-lg overflow-hidden">
+              <div class="px-3 py-1.5 bg-orange-50 border-b flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-orange-500" />
+                <span class="text-xs font-medium text-orange-700">OSNR</span>
+              </div>
+              <div class="grid grid-cols-3 divide-x text-center">
+                <div class="py-2">
+                  <div class="text-sm font-bold text-gray-800">{{ linkCalcSummary.metrics.osnr.min.toFixed(1) }}</div>
+                  <div class="text-[10px] text-gray-400">最小 (dB)</div>
+                </div>
+                <div class="py-2">
+                  <div class="text-sm font-bold text-gray-800">{{ linkCalcSummary.metrics.osnr.avg.toFixed(1) }}</div>
+                  <div class="text-[10px] text-gray-400">平均 (dB)</div>
+                </div>
+                <div class="py-2">
+                  <div class="text-sm font-bold text-gray-800">{{ linkCalcSummary.metrics.osnr.max.toFixed(1) }}</div>
+                  <div class="text-[10px] text-gray-400">最大 (dB)</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- GSNR 指标 -->
+            <div class="border rounded-lg overflow-hidden">
+              <div class="px-3 py-1.5 bg-blue-50 border-b flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-blue-500" />
+                <span class="text-xs font-medium text-blue-700">GSNR</span>
+              </div>
+              <div class="grid grid-cols-3 divide-x text-center">
+                <div class="py-2">
+                  <div class="text-sm font-bold text-gray-800">{{ linkCalcSummary.metrics.gsnr.min.toFixed(1) }}</div>
+                  <div class="text-[10px] text-gray-400">最小 (dB)</div>
+                </div>
+                <div class="py-2">
+                  <div class="text-sm font-bold text-gray-800">{{ linkCalcSummary.metrics.gsnr.avg.toFixed(1) }}</div>
+                  <div class="text-[10px] text-gray-400">平均 (dB)</div>
+                </div>
+                <div class="py-2">
+                  <div class="text-sm font-bold text-gray-800">{{ linkCalcSummary.metrics.gsnr.max.toFixed(1) }}</div>
+                  <div class="text-[10px] text-gray-400">最大 (dB)</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 裕量评估 -->
+            <div class="border rounded-lg p-3 space-y-2"
+              :class="linkCalcSummary.margin.meetsRequirement ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
+              <div class="flex items-center gap-1.5 text-xs font-medium"
+                :class="linkCalcSummary.margin.meetsRequirement ? 'text-green-700' : 'text-red-700'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path v-if="linkCalcSummary.margin.meetsRequirement" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                {{ linkCalcSummary.margin.meetsRequirement ? '满足设计要求' : '不满足设计要求' }}
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div class="flex justify-between">
+                  <span class="text-gray-500">目标 OSNR</span>
+                  <span class="font-mono">{{ linkCalcSummary.margin.targetOsnr.toFixed(1) }} dB</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-500">最差余量</span>
+                  <span class="font-mono" :class="linkCalcSummary.margin.worstMargin >= 0 ? 'text-green-600' : 'text-red-600'">
+                    {{ linkCalcSummary.margin.worstMargin.toFixed(1) }} dB
+                  </span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-500">平均余量</span>
+                  <span class="font-mono">{{ linkCalcSummary.margin.avgMargin.toFixed(1) }} dB</span>
+                </div>
+                <div v-if="linkCalcSummary.metrics.qFactor.avg > 0" class="flex justify-between">
+                  <span class="text-gray-500">Q 因子</span>
+                  <span class="font-mono">{{ linkCalcSummary.metrics.qFactor.avg.toFixed(1) }} dB</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 重新计算 -->
+            <Button variant="outline" size="sm" class="w-full text-xs" @click="handleSubmit">
+              <Cpu class="w-3 h-3 mr-1" /> 重新计算
+            </Button>
+          </div>
+
+          <!-- 无数据提示 -->
+          <div v-else class="flex items-center justify-center h-full text-gray-400">
+            <div class="text-center">
+              <Activity class="w-12 h-12 mx-auto mb-2 text-gray-300" />
+              <div class="text-sm">请先执行系统规划计算</div>
+              <div class="text-xs text-gray-400 mt-1">点击「系统规划」按钮启动计算</div>
+            </div>
+          </div>
+        </CardContent>
       </Card>
     </template>
   </MainLayout>
 
   <!-- 弹框组件 -->
-  <RepeaterConfigDialog :visible="showRepeaterDialog" @close="showRepeaterDialog = false"
-    @saved="handleRepeatersSaved" />
-  <ConnectorDialog :visible="showConnectorDialog" :edit-id="editConnectorId" @close="showConnectorDialog = false"
+  <ConnectorDialog
     @saved="showConnectorDialog = false" />
   <WDMConfigDialog 
     :visible="showWDMConfigDialog" 
@@ -1630,10 +1921,10 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
     @close="showModelSelectDialog = false"
     @confirm="handleModelConfirm"
   />
-  <LinkAnalysisDialog
-    :visible="showLinkAnalysisDialog"
-    :link="currentOpticalLink ?? undefined"
-    @close="showLinkAnalysisDialog = false"
+  <SimulationAnalysisDialog
+    :visible="showSimulationAnalysisDialog"
+    :link-calc-summary="linkCalcSummary"
+    @close="showSimulationAnalysisDialog = false"
   />
   
   <!-- 一站式系统规划配置向导 -->

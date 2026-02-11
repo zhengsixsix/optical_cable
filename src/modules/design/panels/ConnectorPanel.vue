@@ -39,16 +39,17 @@ const emit = defineEmits<{
 // 筛选类型
 const filterType = ref<ConnectorType | 'all'>('all')
 
-// 筛选后的接线元列表
+// 筛选后的接线元列表（排除海缆段，海缆段属于路由规划阶段数据）
 const filteredElements = computed(() => {
+  const base = connectorStore.elements.filter(e => e.type !== 'cable_segment')
   if (filterType.value === 'all') {
-    return connectorStore.elements
+    return base
   }
   // 放大器类型合并过滤（amplifier_e 和 amplifier_w 一起过滤）
   if (filterType.value === 'amplifier_e') {
-    return connectorStore.elements.filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
+    return base.filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
   }
-  return connectorStore.elements.filter(e => e.type === filterType.value)
+  return base.filter(e => e.type === filterType.value)
 })
 
 // 获取类型样式

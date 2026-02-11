@@ -82,7 +82,7 @@ export const connectorFilterLabels: Partial<Record<ConnectorType, string>> = {
   underwater: '水下站点',
   amplifier_e: '放大器',
   bu: '分支器',
-  cable_segment: '海缆段'
+  fiber: '光纤段'
 }
 
 // 接线元状态标签

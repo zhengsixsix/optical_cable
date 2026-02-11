@@ -764,9 +764,18 @@ function spanIteration(simInput) {
     const noiseFigure_dB = amplifierParams.noiseFigure || 4.8
     const NF_linear = Math.pow(10, noiseFigure_dB / 10)
 
-    // NLI 效率系数
-    const channelBW_Hz = baudRateGBaud * 1e9
-    const eta = computeGnEta(fiberParams, channelBW_Hz)
+    // GN-Model 光纤参数
+    const lambda_m = PHYS.c / (centerFreqTHz * 1e12)
+    const D_SI = (fiberParams.dispersion || 20.5) * 1e-6  // ps/nm/km → s/m²
+    const beta2 = Math.abs(D_SI * lambda_m * lambda_m / (2 * Math.PI * PHYS.c))
+    let gamma_W_m  // 非线性系数 1/(W·m)
+    if (fiberParams.nonlinearIndex) {
+        gamma_W_m = (2 * Math.PI * fiberParams.nonlinearIndex * 1e-20) / (lambda_m * (fiberParams.effectiveArea || 130) * 1e-12)
+    } else {
+        gamma_W_m = (fiberParams.nonlinearCoeff || 0.8) * 1e-3
+    }
+    const B_ch = baudRateGBaud * 1e9            // 信道带宽 (Hz)
+    const B_wdm = channelCount * spacingGHz * 1e9  // WDM 总带宽 (Hz)
 
     // BU 总插损
     const totalBuLoss_dB = buConfigs.reduce((s, bu) => s + (bu.trunkLoss || 0), 0)
@@ -795,9 +804,19 @@ function spanIteration(simInput) {
         // 有效长度 Leff
         const L_eff = (1 - Math.exp(-2 * alpha_Np_per_m * spanLen_m)) / (2 * alpha_Np_per_m)
 
+        // GN-Model: 单跨段单信道 NLI 噪声功率 (W)
+        // P_NLI = (16/27) * γ² * L_eff * P_ch³ * asinh(π²/2 * |β2| * L_eff * B_wdm²) / (π² * |β2| * B_ch²)
+        const asinhArg = Math.PI * Math.PI / 2 * beta2 * L_eff * B_wdm * B_wdm
+        const asinhVal = Math.log(asinhArg + Math.sqrt(asinhArg * asinhArg + 1))
+        const P_nli_per_span = (16 / 27) * gamma_W_m * gamma_W_m * L_eff
+            * Math.pow(launchPower_W, 3) * asinhVal
+            / (Math.PI * Math.PI * beta2 * B_ch * B_ch)
+
         // 逐信道计算
         const gsnrPerChannel = []
         const osnrPerChannel = []
+        const powerPerChannel = []
+        const nliPerChannel = []
 
         for (let ch = 0; ch < channelCount; ch++) {
             const freq_Hz = channelFrequencies[ch] * 1e12
@@ -806,16 +825,9 @@ function spanIteration(simInput) {
             // P_ASE_per_amp = h * f * NF * (G - 1) * B_ref
             const P_ase_per_amp = PHYS.h * freq_Hz * NF_linear * (G_linear - 1) * PHYS.refBandwidth
 
-            // 每个 span 的 NLI 噪声功率 (W)
-            // P_NLI_per_span = η * P³ * L_eff² * (N_ch * Δf)^(approx)
-            // 简化 GN-Model: P_NLI ≈ η_total * P_launch³
-            // η_total 考虑信道数带宽: η * N_ch * Δf_ch
-            const totalBW = channelCount * spacingGHz * 1e9
-            const P_nli_per_span = eta * L_eff * L_eff * Math.pow(launchPower_W, 3) * totalBW
-
             // 累积 N 个放大器
             const totalAse_W = P_ase_per_amp * numAmps
-            const totalNli_W = P_nli_per_span * numAmps  // GN-Model 假设 NLI 线性累加
+            const totalNli_W = P_nli_per_span * numAmps  // GN-Model: NLI 按跨段数线性累加
 
             // 考虑 BU 插损（作为额外的等效 ASE 贡献）
             const buLoss_linear = Math.pow(10, totalBuLoss_dB / 10)
@@ -835,6 +847,11 @@ function spanIteration(simInput) {
 
             gsnrPerChannel.push(parseFloat((gsnr_dB - edgePenalty).toFixed(2)))
             osnrPerChannel.push(parseFloat((osnr_dB - edgePenalty * 0.5).toFixed(2)))
+            // 信号功率 (dBm)：各信道发射功率含边缘修正
+            powerPerChannel.push(parseFloat((launchPowerDbm - edgePenalty * 0.3).toFixed(2)))
+            // NLI 噪声功率 (dBm)
+            const nli_dBm = 10 * Math.log10(totalNli_W * 1000)  // W → dBm
+            nliPerChannel.push(parseFloat((nli_dBm + edgePenalty * 0.5).toFixed(2)))
         }
 
         const minGsnr = Math.min(...gsnrPerChannel)
@@ -847,6 +864,8 @@ function spanIteration(simInput) {
             actualSpanKm: parseFloat(actualSpanLen.toFixed(1)),
             gsnrPerChannelDb: gsnrPerChannel,
             osnrPerChannelDb: osnrPerChannel,
+            powerPerChannelDb: powerPerChannel,
+            nliPerChannelDb: nliPerChannel,
             avgGsnrDb: parseFloat(avgGsnr.toFixed(2)),
             minGsnrDb: parseFloat(minGsnr.toFixed(2)),
             avgOsnrDb: parseFloat(avgOsnr.toFixed(2)),
@@ -959,15 +978,23 @@ function buildDetailedResult(simInput, recommendedPoint, spanScanResult) {
     gsnrEvolution.push(parseFloat(recommendedPoint.avgGsnrDb.toFixed(1)))
     osnrEvolution.push(parseFloat(recommendedPoint.avgOsnrDb.toFixed(1)))
 
-    // OSNR/GSNR 频谱统计
+    // OSNR/GSNR/Power/NLI 频谱统计
     const gsnrSpectrum = recommendedPoint.gsnrPerChannelDb
     const osnrSpectrum = recommendedPoint.osnrPerChannelDb
+    const powerSpectrum = recommendedPoint.powerPerChannelDb || []
+    const nliSpectrum = recommendedPoint.nliPerChannelDb || []
     const gsnrMin = Math.min(...gsnrSpectrum)
     const gsnrMax = Math.max(...gsnrSpectrum)
     const gsnrAvg = gsnrSpectrum.reduce((a, b) => a + b, 0) / gsnrSpectrum.length
     const osnrMin = Math.min(...osnrSpectrum)
     const osnrMax = Math.max(...osnrSpectrum)
     const osnrAvg = osnrSpectrum.reduce((a, b) => a + b, 0) / osnrSpectrum.length
+    const powerMin = powerSpectrum.length > 0 ? Math.min(...powerSpectrum) : -2.1
+    const powerMax = powerSpectrum.length > 0 ? Math.max(...powerSpectrum) : -0.8
+    const powerAvg = powerSpectrum.length > 0 ? powerSpectrum.reduce((a, b) => a + b, 0) / powerSpectrum.length : (wdmParams.launchPower ?? -1.5)
+    const nliMin = nliSpectrum.length > 0 ? Math.min(...nliSpectrum) : -30
+    const nliMax = nliSpectrum.length > 0 ? Math.max(...nliSpectrum) : -25
+    const nliAvg = nliSpectrum.length > 0 ? nliSpectrum.reduce((a, b) => a + b, 0) / nliSpectrum.length : -28
     const worstChannelIndex = gsnrSpectrum.indexOf(gsnrMin)
 
     // 成本计算
@@ -994,7 +1021,16 @@ function buildDetailedResult(simInput, recommendedPoint, spanScanResult) {
                 max: parseFloat(gsnrMax.toFixed(1)),
                 avg: parseFloat(gsnrAvg.toFixed(1))
             },
-            power: {min: -2.1, max: -0.8, avg: parseFloat((wdmParams.launchPower ?? -1.5).toFixed(1))},
+            power: {
+                min: parseFloat(powerMin.toFixed(1)),
+                max: parseFloat(powerMax.toFixed(1)),
+                avg: parseFloat(powerAvg.toFixed(1))
+            },
+            nli: {
+                min: parseFloat(nliMin.toFixed(1)),
+                max: parseFloat(nliMax.toFixed(1)),
+                avg: parseFloat(nliAvg.toFixed(1))
+            },
             qFactor: {min: 8.2, max: 10.1, avg: 9.0},
         },
         systemConfig: {
@@ -1016,6 +1052,8 @@ function buildDetailedResult(simInput, recommendedPoint, spanScanResult) {
             channelFrequencies,
             endOsnrSpectrum: osnrSpectrum,
             endGsnrSpectrum: gsnrSpectrum,
+            endPowerSpectrum: powerSpectrum,
+            endNliSpectrum: nliSpectrum,
             positions,
             positionNames,
             osnrEvolution,

@@ -95,7 +95,7 @@ export interface MonitoringConfig {
 }
 
 // 光纤仿真模型类型
-export type FiberSimulationModel = 'GN' | 'EGN'
+export type FiberSimulationModel = 'GN' | 'EGN' | 'SSFM'
 
 // 光纤仿真配置接口
 export interface FiberSimulationConfig {

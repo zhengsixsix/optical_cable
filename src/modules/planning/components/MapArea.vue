@@ -12,8 +12,8 @@ import {
 } from '@/stores'
 import {Button, Tooltip} from '@/shared/components/base'
 import {
-  MousePointer, Move, Plus, Trash2, Square, Edit3,
-  Play, Pause, Loader2, Settings, FileSpreadsheet, Scissors, Wrench
+  Square, Edit3,
+  Play, Pause, Loader2, FileSpreadsheet, Scissors
 } from 'lucide-vue-next'
 
 // 新增组件导入
@@ -33,7 +33,8 @@ import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import OSM from 'ol/source/OSM'
-import {DragBox, DragPan} from 'ol/interaction'
+import {DragBox, Modify} from 'ol/interaction'
+import Collection from 'ol/Collection'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
@@ -78,15 +79,7 @@ const loading = ref(true)
 const coordinates = ref({lon: 0, lat: 0})
 const isPlanning = ref(false)
 const isEditingRoute = ref(false)
-const selectedPointFeature = ref<Feature | null>(null)
 const settingsStore = useSettingsStore()
-const isDraggingPoint = ref(false)
-const isDraggingLine = ref(false)
-const selectedLineFeature = ref<Feature | null>(null)
-const dragLineStartCoord = ref<number[] | null>(null)  // 拖拽起始坐标
-
-// 路径编辑模式: 'drag' 拖拽 | 'add' 添加点 | 'delete' 删除点
-const editMode = ref<'drag' | 'add' | 'delete'>('drag')
 
 // 新增弹窗状态
 const showParetoFrontierDialog = ref(false)
@@ -104,7 +97,10 @@ const currentSegmentGenerateTime = ref('')  // 生成时间
 // 选中的光纤线
 const selectedCableId = ref<string | null>(null)
 
-// 线段 hover 状态
+// 当前高亮的海缆段 ID（点击持续高亮）
+const selectedFineSegmentId = ref<string | null>(null)
+
+// 线段 hover 状态（仅用于海缆段）
 const hoveredFeature = ref<Feature | null>(null)
 
 let map: Map | null = null
@@ -126,11 +122,9 @@ let shippingDataLoaded = false
 let elevationLayers: WebGLTileLayer[] = []  // 海洋高程 GeoTIFF 图层
 let routeLayer: VectorLayer<VectorSource> | null = null
 let routeSource: VectorSource | null = null
+let modifyInteraction: Modify | null = null
+const editableFeatures: any = new Collection([])
 
-const toolModes = [
-  {value: 'select', label: '选择', icon: MousePointer},
-  {value: 'pan', label: '拖拽', icon: Move},
-]
 
 const enableBoxSelect = () => {
   if (!map || !dragBox) return
@@ -219,73 +213,156 @@ const handleAction = (actionName: string) => {
   appStore.addLog('INFO', actionName)
 }
 
-// 设置编辑模式（再次点击取消）
-const setEditMode = (mode: 'drag' | 'add' | 'delete') => {
-  const modeNames = {drag: '拖拽调整', add: '添加节点', delete: '删除节点'}
-
-  // 如果已经在该模式，再次点击则取消编辑模式
-  if (isEditingRoute.value && editMode.value === mode) {
-    isEditingRoute.value = false
-    disablePointDragging()
-    appStore.showNotification({type: 'info', message: `已关闭${modeNames[mode]}模式`})
-    return
-  }
-
-  // 开启或切换编辑模式
-  if (!isEditingRoute.value) {
-    isEditingRoute.value = true
-    mapStore.setToolMode('select')
-    enablePointDragging()
-  }
-  editMode.value = mode
-  appStore.showNotification({type: 'info', message: `已切换到${modeNames[mode]}模式`})
-}
-
-// 开启/关闭路径编辑模式
+// 切换路由调整模式（基于 OL Modify 交互，直接拖拽线条调整路线）
 const toggleRouteEditing = () => {
   isEditingRoute.value = !isEditingRoute.value
 
   if (isEditingRoute.value) {
     mapStore.setToolMode('select')
-    appStore.showNotification({type: 'info', message: '路径编辑模式已开启，点击路径点可拖拽调整位置'})
-    appStore.addLog('INFO', '开启路径编辑模式')
-    enablePointDragging()
+    enableModifyInteraction()
+    appStore.showNotification({type: 'info', message: '路由调整模式已开启，直接拖拽线条调整路线'})
+    appStore.addLog('INFO', '开启路由调整模式')
   } else {
-    appStore.showNotification({type: 'info', message: '路径编辑模式已关闭'})
-    appStore.addLog('INFO', '关闭路径编辑模式')
-    disablePointDragging()
+    disableModifyInteraction()
+    appStore.showNotification({type: 'info', message: '路由调整模式已关闭'})
+    appStore.addLog('INFO', '关闭路由调整模式')
   }
 }
 
-// 获取DragPan交互
-let dragPanInteraction: DragPan | null = null
-
-// 启用点拖拽
-const enablePointDragging = () => {
+// 启用 Modify 交互（拖拽线条调整路线）
+const enableModifyInteraction = () => {
   if (!map) return
 
-  // 找到DragPan交互并保存引用
-  map.getInteractions().forEach((interaction) => {
-    if (interaction instanceof DragPan) {
-      dragPanInteraction = interaction
-    }
+  // 重绘路线以收集可编辑要素
+  drawParetoRoutes()
+
+  // 移除旧的 Modify
+  if (modifyInteraction) {
+    map.removeInteraction(modifyInteraction)
+    modifyInteraction = null
+  }
+
+  // 创建 Modify 交互 - 仅对选中路线的 LineString 生效
+  modifyInteraction = new Modify({
+    features: editableFeatures,
+    insertVertexCondition: () => true, // 允许在边上插入新顶点
+    style: new Style({
+      image: new CircleStyle({
+        radius: 6,
+        fill: new Fill({ color: '#ff6600' }),
+        stroke: new Stroke({ color: '#fff', width: 2 }),
+      }),
+    }),
   })
 
-  ;(map as any).on('pointermove', handlePointerMove)
-  ;(map as any).on('pointerdown', handlePointerDown)
-  ;(map as any).on('pointerup', handlePointerUp)
+  // 修改结束时同步坐标回 store
+  modifyInteraction.on('modifyend', handleModifyEnd)
+
+  map.addInteraction(modifyInteraction)
 }
 
-// 禁用点拖拽
-const disablePointDragging = () => {
+// 禁用 Modify 交互
+const disableModifyInteraction = () => {
   if (!map) return
-      ;
-  (map as any).un('pointermove', handlePointerMove)
-  ;(map as any).un('pointerdown', handlePointerDown)
-  ;(map as any).un('pointerup', handlePointerUp)
-  selectedPointFeature.value = null
-  isDraggingPoint.value = false
-  dragPanInteraction = null
+
+  if (modifyInteraction) {
+    map.removeInteraction(modifyInteraction)
+    modifyInteraction = null
+  }
+  editableFeatures.clear()
+
+  // 重绘路线恢复正常显示
+  drawParetoRoutes()
+}
+
+// Modify 交互结束回调：同步修改后的坐标回 store
+const handleModifyEnd = (evt: any) => {
+  const features = evt.features.getArray()
+  for (const feature of features) {
+    if (!feature.get('isRouteLine')) continue
+
+    const routeId = feature.get('routeId')
+    const route = routeStore.paretoRoutes.find(r => r.id === routeId)
+    if (!route) continue
+
+    const geom = feature.getGeometry() as LineString
+    const newCoords = geom.getCoordinates() as [number, number][]
+
+    // 重建路由点：保留 landing/branching 元数据，其他设为 waypoint
+    const oldPoints = route.points
+    const newPoints: typeof oldPoints = []
+
+    // 找到 landing/branching 点的原始信息（用于保留元数据）
+    const keyPointMap: Record<string, typeof oldPoints[0]> = {}
+    for (const p of oldPoints) {
+      if (p.type === 'landing' || p.type === 'branching') {
+        const key = `${p.coordinates[0].toFixed(4)},${p.coordinates[1].toFixed(4)}`
+        keyPointMap[key] = p
+      }
+    }
+
+    for (let i = 0; i < newCoords.length; i++) {
+      const coord = newCoords[i]
+      const key = `${coord[0].toFixed(4)},${coord[1].toFixed(4)}`
+      const existing = keyPointMap[key]
+
+      if (existing) {
+        // 保留 landing/branching 元数据
+        newPoints.push({ ...existing, coordinates: coord })
+      } else {
+        // 新的 waypoint
+        newPoints.push({
+          id: `point-edit-${Date.now()}-${i}`,
+          coordinates: coord,
+          type: 'waypoint',
+          name: '',
+        })
+      }
+    }
+
+    // 确保第一个和最后一个点保持为 landing（固定端点）
+    if (newPoints.length > 0 && oldPoints.length > 0) {
+      // 强制第一个点坐标与原始 landing 一致
+      const firstLanding = oldPoints.find(p => p.type === 'landing')
+      if (firstLanding) {
+        newPoints[0] = { ...firstLanding }
+        newCoords[0] = firstLanding.coordinates
+      }
+      // 强制最后一个点坐标与原始末端 landing 一致
+      const lastLanding = [...oldPoints].reverse().find(p => p.type === 'landing')
+      if (lastLanding) {
+        newPoints[newPoints.length - 1] = { ...lastLanding }
+        newCoords[newCoords.length - 1] = lastLanding.coordinates
+      }
+    }
+
+    // 重建 segments
+    const newSegments: typeof route.segments = []
+    for (let i = 0; i < newPoints.length - 1; i++) {
+      const segLength = calculateDistanceFromCoords(newPoints[i].coordinates, newPoints[i + 1].coordinates)
+      newSegments.push({
+        id: `${routeId}-seg-${i}`,
+        startPointId: newPoints[i].id,
+        endPointId: newPoints[i + 1].id,
+        length: Math.round(segLength),
+        depth: route.segments[0]?.depth || 2000,
+        cableType: route.segments[0]?.cableType || 'LW',
+        riskLevel: route.segments[0]?.riskLevel || 'low',
+        cost: Math.round(segLength * 30000),
+      })
+    }
+
+    // 更新 store
+    route.points = newPoints
+    route.segments = newSegments
+    route.totalLength = Math.round(newSegments.reduce((sum, s) => sum + s.length, 0))
+
+    // 更新 LineString 几何（确保端点回正）
+    geom.setCoordinates(newCoords)
+
+    appStore.showNotification({ type: 'success', message: '路线已调整' })
+    appStore.addLog('INFO', `路线已调整：${newPoints.length} 个点，总长 ${route.totalLength} km`)
+  }
 }
 
 // 获取当前活动的 routeId
@@ -302,536 +379,6 @@ const getActiveRouteId = () => {
   return undefined
 }
 
-// 处理指针移动
-const handlePointerMove = (evt: any) => {
-  if (!isEditingRoute.value) return
-
-  // 拖拽节点
-  if (isDraggingPoint.value && selectedPointFeature.value) {
-    const geom = selectedPointFeature.value.getGeometry() as Point
-    geom.setCoordinates(evt.coordinate)
-    updateRouteLineFromPoints()
-    return
-  }
-
-  // 拖拽线段（整体平移）
-  if (isDraggingLine.value && selectedLineFeature.value && dragLineStartCoord.value) {
-    const dx = evt.coordinate[0] - dragLineStartCoord.value[0]
-    const dy = evt.coordinate[1] - dragLineStartCoord.value[1]
-
-    // 更新线段两端的节点位置
-    const routeId = selectedLineFeature.value.get('routeId')
-    const segmentIndex = selectedLineFeature.value.get('segmentIndex') ?? 0
-
-    // 找到这条线段的两个端点 Feature
-    const pointFeatures = routeSource?.getFeatures().filter(
-        f => f.getGeometry()?.getType() === 'Point' && f.get('routeId') === routeId
-    ) || []
-
-    const startPointFeature = pointFeatures.find(f => f.get('pointIndex') === segmentIndex)
-    const endPointFeature = pointFeatures.find(f => f.get('pointIndex') === segmentIndex + 1)
-
-    if (startPointFeature && endPointFeature) {
-      const startGeom = startPointFeature.getGeometry() as Point
-      const endGeom = endPointFeature.getGeometry() as Point
-      const startCoords = startGeom.getCoordinates()
-      const endCoords = endGeom.getCoordinates()
-
-      // 移动两个端点
-      startGeom.setCoordinates([startCoords[0] + dx, startCoords[1] + dy])
-      endGeom.setCoordinates([endCoords[0] + dx, endCoords[1] + dy])
-
-      // 更新线段几何
-      const lineGeom = selectedLineFeature.value.getGeometry() as LineString
-      lineGeom.setCoordinates([
-        [startCoords[0] + dx, startCoords[1] + dy],
-        [endCoords[0] + dx, endCoords[1] + dy]
-      ])
-
-      // 更新相邻线段
-      updateAdjacentLines(routeId, segmentIndex, startGeom.getCoordinates(), endGeom.getCoordinates())
-    }
-
-    // 更新起始坐标
-    dragLineStartCoord.value = evt.coordinate
-    return
-  }
-
-  // 鼠标悬停检测
-  {
-    const activeRouteId = getActiveRouteId()
-
-    // 检测是否悬停在点或线上（只检测当前活动路线）
-    const features = map?.getFeaturesAtPixel(evt.pixel, {
-      layerFilter: (layer) => layer === routeLayer,
-      hitTolerance: 10
-    })
-
-    const pointFeature = features?.find(f =>
-        f.getGeometry()?.getType() === 'Point' &&
-        f.get('routeId') === activeRouteId
-    )
-    const lineFeature = features?.find(f =>
-        f.getGeometry()?.getType() === 'LineString' &&
-        f.get('routeId') === activeRouteId &&
-        !f.get('isBranchLine')
-    )
-
-    if (editMode.value === 'drag') {
-      if (pointFeature) {
-        const ptType = pointFeature.get('pointType')
-        mapContainer.value!.style.cursor = (ptType === 'landing' || ptType === 'branching') ? 'not-allowed' : 'grab'
-      } else if (lineFeature) {
-        mapContainer.value!.style.cursor = 'grab'  // 线段可拖拽弯曲
-      } else {
-        mapContainer.value!.style.cursor = 'default'
-      }
-    } else if (editMode.value === 'add') {
-      if (lineFeature) {
-        mapContainer.value!.style.cursor = 'crosshair'
-      } else {
-        mapContainer.value!.style.cursor = 'default'
-      }
-    } else if (editMode.value === 'delete') {
-      if (pointFeature) {
-        mapContainer.value!.style.cursor = 'not-allowed'
-      } else {
-        mapContainer.value!.style.cursor = 'default'
-      }
-    }
-  }
-}
-
-// 处理指针按下
-const handlePointerDown = (evt: any) => {
-  if (!isEditingRoute.value) return
-
-  const activeRouteId = getActiveRouteId()
-
-  const features = map?.getFeaturesAtPixel(evt.pixel, {
-    layerFilter: (layer) => layer === routeLayer,
-    hitTolerance: 15  // 增加点击容差到15像素
-  })
-  // 只处理当前活动路线的特征
-  const pointFeature = features?.find(f =>
-      f.getGeometry()?.getType() === 'Point' &&
-      f.get('routeId') === activeRouteId
-  )
-  const lineFeature = features?.find(f =>
-      f.getGeometry()?.getType() === 'LineString' &&
-      f.get('routeId') === activeRouteId &&
-      !f.get('isBranchLine')  // 排除分支线
-  )
-  if (editMode.value === 'drag') {
-    // 拖拽模式
-    if (pointFeature) {
-      // 登陆站和分支器位置固定，不允许拖拽
-      const ptType = pointFeature.get('pointType')
-      if (ptType === 'landing' || ptType === 'branching') {
-        appStore.showNotification({ type: 'warning', message: `${ptType === 'landing' ? '登陆站' : '分支器'}位置固定，不可拖拽` })
-        return
-      }
-      // 拖拽已有节点
-      selectedPointFeature.value = pointFeature as Feature
-      isDraggingPoint.value = true
-      mapContainer.value!.style.cursor = 'grabbing'
-      if (dragPanInteraction) {
-        dragPanInteraction.setActive(false)
-      }
-    } else if (lineFeature) {
-      // 点击线段：移动离点击位置最近的端点（不创建新节点）
-      const routeId = lineFeature.get('routeId')
-      const segmentIndex = lineFeature.get('segmentIndex') ?? 0
-
-      // 获取线段的两个端点
-      const lineGeom = lineFeature.getGeometry() as LineString
-      const coords = lineGeom.getCoordinates()
-      const startCoord = coords[0]
-      const endCoord = coords[coords.length - 1]
-
-      // 计算点击位置到两个端点的距离
-      const distToStart = Math.hypot(evt.coordinate[0] - startCoord[0], evt.coordinate[1] - startCoord[1])
-      const distToEnd = Math.hypot(evt.coordinate[0] - endCoord[0], evt.coordinate[1] - endCoord[1])
-
-      // 找到离点击位置最近的端点 Feature
-      const targetPointIndex = distToStart < distToEnd ? segmentIndex : segmentIndex + 1
-
-      const pointFeatures = routeSource?.getFeatures().filter(
-          f => f.getGeometry()?.getType() === 'Point' && f.get('routeId') === routeId
-      ) || []
-
-      const targetPointFeature = pointFeatures.find(f => f.get('pointIndex') === targetPointIndex)
-
-      if (targetPointFeature) {
-        // 登陆站和分支器位置固定，不允许通过线段拖拽
-        const tptType = targetPointFeature.get('pointType')
-        if (tptType === 'landing' || tptType === 'branching') {
-          appStore.showNotification({ type: 'warning', message: `${tptType === 'landing' ? '登陆站' : '分支器'}位置固定，不可拖拽` })
-          return
-        }
-        selectedPointFeature.value = targetPointFeature as Feature
-        isDraggingPoint.value = true
-        mapContainer.value!.style.cursor = 'grabbing'
-        if (dragPanInteraction) {
-          dragPanInteraction.setActive(false)
-        }
-      }
-    }
-  } else if (editMode.value === 'add') {
-    // 添加点模式 - 点击线段添加新节点
-    if (lineFeature) {
-      addPointToSegment(lineFeature as Feature, evt.coordinate)
-    }
-  } else if (editMode.value === 'delete') {
-    // 删除点模式 - 点击节点删除
-    if (pointFeature) {
-      deletePoint(pointFeature as Feature)
-    }
-  }
-}
-
-// 更新相邻线段（拖拽线段时同步更新）
-const updateAdjacentLines = (routeId: string, segmentIndex: number, newStartCoords: number[], newEndCoords: number[]) => {
-  if (!routeSource) return
-
-  const lineFeatures = routeSource.getFeatures().filter(
-      f => f.getGeometry()?.getType() === 'LineString' && f.get('routeId') === routeId
-  )
-
-  lineFeatures.forEach(lf => {
-    const idx = lf.get('segmentIndex')
-    const geom = lf.getGeometry() as LineString
-    const coords = geom.getCoordinates()
-
-    // 前一条线段的终点需要更新
-    if (idx === segmentIndex - 1 && coords.length >= 2) {
-      coords[1] = newStartCoords
-      geom.setCoordinates(coords)
-    }
-    // 后一条线段的起点需要更新
-    if (idx === segmentIndex + 1 && coords.length >= 2) {
-      coords[0] = newEndCoords
-      geom.setCoordinates(coords)
-    }
-  })
-}
-
-// 处理指针抬起
-const handlePointerUp = () => {
-  // 拖拽节点结束
-  if (isDraggingPoint.value && selectedPointFeature.value) {
-    const geom = selectedPointFeature.value.getGeometry() as Point
-    const coords = geom.getCoordinates()
-
-    // 同步更新到 store
-    syncPointMoveToStore(selectedPointFeature.value as Feature, coords)
-
-    // 重绘路径以更新线段
-    drawParetoRoutes()
-
-    appStore.showNotification({
-      type: 'success',
-      message: `节点已移动到 ${coords[0].toFixed(4)}°, ${coords[1].toFixed(4)}°`
-    })
-  }
-
-  // 拖拽线段结束
-  if (isDraggingLine.value && selectedLineFeature.value) {
-    const routeId = selectedLineFeature.value.get('routeId')
-    const segmentIndex = selectedLineFeature.value.get('segmentIndex') ?? 0
-
-    // 同步两个端点到 store
-    const route = routeStore.paretoRoutes.find(r => r.id === routeId)
-    if (route) {
-      const pointFeatures = routeSource?.getFeatures().filter(
-          f => f.getGeometry()?.getType() === 'Point' && f.get('routeId') === routeId
-      ) || []
-
-      const startPointFeature = pointFeatures.find(f => f.get('pointIndex') === segmentIndex)
-      const endPointFeature = pointFeatures.find(f => f.get('pointIndex') === segmentIndex + 1)
-
-      if (startPointFeature && route.points[segmentIndex]) {
-        const coords = (startPointFeature.getGeometry() as Point).getCoordinates()
-        route.points[segmentIndex].coordinates = [coords[0], coords[1]]
-      }
-      if (endPointFeature && route.points[segmentIndex + 1]) {
-        const coords = (endPointFeature.getGeometry() as Point).getCoordinates()
-        route.points[segmentIndex + 1].coordinates = [coords[0], coords[1]]
-      }
-    }
-
-    // 重绘路径
-    drawParetoRoutes()
-
-    appStore.showNotification({
-      type: 'success',
-      message: `线段已平移`
-    })
-  }
-
-  // 恢复地图拖拽
-  if (dragPanInteraction) {
-    dragPanInteraction.setActive(true)
-  }
-
-  isDraggingPoint.value = false
-  isDraggingLine.value = false
-  selectedPointFeature.value = null
-  selectedLineFeature.value = null
-  dragLineStartCoord.value = null
-  if (mapContainer.value) {
-    mapContainer.value.style.cursor = 'default'
-  }
-}
-
-// 在线段上添加新节点
-const addPointToSegment = (lineFeature: Feature, clickCoord: number[]) => {
-  const routeId = lineFeature.get('routeId')
-  const segmentIndex = lineFeature.get('segmentIndex') ?? 0
-
-  // 获取该路由的所有点
-  const pointFeatures = routeSource?.getFeatures().filter(
-      f => f.getGeometry()?.getType() === 'Point' && f.get('routeId') === routeId
-  ) || []
-
-  // 按 pointIndex 排序
-  pointFeatures.sort((a, b) => (a.get('pointIndex') || 0) - (b.get('pointIndex') || 0))
-
-  // 在 segmentIndex 和 segmentIndex+1 之间插入新点
-  const insertIndex = segmentIndex + 1
-
-  // 更新后续点的 pointIndex
-  pointFeatures.forEach(pf => {
-    const idx = pf.get('pointIndex') || 0
-    if (idx >= insertIndex) {
-      pf.set('pointIndex', idx + 1)
-    }
-  })
-
-  // 创建新的点 Feature
-  const newPointFeature = new Feature({
-    geometry: new Point(clickCoord),
-    routeId: routeId,
-    pointIndex: insertIndex,
-    pointType: 'waypoint',
-  })
-
-  newPointFeature.setStyle(new Style({
-    image: new CircleStyle({
-      radius: 6,
-      fill: new Fill({color: '#3b82f6'}),
-      stroke: new Stroke({color: '#fff', width: 2}),
-    }),
-  }))
-
-  routeSource?.addFeature(newPointFeature)
-
-  // 同步到 store
-  syncAddPointToStore(routeId, insertIndex, clickCoord)
-
-  // 重绘路径
-  drawParetoRoutes()
-
-  appStore.showNotification({
-    type: 'success',
-    message: `已在线段 ${segmentIndex + 1} 处添加新节点`
-  })
-  appStore.addLog('INFO', `添加新节点: ${clickCoord[0].toFixed(4)}, ${clickCoord[1].toFixed(4)}`)
-}
-
-// 删除节点
-const deletePoint = (pointFeature: Feature) => {
-  const routeId = pointFeature.get('routeId')
-  const pointIndex = pointFeature.get('pointIndex') ?? 0
-  const pointType = pointFeature.get('pointType')
-
-  // 不允许删除登陆站和分支器
-  if (pointType === 'landing' || pointType === 'branching') {
-    appStore.showNotification({
-      type: 'warning',
-      message: `不能删除${pointType === 'landing' ? '登陆站' : '分支器'}节点`
-    })
-    return
-  }
-
-  // 获取该路由的所有点
-  const pointFeatures = routeSource?.getFeatures().filter(
-      f => f.getGeometry()?.getType() === 'Point' && f.get('routeId') === routeId
-  ) || []
-
-  // 至少保留2个点（起点和终点）
-  if (pointFeatures.length <= 2) {
-    appStore.showNotification({
-      type: 'warning',
-      message: '路径至少需要2个节点'
-    })
-    return
-  }
-
-  // 从图层移除该点
-  routeSource?.removeFeature(pointFeature)
-
-  // 更新后续点的 pointIndex
-  pointFeatures.forEach(pf => {
-    if (pf === pointFeature) return
-    const idx = pf.get('pointIndex') || 0
-    if (idx > pointIndex) {
-      pf.set('pointIndex', idx - 1)
-    }
-  })
-
-  // 同步到 store
-  syncDeletePointToStore(routeId, pointIndex)
-
-  // 重绘路径
-  drawParetoRoutes()
-
-  appStore.showNotification({
-    type: 'success',
-    message: `已删除节点 ${pointIndex + 1}`
-  })
-  appStore.addLog('INFO', `删除节点: index=${pointIndex}`)
-}
-
-// 同步点移动到 store
-const syncPointMoveToStore = (pointFeature: Feature, newCoords: number[]) => {
-  const routeId = pointFeature.get('routeId')
-  const pointIndex = pointFeature.get('pointIndex') ?? 0
-
-  // 优先更新 paretoRoutes
-  if (routeId && routeId !== 'monitor-route') {
-    const route = routeStore.paretoRoutes.find(r => r.id === routeId)
-    if (route && pointIndex < route.points.length) {
-      route.points[pointIndex].coordinates = [newCoords[0], newCoords[1]]
-    }
-  }
-}
-
-// 同步添加点到 store
-const syncAddPointToStore = (routeId: string, insertIndex: number, coords: number[]) => {
-  // 优先更新 paretoRoutes
-  const route = routeStore.paretoRoutes.find(r => r.id === routeId)
-  if (route) {
-    const newPointId = `point-new-${Date.now()}`
-    const newPoint = {
-      id: newPointId,
-      name: '',
-      type: 'waypoint' as const,
-      coordinates: [coords[0], coords[1]] as [number, number]
-    }
-
-    // 插入新点
-    route.points.splice(insertIndex, 0, newPoint)
-
-    // 更新 segments：把原来的 segment 拆成两个
-    const segmentIndexToSplit = insertIndex - 1
-    if (segmentIndexToSplit >= 0 && segmentIndexToSplit < route.segments.length) {
-      const oldSegment = route.segments[segmentIndexToSplit]
-      const prevPoint = route.points[insertIndex - 1]
-      const nextPoint = route.points[insertIndex + 1]
-
-      // 新的第一段：从前一个点到新点
-      const newSegment1 = {
-        id: `seg-new-${Date.now()}-1`,
-        startPointId: prevPoint?.id || oldSegment.startPointId,
-        endPointId: newPointId,
-        length: Math.round((oldSegment.length || 50) / 2),
-        depth: oldSegment.depth || 2000,
-        cableType: oldSegment.cableType || 'lw',
-        riskLevel: oldSegment.riskLevel || 'low' as const,
-        cost: Math.round((oldSegment.cost || 100) / 2)
-      }
-
-      // 新的第二段：从新点到下一个点
-      const newSegment2 = {
-        id: `seg-new-${Date.now()}-2`,
-        startPointId: newPointId,
-        endPointId: nextPoint?.id || oldSegment.endPointId,
-        length: Math.round((oldSegment.length || 50) / 2),
-        depth: oldSegment.depth || 2000,
-        cableType: oldSegment.cableType || 'lw',
-        riskLevel: oldSegment.riskLevel || 'low' as const,
-        cost: Math.round((oldSegment.cost || 100) / 2)
-      }
-
-      // 替换原来的 segment
-      route.segments.splice(segmentIndexToSplit, 1, newSegment1, newSegment2)
-    }
-  }
-}
-
-// 同步删除点到 store
-const syncDeletePointToStore = (routeId: string, pointIndex: number) => {
-  // 优先更新 paretoRoutes
-  const route = routeStore.paretoRoutes.find(r => r.id === routeId)
-  if (route && pointIndex < route.points.length) {
-    route.points.splice(pointIndex, 1)
-    // 同时删除对应的 segment
-    if (pointIndex > 0 && pointIndex <= route.segments.length) {
-      route.segments.splice(pointIndex - 1, 1)
-    }
-  }
-}
-
-// 更新路径线（根据点位置）- 支持分段线模式
-const updateRouteLineFromPoints = () => {
-  if (!routeSource || !selectedPointFeature.value) return
-
-  const features = routeSource.getFeatures()
-  const lineFeatures = features.filter(f => f.getGeometry()?.getType() === 'LineString')
-
-  // 获取当前拖拽点的信息
-  const draggedPointIndex = selectedPointFeature.value.get('pointIndex')
-  const draggedCoords = (selectedPointFeature.value.getGeometry() as Point).getCoordinates()
-  const draggedPointType = selectedPointFeature.value.get('pointType')
-  const draggedIsBranchStation = selectedPointFeature.value.get('isBranchStation')
-  const draggedRouteId = selectedPointFeature.value.get('routeId')
-  // 只处理同一路线的线段，通过 routeId 过滤
-  lineFeatures.forEach(lf => {
-    // 关键：只处理同一路线的线段
-    if (lf.get('routeId') !== draggedRouteId) return
-
-    const isBranchLine = lf.get('isBranchLine')
-    const geom = lf.getGeometry() as LineString
-    const coords = geom.getCoordinates()
-
-    // 处理分支线
-    if (isBranchLine) {
-      const branchFromPointIdx = lf.get('branchFromPointIndex')
-
-      if ((draggedPointType === 'branching' || draggedPointType === 'bu') &&
-          branchFromPointIdx === draggedPointIndex) {
-        coords[0] = draggedCoords
-        geom.setCoordinates(coords)
-      }
-      const draggedBranchFromIdx = selectedPointFeature.value?.get('branchFromPointIndex')
-      if (draggedIsBranchStation && branchFromPointIdx === draggedBranchFromIdx) {
-        coords[1] = draggedCoords
-        geom.setCoordinates(coords)
-      }
-      return
-    }
-
-    // 处理主干线段：通过 segmentIndex 匹配
-    const segmentIndex = lf.get('segmentIndex')
-    let updated = false
-
-    // 如果这条线段的终点是拖拽的点（segmentIndex == draggedPointIndex - 1）
-    if (segmentIndex === draggedPointIndex - 1 && coords.length >= 2) {
-      coords[1] = draggedCoords
-      updated = true
-    }
-    // 如果这条线段的起点是拖拽的点（segmentIndex == draggedPointIndex）
-    if (segmentIndex === draggedPointIndex && coords.length >= 2) {
-      coords[0] = draggedCoords
-      updated = true
-    }
-
-    if (updated) {
-      geom.setCoordinates(coords)
-    }
-  })
-}
 
 // 查看Pareto前沿图
 const handleViewParetoChart = () => {
@@ -972,11 +519,12 @@ const handleCableSegmentConfigSave = (segment: CableSegment) => {
   appStore.showNotification({ type: 'success', message: `海缆段 ${segment.id.slice(-8)} 配置已保存` })
 }
 
-// 关闭海缆段配置弹窗
+// 关闭海缆段配置弹窗（取消高亮）
 const handleCloseCableSegmentConfig = () => {
   showCableSegmentConfigDialog.value = false
   selectedCableSegment.value = null
   selectedCableId.value = null
+  selectedFineSegmentId.value = null  // 取消海缆段高亮
   routeStore.clearSelectedSegmentInfo()
   // 重绘路由恢复样式
   drawParetoRoutes()
@@ -987,65 +535,40 @@ const findCableSegmentByKp = (kp: number): CableSegment | null => {
   return cableSegmentStore.segments.find(s => kp >= s.startKp && kp < s.endKp) || null
 }
 
-// 处理线段 hover 事件
+// 处理线段 hover 事件（仅限海缆段 isFineSegment）
 const handleSegmentHover = (evt: any) => {
   if (!map || !routeLayer) return
 
   const pixel = evt.pixel
   const features = map.getFeaturesAtPixel(pixel, {
-    layerFilter: layer => layer === routeLayer
+    layerFilter: layer => layer === routeLayer,
+    hitTolerance: 6
   })
 
-  // 检测线段 (LineString)
-  const lineFeature = features?.find(f => f.getGeometry()?.getType() === 'LineString')
+  // 仅检测海缆段 (isFineSegment)
+  const fineFeature = features?.find(f => f.get && f.get('isFineSegment')) as Feature | undefined
 
-  // 细粒度海缆段仅用于展示，不参与 hover 交互
-  if (lineFeature && lineFeature.get && lineFeature.get('isFineSegment')) {
-    return
-  }
+  if (fineFeature && fineFeature !== hoveredFeature.value) {
+    // 如果该段已被点击选中，不再 hover 高亮
+    const fineId = fineFeature.get('fineSegmentId')
+    if (fineId === selectedFineSegmentId.value) return
 
-  if (lineFeature && lineFeature !== hoveredFeature.value) {
-    // 离开上一个线段，恢复样式
+    // 离开上一个 hover 海缆段，恢复样式
     if (hoveredFeature.value) {
-      restoreSegmentStyle(hoveredFeature.value as Feature)
+      restoreFineSegmentStyle(hoveredFeature.value as Feature)
     }
 
-    // 高亮新的线段
-    hoveredFeature.value = lineFeature as Feature
-    highlightSegment(lineFeature as Feature)
+    // 高亮新的海缆段
+    hoveredFeature.value = fineFeature
+    highlightFineSegment(fineFeature)
 
-    // 获取线段信息
-    const routeId = lineFeature.get('routeId')
-    const segmentIndex = lineFeature.get('segmentIndex') ?? 0
-
-    // 从 paretoRoutes 或 monitorStore 获取线段详细信息
-    const segmentInfo = getSegmentInfo(routeId, segmentIndex)
-
-    // 更新 store 中的悬停线段信息
-    if (segmentInfo) {
-      const geom = lineFeature.getGeometry() as LineString
-      const coords = geom.getCoordinates()
-      routeStore.setHoveredSegment({
-        id: segmentInfo.id || routeId,
-        routeId: routeId,
-        startPoint: {lon: coords[0][0], lat: coords[0][1]},
-        endPoint: {lon: coords[coords.length - 1][0], lat: coords[coords.length - 1][1]},
-        length: segmentInfo.length,
-        depth: segmentInfo.depth,
-        cableType: segmentInfo.cableType || 'LW',
-        riskLevel: segmentInfo.riskLevel || 'low'
-      })
-    }
-
-    // 改变鼠标样式
     if (mapContainer.value) {
       mapContainer.value.style.cursor = 'pointer'
     }
-  } else if (!lineFeature && hoveredFeature.value) {
-    // 离开线段，恢复样式
-    restoreSegmentStyle(hoveredFeature.value as Feature)
+  } else if (!fineFeature && hoveredFeature.value) {
+    // 离开海缆段，恢复样式
+    restoreFineSegmentStyle(hoveredFeature.value as Feature)
     hoveredFeature.value = null
-    routeStore.clearHoveredSegment()
 
     if (mapContainer.value) {
       mapContainer.value.style.cursor = 'default'
@@ -1053,46 +576,50 @@ const handleSegmentHover = (evt: any) => {
   }
 }
 
-// 高亮线段
-const highlightSegment = (feature: Feature) => {
+// 高亮海缆段（hover）
+const highlightFineSegment = (feature: Feature) => {
   const currentStyle = feature.getStyle() as Style
   const currentStroke = currentStyle?.getStroke()
+  const displayId = feature.get('segmentDisplayId') || ''
 
   // 保存原始样式
-  feature.set('_originalWidth', currentStroke?.getWidth() || 3)
-  feature.set('_originalColor', currentStroke?.getColor() || '#3b82f6')
+  feature.set('_origColor', currentStroke?.getColor() || '#f59e0b')
+  feature.set('_origWidth', currentStroke?.getWidth() || 4)
 
-  // 设置高亮样式 - 加粗且颜色变亮
   feature.setStyle(new Style({
     stroke: new Stroke({
-      color: '#f59e0b',  // 橙色高亮
-      width: 6,
-      lineDash: undefined
-    })
+      color: '#facc15', // 亮黄色 hover
+      width: 7,
+    }),
+    text: new Text({
+      text: displayId,
+      placement: 'line',
+      font: 'bold 11px sans-serif',
+      fill: new Fill({ color: '#fff' }),
+      stroke: new Stroke({ color: '#000', width: 3 }),
+    }),
   }))
 }
 
-// 恢复线段样式
-const restoreSegmentStyle = (feature: Feature) => {
-  const originalWidth = feature.get('_originalWidth') || 3
-  const originalColor = feature.get('_originalColor') || '#3b82f6'
-  const routeId = feature.get('routeId')
-  const segmentId = feature.get('segmentId')
-  
-  // 检查该线段所属的路线是否被选中
-  const isRouteSelected = routeStore.selectedRoute?.id === routeId
-  // 检查该线段本身是否被选中
-  const isSegmentSelected = selectedCableId.value === segmentId
+// 恢复海缆段样式（hover 离开时）
+const restoreFineSegmentStyle = (feature: Feature) => {
+  // 如果该段是点击选中状态，不恢复（保持选中高亮）
+  const fineId = feature.get('fineSegmentId')
+  if (fineId === selectedFineSegmentId.value) return
 
-  // 选中的路线用实线，非选中用虚线
-  const lineDash = isRouteSelected || isSegmentSelected ? undefined : [8, 4]
-  
+  const origColor = feature.get('_origColor') || '#f59e0b'
+  const origWidth = feature.get('_origWidth') || 4
+  const displayId = feature.get('segmentDisplayId') || ''
+
   feature.setStyle(new Style({
-    stroke: new Stroke({
-      color: isSegmentSelected ? '#f59e0b' : (isRouteSelected ? '#ef4444' : originalColor),
-      width: isSegmentSelected ? 6 : (isRouteSelected ? 5 : originalWidth),
-      lineDash: lineDash
-    })
+    stroke: new Stroke({ color: origColor, width: origWidth }),
+    text: new Text({
+      text: displayId,
+      placement: 'line',
+      font: 'bold 10px sans-serif',
+      fill: new Fill({ color: '#fff' }),
+      stroke: new Stroke({ color: origColor, width: 3 }),
+    }),
   }))
 }
 
@@ -1242,6 +769,7 @@ const initMap = () => {
           seg = cableSegmentStore.segments.find(s => Math.abs(s.startKp - startKp) < eps && Math.abs(s.endKp - endKp) < eps)
         }
         if (seg) {
+          selectedFineSegmentId.value = segId  // 持续高亮选中的海缆段
           selectedCableSegment.value = seg
           showCableSegmentConfigDialog.value = true
           drawParetoRoutes()
@@ -1800,6 +1328,9 @@ const drawParetoRoutes = async () => {
     map.addLayer(routeLayer)
   }
 
+  // 清除 Modify 交互的可编辑要素集合
+  editableFeatures.clear()
+
   // 优先使用 paretoRoutes 绘制多条路线（路由规划模式）
   if (routeStore.paretoRoutes.length > 0) {
     const routes = routeStore.paretoRoutes
@@ -1809,84 +1340,135 @@ const drawParetoRoutes = async () => {
       const isRouteSelected = routeStore.selectedRoute?.id === route.id
       // 选中路线使用更粗的实线，非选中路线用虚线
       const lineWidth = isRouteSelected ? 5 : 3
-      const lineDash = isRouteSelected ? undefined : [8, 4]  // 选中实线，非选中虚线
-      const lineColor = isRouteSelected ? '#ef4444' : baseColor  // 选中时用红色高亮
-      // 构建点 ID 到坐标的映射，用于分支网络绘制
+      const lineDash = isRouteSelected ? undefined : [8, 4]
+      const lineColor = isRouteSelected ? '#ef4444' : baseColor
+
+      // 构建点 ID 到坐标的映射
       const pointMap: Record<string, [number, number]> = {}
       for (const p of route.points) {
         pointMap[p.id] = p.coordinates
       }
-      
-      // 根据 segments 数据绘制线段（支持分支网络拓扑）
+
+      // ====== 以单条连续 LineString 绘制主干路线（GeoJSON 风格） ======
+      // 按 segments 顺序收集坐标，构建完整折线
+      const allCoords: [number, number][] = []
       for (let i = 0; i < route.segments.length; i++) {
-        const segment = route.segments[i]
-        const segmentId = segment.id || `${route.id}-seg-${i}`
-        const isSegmentSelected = selectedCableId.value === segmentId
-        
-        // 通过 startPointId/endPointId 获取坐标
-        const startCoords = pointMap[segment.startPointId]
-        const endCoords = pointMap[segment.endPointId]
-        
-        if (!startCoords || !endCoords) {
-          // 如果找不到点，回退到顺序索引
-          const startPoint = route.points[i]
-          const endPoint = route.points[i + 1]
-          if (!startPoint || !endPoint) continue
-          
-          const segmentFeature = new Feature({
-            geometry: new LineString([startPoint.coordinates, endPoint.coordinates]),
-            routeId: route.id,
-            segmentId: segmentId,
-            segmentIndex: i,
-            fromPointId: startPoint.id,
-            toPointId: endPoint.id,
-            segmentLength: segment.length || 0,
-            segmentDepth: segment.depth || 0,
-            segmentCableType: segment.cableType || 'LW',
-            segmentRiskLevel: segment.riskLevel || 'low',
-          })
-          
-          const strokeColor = isSegmentSelected ? '#f59e0b' : lineColor
-          const strokeWidth = isSegmentSelected ? 6 : lineWidth
-          const segmentLineDash = isSegmentSelected ? undefined : lineDash  // 选中线段用实线
-          segmentFeature.setStyle(new Style({
-            stroke: new Stroke({ color: strokeColor, width: strokeWidth, lineDash: segmentLineDash }),
-          }))
-          routeSource!.addFeature(segmentFeature)
-          continue
-        }
-        
-        const segmentFeature = new Feature({
-          geometry: new LineString([startCoords, endCoords]),
-          routeId: route.id,
-          segmentId: segmentId,
-          segmentIndex: i,
-          fromPointId: segment.startPointId,
-          toPointId: segment.endPointId,
-          segmentLength: segment.length || 0,
-          segmentDepth: segment.depth || 0,
-          segmentCableType: segment.cableType || 'LW',
-          segmentRiskLevel: segment.riskLevel || 'low',
-        })
-
-        // 线段选中时用橙色，路线选中时用红色，否则用基础颜色
-        const strokeColor = isSegmentSelected ? '#f59e0b' : lineColor
-        const strokeWidth = isSegmentSelected ? 6 : lineWidth
-        const segmentLineDash = isSegmentSelected ? undefined : lineDash  // 选中线段用实线
-
-        segmentFeature.setStyle(new Style({
-          stroke: new Stroke({
-            color: strokeColor,
-            width: strokeWidth,
-            lineDash: segmentLineDash,
-          }),
-        }))
-
-        routeSource!.addFeature(segmentFeature)
+        const seg = route.segments[i]
+        const sc = pointMap[seg.startPointId] || route.points[i]?.coordinates
+        const ec = pointMap[seg.endPointId] || route.points[i + 1]?.coordinates
+        if (!sc || !ec) continue
+        if (allCoords.length === 0) allCoords.push(sc)
+        allCoords.push(ec)
+      }
+      // 兜底：如果 segments 未能生成坐标，使用 points 坐标
+      if (allCoords.length < 2) {
+        route.points.forEach(p => allCoords.push(p.coordinates))
       }
 
-      // 绘制节点
+      if (allCoords.length >= 2) {
+        const hasFineSegments = isRouteSelected && cableSegmentStore.segments.length > 0
+
+        if (hasFineSegments && !isEditingRoute.value) {
+          // ====== 有海缆段且非编辑模式，直接按段画主干线（每段自带颜色、标签） ======
+          const cableSegs = cableSegmentStore.segments
+          const routeLen = route.totalLength || 0
+
+          // 构建 segGeos
+          let kpOff = 0
+          const segGeos: Array<{ startKp: number; endKp: number; startCoord: [number, number]; endCoord: [number, number] }> = []
+          for (const seg of route.segments) {
+            const sc = pointMap[seg.startPointId]
+            const ec = pointMap[seg.endPointId]
+            if (!sc || !ec) { kpOff += (seg.length || 0); continue }
+            segGeos.push({ startKp: kpOff, endKp: kpOff + (seg.length || 0), startCoord: sc, endCoord: ec })
+            kpOff += (seg.length || 0)
+          }
+
+          // 收集分段边界 KP
+          const bKps = new Set<number>()
+          cableSegs.forEach(s => {
+            if (s.startKp > 0) bKps.add(s.startKp)
+            if (s.endKp < routeLen) bKps.add(s.endKp)
+          })
+          const sortedBKps = Array.from(bKps).sort((a, b) => a - b)
+          const boundaries = [0, ...sortedBKps, routeLen]
+
+          for (let i = 0; i < boundaries.length - 1; i++) {
+            const sKp = boundaries[i], eKp = boundaries[i + 1]
+            if (eKp <= sKp) continue
+
+            const coords: [number, number][] = []
+            for (const r of segGeos) {
+              if (eKp <= r.startKp || sKp >= r.endKp) continue
+              const segLen = r.endKp - r.startKp
+              const sf = Math.max(0, (sKp - r.startKp) / segLen)
+              const ef = Math.min(1, (eKp - r.startKp) / segLen)
+              const sLon = r.startCoord[0] + sf * (r.endCoord[0] - r.startCoord[0])
+              const sLat = r.startCoord[1] + sf * (r.endCoord[1] - r.startCoord[1])
+              const eLon = r.startCoord[0] + ef * (r.endCoord[0] - r.startCoord[0])
+              const eLat = r.startCoord[1] + ef * (r.endCoord[1] - r.startCoord[1])
+              if (coords.length === 0) coords.push([sLon, sLat])
+              coords.push([eLon, eLat])
+            }
+            if (coords.length < 2) continue
+
+            const eps = 1e-6
+            const segInfo = cableSegs.find(s => Math.abs(s.startKp - sKp) < eps && Math.abs(s.endKp - eKp) < eps)
+            const risk = segInfo?.riskLevel || 'low'
+            const color = risk === 'high' ? '#dc2626' : risk === 'medium' ? '#f97316' : '#f59e0b'
+            const segIdx = segInfo ? cableSegs.indexOf(segInfo) : -1
+            const displayId = segIdx >= 0 ? `SEG-${String(segIdx + 1).padStart(3, '0')}` : `S-${String(i + 1).padStart(3, '0')}`
+            const fineId = segInfo?.id || `fine-${i}`
+            const isSegSelected = fineId === selectedFineSegmentId.value
+
+            const segFeature = new Feature({
+              geometry: new LineString(coords),
+              routeId: route.id,
+              isFineSegment: true,
+              fineSegmentId: fineId,
+              segmentDisplayId: displayId,
+              startKp: sKp, endKp: eKp,
+              cableTypeName: segInfo?.cableTypeName || 'LW',
+              riskLevel: risk,
+            })
+            segFeature.setStyle(new Style({
+              stroke: new Stroke({
+                color: isSegSelected ? '#facc15' : color,
+                width: isSegSelected ? 7 : 5,
+              }),
+              text: new Text({
+                text: displayId,
+                placement: 'line',
+                font: isSegSelected ? 'bold 11px sans-serif' : 'bold 10px sans-serif',
+                fill: new Fill({ color: '#fff' }),
+                stroke: new Stroke({ color: isSegSelected ? '#000' : color, width: 3 }),
+              }),
+            }))
+            routeSource!.addFeature(segFeature)
+          }
+        } else {
+          // ====== 无海缆段，画单条完整主干线 ======
+          const routeLineFeature = new Feature({
+            geometry: new LineString(allCoords),
+            routeId: route.id,
+            isRouteLine: true,
+          })
+          routeLineFeature.setStyle(new Style({
+            stroke: new Stroke({ color: lineColor, width: lineWidth, lineDash }),
+          }))
+          routeSource!.addFeature(routeLineFeature)
+
+          if (isRouteSelected && isEditingRoute.value) {
+            editableFeatures.push(routeLineFeature as any)
+          }
+        }
+      }
+
+      // ====== 仅绘制 landing / branching 节点（隐藏 waypoint） ======
       for (const [pointIndex, point] of route.points.entries()) {
+        // waypoint 不显示
+        if (point.type !== 'landing' && point.type !== 'branching') continue
+
         const pointFeature = new Feature({
           geometry: new Point(point.coordinates),
           routeId: route.id,
@@ -1896,11 +1478,8 @@ const drawParetoRoutes = async () => {
           pointId: point.id,
         })
 
-        // landing 类型使用图标（根据 depth 判断岸上/水下站点）
         if (point.type === 'landing') {
-          // depth > 0 表示水下站点
           const iconUrl = (point.depth && point.depth > 0) ? '/image/underwater.png' : '/image/landing.png'
-
           pointFeature.setStyle(new Style({
             image: new Icon({
               src: iconUrl,
@@ -1916,7 +1495,6 @@ const drawParetoRoutes = async () => {
             }) : undefined,
           }))
         } else if (point.type === 'branching') {
-          // 分支器显示名称
           const radius = isRouteSelected ? 11 : 9
           pointFeature.setStyle(new Style({
             image: new CircleStyle({
@@ -1931,18 +1509,6 @@ const drawParetoRoutes = async () => {
               fill: new Fill({color: '#a855f7'}),
               stroke: new Stroke({color: '#fff', width: 3}),
             }) : undefined,
-          }))
-        } else {
-          // waypoint 只显示圆形，不显示名称
-          const radius = isRouteSelected ? 8 : 6
-          const pointColor = isRouteSelected ? '#ef4444' : baseColor
-
-          pointFeature.setStyle(new Style({
-            image: new CircleStyle({
-              radius: radius,
-              fill: new Fill({color: pointColor}),
-              stroke: new Stroke({color: '#fff', width: isRouteSelected ? 3 : 2}),
-            }),
           }))
         }
 
@@ -2005,11 +1571,10 @@ const drawParetoRoutes = async () => {
       }
     }
 
-    // ========== 绘制海缆分段节点标记 ==========
-    // 沿着每条实际绘制的路由线段放置 KP 标记（包含主干和分支）
+    // ========== 绘制海缆分段节点标记（编辑模式下隐藏） ==========
     const cableSegments = cableSegmentStore.segments
     const selectedRoute = routeStore.selectedRoute || routeStore.paretoRoutes[0]
-    if (cableSegments.length > 0 && selectedRoute && selectedRoute.segments.length > 0) {
+    if (cableSegments.length > 0 && selectedRoute && selectedRoute.segments.length > 0 && !isEditingRoute.value) {
       const routeLength = selectedRoute.totalLength || 0
       if (routeLength > 0) {
         // 构建点ID→坐标映射（包含分支登陆站）
@@ -2079,54 +1644,35 @@ const drawParetoRoutes = async () => {
           routeSource!.addFeature(nodeFeature)
         }
 
-        // ===== 绘制细粒度海缆段（KP 边界之间的一段）=====
-        const boundaries: number[] = [0, ...sortedKps, routeLength]
-        for (let i = 0; i < boundaries.length - 1; i++) {
-          const startKp = boundaries[i]
-          const endKp = boundaries[i + 1]
-          if (endKp <= startKp) continue
+      }
+    }
 
-          // 在 segGeos 上拼接折线坐标
-          const coords: [number, number][] = []
-          let remainA = startKp
-          let remainB = endKp
-          for (const r of segGeos) {
-            if (remainB <= r.startKp || remainA >= r.endKp) continue // 不相交
-            const segLen = r.endKp - r.startKp
-            const startFrac = Math.max(0, (remainA - r.startKp) / segLen)
-            const endFrac = Math.min(1, (remainB - r.startKp) / segLen)
-            const startLon = r.startCoord[0] + startFrac * (r.endCoord[0] - r.startCoord[0])
-            const startLat = r.startCoord[1] + startFrac * (r.endCoord[1] - r.startCoord[1])
-            const endLon = r.startCoord[0] + endFrac * (r.endCoord[0] - r.startCoord[0])
-            const endLat = r.startCoord[1] + endFrac * (r.endCoord[1] - r.startCoord[1])
-
-            if (coords.length === 0) coords.push([startLon, startLat])
-            coords.push([endLon, endLat])
-          }
-
-          if (coords.length >= 2) {
-            // 查找该段的风险等级/缆型
-            const eps = 1e-6
-            const segInfo = cableSegments.find(s => Math.abs(s.startKp - startKp) < eps && Math.abs(s.endKp - endKp) < eps)
-            const risk = segInfo?.riskLevel || 'low'
-            const color = risk === 'high' ? '#dc2626' : risk === 'medium' ? '#f97316' : '#f59e0b'
-
-            const fineFeature = new Feature({
-              geometry: new LineString(coords),
-              routeId: selectedRoute.id,
-              isFineSegment: true,
-              fineSegmentId: segInfo?.id || `fine-${i}`,
-              startKp,
-              endKp,
-              cableTypeName: segInfo?.cableTypeName || 'LW',
-              riskLevel: risk,
-            })
-            fineFeature.setStyle(new Style({
-              stroke: new Stroke({ color, width: 4 })
-            }))
-            routeSource!.addFeature(fineFeature)
-          }
-        }
+    // ========== 绘制系统规划落位的放大器 (OLA) ==========
+    const olaElements = connectorStore.elements.filter(e => e.type === 'ola')
+    if (olaElements.length > 0) {
+      for (const ola of olaElements) {
+        if (!ola.longitude || !ola.latitude) continue
+        const olaFeature = new Feature({
+          geometry: new Point([ola.longitude, ola.latitude]),
+          deviceId: ola.id,
+          deviceType: 'ola',
+          deviceName: ola.name,
+        })
+        olaFeature.setStyle(new Style({
+          image: new Icon({
+            src: '/image/amplifier-e.png',
+            scale: 0.3,
+            anchor: [0.5, 0.5],
+          }),
+          text: new Text({
+            text: ola.name,
+            offsetY: -18,
+            font: '10px sans-serif',
+            fill: new Fill({ color: '#3b82f6' }),
+            stroke: new Stroke({ color: '#fff', width: 3 }),
+          }),
+        }))
+        routeSource!.addFeature(olaFeature)
       }
     }
 
@@ -2341,6 +1887,13 @@ watch(() => monitorStore.devices.length, (newLen) => {
     }
   }
 }, {immediate: true})
+
+// 监听 connectorStore 中 OLA 元素变化（系统规划应用配置时触发）
+watch(() => connectorStore.elements.filter(e => e.type === 'ola').length, (newLen, oldLen) => {
+  if (newLen !== oldLen && map && routeStore.paretoRoutes.length > 0) {
+    drawParetoRoutes()
+  }
+})
 
 // 监听 paretoRoutes 变化（USE文件导入时触发）
 watch(() => routeStore.paretoRoutes.length, (newLen) => {
@@ -2997,53 +2550,18 @@ onUnmounted(() => {
     <div class="h-12 px-4 border-b flex items-center justify-between"
          style="background-color: var(--app-bg-secondary); border-color: var(--app-border-color);">
       <div class="flex items-center gap-2">
-        <!-- 路由调整 -->
-        <Tooltip content="进入/退出路由调整模式（拖拽、添加、删除节点）">
+        <!-- 路由调整：直接拖拽线条调整路线 -->
+        <Tooltip :content="isEditingRoute ? '关闭路由调整模式' : '开启路由调整（直接拖拽线条调整路线）'">
           <Button
               :variant="isEditingRoute ? 'default' : 'outline'"
               size="sm"
               :disabled="!isPlanning"
-              @click="setEditMode('drag')"
+              @click="toggleRouteEditing"
           >
-            <Wrench class="w-4 h-4 mr-1"/>
-            路由调整
+            <Edit3 class="w-4 h-4 mr-1"/>
+            {{ isEditingRoute ? '完成调整' : '路由调整' }}
           </Button>
         </Tooltip>
-
-        <!-- 路由调整子操作（仅在调整模式下显示） -->
-        <template v-if="isEditingRoute">
-          <div class="w-px h-5" style="background-color: var(--app-border-color);"/>
-          <Tooltip content="拖拽节点调整路径">
-            <Button
-                :variant="editMode === 'drag' ? 'default' : 'outline'"
-                size="sm"
-                @click="editMode = 'drag'"
-            >
-              <Move class="w-4 h-4 mr-1"/>
-              拖拽
-            </Button>
-          </Tooltip>
-          <Tooltip content="点击线段添加节点">
-            <Button
-                :variant="editMode === 'add' ? 'default' : 'outline'"
-                size="sm"
-                @click="editMode = 'add'"
-            >
-              <Plus class="w-4 h-4 mr-1"/>
-              添加点
-            </Button>
-          </Tooltip>
-          <Tooltip content="点击节点删除">
-            <Button
-                :variant="editMode === 'delete' ? 'default' : 'outline'"
-                size="sm"
-                @click="editMode = 'delete'"
-            >
-              <Trash2 class="w-4 h-4 mr-1"/>
-              删除点
-            </Button>
-          </Tooltip>
-        </template>
 
         <div class="w-px h-5" style="background-color: var(--app-border-color);"/>
 

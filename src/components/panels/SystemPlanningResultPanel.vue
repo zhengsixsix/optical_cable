@@ -12,7 +12,9 @@
 
 import { ref, computed } from 'vue'
 import { Button } from '@/shared/components/base'
-import { Activity, ChevronDown, ChevronUp, Download } from 'lucide-vue-next'
+import { Activity, ChevronDown, ChevronUp, Download, TrendingUp, Cpu, DollarSign } from 'lucide-vue-next'
+import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
+import SpanComparisonPanel from '@/components/panels/SpanComparisonPanel.vue'
 import type { SpanScanResult } from '@/types/simulation'
 
 const props = defineProps<{
@@ -22,6 +24,8 @@ const props = defineProps<{
   totalLength: number
   /** 推荐的 Span 长度 */
   recommendedSpan?: number
+  /** 用户选定的 Span 长度 */
+  userSelectedSpan?: number | null
   /** EDFA 放置结果 */
   edfaPlacement?: {
     positions: Array<{ kp: number; longitude: number; latitude: number; isBranch?: boolean }>
@@ -40,9 +44,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'apply-recommendation', spanKm: number): void
+  (e: 'apply-user-selection', spanKm: number): void
+  (e: 'update:userSelectedSpan', v: number | null): void
+  (e: 'restore-recommended'): void
+  (e: 'select-span', spanLength: number): void
   (e: 'export-report'): void
   (e: 'recalculate'): void
 }>()
+
+// Tab 视图
+const activeTab = ref<'overview' | 'performance' | 'amplifier' | 'cost'>('overview')
 
 // 展开/折叠状态
 const expandedSections = ref({
@@ -80,6 +91,36 @@ const performanceOverview = computed(() => {
   }
 })
 
+// 放大器详细列表
+const amplifierDetails = computed(() => {
+  if (!props.edfaPlacement?.positions?.length) return []
+  const positions = [...props.edfaPlacement.positions].sort((a, b) => a.kp - b.kp)
+  let prevKp = 0
+  return positions.map((pos, idx) => {
+    const spacing = pos.kp - prevKp
+    prevKp = pos.kp
+    return { index: idx + 1, kp: pos.kp, spacing, isBranch: pos.isBranch }
+  })
+})
+
+// 成本分析
+const costAnalysis = computed(() => {
+  if (!props.costConfig || !props.totalLength) return null
+  const cfg = props.costConfig
+  const ampCount = props.edfaPlacement?.count || 0
+  const cable = (cfg.cablePerKm || 0) * props.totalLength
+  const repeater = (cfg.repeaterPerUnit || 0) * ampCount
+  const install = (cfg.installationPerKm || 0) * props.totalLength
+  const total = cable + repeater + install
+  return { cable, repeater, install, total, ampCount }
+})
+
+const formatCost = (v: number) => {
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(0)}K`
+  return `$${v.toFixed(0)}`
+}
+
 // 导出报告
 const handleExportReport = () => {
   emit('export-report')
@@ -100,6 +141,41 @@ const handleExportReport = () => {
       </Button>
     </div>
 
+    <!-- Tab 导航 -->
+    <div v-if="hasScanResult" class="flex border-b bg-gray-50/50">
+      <button
+        class="flex-1 px-2 py-1.5 text-xs font-medium transition-colors"
+        :class="activeTab === 'overview' ? 'text-blue-600 border-b-2 border-blue-500 bg-white' : 'text-gray-500 hover:text-gray-700'"
+        @click="activeTab = 'overview'"
+      >
+        概览
+      </button>
+      <button
+        class="flex-1 px-2 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1"
+        :class="activeTab === 'performance' ? 'text-purple-600 border-b-2 border-purple-500 bg-white' : 'text-gray-500 hover:text-gray-700'"
+        @click="activeTab = 'performance'"
+      >
+        <TrendingUp class="w-3 h-3" />
+        性能曲线
+      </button>
+      <button
+        class="flex-1 px-2 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1"
+        :class="activeTab === 'amplifier' ? 'text-blue-600 border-b-2 border-blue-500 bg-white' : 'text-gray-500 hover:text-gray-700'"
+        @click="activeTab = 'amplifier'"
+      >
+        <Cpu class="w-3 h-3" />
+        放大器
+      </button>
+      <button
+        class="flex-1 px-2 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1"
+        :class="activeTab === 'cost' ? 'text-green-600 border-b-2 border-green-500 bg-white' : 'text-gray-500 hover:text-gray-700'"
+        @click="activeTab = 'cost'"
+      >
+        <DollarSign class="w-3 h-3" />
+        成本
+      </button>
+    </div>
+
     <!-- 内容区 -->
     <div class="flex-1 overflow-auto p-4">
       <!-- 无数据提示 -->
@@ -111,9 +187,8 @@ const handleExportReport = () => {
         </div>
       </div>
 
-      <!-- 概览视图 -->
-      <div v-else class="space-y-4">
-        
+      <!-- === 概览 Tab === -->
+      <div v-else-if="activeTab === 'overview'" class="space-y-4">
         <!-- 关键指标卡片 -->
         <div class="grid grid-cols-2 gap-3">
           <div class="p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200">
@@ -178,6 +253,80 @@ const handleExportReport = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- === 性能曲线 Tab === -->
+      <div v-else-if="activeTab === 'performance'" class="space-y-4">
+        <SpanPerformanceChart
+          v-if="scanResult"
+          :scan-result="scanResult"
+          :height="200"
+          :show-osnr="true"
+          :user-selected-span="userSelectedSpan"
+          :recommended-span="recommendedSpan"
+          @select-span="(v: number) => emit('select-span', v)"
+          @update:user-selected-span="(v: number | null) => emit('update:userSelectedSpan', v)"
+        />
+        <SpanComparisonPanel
+          :scan-result="scanResult"
+          :total-length="totalLength"
+          :recommended-span="recommendedSpan"
+          :user-selected-span="userSelectedSpan"
+          :cost-config="costConfig"
+          @update:user-selected-span="(v: number | null) => emit('update:userSelectedSpan', v)"
+          @apply-user-selection="(v: number) => emit('apply-user-selection', v)"
+          @restore-recommended="emit('restore-recommended')"
+        />
+      </div>
+
+      <!-- === 放大器详情 Tab === -->
+      <div v-else-if="activeTab === 'amplifier'" class="space-y-3">
+        <div class="text-xs text-gray-500">共 {{ edfaPlacement?.count || 0 }} 台放大器</div>
+        <div v-if="amplifierDetails.length > 0" class="border rounded-lg overflow-hidden">
+          <div class="grid grid-cols-4 px-3 py-1.5 bg-gray-50 text-xs text-gray-500 font-medium border-b">
+            <span>序号</span><span>KP (km)</span><span>跨段 (km)</span><span>类型</span>
+          </div>
+          <div class="max-h-[400px] overflow-auto divide-y">
+            <div
+              v-for="amp in amplifierDetails" :key="amp.index"
+              class="grid grid-cols-4 px-3 py-1.5 text-xs"
+              :class="amp.spacing > 100 ? 'bg-red-50' : amp.spacing > 90 ? 'bg-amber-50' : ''"
+            >
+              <span class="font-mono">#{{ amp.index }}</span>
+              <span class="font-mono">{{ amp.kp.toFixed(1) }}</span>
+              <span class="font-mono" :class="amp.spacing > 100 ? 'text-red-600 font-bold' : ''">
+                {{ amp.spacing.toFixed(1) }}
+              </span>
+              <span>{{ amp.isBranch ? '分支' : '主干' }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else class="text-sm text-gray-400 text-center py-8">暂无放大器数据</div>
+      </div>
+
+      <!-- === 成本分析 Tab === -->
+      <div v-else-if="activeTab === 'cost'" class="space-y-3">
+        <div v-if="costAnalysis" class="space-y-3">
+          <div class="p-3 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border border-green-200">
+            <div class="text-xs text-green-600 mb-1">总成本估算</div>
+            <div class="text-xl font-bold text-green-800">{{ formatCost(costAnalysis.total) }}</div>
+          </div>
+          <div class="border rounded-lg divide-y">
+            <div class="flex justify-between px-3 py-2 text-sm">
+              <span class="text-gray-600">海缆成本</span>
+              <span class="font-mono">{{ formatCost(costAnalysis.cable) }}</span>
+            </div>
+            <div class="flex justify-between px-3 py-2 text-sm">
+              <span class="text-gray-600">放大器成本 ({{ costAnalysis.ampCount }} 台)</span>
+              <span class="font-mono">{{ formatCost(costAnalysis.repeater) }}</span>
+            </div>
+            <div class="flex justify-between px-3 py-2 text-sm">
+              <span class="text-gray-600">施工成本</span>
+              <span class="font-mono">{{ formatCost(costAnalysis.install) }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else class="text-sm text-gray-400 text-center py-8">请在工程设置中配置成本参数</div>
       </div>
     </div>
   </div>
