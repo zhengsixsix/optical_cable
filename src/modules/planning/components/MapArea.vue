@@ -391,6 +391,16 @@ const handleSelectRoute = (routeId: string) => {
   drawParetoRoutes()
 }
 
+/** 计算路由主干段总长度（排除分支登陆站连线段，用于海缆段 KP 范围计算） */
+const getTrunkOnlyLength = (route: any): number => {
+  if (!route?.points?.some((p: any) => p.type === 'branching')) return route?.totalLength || 0
+  const branchIds = new Set<string>()
+  route.points.forEach((p: any) => { if (p.isBranchStation) branchIds.add(p.id) })
+  return route.segments
+    .filter((seg: any) => !branchIds.has(seg.startPointId) && !branchIds.has(seg.endPointId))
+    .reduce((sum: number, seg: any) => sum + (seg.length || 0), 0)
+}
+
 // ========== 海缆段生成相关函数 ==========
 
 // 打开海缆段生成对话框
@@ -416,9 +426,9 @@ const handleCableSegmentGenerate = (config: SegmentGenerateConfig) => {
   currentSegmentMethod.value = config.method
   currentSegmentGenerateTime.value = new Date().toLocaleString()
   
-  // 获取当前选中路由的长度
-  const selectedRoute = routeStore.paretoRoutes.find(r => r.id === currentSelectedRouteId)
-  const routeLength = selectedRoute?.totalLength || 100
+  // 获取当前选中路由的长度（使用主干段长度，排除分支段）
+    const selectedRoute = routeStore.paretoRoutes.find(r => r.id === currentSelectedRouteId)
+    const routeLength = selectedRoute ? getTrunkOnlyLength(selectedRoute) : 100
   
   // 生成分段（暂无风险数据，使用空数组）
   const segments = cableSegmentStore.generateSegments(routeLength, [])
@@ -468,7 +478,7 @@ const autoGenerateCableSegments = (): number => {
     }
 
     const selectedRoute = routeStore.paretoRoutes.find(r => r.id === selectedRouteId)
-    const routeLength = selectedRoute?.totalLength || 0
+    const routeLength = selectedRoute ? getTrunkOnlyLength(selectedRoute) : 0
     if (routeLength <= 0) {
       return 0
     }
@@ -508,7 +518,7 @@ const autoGenerateCableSegments = (): number => {
 const getCurrentRouteLength = (): number => {
   const currentSelectedRouteId = routeStore.selectedRouteIds[0]
   const selectedRoute = routeStore.paretoRoutes.find(r => r.id === currentSelectedRouteId)
-  return selectedRoute?.totalLength || 0
+  return selectedRoute ? getTrunkOnlyLength(selectedRoute) : 0
 }
 
 // 保存海缆段配置
@@ -1377,7 +1387,6 @@ const drawParetoRoutes = async () => {
         if (hasFineSegments && !isEditingRoute.value) {
           // ====== 有海缆段且非编辑模式，直接按段画主干线（每段自带颜色、标签） ======
           const cableSegs = cableSegmentStore.segments
-          const routeLen = route.totalLength || 0
 
           // 构建 segGeos（仅主干段，排除分支登陆站连线）
           let kpOff = 0
@@ -1389,44 +1398,28 @@ const drawParetoRoutes = async () => {
             segGeos.push({ startKp: kpOff, endKp: kpOff + (seg.length || 0), startCoord: sc, endCoord: ec })
             kpOff += (seg.length || 0)
           }
+          const trunkTotalKp = kpOff  // 主干段总 KP（不含分支段）
 
-          // 收集分段边界 KP
+          // 收集分段边界 KP（限定在主干 KP 范围内）
           const bKps = new Set<number>()
           cableSegs.forEach(s => {
-            if (s.startKp > 0) bKps.add(s.startKp)
-            if (s.endKp < routeLen) bKps.add(s.endKp)
+            if (s.startKp > 0 && s.startKp < trunkTotalKp) bKps.add(s.startKp)
+            if (s.endKp > 0 && s.endKp < trunkTotalKp) bKps.add(s.endKp)
           })
           const sortedBKps = Array.from(bKps).sort((a, b) => a - b)
-          const boundaries = [0, ...sortedBKps, routeLen]
+          const boundaries = [0, ...sortedBKps, trunkTotalKp]
 
-          for (let i = 0; i < boundaries.length - 1; i++) {
-            const sKp = boundaries[i], eKp = boundaries[i + 1]
-            if (eKp <= sKp) continue
-
-            const coords: [number, number][] = []
-            for (const r of segGeos) {
-              if (eKp <= r.startKp || sKp >= r.endKp) continue
-              const segLen = r.endKp - r.startKp
-              const sf = Math.max(0, (sKp - r.startKp) / segLen)
-              const ef = Math.min(1, (eKp - r.startKp) / segLen)
-              const sLon = r.startCoord[0] + sf * (r.endCoord[0] - r.startCoord[0])
-              const sLat = r.startCoord[1] + sf * (r.endCoord[1] - r.startCoord[1])
-              const eLon = r.startCoord[0] + ef * (r.endCoord[0] - r.startCoord[0])
-              const eLat = r.startCoord[1] + ef * (r.endCoord[1] - r.startCoord[1])
-              if (coords.length === 0) coords.push([sLon, sLat])
-              coords.push([eLon, eLat])
-            }
-            if (coords.length < 2) continue
-
+          // 创建海缆段 feature 的辅助函数
+          const makeFineFeature = (coords: [number, number][], sKp: number, eKp: number, idx: number) => {
+            if (coords.length < 2) return
             const eps = 1e-6
             const segInfo = cableSegs.find(s => Math.abs(s.startKp - sKp) < eps && Math.abs(s.endKp - eKp) < eps)
             const risk = segInfo?.riskLevel || 'low'
             const color = risk === 'high' ? '#dc2626' : risk === 'medium' ? '#f97316' : '#f59e0b'
             const segIdx = segInfo ? cableSegs.indexOf(segInfo) : -1
-            const displayId = segIdx >= 0 ? `SEG-${String(segIdx + 1).padStart(3, '0')}` : `S-${String(i + 1).padStart(3, '0')}`
-            const fineId = segInfo?.id || `fine-${i}`
+            const displayId = segIdx >= 0 ? `SEG-${String(segIdx + 1).padStart(3, '0')}` : `S-${String(idx + 1).padStart(3, '0')}`
+            const fineId = segInfo?.id || `fine-${idx}`
             const isSegSelected = fineId === selectedFineSegmentId.value
-
             const segFeature = new Feature({
               geometry: new LineString(coords),
               routeId: route.id,
@@ -1451,6 +1444,49 @@ const drawParetoRoutes = async () => {
               }),
             }))
             routeSource!.addFeature(segFeature)
+          }
+
+          for (let i = 0; i < boundaries.length - 1; i++) {
+            const sKp = boundaries[i], eKp = boundaries[i + 1]
+            if (eKp <= sKp) continue
+
+            if (hasBranching) {
+              // 分支拓扑：逐 segGeo 单独绘制，避免跨不连续分支产生跳线
+              for (const r of segGeos) {
+                if (eKp <= r.startKp || sKp >= r.endKp) continue
+                const segLen = r.endKp - r.startKp
+                if (segLen <= 0) continue
+                const clippedS = Math.max(sKp, r.startKp)
+                const clippedE = Math.min(eKp, r.endKp)
+                const sf = (clippedS - r.startKp) / segLen
+                const ef = (clippedE - r.startKp) / segLen
+                const sCoord: [number, number] = [
+                  r.startCoord[0] + sf * (r.endCoord[0] - r.startCoord[0]),
+                  r.startCoord[1] + sf * (r.endCoord[1] - r.startCoord[1])
+                ]
+                const eCoord: [number, number] = [
+                  r.startCoord[0] + ef * (r.endCoord[0] - r.startCoord[0]),
+                  r.startCoord[1] + ef * (r.endCoord[1] - r.startCoord[1])
+                ]
+                makeFineFeature([sCoord, eCoord], sKp, eKp, i)
+              }
+            } else {
+              // 线性拓扑：跨相邻 segGeo 累积坐标（原始逻辑）
+              const coords: [number, number][] = []
+              for (const r of segGeos) {
+                if (eKp <= r.startKp || sKp >= r.endKp) continue
+                const segLen = r.endKp - r.startKp
+                const sf = Math.max(0, (sKp - r.startKp) / segLen)
+                const ef = Math.min(1, (eKp - r.startKp) / segLen)
+                const sLon = r.startCoord[0] + sf * (r.endCoord[0] - r.startCoord[0])
+                const sLat = r.startCoord[1] + sf * (r.endCoord[1] - r.startCoord[1])
+                const eLon = r.startCoord[0] + ef * (r.endCoord[0] - r.startCoord[0])
+                const eLat = r.startCoord[1] + ef * (r.endCoord[1] - r.startCoord[1])
+                if (coords.length === 0) coords.push([sLon, sLat])
+                coords.push([eLon, eLat])
+              }
+              makeFineFeature(coords, sKp, eKp, i)
+            }
           }
         } else {
           // ====== 无海缆段，画主干线 ======
@@ -1601,7 +1637,7 @@ const drawParetoRoutes = async () => {
     const cableSegments = cableSegmentStore.segments
     const selectedRoute = routeStore.selectedRoute || routeStore.paretoRoutes[0]
     if (cableSegments.length > 0 && selectedRoute && selectedRoute.segments.length > 0 && !isEditingRoute.value) {
-      const routeLength = selectedRoute.totalLength || 0
+      const routeLength = getTrunkOnlyLength(selectedRoute)
       if (routeLength > 0) {
         // 构建点ID→坐标映射（包含分支登陆站）
         const ptMap: Record<string, [number, number]> = {}
