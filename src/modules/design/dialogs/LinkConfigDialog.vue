@@ -699,7 +699,8 @@ const completionPercentage = computed(() => {
 
 const canStartCalculation = computed(() => {
   return stepStatus.value.link && stepStatus.value.model && 
-         stepStatus.value.fiber && stepStatus.value.amplifier && stepStatus.value.wdm
+         stepStatus.value.fiber && stepStatus.value.amplifier && stepStatus.value.wdm &&
+         stepStatus.value.bu
 })
 
 // ============ 导航和操作 ============
