@@ -155,22 +155,22 @@ export interface USEProject {
   
   // 路由规划数据
   routePlanning: {
-    routes: any[]
-    rplTables: any[]
-    planningConfig: any
+    routes: Record<string, unknown>[]
+    rplTables: Record<string, unknown>[]
+    planningConfig: Record<string, unknown>
   }
   
   // 传输规划
   transmissionPlanning: {
-    sldTables: any[]
-    transmissionConfig: any
-    repeaterConfigs: any[]
+    sldTables: Record<string, unknown>[]
+    transmissionConfig: Record<string, unknown>
+    repeaterConfigs: Record<string, unknown>[]
   }
   
   // GIS数据
   gisData: {
     layers: string[]
-    bounds: any
+    bounds: Record<string, unknown>
   }
   
   // 图层设置
@@ -181,12 +181,12 @@ export interface USEProject {
   
   // 设置
   settings: {
-    cableTypes: any[]
-    costFactors: any
+    cableTypes: Record<string, unknown>[]
+    costFactors: Record<string, unknown>
   }
   
   // 监控配置
-  monitoringConfig: any
+  monitoringConfig: Record<string, unknown>
   
   // 性能结果
   performanceResults: {
@@ -201,39 +201,10 @@ export interface USEProject {
 /** 项目文件类型 */
 export type ProjectFile = USEProject
 
-// ==================== 工厂函数 ====================
-// 注意: 实际的项目创建应使用 ProjectFileService.ts 中的 createUSEProject
-// 这里的工厂函数已废弃，保留仅为了向后兼容
-
-/** @deprecated 请使用 ProjectFileService.createUSEProject */
-export function createDefaultUSEProject(name: string, creatorId: string): any {
-  console.warn('createDefaultUSEProject 已废弃，请使用 ProjectFileService.createUSEProject')
-  return {
-    type: 'use',
-    version: '2.0.0',
-    projectName: name,
-    name,
-    creatorUserId: creatorId,
-    creatorId,
-    allowOtherUsers: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    rplFiles: [],
-    rplSldAssociations: [],
-    routePlanning: { routes: [], rplTables: [], planningConfig: {} },
-    transmissionPlanning: { sldTables: [], transmissionConfig: {}, repeaterConfigs: [] },
-    gisData: { layers: [], bounds: {} },
-    layerSettings: { ...defaultLayerSettings },
-    componentLibrary: { currentLibrary: 'default' },
-    settings: { cableTypes: [], costFactors: {} },
-    monitoringConfig: {},
-    performanceResults: { gsnr: null, capacity: null, margin: null },
-  }
-}
 
 // ==================== 类型守卫 ====================
 
 /** 判断是否为 USE 项目 */
-export function isUSEProject(project: any): project is USEProject {
+export function isUSEProject(project: Record<string, unknown>): project is USEProject {
   return project.type === 'use'
 }

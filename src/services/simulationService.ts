@@ -43,18 +43,18 @@ export async function buildSimulationInput(
   })
   
   // 获取路由信息
-  const route = routeStore.routes.find((r: any) => r.id === config.routeId)
+  const route = routeStore.routes.find(r => r.id === config.routeId)
   const linkName = route?.name || '未命名链路'
   
   // 1. 按 KP 排序整理器件序列
   const elements = connectorStore.elements
-    .filter((e: any) => ['landing', 'underwater', 'amplifier_e', 'amplifier_w', 'ola', 'bu'].includes(e.type))
-    .sort((a: any, b: any) => a.kp - b.kp)
+    .filter(e => ['landing', 'underwater', 'amplifier_e', 'amplifier_w', 'ola', 'bu'].includes(e.type))
+    .sort((a, b) => a.kp - b.kp)
   
   const deviceSequence: SimDevice[] = []
   let totalLength = 0
   
-  for (const el of elements as any[]) {
+  for (const el of elements) {
     if (el.type === 'landing' || el.type === 'underwater') {
       deviceSequence.push({
         id: el.id,
@@ -67,7 +67,7 @@ export async function buildSimulationInput(
     } else if (el.type === 'amplifier_e' || el.type === 'amplifier_w' || el.type === 'ola') {
       // 从器件库获取放大器参数
       const ampType = el.componentRefId 
-        ? settingsStore.amplifierTypes.find((a: any) => a.id === el.componentRefId)
+        ? settingsStore.amplifierTypes.find(a => a.id === el.componentRefId)
         : null
       
       deviceSequence.push({
@@ -86,7 +86,7 @@ export async function buildSimulationInput(
       } as SimAmplifierDevice)
     } else if (el.type === 'bu') {
       const buType = el.componentRefId
-        ? settingsStore.branchingUnitTypes.find((b: any) => b.id === el.componentRefId)
+        ? settingsStore.branchingUnitTypes.find(b => b.id === el.componentRefId)
         : null
       
       deviceSequence.push({
@@ -117,7 +117,7 @@ export async function buildSimulationInput(
   
   // 2. 构建光纤段序列
   const fiberSegments: SimFiberSegment[] = []
-  const fiberType = settingsStore.fiberTypes.find((f: any) => f.id === config.fiberTypeId)
+  const fiberType = settingsStore.fiberTypes.find(f => f.id === config.fiberTypeId)
   
   for (let i = 0; i < deviceSequence.length - 1; i++) {
     const fromDevice = deviceSequence[i]
@@ -150,7 +150,7 @@ export async function buildSimulationInput(
     channelSpacing: config.wdmParams.channelSpacing,
     centerWavelength: frequencyToWavelength(config.wdmParams.centerFreq),
     symbolRate: config.wdmParams.baudRate,
-    modulationFormat: config.wdmParams.modulation as any,
+    modulationFormat: config.wdmParams.modulation,
     launchPowerPerChannel: config.wdmParams.launchPower,
     fecType: 'SD-FEC' as const,
     fecOverhead: 15,
@@ -218,10 +218,10 @@ export async function buildSimulationInput(
         band: 'C+L'
       }
     },
-    wdm: wdmConfig as any,
+    wdm: wdmConfig,
     spanStrategy,
     constraints,
-    buConfigs: config.buConfigs.map((bu: any) => ({
+    buConfigs: config.buConfigs.map(bu => ({
       id: bu.id,
       name: bu.name,
       kp: bu.kp || 0,

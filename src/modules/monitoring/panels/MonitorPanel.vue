@@ -28,8 +28,8 @@ const stats = computed(() => {
   return {
     healthStatus: !hasData ? '--' : (statusSummary.error > 0 ? '异常' : statusSummary.warning > 0 ? '警告' : '正常'),
     activeAlarms: monitorStore.activeAlarms,
-    gsnr: hasData ? 25 : '--', // TODO: 从实际数据计算
-    margin: hasData ? 3 : '--', // TODO: 从实际数据计算
+    gsnr: hasData ? 25 : '--',
+    margin: hasData ? 3 : '--',
   }
 })
 

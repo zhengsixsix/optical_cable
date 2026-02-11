@@ -177,7 +177,7 @@ export const useConnectorStore = defineStore('connector', () => {
           ...elem,
           id: `elem-${index}`
         }
-        currentTable.value.elements.push(newElement as any)
+        currentTable.value.elements.push(newElement as ConnectorElement)
       })
       if (currentTable.value) {
         currentTable.value.updatedAt = new Date().toISOString()

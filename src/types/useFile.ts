@@ -117,7 +117,7 @@ export interface LayerRegistryItem {
 export interface LandingPointProperties {
   country?: string               // 国家代码
   owner?: string                 // 所有者
-  [key: string]: any             // 扩展属性
+  [key: string]: unknown          // 扩展属性
 }
 
 /** 导入的登陆站点 */
@@ -216,7 +216,7 @@ export interface ModelInput {
   unit: string                   // 参数单位（如 "dB/km", "W"）
   type: 'float' | 'int' | 'string' | 'array'  // 数据类型
   required: boolean              // 是否必填
-  default?: number | string | any[]  // 默认值（当 required=false 时生效）
+  default?: number | string | unknown[]  // 默认值（当 required=false 时生效）
   source_hint?: string           // 系统自动取值路径提示（如 "fiber.attributes.attenuation"）
 }
 
@@ -266,7 +266,7 @@ export interface FiberAttributes {
 /** 光纤模型参数配置 */
 export interface FiberModelParamsConfig {
   is_configured: boolean         // 该模型的参数是否已完整配置
-  params: Record<string, any>    // 具体参数键值对，与 models[].inputs 的 param_id 对应
+  params: Record<string, unknown>    // 具体参数键值对，与 models[].inputs 的 param_id 对应
 }
 
 /** 光纤规格 */
@@ -322,7 +322,7 @@ export interface BUSpecs {
 /** 器件模型参数配置 */
 export interface ComponentModelParamsConfig {
   is_configured: boolean         // 该模型的参数是否已完整配置
-  params: Record<string, any>    // 具体参数键值对
+  params: Record<string, unknown>    // 具体参数键值对
 }
 
 /** 器件规格（通用） */
@@ -621,7 +621,7 @@ export interface CollectorConnectionParams {
   method: string                 // HTTP 方法
   response_format: string        // 响应格式
   ssl_verify: string             // SSL 验证
-  [key: string]: string          // 扩展参数
+  [key: string]: string | undefined // 扩展参数
 }
 
 /** 采集器配置 */
@@ -664,28 +664,28 @@ export interface USEHealthMonitoring {
 
 /** 路由规划扩展数据 (保存原始 RPL 表格) */
 export interface RouteplanningExtension {
-  rplTables: any[]  // 原始 RPL 表格数据
-  routes?: any[]    // 路由数据
-  planningConfig?: any
-  cableTypeDatabase?: any[]  // 缆型数据库（包含用户新建的缆型）
+  rplTables: Record<string, unknown>[]  // 原始 RPL 表格数据
+  routes?: Record<string, unknown>[]    // 路由数据
+  planningConfig?: Record<string, unknown>
+  cableTypeDatabase?: Record<string, unknown>[]  // 缆型数据库（包含用户新建的缆型）
 }
 
 /** 传输规划扩展数据 (保存原始 SLD 表格) */
 export interface TransmissionPlanningExtension {
-  sldTables: any[]  // 原始 SLD 表格数据
-  transmissionConfig?: any
-  repeaterConfigs?: any[]
+  sldTables: Record<string, unknown>[]  // 原始 SLD 表格数据
+  transmissionConfig?: Record<string, unknown>
+  repeaterConfigs?: Record<string, unknown>[]
 }
 
 /** 接线元扩展数据 */
 export interface ConnectorExtension {
-  connectorTables: any[]  // 接线元表格数据
+  connectorTables: Record<string, unknown>[]  // 接线元表格数据
 }
 
 /** 监控扩展数据 */
 export interface MonitorExtension {
-  devices: any[]         // 监控设备数据
-  alarmHistory?: any[]   // 告警历史
+  devices: Record<string, unknown>[]         // 监控设备数据
+  alarmHistory?: Record<string, unknown>[]   // 告警历史
 }
 
 /** 图层设置扩展数据 */
@@ -711,7 +711,7 @@ export interface USEProjectData {
   // ===== 扩展字段 (保存原始 Store 数据，确保完整恢复) =====
   routePlanning?: RouteplanningExtension       // RPL 原始数据
   transmissionPlanning?: TransmissionPlanningExtension  // SLD 原始数据
-  connectorTables?: any[]                      // 接线元表格数据
+  connectorTables?: Record<string, unknown>[]  // 接线元表格数据
   monitorData?: MonitorExtension               // 监控数据
   layerSettings?: LayerSettingsExtension       // 图层设置
 }
@@ -726,7 +726,7 @@ export interface LinkElementParams {
   index: number                  // 元素在链路中的序号
   element_type: LinkElementType  // 元素类型
   model_id: string               // 使用的计算模型 ID
-  params: Record<string, any>    // 参数键值对
+  params: Record<string, unknown>    // 参数键值对
 }
 
 /** 链路参数组装结果 */

@@ -26,7 +26,6 @@ export {
   type ProjectInfo,
   type USEProject,
   type ProjectFile,
-  createDefaultUSEProject,
   isUSEProject,
 } from './project'
 export * from './simulation'
