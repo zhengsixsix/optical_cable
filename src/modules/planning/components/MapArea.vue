@@ -1580,7 +1580,8 @@ const drawParetoRoutes = async () => {
         if (point.type === 'branching' && (point as any).branchTo) {
           const branchTo = (point as any).branchTo
 
-          // 绘制分支线（选中时与主干同样式，未选中时紫色虚线）
+          // 绘制分支线（海缆段模式下用橙色主干样式，否则选中红色/未选中紫色虚线）
+          const useBranchFineStyle = isRouteSelected && cableSegmentStore.segments.length > 0 && !isEditingRoute.value
           const branchLineFeature = new Feature({
             geometry: new LineString([
               point.coordinates,
@@ -1594,9 +1595,9 @@ const drawParetoRoutes = async () => {
           })
           branchLineFeature.setStyle(new Style({
             stroke: new Stroke({
-              color: isRouteSelected ? '#ef4444' : '#a855f7',
-              width: isRouteSelected ? 4 : 2,
-              lineDash: isRouteSelected ? undefined : [6, 4],
+              color: useBranchFineStyle ? '#f59e0b' : (isRouteSelected ? '#ef4444' : '#a855f7'),
+              width: useBranchFineStyle ? 5 : (isRouteSelected ? 4 : 2),
+              lineDash: useBranchFineStyle ? undefined : (isRouteSelected ? undefined : [6, 4]),
             }),
           }))
           routeSource!.addFeature(branchLineFeature)
