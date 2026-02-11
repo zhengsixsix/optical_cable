@@ -464,14 +464,12 @@ const autoGenerateCableSegments = (): number => {
     // 获取当前选中路由（规划刚完成时默认选中第一条）
     const selectedRouteId = routeStore.selectedRouteIds[0] || routeStore.paretoRoutes[0]?.id
     if (!selectedRouteId) {
-      console.warn('autoGenerateCableSegments: 无可用路由')
       return 0
     }
 
     const selectedRoute = routeStore.paretoRoutes.find(r => r.id === selectedRouteId)
     const routeLength = selectedRoute?.totalLength || 0
     if (routeLength <= 0) {
-      console.warn('autoGenerateCableSegments: 路由长度为0')
       return 0
     }
 
@@ -499,9 +497,9 @@ const autoGenerateCableSegments = (): number => {
 
     appStore.addLog('INFO', `自动生成海缆分段：${segments.length} 段，每段约 ${targetLength} km，总长 ${routeLength.toFixed(1)} km`)
     return segments.length
-  } catch (err: any) {
-    console.error('autoGenerateCableSegments error:', err)
-    appStore.addLog('WARN', `自动生成海缆分段失败: ${err.message}`)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    appStore.addLog('WARN', `自动生成海缆分段失败: ${message}`)
     return 0
   }
 }
@@ -1252,8 +1250,7 @@ const initMap = () => {
       appStore.showNotification({type: 'success', message: `已加载航道数据，共 ${features.length} 个要素`})
       appStore.addLog('INFO', `航道数据加载完成`)
 
-    } catch (error) {
-      console.error('加载航道数据失败:', error)
+    } catch {
       layerStore.setLayerLoading('shipping', false)
       appStore.showNotification({type: 'error', message: '加载航道数据失败'})
     }
@@ -2263,8 +2260,8 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
 
     // 注意：规划模式下不同步到 monitorStore，避免影响 Pareto 路线显示
     // monitorStore.devices 仅用于 USE 文件导入的工程数据
-  } catch (err) {
-    console.error('syncRouteToConnector error:', err)
+  } catch {
+    // syncRouteToConnector 失败时静默处理
   }
 }
 
@@ -2377,8 +2374,7 @@ const handleRunPlanning = async () => {
       const result = await fetchDemPoint(lon, lat)
       // 高程 < 0 表示水下，返回正数水深；>= 0 表示岸上，返回 0
       return result.elevation < 0 ? Math.abs(result.elevation) : 0
-    } catch (e) {
-      console.warn(`查询高程失败 (${lon}, ${lat}):`, e)
+    } catch {
       return 0
     }
   }
@@ -2482,9 +2478,8 @@ const handleRunPlanning = async () => {
           // 如果后端没返回路由，使用前端生成
           routeStore.generateParetoRoutesFromSettings()
         }
-      } catch (apiErr: any) {
+      } catch {
         // 后端API失败时，回退到前端生成路由（确保多点规划仍有路由和海缆段）
-        console.warn('后端路由规划API失败，使用前端生成:', apiErr.message)
         routeStore.generateParetoRoutesFromSettings()
       }
     }

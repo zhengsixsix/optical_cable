@@ -21,8 +21,7 @@ export class GeoService {
         try {
             const data = await this.repository.loadGeoTiff(url)
             return data
-        } catch (error) {
-            console.error('加载地形数据失败:', error)
+        } catch {
             throw new Error('无法加载地形数据')
         }
     }
@@ -35,8 +34,7 @@ export class GeoService {
         try {
             const data = await this.repository.getElevationData(extent)
             return data
-        } catch (error) {
-            console.error('获取高程数据失败:', error)
+        } catch {
             throw new Error('无法获取高程数据')
         }
     }
@@ -63,7 +61,6 @@ export class GeoService {
             const result = await this.repository.importGisFile(file)
             return result
         } catch (error) {
-            console.error('导入文件失败:', error)
             return {
                 success: false,
                 message: '导入失败',
@@ -81,8 +78,7 @@ export class GeoService {
         try {
             const blob = await this.repository.exportRouteData(routeId, format)
             return blob
-        } catch (error) {
-            console.error(`导出路由 ${routeId} 失败:`, error)
+        } catch {
             throw new Error('导出路由数据失败')
         }
     }

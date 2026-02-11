@@ -604,8 +604,7 @@ export function useProjectManager() {
             
             appStore.addLog('INFO', `导入 RPL 文件: ${rplFileData.name}, ${records.length} 条记录, ${newDevices.length} 个设备`)
           }
-        } catch (e) {
-          console.error('RPL 文件导入失败:', e)
+      } catch {
           appStore.showNotification({
             type: 'warning',
             message: 'RPL 文件导入失败，项目已创建但无路由数据',

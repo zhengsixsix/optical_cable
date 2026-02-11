@@ -171,8 +171,8 @@ export const useUserStore = defineStore('user', () => {
           parsed.unshift(defaultAdmin)
         }
         users.value = parsed
-      } catch (e) {
-        console.error('恢复用户数据失败:', e)
+      } catch {
+        // localStorage 解析失败时使用默认值
       }
     }
     
@@ -180,8 +180,8 @@ export const useUserStore = defineStore('user', () => {
     if (savedCurrentUser) {
       try {
         currentUser.value = JSON.parse(savedCurrentUser)
-      } catch (e) {
-        console.error('恢复当前用户失败:', e)
+      } catch {
+        // localStorage 解析失败时静默处理
       }
     }
   }

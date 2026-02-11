@@ -912,9 +912,8 @@ const startCalculation = async () => {
 
     spanScanData.value = response.spanScanResult
     calculationResult.value = response.detailedResult as CalculationResult
-  } catch (err: any) {
-    console.error('仿真计算失败:', err)
-    calculationError.value = err.message || '仿真计算失败，请检查后端服务是否启动'
+  } catch (err: unknown) {
+    calculationError.value = err instanceof Error ? err.message : '仿真计算失败，请检查后端服务是否启动'
   } finally {
     isCalculating.value = false
   }
@@ -1368,7 +1367,6 @@ const applyAndClose = async () => {
   isApplying.value = true
   try {
     if (!calculationResult.value || !calculationResult.value.amplifiers) {
-      console.warn('[applyAndClose] 无计算结果或无放大器数据')
       emit('close')
       return
     }
@@ -1376,7 +1374,6 @@ const applyAndClose = async () => {
     // 优先使用 selectedRoute，回退到 paretoRoutes[0]
     const route = routeStore.selectedRoute || routeStore.paretoRoutes[0] || null
     if (!route) {
-      console.warn('[applyAndClose] 无可用路由, selectedRoute:', routeStore.selectedRoute, 'paretoRoutes:', routeStore.paretoRoutes.length)
       emit('close')
       return
     }

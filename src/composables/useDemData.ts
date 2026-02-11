@@ -53,8 +53,8 @@ export const loadTifMeta = async (): Promise<TifMeta[]> => {
         const pixelHeight = (bbox[3] - bbox[1]) / height
         
         metas.push({ url, bbox, image, pixelWidth, pixelHeight, width, height })
-      } catch (e) {
-        console.warn(`加载 ${url} 元数据失败:`, e)
+      } catch {
+        // 单个 tif 加载失败不影响其他文件
       }
     }))
     

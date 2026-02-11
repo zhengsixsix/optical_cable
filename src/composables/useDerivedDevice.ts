@@ -146,7 +146,6 @@ export function useDerivedDevice() {
                          settingsStore.branchingUnitTypes.find(b => b.id === sourceId)
     
     if (!originalSpec) {
-      console.warn(`Cannot find source component: ${sourceId}`)
       return sourceId
     }
     
@@ -219,7 +218,6 @@ export function useDerivedDevice() {
     const originalSpec = settingsStore.fiberTypes.find(f => f.id === sourceId)
     
     if (!originalSpec) {
-      console.warn(`Cannot find source fiber: ${sourceId}`)
       return sourceId
     }
     

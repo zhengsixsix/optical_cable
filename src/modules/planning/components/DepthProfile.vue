@@ -63,8 +63,8 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
       hasData.value = result.data.points.length > 0
       nextTick(() => drawProfile())
     }
-  } catch (error) {
-    console.error('加载剖面数据失败:', error)
+  } catch {
+    // 加载失败时 hasData 保持 false
   } finally {
     loading.value = false
   }
@@ -96,8 +96,8 @@ const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
       hasData.value = result.data.points.length > 0
       nextTick(() => drawProfile())
     }
-  } catch (error) {
-    console.error('加载线段剖面数据失败:', error)
+  } catch {
+    // 加载失败时 hasData 保持 false
   } finally {
     loading.value = false
   }

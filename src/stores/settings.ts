@@ -239,8 +239,8 @@ export const useSettingsStore = defineStore('settings', () => {
         branchingUnits.value = data.branchingUnits || defaultSettings.branchingUnits
         // costFactors 不从 localStorage 加载，使用默认值，由项目文件恢复
       }
-    } catch (error) {
-      console.error('加载设置失败:', error)
+    } catch {
+      // localStorage 加载失败时使用默认值
     }
   }
 
@@ -256,8 +256,8 @@ export const useSettingsStore = defineStore('settings', () => {
         // 不保存 costFactors，它应该只存储在项目文件 (.use) 中
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-    } catch (error) {
-      console.error('保存设置失败:', error)
+    } catch {
+      // localStorage 保存失败时静默处理
     }
   }
 

@@ -63,8 +63,8 @@ class AlarmWebSocketService {
             // 心跳响应
             this.ws?.send(JSON.stringify({ type: 'pong' }))
           }
-        } catch (e) {
-          console.error('[AlarmWS] Failed to parse message:', e)
+        } catch {
+          // 无法解析的 WebSocket 消息静默忽略
         }
       }
       
@@ -75,13 +75,11 @@ class AlarmWebSocketService {
         this.attemptReconnect()
       }
       
-      this.ws.onerror = (error) => {
-        console.error('[AlarmWS] Error:', error)
+      this.ws.onerror = () => {
         this.connectionStatus.value = 'error'
         this.notifyConnectionStatus('error')
       }
-    } catch (e) {
-      console.error('[AlarmWS] Failed to connect:', e)
+    } catch {
       this.connectionStatus.value = 'error'
       this.attemptReconnect()
     }

@@ -115,8 +115,8 @@ const loadTerrainData = async (extent: [number, number, number, number]) => {
       createTerrain(data)
       hasData.value = true
     }
-  } catch (error) {
-    console.error('加载地形数据失败:', error)
+  } catch {
+    // 加载失败时 hasData 保持 false
   } finally {
     loading.value = false
   }

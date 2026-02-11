@@ -9,7 +9,7 @@ import type { SpanScanResult, SpanScanPoint } from '@/types/simulation'
 // ========== 请求类型 ==========
 
 /** Span 策略 */
-export interface SpanStrategyPayload
+export interface SpanStrategyPayload {
   mode: 'fixed' | 'scan'
   fixedLength?: number
   scanRange?: {

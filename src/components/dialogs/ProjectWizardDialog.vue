@@ -475,8 +475,8 @@ const handleDeviceFileSelected = async (e: Event) => {
             message: `解析成功：光纤${fiberTypes.length}种，放大器${amplifierTypes.length}种，分支器${branchingUnitTypes.length}种`
           })
         }
-      } catch (err) {
-        console.error('CSV解析失败:', err)
+      } catch {
+        // CSV 解析失败时静默处理，文件仍会被添加到列表
       }
     }
     

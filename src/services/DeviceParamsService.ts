@@ -19,7 +19,6 @@ export function getFiberParamsFromLibrary(fiberTypeId?: string): FiberParams {
   
   // 如果没有导入器件库，使用默认值
   if (!fiberTypes || fiberTypes.length === 0) {
-    console.warn('[DeviceParamsService] 器件库无光纤类型，使用默认参数')
     return { ...DEFAULT_FIBER_PARAMS }
   }
   
@@ -29,7 +28,6 @@ export function getFiberParamsFromLibrary(fiberTypeId?: string): FiberParams {
     : fiberTypes[0]
   
   if (!fiberType) {
-    console.warn(`[DeviceParamsService] 未找到光纤类型 ${fiberTypeId}，使用默认参数`)
     return { ...DEFAULT_FIBER_PARAMS }
   }
   
@@ -57,7 +55,6 @@ export function getAmplifierParamsFromLibrary(amplifierTypeId?: string): Amplifi
   
   // 如果没有导入器件库，使用默认值
   if (!amplifierTypes || amplifierTypes.length === 0) {
-    console.warn('[DeviceParamsService] 器件库无放大器类型，使用默认参数')
     return { ...DEFAULT_AMPLIFIER_PARAMS }
   }
   
@@ -67,7 +64,6 @@ export function getAmplifierParamsFromLibrary(amplifierTypeId?: string): Amplifi
     : amplifierTypes[0]
   
   if (!ampType) {
-    console.warn(`[DeviceParamsService] 未找到放大器类型 ${amplifierTypeId}，使用默认参数`)
     return { ...DEFAULT_AMPLIFIER_PARAMS }
   }
   

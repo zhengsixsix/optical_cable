@@ -437,7 +437,6 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
     // 检查解析错误
     const parseError = doc.querySelector('parsererror')
     if (parseError) {
-      console.error('XML解析错误:', parseError.textContent)
       return null
     }
     
@@ -450,7 +449,6 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
     }
     
     if (!root) {
-      console.error('无效的SLD XML格式')
       return null
     }
     
@@ -651,8 +649,7 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
       },
       globalInfo
     }
-  } catch (error) {
-    console.error('XML解析失败:', error)
+  } catch {
     return null
   }
 }

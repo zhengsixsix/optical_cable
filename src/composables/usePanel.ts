@@ -51,8 +51,8 @@ export function usePanel(options: UsePanelOptions = {}) {
           size: data.size || defaultSize
         }
       }
-    } catch (e) {
-      console.warn('加载面板位置失败:', e)
+    } catch {
+      // localStorage 加载失败时使用默认位置
     }
     return { position: defaultPosition, size: defaultSize }
   }
@@ -75,8 +75,8 @@ export function usePanel(options: UsePanelOptions = {}) {
         position: position.value,
         size: size.value
       }))
-    } catch (e) {
-      console.warn('保存面板位置失败:', e)
+    } catch {
+      // localStorage 保存失败时静默处理
     }
   }
 

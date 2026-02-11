@@ -68,8 +68,8 @@ export function loadAppearanceSettings(): AppearanceSettings {
     if (saved) {
       return { ...defaultSettings, ...JSON.parse(saved) }
     }
-  } catch (error) {
-    console.error('加载外观设置失败:', error)
+  } catch {
+    // 加载失败时使用默认设置
   }
   return defaultSettings
 }

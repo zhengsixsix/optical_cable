@@ -693,8 +693,7 @@ export const useRPLStore = defineStore('rpl', () => {
       }
 
       return true
-    } catch (e) {
-      console.error('CSV导入失败:', e)
+    } catch {
       return false
     }
   }

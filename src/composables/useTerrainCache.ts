@@ -72,7 +72,6 @@ export async function getTerrainData(
         const tifMeta = findTifForExtent(extentLonLat)
         
         if (!tifMeta || !tifMeta.image) {
-          console.warn('未找到覆盖该区域的 DEM 数据')
           return null
         }
 
@@ -91,7 +90,6 @@ export async function getTerrainData(
         const windowMaxY = Math.min(imgHeight, Math.ceil((imgMaxY - clampedMinY) / pixelHeight))
 
         if (windowMaxX <= windowMinX || windowMaxY <= windowMinY) {
-          console.warn('选择区域超出 DEM 数据范围')
           return null
         }
 
@@ -133,8 +131,7 @@ export async function getTerrainData(
 
       cachedData.value = data
       return data
-    } catch (error) {
-      console.error('加载地形数据失败:', error)
+    } catch {
       return null
     } finally {
       isLoading.value = false
