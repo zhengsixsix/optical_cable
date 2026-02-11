@@ -3,7 +3,6 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button, Select, Tooltip, Input } from '@/shared/components/base'
 import ConnectorPanel from '@/modules/design/panels/ConnectorPanel.vue'
-// BUConfigPanel 已移除，BU 配置统一在系统规划弹窗中完成
 import WDMConfigDialog from '@/modules/design/dialogs/WDMConfigDialog.vue'
 import ConnectorDialog from '@/modules/design/dialogs/ConnectorDialog.vue'
 import SimulationModelSelectDialog from '@/modules/design/dialogs/SimulationModelSelectDialog.vue'
@@ -18,7 +17,6 @@ import SystemDesignMap from '@/modules/design/components/SystemDesignMap.vue'
 import GSNRMarginChart from '@/components/charts/GSNRMarginChart.vue'
 import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
 import SystemPlanningResultPanel from '@/components/panels/SystemPlanningResultPanel.vue'
-import ChannelPerformanceChart from '@/components/charts/ChannelPerformanceChart.vue'
 import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore, useRouteStore } from '@/stores'
 import { useRouter } from 'vue-router'
 import { opticalSimulationService, repeaterPlacementService } from '@/services'
@@ -113,7 +111,6 @@ const openNewProject = () => {
   appStore.openDialog('new-project')
 }
 
-// 调试日志 + 初始化登陆站数据
 onMounted(() => {
   // 从路由规划初始化登陆站和分支器到 monitorStore
   initLandingStationsFromRoute()

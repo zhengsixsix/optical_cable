@@ -186,7 +186,6 @@ const allNodes = computed(() => {
     })
   }
   
-  console.log('[BU Config] allNodes:', nodes, 'buId:', props.buId)
   return nodes
 })
 
@@ -198,7 +197,6 @@ const currentBuIndex = computed(() => {
     n.id === `branch-${props.buId}` ||
     (n.type === 'branching' && n.name === currentBu.value?.name)
   )
-  console.log('[BU Config] currentBuIndex:', node?.index, 'found node:', node)
   return node ? node.index : -1
 })
 
@@ -208,11 +206,8 @@ const getNextHopOptions = (direction: 'upstream' | 'downstream' | 'branch') => {
   const nodes = allNodes.value
   const currentIdx = currentBuIndex.value
   
-  console.log(`[BU Config] getNextHopOptions(${direction}): currentIdx=${currentIdx}, nodes count=${nodes.length}`)
-  
   // 如果找不到当前 BU，返回所有可选节点
   if (currentIdx === -1) {
-    console.log('[BU Config] currentIdx is -1, returning all landing nodes')
     nodes
       .filter(n => n.type === 'landing' || n.type === 'branching')
       .forEach(n => options.push({ value: n.id, label: n.name }))
@@ -222,12 +217,10 @@ const getNextHopOptions = (direction: 'upstream' | 'downstream' | 'branch') => {
   if (direction === 'upstream') {
     // 上行：在当前 BU 之前的节点（排除其他 BU 的分支站）
     const upstream = nodes.filter(n => n.index < currentIdx && n.type !== 'branch-landing')
-    console.log('[BU Config] upstream nodes:', upstream)
     upstream.reverse().forEach(n => options.push({ value: n.id, label: n.name }))
   } else if (direction === 'downstream') {
     // 下行：在当前 BU 之后的节点（排除 BU 自己的分支站）
     const downstream = nodes.filter(n => n.index > currentIdx && n.type !== 'branch-landing')
-    console.log('[BU Config] downstream nodes:', downstream)
     downstream.forEach(n => options.push({ value: n.id, label: n.name }))
   } else {
     // 分支：优先使用 branch-landing
@@ -249,7 +242,6 @@ const getNextHopOptions = (direction: 'upstream' | 'downstream' | 'branch') => {
     }
   }
   
-  console.log(`[BU Config] ${direction} options:`, options)
   return options
 }
 
@@ -431,14 +423,10 @@ const createNewDevice = () => {
 // 初始化
 watch(() => props.visible, (visible) => {
   if (visible && props.buId) {
-    console.log('[BU Config] Dialog opened, buId:', props.buId)
-    
     // 优先从共享的 store 加载
     const cached = buConfigStore.getConfig(props.buId)
-    console.log('[BU Config] buConfigStore:', cached)
     
     if (cached) {
-      console.log('[BU Config] Loading from store:', cached)
       selectedDeviceId.value = cached.componentRefId || ''
       localParams.trunkLoss = cached.buTrunkLoss || 0.8
       localParams.branchLoss = cached.buBranchLoss || 3.5
@@ -447,7 +435,6 @@ watch(() => props.visible, (visible) => {
       nextHopConfig.branch1 = cached.buNextHopBranch1 || ''
     } else if (currentBu.value) {
       // 否则从 currentBu 加载（新打开时）
-      console.log('[BU Config] Loading from currentBu')
       selectedDeviceId.value = currentBu.value.componentRefId || ''
       localParams.trunkLoss = currentBu.value.buTrunkLoss || 0.8
       localParams.branchLoss = currentBu.value.buBranchLoss || 3.5

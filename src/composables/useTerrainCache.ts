@@ -35,13 +35,11 @@ export async function getTerrainData(
 ): Promise<TerrainData | null> {
   // 如果缓存命中，直接返回
   if (cachedExtent.value && cachedData.value && extentEquals(cachedExtent.value, extent)) {
-    console.log('✅ 地形数据缓存命中')
     return cachedData.value
   }
 
   // 如果正在加载相同的数据，等待完成
   if (isLoading.value && loadingPromise.value && cachedExtent.value && extentEquals(cachedExtent.value, extent)) {
-    console.log('⏳ 等待地形数据加载完成...')
     return loadingPromise.value
   }
 
@@ -64,14 +62,12 @@ export async function getTerrainData(
       const apiAvailable = await checkDemService()
 
       if (apiAvailable) {
-        console.log('✨ 使用 DEM API 服务获取地形数据')
         const result = await fetchDemClip(extentLonLat, 128, 128)
         elevationData = new Int16Array(result.elevation)
         width = result.width
         height = result.height
       } else {
         // Fallback: 前端直接加载 tif
-        console.log('⚠️ DEM API 不可用，使用前端加载')
         await loadTifMeta()
         const tifMeta = findTifForExtent(extentLonLat)
         
@@ -136,7 +132,6 @@ export async function getTerrainData(
       }
 
       cachedData.value = data
-      console.log(`📦 地形数据已缓存: ${width}x${height}, 高程 ${data.minElev}~${data.maxElev}m`)
       return data
     } catch (error) {
       console.error('加载地形数据失败:', error)

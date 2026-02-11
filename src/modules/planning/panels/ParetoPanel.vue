@@ -2,7 +2,7 @@
 import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouteStore } from '@/stores'
-import { cn } from '@/lib/utils'
+import { cn } from '@/shared/utils'
 
 /**
  * ParetoPanel Pareto 路径列表面板

@@ -1373,8 +1373,6 @@ const applyAndClose = async () => {
       return
     }
     
-    console.log('[applyAndClose] 放大器数量:', calculationResult.value.amplifiers.length)
-    
     // 优先使用 selectedRoute，回退到 paretoRoutes[0]
     const route = routeStore.selectedRoute || routeStore.paretoRoutes[0] || null
     if (!route) {
@@ -1383,8 +1381,6 @@ const applyAndClose = async () => {
       return
     }
     
-    console.log('[applyAndClose] 使用路由:', route.name, 'points:', route.points.length)
-    
     // 获取 RPL 记录用于经纬度计算
     const rplTable = rplStore.tables.find(t => t.id === selectedRplId.value)
     const rplRecords = rplTable?.records || []
@@ -1392,9 +1388,7 @@ const applyAndClose = async () => {
     
     // 预先计算主干路径坐标序列（避免每个放大器都重复计算）
     const pathCoords = buildPathCoords(route, rplRecords)
-    console.log('[applyAndClose] pathCoords点数:', pathCoords.length, 'rplRecords:', rplRecords.length, 'configTotalLength:', configTotalLength)
-    
-    // 计算路径总长和线段长度（复用 getCoordinateByKP 的逻辑）
+    // 计算路径总长和线段长度
     let actualTotalLength = 0
     const segmentLengths: number[] = []
     for (let i = 0; i < pathCoords.length - 1; i++) {
@@ -1502,10 +1496,7 @@ const applyAndClose = async () => {
     }
     
     // 3) 批量添加（一次性响应式更新，避免页面卡顿）
-    console.log('[applyAndClose] 准备添加元素:', newElements.length, 'OLA:', newElements.filter(e => e.type === 'ola').length)
-    console.log('[applyAndClose] connectorStore.currentTable:', !!connectorStore.currentTable)
     const addedIds = connectorStore.addElements(newElements)
-    console.log('[applyAndClose] 已添加元素IDs:', addedIds.length, '当前总元素数:', connectorStore.elements.length)
     
     // 传递计算结果给父组件（包含完整 Span 扫描数据和用户选择）
     const activeSpan = spanUserSelectedSpan.value ?? spanScanData.value?.recommendedSpanKm

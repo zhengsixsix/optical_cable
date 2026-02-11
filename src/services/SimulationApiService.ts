@@ -4,11 +4,12 @@
  */
 
 import { API_ENDPOINTS } from '@/config/api'
+import type { SpanScanResult, SpanScanPoint } from '@/types/simulation'
 
 // ========== 请求类型 ==========
 
 /** Span 策略 */
-export interface SpanStrategyPayload {
+export interface SpanStrategyPayload
   mode: 'fixed' | 'scan'
   fixedLength?: number
   scanRange?: {
@@ -78,36 +79,17 @@ export interface SimulationRequest {
 
 // ========== 响应类型 ==========
 
-/** Span 扫描点 */
-export interface ScanPoint {
-  spanLengthKm: number
-  numAmplifiers: number
-  actualSpanKm: number
-  gsnrPerChannelDb: number[]
-  osnrPerChannelDb: number[]
-  avgGsnrDb: number
-  minGsnrDb: number
-  avgOsnrDb: number
-  meetTarget: boolean
-  gsnrMarginDb: number
-}
-
-/** Span 扫描结果 */
-export interface SpanScanResult {
-  spanLengthsKm: number[]
-  scanPoints: ScanPoint[]
-  recommendedSpanKm: number
-  targetGsnrDb: number
-  feasibleRange: [number, number] | null
-  channelFrequencies: number[]
-}
+/** Span 扫描点（与 types/simulation.ts 中的 SpanScanPoint 兼容） */
+export type ScanPoint = SpanScanPoint
 
 /** 仿真计算响应 */
 export interface SimulationResponse {
   success: boolean
   error?: string
-  spanScanResult: SpanScanResult
-  detailedResult: any  // 与 LinkConfigDialog 的 CalculationResult 兼容
+  spanScanResult: Omit<SpanScanResult, 'linkId' | 'scannedAt' | 'model' | 'gsnrPerSpanDb' | 'osnrPerSpanDb'> & {
+    channelFrequencies?: number[]
+  }
+  detailedResult: any
 }
 
 // ========== API 调用 ==========

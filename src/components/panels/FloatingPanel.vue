@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { X, Minus, Maximize2, Minimize2 } from 'lucide-vue-next'
 import { usePanel, type PanelPosition, type PanelSize } from '@/composables/usePanel'
-import { cn } from '@/lib/utils'
+import { cn } from '@/shared/utils'
 
 /**
  * FloatingPanel 通用浮动面板组件

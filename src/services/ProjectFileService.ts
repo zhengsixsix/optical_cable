@@ -1583,13 +1583,11 @@ class ProjectFileService {
       if (rplStore.tables.length > 0) {
         rplStore.currentTableId = rplStore.tables[0].id
       }
-      console.log('[ProjectFileService] 从扩展字段恢复 RPL 表格:', rplStore.tables.length)
     }
 
     // 14.2 恢复路由数据 (如果扩展字段存在)
     if (projectData.routePlanning?.routes && projectData.routePlanning.routes.length > 0) {
       routeStore.setParetoRoutes(projectData.routePlanning.routes)
-      console.log('[ProjectFileService] 从扩展字段恢复路由:', projectData.routePlanning.routes.length)
     }
     
     // 14.2.1 恢复缆型数据库 (如果扩展字段存在)
@@ -1597,14 +1595,12 @@ class ProjectFileService {
       const settingsStore = useSettingsStore()
       // 替换现有的缆型数据库
       settingsStore.cableTypeDatabase.splice(0, settingsStore.cableTypeDatabase.length, ...projectData.routePlanning.cableTypeDatabase)
-      console.log('[ProjectFileService] 从扩展字段恢复缆型数据库:', projectData.routePlanning.cableTypeDatabase.length)
     }
     
     // 14.2.2 恢复完整的路径规划配置 (包含 armorMappings, waypoints, buList 等)
     if (projectData.routePlanning?.planningConfig) {
       const settingsStore = useSettingsStore()
       settingsStore.updateRoutePlanningConfig(projectData.routePlanning.planningConfig)
-      console.log('[ProjectFileService] 从扩展字段恢复路径规划配置')
     }
 
     // 14.3 恢复 SLD 原始数据 (如果扩展字段存在) - 这是最重要的修复!
@@ -1613,7 +1609,6 @@ class ProjectFileService {
       if (sldStore.tables.length > 0) {
         sldStore.currentTableId = sldStore.tables[0].id
       }
-      console.log('[ProjectFileService] 从扩展字段恢复 SLD 表格:', sldStore.tables.length)
     }
 
     // 14.4 恢复接线元数据 (如果扩展字段存在)
@@ -1622,7 +1617,6 @@ class ProjectFileService {
       if (connectorStore.tables.length > 0) {
         connectorStore.currentTableId = connectorStore.tables[0].id
       }
-      console.log('[ProjectFileService] 从扩展字段恢复接线元表格:', connectorStore.tables.length)
     }
 
     // 14.5 恢复监控数据 (如果扩展字段存在)
@@ -1631,7 +1625,6 @@ class ProjectFileService {
         devices: projectData.monitorData.devices,
         alarmHistory: projectData.monitorData.alarmHistory || []
       })
-      console.log('[ProjectFileService] 从扩展字段恢复监控设备:', projectData.monitorData.devices.length)
     }
 
     // 14.6 恢复图层设置 (如果扩展字段存在)
@@ -1643,7 +1636,6 @@ class ProjectFileService {
       layerStore.setLayerVisible('slope', ls.slopeMap ?? false)
       layerStore.setLayerVisible('earthquake', ls.earthquakeDistribution ?? false)
       layerStore.setLayerVisible('shipping', ls.shippingLanes ?? false)
-      console.log('[ProjectFileService] 从扩展字段恢复图层设置')
     }
   }
 
