@@ -715,6 +715,12 @@ const initMap = () => {
       if (options.extent) {
         map?.getView().fit(options.extent, {padding: [20, 20, 20, 20]})
       }
+      // 根据 TIF 原始分辨率限制最大缩放，+2 允许轻微过采样但不会黑屏
+      if (options.resolutions && map) {
+        const nativeMaxZoom = options.resolutions.length - 1
+        const safeMaxZoom = Math.min(nativeMaxZoom + 2, 18)
+        map.getView().setProperties({ maxZoom: safeMaxZoom })
+      }
     }).catch(() => {
     })
   }

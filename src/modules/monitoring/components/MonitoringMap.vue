@@ -203,7 +203,7 @@ const initMap = () => {
   if (!mapContainer.value) return
   
   // 加载 GeoTIFF 影像
-  const tifFiles = ['/output2.tif']
+  const tifFiles = ['/output2_cog.tif']
   const rgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], 1] }
   
   const geoTiffLayers = tifFiles.map((url) => {

@@ -90,7 +90,7 @@ const initMap = () => {
   // GeoTIFF图层
   const rgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], 1] }
   const geoTiffSource = new GeoTIFF({
-    sources: [{ url: '/output2.tif' }],
+    sources: [{ url: '/output2_cog.tif' }],
     normalize: true,
     wrapX: true,
   })
