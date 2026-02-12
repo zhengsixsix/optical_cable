@@ -278,11 +278,24 @@ export const mockMonitorDevices = [
 ]
 
 export const mockAlarmHistory = [
-  { id: 1, time: '14:30', device: '放大器 R2', deviceId: 'mon-rep-02', neType: 'Repeater', message: '温度超过阈值', level: 'warning', status: 'active' },
-  { id: 2, time: '12:15', device: '放大器 R1', deviceId: 'mon-rep-01', neType: 'Repeater', message: '信号恢复正常', level: 'info', status: 'cleared' },
-  { id: 3, time: '10:45', device: '分支器 B1', deviceId: 'mon-bu-01', neType: 'BU', message: '端口连接正常', level: 'info', status: 'cleared' },
-  { id: 4, time: '09:30', device: '登陆站 L1', deviceId: 'mon-te-sh', neType: 'LandingStation', message: '系统自检完成', level: 'info', status: 'cleared' },
-  { id: 5, time: '08:00', device: '系统', deviceId: '', neType: '', message: '系统启动完成', level: 'info', status: 'cleared' },
+  // 活跃告警 - 故障(error)
+  { id: 1, time: '2026/01/26 16:25', device: '登陆站 S1', deviceId: 'mon-te-sh', neType: 'LandingStation', message: 'OTU 告警事件触发', level: 'error', status: 'active' },
+  { id: 2, time: '2026/01/26 15:26', device: '登陆站 S1', deviceId: 'mon-te-sh', neType: 'LandingStation', message: 'ODU 预警事件触发', level: 'warning', status: 'active' },
+  { id: 3, time: '2026/01/26 12:26', device: '放大器 R1', deviceId: 'mon-rep-01', neType: 'Repeater', message: 'EDFA 增益波动下降，算法预测设备健康度下降，可能存在光纤性能退化', level: 'warning', status: 'active' },
+  { id: 4, time: '2026/01/26 09:26', device: '放大器 R2', deviceId: 'mon-rep-02', neType: 'Repeater', message: '链路 OSNR 性能优化，算法预测 2 小时内下降至预警阈值', level: 'error', status: 'active' },
+  { id: 5, time: '2026/01/26 08:10', device: '放大器 R3', deviceId: 'mon-rep-03', neType: 'Repeater', message: '泵浦电流异常波动，超出正常范围', level: 'warning', status: 'active' },
+  { id: 6, time: '2026/01/26 07:45', device: '分支器 B1', deviceId: 'mon-bu-01', neType: 'BU', message: '端口 2 通信质量下降，BER 升高', level: 'warning', status: 'active' },
+  { id: 7, time: '2026/01/26 06:30', device: '登陆站 L2', deviceId: 'mon-te-ok', neType: 'LandingStation', message: '光功率接收端偏低，接近告警阈值', level: 'warning', status: 'active' },
+  { id: 8, time: '2026/01/26 05:15', device: '供电设备 PFE-SH', deviceId: 'mon-pfe-sh', neType: 'PFE', message: '供电电压轻微波动，已触发监控', level: 'error', status: 'active' },
+  // 历史告警 - 已清除/已确认
+  { id: 9, time: '2026/01/25 22:00', device: '放大器 R2', deviceId: 'mon-rep-02', neType: 'Repeater', message: '温度超过阈值 (5.2°C > 5.0°C)，已自动调节', level: 'warning', status: 'acknowledged' },
+  { id: 10, time: '2026/01/25 18:30', device: '放大器 R1', deviceId: 'mon-rep-01', neType: 'Repeater', message: '输出光功率恢复正常', level: 'info', status: 'cleared' },
+  { id: 11, time: '2026/01/25 14:15', device: '分支器 B1', deviceId: 'mon-bu-01', neType: 'BU', message: '端口连接恢复正常', level: 'info', status: 'cleared' },
+  { id: 12, time: '2026/01/25 10:00', device: '登陆站 L1', deviceId: 'mon-te-sh', neType: 'LandingStation', message: '系统自检完成，所有模块正常', level: 'info', status: 'cleared' },
+  { id: 13, time: '2026/01/25 08:00', device: '系统', deviceId: '', neType: '', message: '系统启动完成，全部服务就绪', level: 'info', status: 'cleared' },
+  { id: 14, time: '2026/01/24 20:45', device: '放大器 R3', deviceId: 'mon-rep-03', neType: 'Repeater', message: 'EDFA 增益异常，已恢复', level: 'warning', status: 'cleared' },
+  { id: 15, time: '2026/01/24 16:30', device: '供电设备 PFE-OK', deviceId: 'mon-pfe-ok', neType: 'PFE', message: '供电电压短暂下降后恢复', level: 'info', status: 'cleared' },
+  { id: 16, time: '2026/01/24 12:00', device: '登陆站 L2', deviceId: 'mon-te-ok', neType: 'LandingStation', message: 'OSNR 恢复正常水平', level: 'info', status: 'cleared' },
 ]
 
 // ============================================
@@ -324,75 +337,6 @@ export const repeaterSpacingConfig = {
   max: 120,         // 最大间距 km
   totalLength: 650, // 总长度 km
 }
-
-// ============================================
-// 告警管理数据 - 用于 AlarmManageDialog
-// ============================================
-export const mockAlarmRecords = [
-  { id: '1', time: '2024-12-10 14:30:25', device: '登陆站 L1', deviceType: 'landing', message: '供电电压低于阈值 (47.2V < 47.5V)', level: 'critical', status: 'active', type: 'voltage' },
-  { id: '2', time: '2024-12-10 14:28:15', device: '放大器 R2', deviceType: 'repeater', message: '设备温度超过警告阈值 (5.2°C > 5.0°C)', level: 'warning', status: 'active', type: 'temperature' },
-  { id: '3', time: '2024-12-10 12:15:30', device: '放大器 R1', deviceType: 'repeater', message: '输出光功率下降 (-2.5dBm)', level: 'major', status: 'acknowledged', type: 'power' },
-  { id: '4', time: '2024-12-10 10:45:00', device: '分支器 B1', deviceType: 'branching', message: '端口2连接异常', level: 'warning', status: 'cleared', type: 'other' },
-  { id: '5', time: '2024-12-10 09:30:20', device: '放大器 R3', deviceType: 'repeater', message: 'BER超过阈值 (1e-5 > 1e-6)', level: 'major', status: 'active', type: 'other' },
-  { id: '6', time: '2024-12-10 08:15:10', device: '登陆站 L2', deviceType: 'landing', message: 'OSNR下降告警 (25dB < 28dB)', level: 'warning', status: 'acknowledged', type: 'power' },
-  { id: '7', time: '2024-12-09 23:45:00', device: '放大器 R3', deviceType: 'repeater', message: '温度传感器故障', level: 'info', status: 'cleared', type: 'temperature' },
-  { id: '8', time: '2024-12-09 20:30:00', device: '登陆站 L1', deviceType: 'landing', message: '供电电压恢复正常', level: 'info', status: 'cleared', type: 'voltage' },
-]
-
-// 告警筛选选项
-export const alarmFilterOptions = {
-  typeOptions: [
-    { value: 'all', label: '全部类型' },
-    { value: 'power', label: '光功率异常' },
-    { value: 'temperature', label: '温度异常' },
-    { value: 'voltage', label: '电压异常' },
-    { value: 'other', label: '其他' },
-  ],
-  levelOptions: [
-    { value: 'all', label: '全部级别' },
-    { value: 'info', label: '提示' },
-    { value: 'warning', label: '次要告警' },
-    { value: 'major', label: '重要告警' },
-    { value: 'critical', label: '紧急告警' },
-  ],
-  deviceTypeOptions: [
-    { value: 'all', label: '全部设备' },
-    { value: 'landing', label: '登陆站' },
-    { value: 'repeater', label: '放大器' },
-    { value: 'branching', label: '分支器' },
-  ],
-  statusOptions: [
-    { value: 'all', label: '全部状态' },
-    { value: 'active', label: '活动' },
-    { value: 'acknowledged', label: '已确认' },
-    { value: 'cleared', label: '已清除' },
-  ],
-}
-
-// ============================================
-// 性能历史数据 - 用于 PerformanceView
-// ============================================
-export const mockPerformanceData = [
-  { id: 1, time: '2024-12-10 10:00', device: '放大器 R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
-  { id: 2, time: '2024-12-10 11:00', device: '放大器 R1', voltage: '48.1V', temp: '4.3°C', status: 'Normal' },
-  { id: 3, time: '2024-12-10 12:00', device: '放大器 R1', voltage: '48.3V', temp: '4.2°C', status: 'Normal' },
-  { id: 4, time: '2024-12-10 13:00', device: '放大器 R1', voltage: '48.2V', temp: '4.4°C', status: 'Warning' },
-  { id: 5, time: '2024-12-10 14:00', device: '放大器 R1', voltage: '48.2V', temp: '4.2°C', status: 'Normal' },
-  { id: 6, time: '2024-12-10 15:00', device: '放大器 R1', voltage: '48.1V', temp: '4.1°C', status: 'Normal' },
-]
-
-export const performanceDeviceOptions = [
-  { value: 'r1', label: '放大器 R1' },
-  { value: 'r2', label: '放大器 R2' },
-  { value: 'r3', label: '放大器 R3' },
-  { value: 'b1', label: '分支器 B1' },
-]
-
-export const performanceTimeRangeOptions = [
-  { value: '24h', label: '最近 24 小时' },
-  { value: '7d', label: '最近 7 天' },
-  { value: '30d', label: '最近 30 天' },
-]
 
 // ============================================
 // 实时性能概览 - 用于 MonitorPanel

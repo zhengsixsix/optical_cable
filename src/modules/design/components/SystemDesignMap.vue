@@ -513,14 +513,15 @@ const drawFiberLines = () => {
   if (!selectedRoute || !selectedRoute.segments || selectedRoute.segments.length === 0) return
 
   // 构建点 ID → 坐标映射 & 无向图（遵循实际拓扑）
+  // 注意：不能使用 new Map()，因为 ol/Map 导入覆盖了全局 Map 构造函数
   const pointMap: Record<string, [number, number]> = {}
   for (const p of selectedRoute.points) pointMap[p.id] = p.coordinates
-  const adj = new Map<string, string[]>()
+  const adj: Record<string, string[]> = {}
   selectedRoute.segments.forEach(seg => {
-    if (!adj.has(seg.startPointId)) adj.set(seg.startPointId, [])
-    if (!adj.has(seg.endPointId)) adj.set(seg.endPointId, [])
-    adj.get(seg.startPointId)!.push(seg.endPointId)
-    adj.get(seg.endPointId)!.push(seg.startPointId)
+    if (!adj[seg.startPointId]) adj[seg.startPointId] = []
+    if (!adj[seg.endPointId]) adj[seg.endPointId] = []
+    adj[seg.startPointId].push(seg.endPointId)
+    adj[seg.endPointId].push(seg.startPointId)
   })
 
   // 计算点到线段的投影（返回最近线段与投影坐标）
@@ -549,16 +550,16 @@ const drawFiberLines = () => {
   const bfsPath = (startId: string, endId: string): string[] => {
     if (startId === endId) return [startId]
     const q: string[] = [startId]
-    const prev = new Map<string, string | null>([[startId, null]])
+    const prev: Record<string, string | null> = { [startId]: null }
     while (q.length) {
       const cur = q.shift()!
-      for (const nb of (adj.get(cur) || [])) {
-        if (!prev.has(nb)) {
-          prev.set(nb, cur)
+      for (const nb of (adj[cur] || [])) {
+        if (!(nb in prev)) {
+          prev[nb] = cur
           if (nb === endId) {
             const path: string[] = []
             let p: string | null = nb
-            while (p) { path.push(p); p = prev.get(p) || null }
+            while (p) { path.push(p); p = prev[p] ?? null }
             path.reverse()
             return path
           }

@@ -1685,34 +1685,7 @@ const drawParetoRoutes = async () => {
       }
     }
 
-    // ========== 绘制系统规划落位的放大器 (OLA) ==========
-    const olaElements = connectorStore.elements.filter(e => e.type === 'ola')
-    if (olaElements.length > 0) {
-      for (const ola of olaElements) {
-        if (!ola.longitude || !ola.latitude) continue
-        const olaFeature = new Feature({
-          geometry: new Point([ola.longitude, ola.latitude]),
-          deviceId: ola.id,
-          deviceType: 'ola',
-          deviceName: ola.name,
-        })
-        olaFeature.setStyle(new Style({
-          image: new Icon({
-            src: '/image/amplifier-e.png',
-            scale: 0.3,
-            anchor: [0.5, 0.5],
-          }),
-          text: new Text({
-            text: ola.name,
-            offsetY: -18,
-            font: '10px sans-serif',
-            fill: new Fill({ color: '#3b82f6' }),
-            stroke: new Stroke({ color: '#fff', width: 3 }),
-          }),
-        }))
-        routeSource!.addFeature(olaFeature)
-      }
-    }
+    // 注意：路由规划视图不绘制放大器 (OLA)，放大器仅在系统设计视图显示
 
     if (routes.length > 0 && routeSource.getFeatures().length > 0) {
       const extent = routeSource.getExtent()

@@ -114,6 +114,24 @@ const openNewProject = () => {
 onMounted(() => {
   // 从路由规划初始化登陆站和分支器到 monitorStore
   initLandingStationsFromRoute()
+  
+  // 从 settingsStore 恢复链路计算结果摘要（导入 USE 文件后自动显示）
+  if (!linkCalcSummary.value && settingsStore.linkCalcSummaryCache) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    linkCalcSummary.value = settingsStore.linkCalcSummaryCache as any
+    currentLinkName.value = settingsStore.linkCalcSummaryCache.linkName || routeStore.selectedRoute?.name || '链路'
+  }
+  
+  // 如果 connectorStore 中已有放大器，启用拖拽（USE 导入后）
+  if (!autoPlacementResult.value) {
+    const amps = connectorStore.elements.filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
+    if (amps.length > 0) {
+      autoPlacementResult.value = {
+        positions: amps.map(e => ({ kp: e.kp, longitude: e.longitude, latitude: e.latitude })),
+        count: amps.length
+      }
+    }
+  }
 })
 
 // 从路由规划初始化登陆站和分支器数据
@@ -1386,6 +1404,8 @@ const handleLinkConfigApplyResult = (result: Record<string, any>) => {
         margin: result.margin || { targetOsnr: 0, worstMargin: 0, avgMargin: 0, meetsRequirement: false },
         costData: result.costData || { cableCost: 0, amplifierCost: 0, buCost: 0, totalCost: 0, costItems: [] },
       }
+      // 同步到 settingsStore 以便导出时保存
+      settingsStore.linkCalcSummaryCache = linkCalcSummary.value
     }
     
     // 更新自动放置结果

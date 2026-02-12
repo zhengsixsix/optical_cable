@@ -864,10 +864,30 @@ const monitorConfig = reactive({
   dataSourceType: settingsStore.monitoringConfig.dataSourceType,
   connectionAddress: settingsStore.monitoringConfig.connectionAddress,
   authToken: settingsStore.monitoringConfig.authToken,
+  pollingInterval: settingsStore.monitoringConfig.pollingInterval,
+  requestTimeout: settingsStore.monitoringConfig.requestTimeout,
+  protocol: settingsStore.monitoringConfig.protocol,
+  authMethod: settingsStore.monitoringConfig.authMethod,
   powerThreshold: settingsStore.monitoringConfig.powerThreshold,
   temperatureThreshold: settingsStore.monitoringConfig.temperatureThreshold,
   berThreshold: settingsStore.monitoringConfig.berThreshold,
+  fieldMappings: settingsStore.monitoringConfig.fieldMappings.map(m => ({ ...m })),
 })
+
+// 字段映射操作
+const addFieldMapping = () => {
+  monitorConfig.fieldMappings.push({
+    id: `fm-${Date.now()}`,
+    sourceField: '',
+    targetField: '',
+    dataType: 'string',
+    description: '',
+  })
+}
+
+const removeFieldMapping = (id: string) => {
+  monitorConfig.fieldMappings = monitorConfig.fieldMappings.filter(m => m.id !== id)
+}
 
 const fiberConfig = reactive({
   model: settingsStore.fiberSimulationConfig.model,
@@ -1005,9 +1025,14 @@ const handleSave = () => {
     dataSourceType: monitorConfig.dataSourceType as 'realtime' | 'history',
     connectionAddress: monitorConfig.connectionAddress,
     authToken: monitorConfig.authToken,
+    pollingInterval: monitorConfig.pollingInterval,
+    requestTimeout: monitorConfig.requestTimeout,
+    protocol: monitorConfig.protocol as 'JSON' | 'XML' | 'SNMP' | 'gRPC',
+    authMethod: monitorConfig.authMethod as 'apikey' | 'oauth' | 'basic',
     powerThreshold: monitorConfig.powerThreshold,
     temperatureThreshold: monitorConfig.temperatureThreshold,
     berThreshold: monitorConfig.berThreshold,
+    fieldMappings: monitorConfig.fieldMappings.map(m => ({ ...m })),
   })
 
   settingsStore.updateFiberSimulationConfig({
@@ -1881,27 +1906,48 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
 
         <!-- 监控系统配置 -->
         <div v-if="activeTab === 'monitoring'" class="space-y-6">
-          <!-- 数据源 -->
+          <!-- NMS连接配置 -->
           <Card>
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">数据源</h3>
+              <h3 class="text-center font-bold text-gray-800 dark:text-gray-100 text-lg mb-4 pb-3 border-b">NMS连接配置</h3>
               <div class="space-y-4">
                 <div class="flex items-center gap-4">
-                  <label class="w-24 text-sm text-gray-600 text-right shrink-0">数据源类型：</label>
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">数据源类型：</label>
                   <Select v-model="monitorConfig.dataSourceType"
-                          :options="[{ value: 'realtime', label: '网络实时数据' }]"
+                          :options="[{ value: 'realtime', label: '网络实时数据' }, { value: 'history', label: '历史数据' }]"
                           class="flex-1"/>
                 </div>
                 <div class="flex items-center gap-4">
-                  <label class="w-24 text-sm text-gray-600 text-right shrink-0">连接地址：</label>
-                  <Input v-model="monitorConfig.connectionAddress" placeholder="tcp://monitor.example.com:1234"
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">数据源URL：</label>
+                  <Input v-model="monitorConfig.connectionAddress" placeholder="ws://nms.example.com:8080/api"
                          class="flex-1"/>
                 </div>
                 <div class="flex items-center gap-4">
-                  <label class="w-24 text-sm text-gray-600 text-right shrink-0">认证信息：</label>
-                  <Button size="sm"
-                          @click="appStore.showNotification({ type: 'info', message: '认证配置功能开发中' })">配置
-                  </Button>
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">轮询间隔：</label>
+                  <Input v-model="monitorConfig.pollingInterval" type="number" class="flex-1"/>
+                  <span class="text-sm text-gray-500 w-8 shrink-0">秒</span>
+                </div>
+                <div class="flex items-center gap-4">
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">请求超时：</label>
+                  <Input v-model="monitorConfig.requestTimeout" type="number" class="flex-1"/>
+                  <span class="text-sm text-gray-500 w-8 shrink-0">秒</span>
+                </div>
+                <div class="flex items-center gap-4">
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">数据协议：</label>
+                  <Select v-model="monitorConfig.protocol"
+                          :options="[{ value: 'JSON', label: 'JSON' }, { value: 'XML', label: 'XML' }, { value: 'SNMP', label: 'SNMP' }, { value: 'gRPC', label: 'gRPC' }]"
+                          class="flex-1"/>
+                </div>
+                <div class="flex items-center gap-4">
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">认证方式：</label>
+                  <Select v-model="monitorConfig.authMethod"
+                          :options="[{ value: 'apikey', label: 'API Key' }, { value: 'oauth', label: 'OAuth 2.0' }, { value: 'basic', label: 'Basic Auth' }]"
+                          class="flex-1"/>
+                </div>
+                <div class="flex items-center gap-4">
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">认证凭据：</label>
+                  <Input v-model="monitorConfig.authToken" type="password" placeholder="输入认证Token或API Key"
+                         class="flex-1"/>
                 </div>
               </div>
             </CardContent>
@@ -1910,37 +1956,74 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
           <!-- 告警阈值 -->
           <Card>
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">告警阈值</h3>
+              <h3 class="text-center font-bold text-gray-800 dark:text-gray-100 text-lg mb-4 pb-3 border-b">告警阈值</h3>
               <div class="space-y-4">
                 <div class="flex items-center gap-4">
-                  <label class="w-24 text-sm text-gray-600 text-right shrink-0">光功率阈值：</label>
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">光功率阈值：</label>
                   <Input v-model="monitorConfig.powerThreshold" type="number" class="flex-1"/>
                   <span class="text-sm text-gray-500 w-12 shrink-0">dBm</span>
                 </div>
                 <div class="flex items-center gap-4">
-                  <label class="w-24 text-sm text-gray-600 text-right shrink-0">温度阈值：</label>
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">温度阈值：</label>
                   <Input v-model="monitorConfig.temperatureThreshold" type="number" class="flex-1"/>
                   <span class="text-sm text-gray-500 w-12 shrink-0">°C</span>
                 </div>
                 <div class="flex items-center gap-4">
-                  <label class="w-24 text-sm text-gray-600 text-right shrink-0">BER阈值：</label>
+                  <label class="w-28 text-sm text-gray-600 dark:text-gray-400 text-right shrink-0">BER阈值：</label>
                   <Input v-model="monitorConfig.berThreshold" placeholder="1e-9" class="flex-1"/>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <!-- 告警显示字段设置 -->
+          <!-- 数据字段映射配置 -->
           <Card>
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">告警显示字段设置</h3>
-              <div class="space-y-3">
-                <div class="grid grid-cols-4 gap-4" v-for="row in 4" :key="row">
-                  <label v-for="col in 4" :key="col" class="flex items-center gap-2">
-                    <input type="checkbox" class="w-4 h-4 text-primary border-gray-300 rounded"/>
-                    <span class="text-sm text-gray-600">字段{{ (row - 1) * 4 + col }}</span>
-                  </label>
-                </div>
+              <div class="flex items-center justify-between mb-4 pb-3 border-b">
+                <h3 class="font-bold text-gray-800 dark:text-gray-100 text-lg">数据字段映射配置</h3>
+                <Button size="sm" class="bg-primary hover:bg-primary hover:brightness-90 text-white" @click="addFieldMapping">
+                  <Plus class="w-4 h-4 mr-1"/> 添加映射
+                </Button>
+              </div>
+              <div class="border rounded-lg overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead class="bg-gray-100 dark:bg-white/5">
+                    <tr>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">NMS原始字段</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">系统内部字段</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">数据类型</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">描述</th>
+                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300 w-16">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="monitorConfig.fieldMappings.length === 0">
+                      <td colspan="5" class="px-3 py-8 text-center text-gray-400">暂无字段映射，点击“添加映射”新建</td>
+                    </tr>
+                    <tr v-for="mapping in monitorConfig.fieldMappings" :key="mapping.id"
+                        class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
+                      <td class="px-3 py-1.5">
+                        <Input v-model="mapping.sourceField" placeholder="原始字段" class="text-sm"/>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <Input v-model="mapping.targetField" placeholder="目标字段" class="text-sm"/>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <Select v-model="mapping.dataType"
+                                :options="[{ value: 'string', label: 'String' }, { value: 'number', label: 'Number' }, { value: 'boolean', label: 'Boolean' }, { value: 'date', label: 'Date' }]"
+                                class="text-sm"/>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <Input v-model="mapping.description" placeholder="字段描述" class="text-sm"/>
+                      </td>
+                      <td class="px-3 py-1.5 text-center">
+                        <button class="text-red-500 hover:text-red-700" @click="removeFieldMapping(mapping.id)">
+                          <Trash2 class="w-4 h-4"/>
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </CardContent>
           </Card>

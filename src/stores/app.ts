@@ -1,6 +1,6 @@
 ﻿﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Notification, LogEntry } from '@/types'
+import type { Notification, LogEntry, LogCategory } from '@/types'
 import type { ProjectType, ProjectMetadata } from '@/services/ProjectFileService'
 
 export type ViewType = 'planning' | 'design' | 'monitoring' | 'settings'
@@ -71,14 +71,14 @@ export const useAppStore = defineStore('app', () => {
   })
   
   const logs = ref<LogEntry[]>([
-    { time: formatTime(), level: 'INFO', message: 'GIS数据源切换至本地文件' },
-    { time: formatTime(), level: 'INFO', message: '软件界面加载完成' },
-    { time: formatTime(), level: 'INFO', message: '加载默认配置...' },
-    { time: formatTime(), level: 'INFO', message: '加载基础GIS数据...' },
-    { time: formatTime(), level: 'INFO', message: '初始化路由规划模块...' },
-    { time: formatTime(), level: 'INFO', message: '初始化传感器系统规划模块...' },
-    { time: formatTime(), level: 'INFO', message: '初始化监控模块...' },
-    { time: formatTime(), level: 'INFO', message: '系统就绪' },
+    { time: formatTime(), level: 'INFO', message: 'GIS数据源切换至本地文件', category: '系统日志' },
+    { time: formatTime(), level: 'INFO', message: '软件界面加载完成', category: '系统日志' },
+    { time: formatTime(), level: 'INFO', message: '加载默认配置...', category: '系统日志' },
+    { time: formatTime(), level: 'INFO', message: '加载基础GIS数据...', category: '系统日志' },
+    { time: formatTime(), level: 'INFO', message: '初始化路由规划模块...', category: '系统日志' },
+    { time: formatTime(), level: 'INFO', message: '初始化传感器系统规划模块...', category: '系统日志' },
+    { time: formatTime(), level: 'INFO', message: '初始化监控模块...', category: '系统日志' },
+    { time: formatTime(), level: 'INFO', message: '系统就绪', category: '系统日志' },
   ])
   const isLoading = ref(false)
   const previousView = ref<ViewType | null>(null)
@@ -110,7 +110,7 @@ export const useAppStore = defineStore('app', () => {
     const names: Record<ViewType, string> = {
       planning: '路由规划',
       design: '系统设计',
-      monitoring: '监控',
+      monitoring: '设备健康度管理',
       settings: '设置',
     }
     return names[view]
@@ -134,11 +134,13 @@ export const useAppStore = defineStore('app', () => {
     notifications.value = notifications.value.filter(n => n.id !== id)
   }
 
-  function addLog(level: LogEntry['level'], message: string) {
+  function addLog(level: LogEntry['level'], message: string, category?: LogCategory, extra?: { deviceId?: string; deviceName?: string }) {
     logs.value.push({
       time: formatTime(),
       level,
       message,
+      category: category || '系统日志',
+      ...extra,
     })
 
     // 限制日志数量

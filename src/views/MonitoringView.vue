@@ -5,12 +5,14 @@ import { Card, CardHeader, CardContent, Button, Select } from '@/shared/componen
 import MonitorPanel from '@/modules/monitoring/panels/MonitorPanel.vue'
 import PerformanceChart from '@/components/charts/PerformanceChart.vue'
 import MonitoringMap from '@/modules/monitoring/components/MonitoringMap.vue'
-import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin, ChevronRight, Filter, TrendingDown, TrendingUp, Minus, Link2 } from 'lucide-vue-next'
-import { useConnectorStore, useMonitorStore, useRouteStore } from '@/stores'
+import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin, ChevronRight, ChevronDown, Filter, TrendingDown, TrendingUp, Minus, Link2, Download, Trash2, Search } from 'lucide-vue-next'
+import type { LogCategory } from '@/types'
+import { useConnectorStore, useMonitorStore, useRouteStore, useAppStore } from '@/stores'
 
 const connectorStore = useConnectorStore()
 const monitorStore = useMonitorStore()
 const routeStore = useRouteStore()
+const appStore = useAppStore()
 
 // 筛选条件
 const filterByType = ref(false)
@@ -300,31 +302,114 @@ const getGroupHealth = (devices: typeof filteredDevices.value) => {
   return devices.reduce((sum, d) => sum + (d.health || 0), 0) / devices.length
 }
 
-// 性能参数图表弹窗
+// === 日志面板状态 ===
+const logFilterLevel = ref<string>('全部')
+const logFilterCategory = ref<string>('全部')
+const logFilterTime = ref<string>('全部')
+const logSearchKeyword = ref('')
+const logAlarmFolded = ref(false)
+
+const logCategories: string[] = ['全部', '系统日志', '链路日志', '设备日志', '模块日志', '操作日志', '告警日志']
+const logLevels: string[] = ['全部', 'INFO', 'WARN', 'ERROR']
+const logTimeOptions: string[] = ['全部', '近 1 小时', '近 6 小时', '近 24 小时']
+
+// 筛选后的日志
+const filteredLogs = computed(() => {
+  let result = appStore.recentLogs.slice().reverse()
+  if (logFilterLevel.value !== '全部') {
+    result = result.filter(l => l.level === logFilterLevel.value)
+  }
+  if (logFilterCategory.value !== '全部') {
+    result = result.filter(l => (l.category || '系统日志') === logFilterCategory.value)
+  }
+  if (logSearchKeyword.value.trim()) {
+    const kw = logSearchKeyword.value.trim().toLowerCase()
+    result = result.filter(l => l.message.toLowerCase().includes(kw))
+  }
+  return result
+})
+
+// 告警日志(只显示 WARN/ERROR)
+const alarmLogs = computed(() => {
+  return appStore.recentLogs.slice().reverse().filter(l => l.level === 'WARN' || l.level === 'ERROR')
+})
+
+// 屏蔽的告警索引
+const maskedAlarmIndices = ref<Set<number>>(new Set())
+const maskAlarm = (index: number) => maskedAlarmIndices.value.add(index)
+const maskAllAlarms = () => alarmLogs.value.forEach((_, i) => maskedAlarmIndices.value.add(i))
+
+// 导出日志
+const handleExportLogs = () => appStore.exportLogs('csv')
+const handleClearLogs = () => appStore.clearLogs()
+
+// === 性能参数图表弹窗 ===
 const showChartModal = ref(false)
 const chartModalParam = ref<{ name: string; unit: string; value: number | string } | null>(null)
-const chartModalData = ref<{ time: string; value: number }[]>([])
+const chartModalDistanceData = ref<{ time: string; value: number }[]>([])
+const chartModalTimeData = ref<{ time: string; value: number }[]>([])
+
+// 图表筛选范围
+const distanceRangeStart = ref(0)
+const distanceRangeEnd = ref(275)
+const timeRangeStart = ref(0)
+const timeRangeEnd = ref(24)
+
+// 生成沿距离变化数据
+const generateDistanceData = (baseValue: number, distStart: number, distEnd: number) => {
+  const data: { time: string; value: number }[] = []
+  const totalKm = distEnd - distStart
+  const steps = Math.min(20, totalKm)
+  for (let i = 0; i <= steps; i++) {
+    const km = distStart + (totalKm / steps) * i
+    // 模拟沿距离衰减
+    const decay = (km / 275) * baseValue * 0.4
+    data.push({ time: `${km.toFixed(0)}`, value: baseValue - decay + (Math.random() - 0.5) * 0.5 })
+  }
+  return data
+}
+
+// 生成随时间变化数据
+const generateTimeData = (baseValue: number, hourStart: number, hourEnd: number) => {
+  const data: { time: string; value: number }[] = []
+  const totalHours = hourEnd - hourStart
+  const steps = Math.min(24, totalHours)
+  for (let i = 0; i <= steps; i++) {
+    const hour = hourStart + (totalHours / steps) * i
+    // 模拟随时间的轻微波动
+    const drift = (hour / 24) * baseValue * 0.2
+    data.push({ time: `${hour.toFixed(0)}`, value: baseValue - drift + (Math.random() - 0.5) * 0.3 })
+  }
+  return data
+}
 
 // 打开性能参数图表
 const openChartModal = (name: string, unit: string, value: number | string) => {
   chartModalParam.value = { name, unit, value }
-  
-  // 生成模拟历史数据
-  const now = new Date()
-  const data: { time: string; value: number }[] = []
   const baseValue = typeof value === 'number' ? value : parseFloat(String(value)) || 15
   
-  for (let i = 23; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 3600000)
-    const timeStr = time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    data.push({ 
-      time: timeStr, 
-      value: baseValue + (Math.random() - 0.5) * baseValue * 0.1 
-    })
-  }
+  distanceRangeStart.value = 0
+  distanceRangeEnd.value = 275
+  timeRangeStart.value = 0
+  timeRangeEnd.value = 24
   
-  chartModalData.value = data
+  chartModalDistanceData.value = generateDistanceData(baseValue, 0, 275)
+  chartModalTimeData.value = generateTimeData(baseValue, 0, 24)
   showChartModal.value = true
+}
+
+// 应用距离范围
+const applyDistanceRange = () => {
+  if (!chartModalParam.value) return
+  const baseValue = typeof chartModalParam.value.value === 'number' ? chartModalParam.value.value : parseFloat(String(chartModalParam.value.value)) || 15
+  chartModalDistanceData.value = generateDistanceData(baseValue, distanceRangeStart.value, distanceRangeEnd.value)
+}
+
+// 应用时间范围
+const applyTimeRange = () => {
+  if (!chartModalParam.value) return
+  const baseValue = typeof chartModalParam.value.value === 'number' ? chartModalParam.value.value : parseFloat(String(chartModalParam.value.value)) || 15
+  chartModalTimeData.value = generateTimeData(baseValue, timeRangeStart.value, timeRangeEnd.value)
 }
 
 // 关闭图表弹窗
@@ -333,27 +418,67 @@ const closeChartModal = () => {
   chartModalParam.value = null
 }
 
-// 图表数据
-const chartSeries = computed(() => {
-  if (!chartModalParam.value || chartModalData.value.length === 0) return []
+// 沿距离图表数据
+const distanceChartSeries = computed(() => {
+  if (!chartModalParam.value || chartModalDistanceData.value.length === 0) return []
   return [{
     name: chartModalParam.value.name,
-    data: chartModalData.value,
+    data: chartModalDistanceData.value,
     color: '#3b82f6',
     unit: chartModalParam.value.unit
   }]
 })
+
+// 随时间图表数据
+const timeChartSeries = computed(() => {
+  if (!chartModalParam.value || chartModalTimeData.value.length === 0) return []
+  return [{
+    name: chartModalParam.value.name,
+    data: chartModalTimeData.value,
+    color: '#3b82f6',
+    unit: chartModalParam.value.unit
+  }]
+})
+
+// === 链路设备子设备层级 ===
+// 展开的子设备节点
+const expandedSubDevices = ref<Set<string>>(new Set())
+const toggleSubDevice = (key: string) => {
+  if (expandedSubDevices.value.has(key)) {
+    expandedSubDevices.value.delete(key)
+  } else {
+    expandedSubDevices.value.add(key)
+  }
+}
+
+// 模拟子设备/模块数据
+const getSubDevices = (device: any) => {
+  // 根据设备类型生成模拟子设备
+  const baseHealth = device.health || 90
+  if (device.type === 'landing' || device.type === 'LandingStation') {
+    return [
+      { id: `${device.id}-dev1`, name: '设备1', health: Math.min(99, baseHealth + 2), status: 'normal' as const },
+      { id: `${device.id}-dev2`, name: '设备2', health: Math.max(80, baseHealth - 1), status: 'normal' as const },
+    ]
+  }
+  if (device.type === 'Repeater' || device.type === 'amplifier_e') {
+    return [
+      { id: `${device.id}-edfa`, name: 'EDFA 模块', health: baseHealth, status: device.status },
+    ]
+  }
+  return []
+}
 </script>
 
 <template>
   <MainLayout>
     <template #left>
-      <!-- 系统设备健康总览 -->
+      <!-- 系统设备面板 -->
       <Card class="shrink-0">
         <CardHeader>
           <span class="font-semibold text-sm flex items-center gap-2">
             <Activity class="w-4 h-4" />
-            系统设备健康总览
+            系统设备
           </span>
         </CardHeader>
         <CardContent class="space-y-4">
@@ -535,16 +660,120 @@ const chartSeries = computed(() => {
     </template>
 
     <template #center>
-      <!-- 监控主视图 - 只显示地图，设备详情通过气泡框展示 -->
+      <!-- 海缆系统拓扑显示区域 -->
       <Card class="flex-1 flex flex-col overflow-hidden">
         <CardHeader>
-          <span class="font-semibold text-sm">实时监控</span>
+          <span class="font-semibold text-sm">海缆系统拓扑显示</span>
         </CardHeader>
         <CardContent class="flex-1 p-2">
           <!-- 地图视图 -->
           <div class="w-full h-full bg-gray-100 rounded-lg overflow-hidden">
             <MonitoringMap ref="monitoringMapRef" :devices="devices" :selected-device-id="selectedDevice"
               @device-click="handleMapDeviceClick" />
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- 系统运行日志 -->
+      <Card class="shrink-0 h-[260px] flex flex-col overflow-hidden">
+        <CardHeader class="shrink-0">
+          <span class="font-semibold text-sm flex items-center gap-2">
+            <Activity class="w-4 h-4" />
+            系统运行日志
+          </span>
+          <div class="flex items-center gap-2">
+            <button @click="handleExportLogs" class="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+              <Download class="w-3 h-3" /> 导出
+            </button>
+            <button @click="handleClearLogs" class="text-xs text-gray-500 hover:text-red-600 flex items-center gap-1">
+              <Trash2 class="w-3 h-3" /> 清空
+            </button>
+          </div>
+        </CardHeader>
+        <!-- 筛选栏 -->
+        <div class="px-3 py-1.5 border-b bg-gray-50 flex items-center gap-2 text-xs shrink-0 flex-wrap">
+          <label class="flex items-center gap-1 text-gray-500">级别:
+            <select v-model="logFilterLevel" class="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white">
+              <option v-for="l in logLevels" :key="l" :value="l">{{ l }}</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-1 text-gray-500">类型:
+            <select v-model="logFilterCategory" class="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white">
+              <option v-for="c in logCategories" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-1 text-gray-500">时间:
+            <select v-model="logFilterTime" class="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white">
+              <option v-for="t in logTimeOptions" :key="t" :value="t">{{ t }}</option>
+            </select>
+          </label>
+          <div class="flex items-center gap-1 ml-auto">
+            <Search class="w-3 h-3 text-gray-400" />
+            <input v-model="logSearchKeyword" type="text" placeholder="关键字搜索..." 
+                   class="border border-gray-300 rounded px-1.5 py-0.5 text-xs w-28 bg-white" />
+          </div>
+        </div>
+        <!-- 告警摘要 -->
+        <div v-if="alarmLogs.length > 0" class="px-3 py-1.5 border-b bg-orange-50 shrink-0">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-orange-700 flex items-center gap-1">
+              <AlertTriangle class="w-3 h-3" /> 告警 ({{ alarmLogs.length }})
+            </span>
+            <div class="flex items-center gap-2">
+              <button @click="logAlarmFolded = !logAlarmFolded" class="text-xs text-gray-500 hover:text-gray-700">{{ logAlarmFolded ? '展开' : '折叠' }}</button>
+              <button @click="maskAllAlarms" class="text-xs text-gray-500 hover:text-gray-700">全部屏蔽</button>
+            </div>
+          </div>
+          <div v-if="!logAlarmFolded" class="mt-1 space-y-1">
+            <template v-for="(alarm, i) in alarmLogs.slice(0, 5)" :key="i">
+              <div v-if="!maskedAlarmIndices.has(i)" 
+                   :class="['flex items-center justify-between px-2 py-1 rounded text-xs', alarm.level === 'ERROR' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700']">
+                <div class="flex items-center gap-2">
+                  <span :class="['font-medium px-1 py-0.5 rounded text-[10px]', alarm.level === 'ERROR' ? 'bg-red-200' : 'bg-yellow-200']">{{ alarm.level === 'ERROR' ? '故障' : '预警' }}</span>
+                  <span>{{ alarm.message }}</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <button class="text-blue-600 hover:underline">详情</button>
+                  <button @click="maskAlarm(i)" class="text-gray-500 hover:text-gray-700">屏蔽</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+        <!-- 日志流 -->
+        <CardContent class="flex-1 overflow-auto p-0 text-xs">
+          <div class="divide-y">
+            <div v-for="(log, index) in filteredLogs.slice(0, 50)" :key="index"
+                 :class="['px-3 py-1.5 flex items-start gap-2', 
+                   log.level === 'ERROR' ? 'bg-red-50' : log.level === 'WARN' ? 'bg-yellow-50' : ''
+                 ]">
+              <span class="text-gray-400 whitespace-nowrap font-mono">{{ log.time }}</span>
+              <span :class="[
+                'whitespace-nowrap',
+                log.level === 'ERROR' ? 'text-red-600' : 
+                log.level === 'WARN' ? 'text-yellow-600' : 
+                'text-gray-400'
+              ]">●</span>
+              <span :class="[
+                'font-medium whitespace-nowrap',
+                log.level === 'ERROR' ? 'text-red-600' : 
+                log.level === 'WARN' ? 'text-yellow-600' : 
+                'text-gray-500'
+              ]">{{ log.level }}</span>
+              <span class="text-gray-400 whitespace-nowrap">│</span>
+              <span class="text-gray-500 whitespace-nowrap">{{ log.category || '系统日志' }}</span>
+              <span class="text-gray-400 whitespace-nowrap">│</span>
+              <span :class="[
+                log.level === 'ERROR' ? 'text-red-700' : 
+                log.level === 'WARN' ? 'text-yellow-700' : 
+                'text-gray-700'
+              ]">{{ log.message }}</span>
+              <span v-if="log.level === 'WARN' || log.level === 'ERROR'" 
+                    class="ml-auto text-blue-500 hover:underline cursor-pointer whitespace-nowrap">详情 →</span>
+            </div>
+          </div>
+          <div v-if="filteredLogs.length === 0" class="h-full flex items-center justify-center text-gray-400 py-4">
+            暂无日志记录
           </div>
         </CardContent>
       </Card>
@@ -579,6 +808,7 @@ const chartSeries = computed(() => {
                 <span class="text-xs text-gray-500">OSNR:</span>
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-medium text-green-600">18.5 dB</span>
+                  <span class="text-xs text-green-500">✓</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
@@ -587,6 +817,7 @@ const chartSeries = computed(() => {
                 <span class="text-xs text-gray-500">GSNR:</span>
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-medium text-green-600">15.2 dB</span>
+                  <span class="text-xs text-green-500">✓</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
@@ -595,6 +826,7 @@ const chartSeries = computed(() => {
                 <span class="text-xs text-gray-500">BER:</span>
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-medium text-green-600">1.2e-12</span>
+                  <span class="text-xs text-green-500">✓</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
@@ -603,6 +835,7 @@ const chartSeries = computed(() => {
                 <span class="text-xs text-gray-500">Q因子:</span>
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-medium text-green-600">8.2 dB</span>
+                  <span class="text-xs text-green-500">✓</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
@@ -619,79 +852,85 @@ const chartSeries = computed(() => {
         </CardContent>
       </Card>
 
-      <!-- 链路设备健康度 -->
+      <!-- 链路设备信息 -->
       <Card class="flex-1 overflow-hidden flex flex-col">
         <CardHeader>
           <span class="font-semibold text-sm flex items-center gap-2">
-            <Activity class="w-4 h-4" />
-            链路设备健康度
+            <ChevronDown class="w-4 h-4" />
+            链路设备信息
           </span>
         </CardHeader>
-        <CardContent class="flex-1 overflow-auto space-y-3">
+        <CardContent class="flex-1 overflow-auto space-y-2 p-2">
           <template v-if="hasData">
-            <!-- 按类型分组的设备健康度 -->
-            <div v-for="(groupDevices, type) in devicesByType" :key="type" class="space-y-2">
+            <!-- 按类型分组的设备信息 -->
+            <div v-for="(groupDevices, type) in devicesByType" :key="type" 
+                 class="border rounded-lg overflow-hidden">
               <!-- 分组标题 -->
-              <div class="flex items-center justify-between">
+              <div class="px-3 py-2 bg-gray-50 cursor-pointer flex items-center justify-between" 
+                   @click="toggleGroup('right-' + type)">
                 <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-gray-700">{{ type }}</span>
-                  <span class="bg-blue-500 text-white text-xs px-1.5 py-0.5 rounded-full">{{ groupDevices.length }}台</span>
+                  <ChevronRight :class="['w-3.5 h-3.5 transition-transform text-gray-500', expandedGroups.has('right-' + type) && 'rotate-90']" />
+                  <span class="text-xs font-bold text-gray-800">{{ type }} ({{ groupDevices.length }}台)</span>
                 </div>
-                <span class="text-xs text-gray-400">平均: {{ getGroupHealth(groupDevices).toFixed(0) }}%</span>
+              </div>
+              <!-- 分组状态概要 -->
+              <div v-if="expandedGroups.has('right-' + type)" class="px-3 py-1 text-xs">
+                <span v-if="getGroupStats(groupDevices).normal > 0" class="text-green-600">正常: {{ getGroupStats(groupDevices).normal }}</span>
+                <span v-if="getGroupStats(groupDevices).warning > 0" class="ml-2 text-yellow-600">告警: {{ getGroupStats(groupDevices).warning }}</span>
+                <span v-if="getGroupStats(groupDevices).error > 0" class="ml-2 text-red-600">故障: {{ getGroupStats(groupDevices).error }}</span>
               </div>
               
-              <!-- 设备卡片 -->
-              <div v-for="device in groupDevices" :key="device.id" 
-                   class="p-3 bg-gray-50 border rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
-                   @click="selectDevice(device.id)">
-                <div class="flex items-center justify-between mb-2">
-                  <div class="flex items-center gap-2">
-                    <span :class="['text-xs', device.status === 'normal' ? 'text-green-500' : device.status === 'warning' ? 'text-yellow-500' : 'text-red-500']">
-                      {{ device.status === 'normal' ? '●' : '▲' }}
-                    </span>
-                    <span class="text-sm font-medium text-gray-800">{{ device.name }}</span>
+              <!-- 设备列表 - 树形结构 -->
+              <div v-if="expandedGroups.has('right-' + type)" class="px-2 pb-2">
+                <div v-for="(device, dIdx) in groupDevices" :key="device.id" class="relative">
+                  <!-- 树线 -->
+                  <div class="absolute left-3 top-0 bottom-0 border-l border-gray-300" 
+                       :class="{ 'border-transparent': dIdx === groupDevices.length - 1 }"></div>
+                  
+                  <!-- 设备节点 -->
+                  <div class="flex items-center py-1.5 pl-6 relative">
+                    <!-- 横线 -->
+                    <div class="absolute left-3 top-1/2 w-3 border-t border-gray-300"></div>
+                    <div class="flex items-center gap-1 cursor-pointer" @click="toggleSubDevice(device.id)">
+                      <ChevronRight v-if="getSubDevices(device).length > 0" 
+                                    :class="['w-3 h-3 transition-transform text-gray-400', expandedSubDevices.has(device.id) && 'rotate-90']" />
+                      <span v-else class="w-3"></span>
+                      <span class="text-xs text-gray-800">{{ device.name }}</span>
+                    </div>
+                    <div class="ml-auto flex items-center gap-1.5">
+                      <span class="text-xs text-blue-500 cursor-pointer hover:underline" @click.stop="selectDevice(device.id)">详情</span>
+                      <span :class="['text-xs font-bold', getHealthColor(device.health)]">{{ device.health?.toFixed(0) }}%</span>
+                      <span :class="['text-[10px] px-1.5 py-0.5 rounded border', getStatusClass(device.status)]">
+                        {{ device.status === 'normal' ? '正常' : device.status === 'warning' ? '告警' : '故障' }}
+                      </span>
+                    </div>
                   </div>
-                  <span :class="['text-sm font-bold', getHealthColor(device.health)]">{{ device.health?.toFixed(0) }}%</span>
-                </div>
-                <!-- 健康度进度条 -->
-                <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-2">
-                  <div :class="['h-full transition-all', getHealthBarColor(device.health)]" 
-                       :style="{ width: device.health + '%' }"></div>
-                </div>
-                <!-- 设备参数 -->
-                <div class="grid grid-cols-2 gap-x-4 text-xs text-gray-500">
-                  <div>深度: {{ device.depth?.toFixed(0) || 0 }}m</div>
-                  <div>温度: {{ device.temperature?.toFixed(1) || '--' }}°C</div>
+                  
+                  <!-- 子设备/模块 -->
+                  <div v-if="expandedSubDevices.has(device.id) && getSubDevices(device).length > 0" class="ml-6">
+                    <div v-for="(sub, sIdx) in getSubDevices(device)" :key="sub.id" class="relative">
+                      <div class="absolute left-3 top-0 bottom-0 border-l border-gray-200"
+                           :class="{ 'border-transparent': sIdx === getSubDevices(device).length - 1 }"></div>
+                      <div class="flex items-center py-1 pl-6 relative">
+                        <div class="absolute left-3 top-1/2 w-3 border-t border-gray-200"></div>
+                        <span class="text-xs text-gray-400 mr-1">›</span>
+                        <span class="text-xs text-gray-600">{{ sub.name }}</span>
+                        <div class="ml-auto flex items-center gap-1.5">
+                          <span class="text-xs text-blue-500 cursor-pointer hover:underline">详情</span>
+                          <span :class="['text-xs font-bold', getHealthColor(sub.health)]">{{ sub.health?.toFixed(0) }}%</span>
+                          <span :class="['text-[10px] px-1.5 py-0.5 rounded border', getStatusClass(sub.status)]">
+                            {{ sub.status === 'normal' ? '正常' : sub.status === 'warning' ? '告警' : '故障' }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </template>
           <div v-else class="h-full flex items-center justify-center text-gray-400 text-sm">
             暂无设备数据
-          </div>
-        </CardContent>
-      </Card>
-
-      <!-- 告警历史 -->
-      <Card class="shrink-0 max-h-48 overflow-hidden flex flex-col">
-        <CardHeader>
-          <span class="font-semibold text-sm flex items-center gap-2">
-            <AlertTriangle class="w-4 h-4" />
-            告警历史
-          </span>
-        </CardHeader>
-        <CardContent class="flex-1 overflow-auto p-0">
-          <div v-if="alarmHistory.length === 0" class="h-full flex items-center justify-center text-gray-400 text-sm py-4">
-            暂无告警记录
-          </div>
-          <div v-else class="divide-y">
-            <div v-for="alarm in alarmHistory.slice(0, 5)" :key="alarm.id" :class="['px-3 py-2', getAlarmClass(alarm.level)]">
-              <div class="flex items-center justify-between">
-                <span class="text-xs font-medium">{{ alarm.device }}</span>
-                <span class="text-xs opacity-70">{{ alarm.time }}</span>
-              </div>
-              <div class="text-xs mt-1">{{ alarm.message }}</div>
-            </div>
           </div>
         </CardContent>
       </Card>
@@ -705,25 +944,39 @@ const chartSeries = computed(() => {
       <div class="absolute inset-0 bg-black/50" @click="closeChartModal"></div>
       
       <!-- 弹窗内容 -->
-      <div class="relative bg-white rounded-xl shadow-2xl w-[800px] max-w-[90vw] max-h-[80vh] overflow-hidden">
+      <div class="relative bg-white rounded-xl shadow-2xl w-[860px] max-w-[90vw] max-h-[85vh] overflow-auto">
         <!-- 头部 -->
-        <div class="px-6 py-4 border-b bg-gray-50 flex items-center justify-between">
+        <div class="px-6 py-4 border-b bg-white flex items-center justify-between sticky top-0 z-10">
           <div>
-            <h3 class="text-lg font-semibold text-gray-800">{{ chartModalParam?.name }} 性能参数图表</h3>
-            <p class="text-sm text-gray-500">参数变化趋势分析</p>
+            <h3 class="text-lg font-bold text-gray-900">{{ chartModalParam?.name }} 性能参数图表</h3>
+            <p class="text-sm text-gray-500">当前值: {{ chartModalParam?.value }}{{ chartModalParam?.unit }} · 趋势分析</p>
           </div>
           <button @click="closeChartModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
         </div>
         
         <!-- 内容 -->
-        <div class="p-6">
-          <!-- 当前值显示 -->
-          <div class="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-blue-700">当前值</span>
-              <span class="text-2xl font-bold text-blue-600">
-                {{ chartModalParam?.value }} {{ chartModalParam?.unit }}
-              </span>
+        <div class="p-6 space-y-4">
+          <!-- 筛选控件 -->
+          <div class="space-y-2 bg-gray-50 p-4 rounded-lg border">
+            <div class="flex items-center gap-3">
+              <span class="text-sm text-gray-600 whitespace-nowrap">距离范围 (km):</span>
+              <input v-model.number="distanceRangeStart" type="number" min="0" 
+                     class="w-20 border border-gray-300 rounded px-2 py-1 text-sm" />
+              <span class="text-gray-400">至</span>
+              <input v-model.number="distanceRangeEnd" type="number" min="0" 
+                     class="w-20 border border-gray-300 rounded px-2 py-1 text-sm" />
+              <button @click="applyDistanceRange" 
+                      class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">应用</button>
+            </div>
+            <div class="flex items-center gap-3">
+              <span class="text-sm text-gray-600 whitespace-nowrap">时间范围 (小时):</span>
+              <input v-model.number="timeRangeStart" type="number" min="0" 
+                     class="w-20 border border-gray-300 rounded px-2 py-1 text-sm" />
+              <span class="text-gray-400">至</span>
+              <input v-model.number="timeRangeEnd" type="number" min="0" 
+                     class="w-20 border border-gray-300 rounded px-2 py-1 text-sm" />
+              <button @click="applyTimeRange" 
+                      class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">应用</button>
             </div>
           </div>
           
@@ -733,16 +986,16 @@ const chartSeries = computed(() => {
               <div class="text-sm font-medium text-gray-700 mb-3 text-center">沿距离变化</div>
               <PerformanceChart 
                 :title="''" 
-                :series="chartSeries" 
-                :height="200"
+                :series="distanceChartSeries" 
+                :height="220"
               />
             </div>
             <div class="bg-gray-50 p-4 rounded-lg border">
               <div class="text-sm font-medium text-gray-700 mb-3 text-center">随时间变化</div>
               <PerformanceChart 
                 :title="''" 
-                :series="chartSeries" 
-                :height="200"
+                :series="timeChartSeries" 
+                :height="220"
               />
             </div>
           </div>

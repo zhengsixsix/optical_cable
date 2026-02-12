@@ -40,10 +40,15 @@ export interface Notification {
   duration?: number
 }
 
+export type LogCategory = '系统日志' | '链路日志' | '设备日志' | '模块日志' | '操作日志' | '告警日志'
+
 export interface LogEntry {
   time: string
   level: 'INFO' | 'WARN' | 'ERROR'
   message: string
+  category?: LogCategory
+  deviceId?: string
+  deviceName?: string
 }
 
 // 导入导出格式

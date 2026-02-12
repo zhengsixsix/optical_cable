@@ -7,7 +7,7 @@ import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
 import ProjectWizardDialog from '@/components/dialogs/ProjectWizardDialog.vue'
 import UserManageDialog from '@/components/dialogs/UserManageDialog.vue'
-import AlarmManageDialog from '@/modules/monitoring/dialogs/AlarmManageDialog.vue'
+import MonitoringCenterDialog from '@/modules/monitoring/dialogs/MonitoringCenterDialog.vue'
 import HelpDialog from '@/components/dialogs/HelpDialog.vue'
 import RPLManageDialog from '@/modules/design/dialogs/RPLManageDialog.vue'
 import SLDManageDialog from '@/modules/design/dialogs/SLDManageDialog.vue'
@@ -105,8 +105,8 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
     @close="appStore.closeDialog()"
   />
 
-  <AlarmManageDialog
-    :visible="appStore.activeDialog === 'alarm-manager'"
+  <MonitoringCenterDialog
+    :visible="appStore.activeDialog === 'monitor-center'"
     @close="appStore.closeDialog()"
   />
 

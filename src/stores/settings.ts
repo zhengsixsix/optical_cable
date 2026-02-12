@@ -84,14 +84,28 @@ export interface TransmissionConfig {
   calculationModels: string[]
 }
 
+// 数据字段映射接口
+export interface FieldMapping {
+  id: string
+  sourceField: string   // NMS原始字段名
+  targetField: string   // 系统内部字段名
+  dataType: 'string' | 'number' | 'boolean' | 'date'
+  description: string
+}
+
 // 监控系统配置接口
 export interface MonitoringConfig {
   dataSourceType: 'realtime' | 'history'
   connectionAddress: string
   authToken: string  // 认证Token
+  pollingInterval: number  // 轮询间隔(秒)
+  requestTimeout: number   // 请求超时(秒)
+  protocol: 'JSON' | 'XML' | 'SNMP' | 'gRPC'  // 数据协议
+  authMethod: 'apikey' | 'oauth' | 'basic'      // 认证方式
   powerThreshold: number
   temperatureThreshold: number
   berThreshold: string
+  fieldMappings: FieldMapping[]  // 数据字段映射配置
 }
 
 // 光纤仿真模型类型
@@ -164,9 +178,19 @@ const defaultMonitoringConfig: MonitoringConfig = {
   dataSourceType: 'realtime',
   connectionAddress: 'ws://localhost:8080/monitor',
   authToken: '',
+  pollingInterval: 30,
+  requestTimeout: 10,
+  protocol: 'JSON',
+  authMethod: 'apikey',
   powerThreshold: -25,
   temperatureThreshold: 45,
   berThreshold: '1e-6',
+  fieldMappings: [
+    { id: 'fm-1', sourceField: 'device_id', targetField: 'deviceId', dataType: 'string', description: '设备标识' },
+    { id: 'fm-2', sourceField: 'optical_power', targetField: 'inputPower', dataType: 'number', description: '光功率' },
+    { id: 'fm-3', sourceField: 'temperature', targetField: 'temperature', dataType: 'number', description: '温度' },
+    { id: 'fm-4', sourceField: 'bit_error_rate', targetField: 'ber', dataType: 'number', description: '误码率' },
+  ],
 }
 
 const defaultFiberSimulationConfig: FiberSimulationConfig = {
@@ -217,6 +241,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const simulationCache = ref<SimulationCache | null>(null)
   // 系统规划缓存 (system_engineering.system_planning_cache)
   const systemPlanningCache = ref<SystemPlanningCache | null>(null)
+  
+  // 设计视图链路计算摘要缓存 (_app_extensions.designCache)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const linkCalcSummaryCache = ref<Record<string, any> | null>(null)
   
   // 汇总的settings对象，兼容旧代码
   const settings = ref({
@@ -601,6 +629,7 @@ export const useSettingsStore = defineStore('settings', () => {
     models,
     simulationCache,
     systemPlanningCache,
+    linkCalcSummaryCache,
     addModel,
     updateModel,
     removeModel,

@@ -5,6 +5,7 @@ import type {
   EDFASimpleParams,
   EDFAFullParams,
 } from './systemPlanning'
+import type { ComponentModelParamsConfig } from './useFile'
 
 // ========== 模型参数抽屉机制 ==========
 
@@ -63,6 +64,10 @@ export interface AmplifierType {
   currency?: 'USD' | 'CNY' | 'EUR'
   /** 模型参数抽屉 - 按计算模型分层的额外参数 */
   modelDrawers?: EDFAModelDrawers
+  /** USE 规范字段: 支持的计算模型 ID 列表 */
+  supported_models?: string[]
+  /** USE 规范字段: 以模型 ID 为 key 的参数配置 */
+  model_params?: Record<string, ComponentModelParamsConfig>
 }
 
 // 分支器类型 (BU)
@@ -81,6 +86,10 @@ export interface BranchingUnitType {
   unitPrice?: number
   /** 币种 */
   currency?: 'USD' | 'CNY' | 'EUR'
+  /** USE 规范字段: 支持的计算模型 ID 列表 */
+  supported_models?: string[]
+  /** USE 规范字段: 以模型 ID 为 key 的参数配置 */
+  model_params?: Record<string, ComponentModelParamsConfig>
 }
 
 // 电缆类型（保留兼容）

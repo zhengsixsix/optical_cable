@@ -7,7 +7,7 @@
  */
 
 import JSZip from 'jszip'
-import { useRouteStore, useRPLStore, useSLDStore, useSettingsStore, useUserStore, useConnectorStore, useMonitorStore, useLayerStore } from '@/stores'
+import { useRouteStore, useRPLStore, useSLDStore, useSettingsStore, useUserStore, useConnectorStore, useMonitorStore, useLayerStore, useCableSegmentStore } from '@/stores'
 import type {
   USEProjectData,
   USEEnvironmentContext,
@@ -16,6 +16,7 @@ import type {
   USESystemEngineering,
   USEHealthMonitoring,
   USEProjectSettings,
+  USEAppExtensions,
   LayerRegistryItem,
   ImportedLandingPoint,
   ImportedBUNode,
@@ -196,6 +197,16 @@ class ProjectFileService {
    * @param fileName 文件名
    */
   private validateProjectFile(projectData: USEProjectData, fileName: string): { valid: boolean; error?: string } {
+    // 如果有 _app_extensions，说明是本应用保存的文件，允许部分完成的项目
+    if (projectData._app_extensions) {
+      // 只要求最基本的结构完整性
+      if (!projectData.metadata?.file_format_version) {
+        return { valid: false, error: '项目文件缺少版本信息' }
+      }
+      return { valid: true }
+    }
+    
+    // 非本应用生成的文件，执行严格验证
     // USE 文件必须有 RPL 数据
     const rplResult = this.validateHasRPL(projectData)
     if (!rplResult.valid) {
@@ -242,8 +253,13 @@ class ProjectFileService {
     const connectorStore = useConnectorStore()
     const routeStore = useRouteStore()
 
-    // 0. 收集 project_settings (工程设置)
-    projectData.project_settings = this.collectProjectSettings(settingsStore)
+    // 初始化扩展数据包
+    if (!projectData._app_extensions) {
+      projectData._app_extensions = {}
+    }
+
+    // 0. 收集 project_settings (工程设置) -> 归入 _app_extensions
+    projectData._app_extensions.project_settings = this.collectProjectSettings(settingsStore)
 
     // 1. 收集 environment_context
     projectData.environment_context = this.collectEnvironmentContext(layerStore, rplStore)
@@ -260,10 +276,10 @@ class ProjectFileService {
     // 5. 收集 health_monitoring
     projectData.health_monitoring = this.collectHealthMonitoring(settingsStore, monitorStore)
 
-    // ===== 6. 收集扩展字段 (保存原始 Store 数据，确保完整恢复) =====
+    // ===== 6. 收集扩展字段 -> 统一归入 _app_extensions =====
     
     // 6.1 保存 RPL 原始数据
-    projectData.routePlanning = {
+    projectData._app_extensions.routePlanning = {
       rplTables: JSON.parse(JSON.stringify(rplStore.tables)),
       routes: JSON.parse(JSON.stringify(routeStore.paretoRoutes || [])),
       planningConfig: settingsStore.routePlanningConfig,
@@ -271,7 +287,7 @@ class ProjectFileService {
     }
 
     // 6.2 保存 SLD 原始数据
-    projectData.transmissionPlanning = {
+    projectData._app_extensions.transmissionPlanning = {
       sldTables: JSON.parse(JSON.stringify(sldStore.tables)),
       transmissionConfig: settingsStore.transmissionConfig,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -279,16 +295,29 @@ class ProjectFileService {
     }
 
     // 6.3 保存接线元数据
-    projectData.connectorTables = JSON.parse(JSON.stringify(connectorStore.tables))
+    projectData._app_extensions.connectorTables = JSON.parse(JSON.stringify(connectorStore.tables))
 
     // 6.4 保存监控数据
-    projectData.monitorData = {
+    projectData._app_extensions.monitorData = {
       devices: JSON.parse(JSON.stringify(monitorStore.devices)),
       alarmHistory: JSON.parse(JSON.stringify(monitorStore.alarmHistory || []))
     }
 
-    // 6.5 保存图层设置
-    projectData.layerSettings = {
+    // 6.5 保存海缆段数据
+    const cableSegmentStore = useCableSegmentStore()
+    if (cableSegmentStore.segments.length > 0) {
+      projectData._app_extensions.cableSegments = cableSegmentStore.exportData()
+    }
+
+    // 6.6 保存设计视图缓存（链路成本 + 性能指标）
+    if (settingsStore.linkCalcSummaryCache) {
+      projectData._app_extensions.designCache = {
+        linkCalcSummary: JSON.parse(JSON.stringify(settingsStore.linkCalcSummaryCache))
+      }
+    }
+
+    // 6.7 保存图层设置
+    projectData._app_extensions.layerSettings = {
       oceanElevation: layerStore.getLayerVisible('elevation'),
       volcanoDistribution: layerStore.getLayerVisible('volcano'),
       fishingAreaDistribution: layerStore.getLayerVisible('fishing'),
@@ -1146,9 +1175,9 @@ class ProjectFileService {
     const connectorStore = useConnectorStore()
     const routeStore = useRouteStore()
 
-    // 0. 恢复工程设置 (project_settings)
-    if (projectData.project_settings) {
-      this.restoreProjectSettings(projectData.project_settings, settingsStore)
+    // 0. 恢复工程设置 (project_settings) - 从 _app_extensions 读取
+    if (projectData._app_extensions?.project_settings) {
+      this.restoreProjectSettings(projectData._app_extensions.project_settings, settingsStore)
     }
 
     // 1. 注册图层 (layer_registry)
@@ -1201,6 +1230,8 @@ class ProjectFileService {
         outputPower: specs.max_output_power_dbm || 17,
         gainFlatness: specs.gain_flatness_db || 0.5,
         gainRangePower: specs.gain_range_db || 0.1,
+        supported_models: amp.supported_models,
+        model_params: amp.model_params,
       }
     })
 
@@ -1217,6 +1248,8 @@ class ProjectFileService {
         branchInsertionLoss: specs.loss_vals?.branch || 3.0,
         insertionLoss: specs.loss_vals?.thru || 0.5,
         wavelengthRange: 1550,
+        supported_models: bu.supported_models,
+        model_params: bu.model_params,
       }
     })
 
@@ -1363,17 +1396,25 @@ class ProjectFileService {
               name: undefined,
             }))
       
-      // 创建路由分段
-      const routeSegments = displayPoints.slice(0, -1).map((point, i) => ({
-        id: `seg-${i}`,
-        startPointId: point.id,
-        endPointId: displayPoints[i + 1].id,
-        length: 0,
-        depth: 0,
-        cableType: 'LW',
-        riskLevel: 'low' as const,
-        cost: 0,
-      }))
+      // 构建点 id -> KP 的映射，用于计算 segment 长度
+      const idToKp = new Map<string, number>()
+      records.forEach(r => idToKp.set(r.id, r.kp))
+
+      // 创建路由分段（length 基于 KP 计算）
+      const routeSegments = displayPoints.slice(0, -1).map((point, i) => {
+        const startKp = idToKp.get(point.id) || 0
+        const endKp = idToKp.get(displayPoints[i + 1].id) || 0
+        return {
+          id: `seg-${i}`,
+          startPointId: point.id,
+          endPointId: displayPoints[i + 1].id,
+          length: Math.abs(endKp - startKp),
+          depth: 0,
+          cableType: 'LW',
+          riskLevel: 'low' as const,
+          cost: 0,
+        }
+      })
       
       // 创建主路线
       const mainRoute = {
@@ -1413,11 +1454,12 @@ class ProjectFileService {
         const newElements: any[] = []
         
         // 只添加关键点作为接线元（登陆站、放大器、分支器）
+        // 使用 record.id (event_id) 作为 ID，保证与 span 的 from/to_event_id 一致
         records.forEach((record, index) => {
           if (record.pointType !== 'waypoint') {
             const connectorType = this.mapPointTypeToConnectorType(record.pointType)
             newElements.push({
-              id: `monitor-${index}`,
+              id: record.id,
               name: record.remarks || `${this.getDeviceTypeChinese(connectorType)}-${index + 1}`,
               type: connectorType,
               longitude: record.longitude,
@@ -1477,7 +1519,7 @@ class ProjectFileService {
         if (record.pointType !== 'waypoint') {
           const deviceType = this.mapPointTypeToConnectorType(record.pointType)
           newDevices.push({
-            id: `monitor-${index}`,
+            id: record.id,
             name: record.remarks || `${this.getDeviceTypeChinese(deviceType)}-${index + 1}`,
             type: deviceType,
             neType: deviceType,
@@ -1574,9 +1616,14 @@ class ProjectFileService {
         dataSourceType: 'realtime',
         connectionAddress: projectData.health_monitoring.collector_config.connection_params.base_url,
         authToken: '',
+        pollingInterval: projectData.health_monitoring.collector_config.polling_interval || 30,
+        requestTimeout: 10,
+        protocol: 'JSON',
+        authMethod: 'apikey',
         powerThreshold: -25,
         temperatureThreshold: 45,
         berThreshold: '1e-6',
+        fieldMappings: [],
       }
       // 存储扩展监控配置
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1599,6 +1646,9 @@ class ProjectFileService {
     // 13. 从项目数据中提取起点/终点坐标并更新路径规划配置
     this.extractRoutePlanningConfig(projectData, settingsStore)
 
+    // 13.5 恢复海缆段数据到 cableSegmentStore
+    this.restoreCableSegments(projectData, settingsStore)
+
     // ===== 14. 从扩展字段恢复原始 Store 数据 (优先级最高) =====
     this.restoreExtensionData(projectData, rplStore, sldStore, connectorStore, monitorStore, routeStore, layerStore)
   }
@@ -1616,65 +1666,79 @@ class ProjectFileService {
     routeStore: RouteStore,
     layerStore: LayerStore
   ): void {
-    // 14.1 恢复 RPL 原始数据 (如果扩展字段存在)
-    if (projectData.routePlanning?.rplTables && projectData.routePlanning.rplTables.length > 0) {
+    const ext = projectData._app_extensions
+    if (!ext) return
+
+    // 14.1 恢复 RPL 原始数据
+    if (ext.routePlanning?.rplTables && ext.routePlanning.rplTables.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rplStore.tables = projectData.routePlanning.rplTables as any
+      rplStore.tables = ext.routePlanning.rplTables as any
       if (rplStore.tables.length > 0) {
         rplStore.currentTableId = rplStore.tables[0].id
       }
     }
 
-    // 14.2 恢复路由数据 (如果扩展字段存在)
-    if (projectData.routePlanning?.routes && projectData.routePlanning.routes.length > 0) {
+    // 14.2 恢复路由数据
+    if (ext.routePlanning?.routes && ext.routePlanning.routes.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      routeStore.setParetoRoutes(projectData.routePlanning.routes as any)
+      routeStore.setParetoRoutes(ext.routePlanning.routes as any)
     }
     
-    // 14.2.1 恢复缆型数据库 (如果扩展字段存在)
-    if (projectData.routePlanning?.cableTypeDatabase && projectData.routePlanning.cableTypeDatabase.length > 0) {
+    // 14.2.1 恢复缆型数据库
+    if (ext.routePlanning?.cableTypeDatabase && ext.routePlanning.cableTypeDatabase.length > 0) {
       const settingsStore = useSettingsStore()
-      // 替换现有的缆型数据库
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      settingsStore.cableTypeDatabase.splice(0, settingsStore.cableTypeDatabase.length, ...(projectData.routePlanning.cableTypeDatabase as any))
+      settingsStore.cableTypeDatabase.splice(0, settingsStore.cableTypeDatabase.length, ...(ext.routePlanning.cableTypeDatabase as any))
     }
     
-    // 14.2.2 恢复完整的路径规划配置 (包含 armorMappings, waypoints, buList 等)
-    if (projectData.routePlanning?.planningConfig) {
+    // 14.2.2 恢复完整的路径规划配置
+    if (ext.routePlanning?.planningConfig) {
       const settingsStore = useSettingsStore()
-      settingsStore.updateRoutePlanningConfig(projectData.routePlanning.planningConfig)
+      settingsStore.updateRoutePlanningConfig(ext.routePlanning.planningConfig)
     }
 
-    // 14.3 恢复 SLD 原始数据 (如果扩展字段存在) - 这是最重要的修复!
-    if (projectData.transmissionPlanning?.sldTables && projectData.transmissionPlanning.sldTables.length > 0) {
+    // 14.3 恢复 SLD 原始数据
+    if (ext.transmissionPlanning?.sldTables && ext.transmissionPlanning.sldTables.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      sldStore.tables = projectData.transmissionPlanning.sldTables as any
+      sldStore.tables = ext.transmissionPlanning.sldTables as any
       if (sldStore.tables.length > 0) {
         sldStore.currentTableId = sldStore.tables[0].id
       }
     }
 
-    // 14.4 恢复接线元数据 (如果扩展字段存在)
-    if (projectData.connectorTables && projectData.connectorTables.length > 0) {
+    // 14.4 恢复接线元数据
+    if (ext.connectorTables && ext.connectorTables.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      connectorStore.tables = projectData.connectorTables as any
+      connectorStore.tables = ext.connectorTables as any
       if (connectorStore.tables.length > 0) {
         connectorStore.currentTableId = connectorStore.tables[0].id
       }
     }
 
-    // 14.5 恢复监控数据 (如果扩展字段存在)
-    if (projectData.monitorData?.devices && projectData.monitorData.devices.length > 0) {
+    // 14.5 恢复监控数据
+    if (ext.monitorData?.devices && ext.monitorData.devices.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(monitorStore as any).$patch({
-        devices: projectData.monitorData.devices,
-        alarmHistory: projectData.monitorData.alarmHistory || []
+        devices: ext.monitorData.devices,
+        alarmHistory: ext.monitorData.alarmHistory || []
       })
     }
 
-    // 14.6 恢复图层设置 (如果扩展字段存在)
-    if (projectData.layerSettings) {
-      const ls = projectData.layerSettings
+    // 14.5.5 恢复海缆段数据 (如果 _app_extensions 中有更完整的版本)
+    if (ext.cableSegments) {
+      const cableSegmentStore = useCableSegmentStore()
+      cableSegmentStore.importData(ext.cableSegments)
+    }
+
+    // 14.6 恢复设计视图缓存
+    if (ext.designCache?.linkCalcSummary) {
+      const settingsStore = useSettingsStore()
+      settingsStore.linkCalcSummaryCache = ext.designCache.linkCalcSummary
+    }
+
+    // 14.7 恢复图层设置
+    if (ext.layerSettings) {
+      const ls = ext.layerSettings
       layerStore.setLayerVisible('elevation', ls.oceanElevation ?? false)
       layerStore.setLayerVisible('volcano', ls.volcanoDistribution ?? false)
       layerStore.setLayerVisible('fishing', ls.fishingAreaDistribution ?? false)
@@ -1682,6 +1746,82 @@ class ProjectFileService {
       layerStore.setLayerVisible('earthquake', ls.earthquakeDistribution ?? false)
       layerStore.setLayerVisible('shipping', ls.shippingLanes ?? false)
     }
+  }
+
+  /**
+   * 从 route_engineering.segments 恢复海缆段数据到 cableSegmentStore
+   */
+  private restoreCableSegments(projectData: USEProjectData, settingsStore: SettingsStore): void {
+    const segments = projectData.route_engineering?.segments || []
+    const segConfig = projectData.route_engineering?.segmentation_config
+    if (segments.length === 0) return
+
+    const cableSegmentStore = useCableSegmentStore()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cableTypes = (settingsStore.cableTypes || []) as any[]
+
+    // 辅助：根据 cable_type_ref 查找缆型名称和铠装类型
+    const getCableInfo = (ref: string) => {
+      const ct = cableTypes.find((c: any) => c.id === ref)
+      if (ct) return { name: ct.name, armor: ct.type || 'LW' }
+      // fallback: 从 ref 字符串推断
+      const upper = ref.toUpperCase()
+      if (upper.includes('DA')) return { name: 'DA (双铠装)', armor: '双铠' }
+      if (upper.includes('SA')) return { name: 'SA (单铠装)', armor: '单铠' }
+      return { name: 'LW (轻型)', armor: '轻铠' }
+    }
+
+    // 辅助：映射风险等级 USE -> store
+    const mapRisk = (level: string): 'high' | 'medium' | 'low' => {
+      const map: Record<string, 'high' | 'medium' | 'low'> = {
+        'HIGH': 'high', 'MEDIUM': 'medium', 'LOW': 'low'
+      }
+      return map[level?.toUpperCase()] || 'low'
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const converted = segments.map((seg: any) => {
+      const range = seg.geometry_range || {}
+      const startKm = range.start_km ?? range.startKm ?? 0
+      const endKm = range.end_km ?? range.endKm ?? 0
+      const lengthKm = range.length_km ?? range.lengthKm ?? (endKm - startKm)
+      const riskLevel = mapRisk(seg.risk_info?.risk_level || 'LOW')
+      const cableRef = seg.cable_type_ref || seg.cable_struct_ref || 'struct_lw_01'
+      const cableInfo = getCableInfo(cableRef)
+
+      return {
+        id: seg.segment_id,
+        routeId: 'route-main',
+        startKp: startKm,
+        endKp: endKm,
+        length: lengthKm,
+        riskLevel,
+        cableTypeId: cableRef,
+        cableTypeName: cableInfo.name,
+        armorType: cableInfo.armor,
+        slack: seg.slack_percent ?? 2.5,
+        burialDepth: seg.burial_depth_m ?? 0,
+        isLocked: seg.is_locked ?? false,
+        geometryStartIndex: range.start_index,
+        geometryEndIndex: range.end_index,
+      }
+    })
+
+    // 构建导入数据
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const importPayload: any = { segments: converted }
+
+    // 转换分段配置
+    if (segConfig) {
+      importPayload.config = {
+        method: segConfig.method === 'FIXED_LENGTH' ? 'fixed-length' : 'risk-based',
+        targetLength: segConfig.fixed_length_km,
+        minLength: segConfig.risk_based?.min_length_km,
+        maxLength: segConfig.risk_based?.max_length_km,
+      }
+    }
+
+    cableSegmentStore.importData(importPayload)
   }
 
   /**

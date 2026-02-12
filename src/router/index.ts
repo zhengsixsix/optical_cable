@@ -22,13 +22,7 @@ const routes: RouteRecordRaw[] = [
         path: '/monitoring',
         name: 'monitoring',
         component: () => import('@/views/MonitoringView.vue'),
-        meta: {title: '监控', requiresAuth: true, requiresUSE: true},
-    },
-    {
-        path: '/performance',
-        name: 'performance',
-        component: () => import('@/views/PerformanceView.vue'),
-        meta: {title: '性能历史', requiresAuth: true},
+        meta: {title: '设备健康度管理', requiresAuth: true, requiresUSE: true},
     },
     {
         path: '/settings',

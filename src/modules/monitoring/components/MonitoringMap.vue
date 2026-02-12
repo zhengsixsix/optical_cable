@@ -390,69 +390,44 @@ onUnmounted(() => {
   <div class="w-full h-full relative">
     <div ref="mapContainer" class="w-full h-full" />
     
-    <!-- 设备详情气泡框 -->
+    <!-- 设备信息预览窗口 (图5样式) -->
     <div ref="popupContainer" class="popup-container" v-show="popupVisible && popupDevice">
-      <div class="bg-white rounded-lg shadow-xl border border-gray-200 min-w-[280px] max-w-[320px]">
-        <!-- 气泡框头部 -->
+      <div class="bg-white rounded-lg shadow-xl border border-gray-200 min-w-[220px] max-w-[260px]">
+        <!-- 头部: 设备名称 -->
         <div class="px-4 py-3 border-b flex items-center justify-between bg-gray-50 rounded-t-lg">
-          <div class="flex items-center gap-2">
-            <span :class="['w-2.5 h-2.5 rounded-full', popupDevice?.status === 'normal' ? 'bg-green-500' : popupDevice?.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500']"></span>
-            <span class="font-semibold text-gray-800">{{ popupDevice?.name }}</span>
-          </div>
+          <span class="font-bold text-gray-800 text-sm">{{ popupDevice?.name }}</span>
           <button @click="closePopup" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
         </div>
         
-        <!-- 气泡框内容 -->
-        <div class="px-4 py-3 space-y-3">
-          <!-- 状态和健康度 -->
+        <!-- 内容 -->
+        <div class="px-4 py-3 space-y-2">
+          <!-- 类型 -->
           <div class="flex items-center justify-between">
-            <span class="text-xs text-gray-500">设备状态</span>
-            <span :class="['text-sm font-medium', getHealthColor(popupDevice?.status || '')]">
-              {{ getStatusText(popupDevice?.status || '') }}
+            <span class="text-xs text-gray-500">类型：</span>
+            <span class="text-xs text-gray-700">{{ popupDevice?.neType || popupDevice?.type }}</span>
+          </div>
+          
+          <!-- 状态 -->
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-gray-500">状态：</span>
+            <span class="flex items-center gap-1.5">
+              <span :class="['w-2 h-2 rounded-full', popupDevice?.status === 'normal' ? 'bg-green-500' : popupDevice?.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500']"></span>
+              <span :class="['text-xs font-medium', getHealthColor(popupDevice?.status || '')]">
+                {{ getStatusText(popupDevice?.status || '') }}
+              </span>
             </span>
           </div>
           
-          <!-- 设备类型 -->
-          <div class="flex items-center justify-between">
-            <span class="text-xs text-gray-500">设备类型</span>
-            <span class="text-sm text-gray-700">{{ popupDevice?.type }}</span>
-          </div>
-          
-          <!-- 位置信息 -->
-          <div class="flex items-center justify-between">
-            <span class="text-xs text-gray-500">位置</span>
-            <span class="text-sm text-gray-700">{{ popupDevice?.location }}</span>
-          </div>
-          
-          <!-- 坐标 -->
-          <div class="grid grid-cols-2 gap-2 pt-2 border-t">
-            <div>
-              <div class="text-xs text-gray-400">经度</div>
-              <div class="text-sm font-medium">{{ popupDevice?.longitude?.toFixed(4) }}°</div>
+          <!-- 健康度 - 突出显示 -->
+          <div class="pt-2">
+            <div class="text-xs text-gray-500 mb-1">健康度：</div>
+            <div :class="['text-3xl font-bold', popupDevice?.health >= 80 ? 'text-green-600' : popupDevice?.health >= 60 ? 'text-yellow-600' : 'text-red-600']">
+              {{ popupDevice?.health?.toFixed(0) || '--' }}<span class="text-lg">%</span>
             </div>
-            <div>
-              <div class="text-xs text-gray-400">纬度</div>
-              <div class="text-sm font-medium">{{ popupDevice?.latitude?.toFixed(4) }}°</div>
-            </div>
-          </div>
-          
-          <!-- 性能参数 -->
-          <div v-if="popupDevice?.inputPower !== undefined" class="grid grid-cols-2 gap-2 pt-2 border-t">
-            <div>
-              <div class="text-xs text-gray-400">输入光功率</div>
-              <div class="text-sm font-medium text-blue-600">{{ popupDevice?.inputPower?.toFixed(1) }} dBm</div>
-            </div>
-            <div>
-              <div class="text-xs text-gray-400">输出光功率</div>
-              <div class="text-sm font-medium text-blue-600">{{ popupDevice?.outputPower?.toFixed(1) }} dBm</div>
-            </div>
-            <div>
-              <div class="text-xs text-gray-400">温度</div>
-              <div class="text-sm font-medium text-orange-600">{{ popupDevice?.temperature?.toFixed(1) }} °C</div>
-            </div>
-            <div>
-              <div class="text-xs text-gray-400">泵浦电流</div>
-              <div class="text-sm font-medium text-purple-600">{{ popupDevice?.pumpCurrent }} mA</div>
+            <!-- 健康度进度条 -->
+            <div class="h-2 bg-gray-200 rounded-full overflow-hidden mt-2">
+              <div :class="['h-full transition-all rounded-full', popupDevice?.health >= 80 ? 'bg-green-500' : popupDevice?.health >= 60 ? 'bg-yellow-500' : 'bg-red-500']" 
+                   :style="{ width: (popupDevice?.health || 0) + '%' }"></div>
             </div>
           </div>
         </div>

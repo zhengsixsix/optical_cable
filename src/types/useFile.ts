@@ -238,11 +238,35 @@ export interface ModelConstraint {
 /** 模型适用领域 */
 export type ModelDomain = 'FIBER' | 'EDFA' | 'BU' | 'SYSTEM'
 
+/** 模型角色 */
+export type ModelRole = 'propagation' | 'auxiliary'
+
+/** 模型状态量定义（接口契约中的输入/输出状态） */
+export interface ModelStateIO {
+  param_id: string               // 状态量 ID
+  data_type: 'float' | 'int' | 'string' | 'array' | 'matrix'  // 数据类型
+  description: string            // 状态量描述
+}
+
+/** 模型接口契约 */
+export interface ModelInterfaceContract {
+  state_inputs: ModelStateIO[]   // 模型所需的状态输入
+  state_outputs: ModelStateIO[]  // 模型产生的状态输出
+}
+
+/** 模型兼容性声明 */
+export interface ModelCompatibility {
+  requires: string[]             // 依赖的其他模型 ID
+  provides: string[]             // 本模型提供的能力标识
+  incompatible_with: string[]    // 与本模型互斥的模型 ID
+}
+
 /** 计算模型完整定义 */
 export interface ModelDefinition {
   model_id: string               // 模型唯一标识符，系统稳定 ID
   version: string                // 模型版本号
   domain: ModelDomain            // 模型适用领域
+  role: ModelRole                // 模型角色（传播计算/辅助工具）
   display_name: string           // 前端显示名称
   description: string            // 模型功能描述
   entry_point: string            // 代码入口，格式为 "文件名:函数名"
@@ -250,6 +274,8 @@ export interface ModelDefinition {
   inputs: ModelInput[]           // 输入参数定义
   outputs: ModelOutput[]         // 输出参数定义
   constraints?: ModelConstraint[] // 参数约束条件（可选）
+  interface_contract: ModelInterfaceContract  // 接口契约
+  compatibility: ModelCompatibility           // 兼容性声明
 }
 
 // ---------- 3.2 光纤参数库 (libraries.fibers) ----------
@@ -593,6 +619,53 @@ export interface UserDecision {
   decision_time: string          // 用户确认时间戳 (ISO 8601)
 }
 
+// ---------- 5.3 最终规划缓存 (final_plan_cache) ----------
+
+/** 节点元数据 */
+export interface NodeMetadataItem {
+  event_id: string               // 对应 key_events 中的事件 ID
+  type: KeyEventType             // 节点类型
+  geo_index: number              // geometry_pool 索引
+  component_ref_id: string       // 引用的器件规格 ID
+  kp_km: number                  // 里程 (km)
+  name: string                   // 节点名称
+}
+
+/** Span 性能指标行 */
+export interface SpanPerformanceRow {
+  span_id: string                // Span ID
+  length_km: number              // Span 长度 (km)
+  loss_db: number                // 总损耗 (dB)
+  gsnr_db: number                // GSNR (dB)
+  osnr_db: number                // OSNR (dB)
+}
+
+/** Span 布放详情 */
+export interface SpanPlacementDetail {
+  span_id: string                // Span ID
+  from_event_id: string          // 起点设备 Event ID
+  to_event_id: string            // 终点设备 Event ID
+  length_km: number              // Span 长度 (km)
+  fiber_ref: string              // 光纤规格引用 ID
+}
+
+/** 放大器布放算法结果 */
+export interface AmplifierPlacementResult {
+  strategy: string               // 布放策略（如 'equal_spacing', 'optimized'）
+  total_edfa_count: number       // EDFA 总数
+  total_bu_count: number         // BU 总数
+  span_details: SpanPlacementDetail[]  // 每段布放详情
+}
+
+/** 最终规划缓存 */
+export interface FinalPlanCache {
+  is_valid: boolean              // 缓存有效性标识
+  timestamp: string              // 规划完成时间戳 (ISO 8601)
+  node_metadata: NodeMetadataItem[]        // 各节点元数据
+  performance_matrices: SpanPerformanceRow[]  // 各 Span 性能矩阵
+  amplifier_placement: AmplifierPlacementResult  // 放大器布放结果
+}
+
 /** 系统规划缓存 */
 export interface SystemPlanningCache {
   is_valid: boolean              // 缓存有效性标识
@@ -604,6 +677,7 @@ export interface SystemPlanningCache {
   sweep_config: SweepConfig      // Span 扫描配置参数
   sweep_results: SweepResults    // Span 扫描计算结果
   user_decision: UserDecision | null  // 用户最终决策记录
+  final_plan_cache: FinalPlanCache | null  // 最终规划缓存
 }
 
 /** 系统工程模块 */
@@ -660,7 +734,7 @@ export interface USEHealthMonitoring {
   view_settings: ViewSettings
 }
 
-// ==================== USE 项目数据结构 ====================
+// ==================== 应用扩展数据结构 ====================
 
 /** 路由规划扩展数据 (保存原始 RPL 表格) */
 export interface RouteplanningExtension {
@@ -675,11 +749,6 @@ export interface TransmissionPlanningExtension {
   sldTables: Record<string, unknown>[]  // 原始 SLD 表格数据
   transmissionConfig?: Record<string, unknown>
   repeaterConfigs?: Record<string, unknown>[]
-}
-
-/** 接线元扩展数据 */
-export interface ConnectorExtension {
-  connectorTables: Record<string, unknown>[]  // 接线元表格数据
 }
 
 /** 监控扩展数据 */
@@ -698,22 +767,64 @@ export interface LayerSettingsExtension {
   shippingLanes?: boolean
 }
 
+/** 设计视图缓存（链路成本 + 性能指标） */
+export interface DesignCacheExtension {
+  linkCalcSummary?: {
+    linkName: string
+    metrics: {
+      osnr: { min: number; max: number; avg: number }
+      gsnr: { min: number; max: number; avg: number }
+      power: { min: number; max: number; avg: number }
+      nli: { min: number; max: number; avg: number }
+      qFactor: { min: number; max: number; avg: number }
+    }
+    systemConfig: {
+      amplifierCount: number
+      avgSpanLength: number
+      buCount: number
+      totalBuLoss: number
+      channelCount: number
+      modulation: string
+    }
+    margin: {
+      targetOsnr: number
+      worstMargin: number
+      avgMargin: number
+      meetsRequirement: boolean
+    }
+    costData: {
+      cableCost: number
+      amplifierCost: number
+      buCost: number
+      totalCost: number
+      costItems: Array<{ category: string; model: string; quantity: number | string; unit: string; unitPrice: number; subtotal: number }>
+    }
+  } | null
+}
+
+/** 应用扩展数据包 (非规范模块，统一归集) */
+export interface USEAppExtensions {
+  project_settings?: USEProjectSettings          // 工程设置
+  routePlanning?: RouteplanningExtension         // RPL 原始数据
+  transmissionPlanning?: TransmissionPlanningExtension  // SLD 原始数据
+  connectorTables?: Record<string, unknown>[]    // 接线元表格数据
+  monitorData?: MonitorExtension                 // 监控数据
+  cableSegments?: Record<string, unknown>        // 海缆段数据
+  layerSettings?: LayerSettingsExtension         // 图层设置
+  designCache?: DesignCacheExtension             // 设计视图缓存
+}
+
 /** USE 项目数据 (project_data.json 内容) */
 export interface USEProjectData {
+  // ===== 规范六大模块 =====
   metadata: USEMetadata
-  project_settings: USEProjectSettings  // 工程设置模块
   environment_context: USEEnvironmentContext
   libraries: USELibraries
   route_engineering: USERouteEngineering
   system_engineering: USESystemEngineering
   health_monitoring: USEHealthMonitoring
-  
-  // ===== 扩展字段 (保存原始 Store 数据，确保完整恢复) =====
-  routePlanning?: RouteplanningExtension       // RPL 原始数据
-  transmissionPlanning?: TransmissionPlanningExtension  // SLD 原始数据
-  connectorTables?: Record<string, unknown>[]  // 接线元表格数据
-  monitorData?: MonitorExtension               // 监控数据
-  layerSettings?: LayerSettingsExtension       // 图层设置
+  // ===== 应用扩展 =====
+  _app_extensions?: USEAppExtensions
 }
 
 // ==================== 链路器件参数获取流程 ====================
@@ -796,30 +907,6 @@ export function createDefaultUSEProjectData(
       display_settings: {
         crs: 'EPSG:4326',
         units: { length: 'km', depth: 'm' }
-      }
-    },
-    project_settings: {
-      route_planning: {
-        mode: 'point-to-point',
-        start_point: { lon: 0, lat: 0 },
-        end_point: { lon: 0, lat: 0 },
-        planning_range: {
-          northwest: { lon: 100, lat: 50 },
-          southeast: { lon: 150, lat: 10 }
-        }
-      },
-      cost_settings: {
-        cable_cost_per_km: 35000,
-        installation_cost_per_km: 15000,
-        repeater_cost: 250000,
-        branching_unit_cost: 180000,
-        landing_station_cost: 5000000,
-        currency: 'USD'
-      },
-      simulation_settings: {
-        fiber_model: 'GN',
-        edfa_model: 'EDFA_Simple',
-        calculation_models: ['power', 'ase', 'nli']
       }
     },
     environment_context: {
@@ -985,6 +1072,7 @@ export function createDefaultModels(): ModelDefinition[] {
       model_id: 'fiber_linear_loss',
       version: '1.0.0',
       domain: 'FIBER',
+      role: 'propagation',
       display_name: 'Fiber Linear Loss Model',
       description: 'Calculate linear attenuation loss for optical fiber span',
       entry_point: 'fiber_loss.py:calculate_linear_loss',
@@ -998,13 +1086,27 @@ export function createDefaultModels(): ModelDefinition[] {
       ],
       constraints: [
         { param_id: 'length', min: 0, max: 500 }
-      ]
+      ],
+      interface_contract: {
+        state_inputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入纤光功率谱 (dBm)' }
+        ],
+        state_outputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '出纤光功率谱 (dBm)' }
+        ]
+      },
+      compatibility: {
+        requires: [],
+        provides: ['fiber_loss'],
+        incompatible_with: []
+      }
     },
     // GN 模型
     {
       model_id: 'fiber_gn_model',
       version: '1.0.0',
       domain: 'FIBER',
+      role: 'propagation',
       display_name: 'GN Model',
       description: 'Gaussian Noise model for fiber nonlinear interference calculation',
       entry_point: 'gn_model.py:calculate_gn',
@@ -1019,13 +1121,31 @@ export function createDefaultModels(): ModelDefinition[] {
       outputs: [
         { param_id: 'nli_power', label: 'NLI Power', unit: 'dBm', type: 'float' },
         { param_id: 'gsnr', label: 'GSNR', unit: 'dB', type: 'float' }
-      ]
+      ],
+      interface_contract: {
+        state_inputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入纤光功率谱 (dBm)' },
+          { param_id: 'ase_spectrum_dbm', data_type: 'array', description: 'ASE 噪声谱 (dBm)' },
+          { param_id: 'nli_spectrum_dbm', data_type: 'array', description: 'NLI 噪声谱 (dBm)' }
+        ],
+        state_outputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '出纤光功率谱 (dBm)' },
+          { param_id: 'nli_spectrum_dbm', data_type: 'array', description: '累积 NLI 噪声谱 (dBm)' },
+          { param_id: 'gsnr_spectrum_db', data_type: 'array', description: 'GSNR 频谱 (dB)' }
+        ]
+      },
+      compatibility: {
+        requires: [],
+        provides: ['fiber_nli', 'fiber_loss'],
+        incompatible_with: ['fiber_egn_model']
+      }
     },
     // EDFA 增益模型
     {
       model_id: 'edfa_gain_model',
       version: '1.0.0',
       domain: 'EDFA',
+      role: 'propagation',
       display_name: 'EDFA Gain Model',
       description: 'Calculate EDFA output power considering saturation',
       entry_point: 'edfa_model.py:calculate_gain',
@@ -1038,13 +1158,29 @@ export function createDefaultModels(): ModelDefinition[] {
       outputs: [
         { param_id: 'output_power_dbm', label: 'Output Power', unit: 'dBm', type: 'float' },
         { param_id: 'actual_gain_db', label: 'Actual Gain', unit: 'dB', type: 'float' }
-      ]
+      ],
+      interface_contract: {
+        state_inputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入纤光功率谱 (dBm)' },
+          { param_id: 'ase_spectrum_dbm', data_type: 'array', description: 'ASE 噪声谱 (dBm)' }
+        ],
+        state_outputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '放大后光功率谱 (dBm)' },
+          { param_id: 'ase_spectrum_dbm', data_type: 'array', description: '累积 ASE 噪声谱 (dBm)' }
+        ]
+      },
+      compatibility: {
+        requires: [],
+        provides: ['edfa_gain', 'edfa_ase'],
+        incompatible_with: []
+      }
     },
     // BU 损耗模型
     {
       model_id: 'bu_loss_model',
       version: '1.0.0',
       domain: 'BU',
+      role: 'propagation',
       display_name: 'BU Loss Model',
       description: 'Calculate BU insertion loss based on port configuration',
       entry_point: 'bu_model.py:calculate_loss',
@@ -1058,7 +1194,20 @@ export function createDefaultModels(): ModelDefinition[] {
       outputs: [
         { param_id: 'loss_db', label: 'Insertion Loss', unit: 'dB', type: 'float' },
         { param_id: 'mode', label: 'Mode', unit: '', type: 'string' }
-      ]
+      ],
+      interface_contract: {
+        state_inputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入端光功率谱 (dBm)' }
+        ],
+        state_outputs: [
+          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '出端光功率谱 (dBm)' }
+        ]
+      },
+      compatibility: {
+        requires: [],
+        provides: ['bu_loss'],
+        incompatible_with: []
+      }
     }
   ]
 }

@@ -152,7 +152,7 @@ const showModal = (key: string) => {
     '关于软件': 'about',
     '用户手册': 'manual',
     '联系支持': 'support',
-    '告警管理': 'alarm-manager'
+    '监控中心': 'monitor-center'
   }
 
   const dialogKey = map[key] || key
@@ -417,15 +417,11 @@ const togglePanel = (panel: string) => {
             :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/monitoring') || $route.path.includes('/performance') }">监控</span>
           <div
             class="absolute top-full left-0 bg-white text-gray-800 shadow-lg rounded-b-md py-1 min-w-[150px] hidden group-hover:block border border-gray-200 z-50">
+            <a href="#" @click.prevent="showModal('监控中心')"
+              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">监控中心...</a>
             <RouterLink to="/monitoring"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
-              active-class="bg-primary/10 text-primary font-medium">实时监控
-            </RouterLink>
-            <a href="#" @click.prevent="showModal('告警管理')"
-              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">告警管理...</a>
-            <RouterLink to="/performance"
-              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
-              active-class="bg-primary/10 text-primary font-medium">性能历史查询
+              active-class="bg-primary/10 text-primary font-medium">设备健康度管理
             </RouterLink>
           </div>
         </div>
