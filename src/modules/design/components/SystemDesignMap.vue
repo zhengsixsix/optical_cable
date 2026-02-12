@@ -336,6 +336,24 @@ const sortedPoints = computed(() => {
       }
     })
     
+    // 合并 connectorStore 中的放大器（系统规划应用配置后生成）
+    const ampTypes = ['ola', 'amplifier_e', 'amplifier_w']
+    const existingIds = new Set(mainPoints.map(p => p.id))
+    const amplifiers = connectorStore.elements.filter(
+      e => ampTypes.includes(e.type) && !existingIds.has(e.id)
+    )
+    amplifiers.forEach(amp => {
+      mainPoints.push({
+        id: amp.id,
+        name: amp.name,
+        type: amp.type,
+        longitude: amp.longitude,
+        latitude: amp.latitude,
+        kp: amp.kp,
+        depth: amp.depth || 0,
+      } as any)
+    })
+    
     return mainPoints
   }
   
@@ -1035,6 +1053,16 @@ watch(
   () => {
     if (map) {
       scheduleRedraw(false, true)
+    }
+  }
+)
+
+// 监听放大器变化 - 应用配置后重绘设备点位
+watch(
+  () => connectorStore.elements.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w').length,
+  () => {
+    if (map) {
+      scheduleRedraw(false, false)
     }
   }
 )

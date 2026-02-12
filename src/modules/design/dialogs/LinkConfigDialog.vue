@@ -159,9 +159,23 @@ const linkInfo = computed(() => {
   const landingPoints = landingPointsAll.filter(p => !(p as any).isBranchStation)
   const buPoints = pointsWithKp.filter(p => p.type === 'branching')
   
+  // 计算主干线长度（排除分支段）
+  let trunkLen = 0
+  if (route.segments && route.segments.length > 0) {
+    // 分支登陆站 ID 集合
+    const branchLandingIds = new Set(branchLandingPoints.map(p => p.id))
+    for (const seg of route.segments) {
+      // 排除起点或终点为分支登陆站的段
+      if (branchLandingIds.has(seg.startPointId) || branchLandingIds.has(seg.endPointId)) continue
+      trunkLen += seg.length || 0
+    }
+  }
+  const totalLen = rpl?.metadata?.totalLength || route.totalLength || 0
+  
   return {
     name: route.name,
-    totalLength: rpl?.metadata?.totalLength || route.totalLength || 0,
+    totalLength: totalLen,
+    trunkLength: trunkLen > 0 ? trunkLen : totalLen,  // 主干线长度（不含分支）
     startStation: landingPoints[0]?.name || '起点',
     endStation: landingPoints[landingPoints.length - 1]?.name || '终点',
     landingList: landingPoints.map(p => ({ id: p.id, name: p.name || '登陆站', kp: p.kp })),
@@ -872,7 +886,7 @@ const startCalculation = async () => {
     const response = await runSimulation({
       linkId: selectedRouteId.value,
       linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
-      totalLengthKm: info?.totalLength || 512,
+      totalLengthKm: info?.trunkLength || info?.totalLength || 512,
       fiberModel: selectedFiberModel.value,
       amplifierModel: selectedAmplifierModel.value,
       fiberParams: {
@@ -1388,7 +1402,9 @@ const applyAndClose = async () => {
     // 获取 RPL 记录用于经纬度计算
     const rplTable = rplStore.tables.find(t => t.id === selectedRplId.value)
     const rplRecords = rplTable?.records || []
-    const configTotalLength = linkInfo.value?.totalLength || 0
+    // 仿真使用 trunkLength 生成放大器，KP 位置基于主干长度
+    // kpToCoord 映射必须用同一基准，否则放大器会被"压缩"到路径前半部分
+    const configTotalLength = linkInfo.value?.trunkLength || linkInfo.value?.totalLength || 0
     
     // 预先计算主干路径坐标序列（避免每个放大器都重复计算）
     const pathCoords = buildPathCoords(route, rplRecords)
@@ -1497,6 +1513,71 @@ const applyAndClose = async () => {
         length: amplifiers[0].position,
         remarks: ''
       })
+    }
+    
+    // 2.5) 在分支线上生成额外的放大器
+    // 仿真结果只覆盖主干线（buildPathCoords 路径），其余 BU→登陆站 段需单独落位
+    const spanLength = calculationResult.value.systemConfig.avgSpanLength || 80
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pointMap = new Map(route.points.map((p: any) => [p.id, p]))
+    
+    // 主干路径的起/终点坐标 —— 在此路径上的登陆站已由仿真覆盖
+    const mainStart = pathCoords[0]
+    const mainEnd = pathCoords[pathCoords.length - 1]
+    const EPS = 0.0005 // ≈50m，用于坐标比较
+    const isMainEndpoint = (c: [number, number]) =>
+      (Math.abs(c[0] - mainStart[0]) < EPS && Math.abs(c[1] - mainStart[1]) < EPS) ||
+      (Math.abs(c[0] - mainEnd[0]) < EPS && Math.abs(c[1] - mainEnd[1]) < EPS)
+    
+    let branchAmpIndex = amplifiers.length
+    
+    // 遍历所有段，找到 BU→登陆站 且登陆站不在主干路径端点上的分支段
+    for (const seg of (route.segments || [])) {
+      const startP = pointMap.get(seg.startPointId)
+      const endP = pointMap.get(seg.endPointId)
+      if (!startP || !endP) continue
+      
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let buPoint: any, landingPoint: any
+      if (startP.type === 'branching' && endP.type === 'landing') {
+        buPoint = startP; landingPoint = endP
+      } else if (endP.type === 'branching' && startP.type === 'landing') {
+        buPoint = endP; landingPoint = startP
+      } else {
+        continue
+      }
+      
+      // 主干路径端点的登陆站已由仿真放大器覆盖，跳过
+      if (isMainEndpoint(landingPoint.coordinates)) continue
+      
+      const branchLength = seg.length || calculateDistance(buPoint.coordinates, landingPoint.coordinates)
+      if (branchLength < spanLength) continue
+      
+      const buCoord = buPoint.coordinates as [number, number]
+      const endCoord = landingPoint.coordinates as [number, number]
+      const count = Math.floor(branchLength / spanLength)
+      
+      for (let j = 1; j <= count; j++) {
+        const ratio = (j * spanLength) / branchLength
+        if (ratio >= 1) break
+        
+        const lon = buCoord[0] + (endCoord[0] - buCoord[0]) * ratio
+        const lat = buCoord[1] + (endCoord[1] - buCoord[1]) * ratio
+        
+        branchAmpIndex++
+        newElements.push({
+          name: `AMP-${String(branchAmpIndex).padStart(2, '0')}`,
+          type: 'ola',
+          kp: j * spanLength,  // 分支线上的相对 KP
+          longitude: lon,
+          latitude: lat,
+          depth: 0,
+          status: 'planned',
+          specifications: ampType ? `${ampType.name} | 分支放大器` : '分支放大器',
+          componentRefId: selectedAmplifierTypeId.value,
+          remarks: `分支放大器 | ${buPoint.name || 'BU'} → ${landingPoint.name || '登陆站'}`
+        })
+      }
     }
     
     // 3) 批量添加（一次性响应式更新，避免页面卡顿）

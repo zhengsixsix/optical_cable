@@ -39,6 +39,8 @@ export interface RoutePoint {
   device?: RoutePointDevice
   // 分支目标（多点规划时使用）
   branchTo?: BranchToInfo
+  // 所有分支目标（支持一个 BU 连接多个分支登陆站）
+  branchTargets?: BranchToInfo[]
 }
 
 // 路由分段

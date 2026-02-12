@@ -764,55 +764,61 @@ export class RepeaterPlacementService {
       })
     }
     
-    // 4. 在每条分支线上也落位放大器
-    const branchingUnits = routePoints.filter(p => p.type === 'branching' && p.branchTo)
+    // 4. 在每条分支线上也落位放大器（支持多分支目标）
+    const branchingUnits = routePoints.filter(p => p.type === 'branching' && (p.branchTargets?.length || p.branchTo))
     branchingUnits.forEach((bu) => {
-      if (!bu.branchTo) return
+      // 获取所有分支目标：优先使用 branchTargets 数组，回退到 [branchTo]
+      const targets = bu.branchTargets?.length
+        ? bu.branchTargets
+        : (bu.branchTo ? [bu.branchTo] : [])
+      
+      if (targets.length === 0) return
       
       // 分支线起点：分支器位置
       const buCoord = bu.coordinates
-      // 分支线终点：分支登陆站位置
-      const branchEndCoord = bu.branchTo.coord
-      
-      // 计算分支线长度
-      const branchLength = this.calculateDistance(
-        buCoord[0], buCoord[1],
-        branchEndCoord[0], branchEndCoord[1]
-      )
-      
-      // 如果分支线长度小于一个 span，不需要落位放大器
-      if (branchLength < spanLength) return
-      
       // 获取分支器在主干线上的 KP
       const buKP = this.getPointKP(bu, mainTrunkPoints)
       
-      // 分支线上需要的放大器数量（按实际间距计算）
-      const branchRepeaterCount = Math.floor(branchLength / spanLength)
-      
-      // 在分支线上按间距落位
-      for (let j = 1; j <= branchRepeaterCount; j++) {
-        // 按实际距离计算比例（从分支器开始，每隔 spanLength 落一个放大器）
-        const distanceFromBU = j * spanLength
-        const ratio = distanceFromBU / branchLength
+      targets.forEach((target) => {
+        const branchEndCoord = target.coord
         
-        // 如果超过分支线长度，停止
-        if (ratio >= 1) break
+        // 计算分支线长度
+        const branchLength = this.calculateDistance(
+          buCoord[0], buCoord[1],
+          branchEndCoord[0], branchEndCoord[1]
+        )
         
-        // 分支线上的 KP：从分支器 KP 开始累加
-        const branchKp = buKP + distanceFromBU
+        // 如果分支线长度小于一个 span，不需要落位放大器
+        if (branchLength < spanLength) return
         
-        // 插值计算分支线上的坐标（在分支器到分支登陆站的连线上）
-        const lon = buCoord[0] + (branchEndCoord[0] - buCoord[0]) * ratio
-        const lat = buCoord[1] + (branchEndCoord[1] - buCoord[1]) * ratio
+        // 分支线上需要的放大器数量（按实际间距计算）
+        const branchRepeaterCount = Math.floor(branchLength / spanLength)
         
-        positions.push({
-          kp: branchKp,
-          longitude: lon,
-          latitude: lat,
-          isBranch: true,
-          branchId: bu.id
-        })
-      }
+        // 在分支线上按间距落位
+        for (let j = 1; j <= branchRepeaterCount; j++) {
+          // 按实际距离计算比例（从分支器开始，每隔 spanLength 落一个放大器）
+          const distanceFromBU = j * spanLength
+          const ratio = distanceFromBU / branchLength
+          
+          // 如果超过分支线长度，停止
+          if (ratio >= 1) break
+          
+          // 分支线上的 KP：从分支器 KP 开始累加
+          const branchKp = buKP + distanceFromBU
+          
+          // 插值计算分支线上的坐标（在分支器到分支登陆站的连线上）
+          const lon = buCoord[0] + (branchEndCoord[0] - buCoord[0]) * ratio
+          const lat = buCoord[1] + (branchEndCoord[1] - buCoord[1]) * ratio
+          
+          positions.push({
+            kp: branchKp,
+            longitude: lon,
+            latitude: lat,
+            isBranch: true,
+            branchId: bu.id
+          })
+        }
+      })
     })
     
     // 按 KP 排序
@@ -825,12 +831,16 @@ export class RepeaterPlacementService {
    * 判断是否为分支登陆站
    */
   private isBranchStation(point: RoutePoint, allPoints: RoutePoint[]): boolean {
-    // 检查是否有其他点的 branchTo 指向这个点
-    return allPoints.some(p => 
-      p.branchTo && 
-      Math.abs(p.branchTo.coord[0] - point.coordinates[0]) < 0.001 && 
-      Math.abs(p.branchTo.coord[1] - point.coordinates[1]) < 0.001
-    )
+    // 检查是否有其他点的 branchTargets / branchTo 指向这个点
+    return allPoints.some(p => {
+      const targets = p.branchTargets?.length
+        ? p.branchTargets
+        : (p.branchTo ? [p.branchTo] : [])
+      return targets.some(t =>
+        Math.abs(t.coord[0] - point.coordinates[0]) < 0.001 &&
+        Math.abs(t.coord[1] - point.coordinates[1]) < 0.001
+      )
+    })
   }
   
   /**

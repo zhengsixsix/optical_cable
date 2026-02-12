@@ -1481,8 +1481,8 @@ const drawParetoRoutes = async () => {
         } else {
           // ====== 无海缆段，画主干线 ======
           if (hasBranching) {
-            // 多点规划：逐段绘制（拓扑是树形，不能串联成单条折线）
-            trunkSegments.forEach((seg, i) => {
+            // 多点规划：逐段绘制所有段（含分支，拓扑是树形不能串联成单条折线）
+            route.segments.forEach((seg, i) => {
               const sc = pointMap[seg.startPointId]
               const ec = pointMap[seg.endPointId]
               if (!sc || !ec) return
@@ -1566,46 +1566,29 @@ const drawParetoRoutes = async () => {
 
         routeSource!.addFeature(pointFeature)
 
-        // 如果是分支器且有分支目标，绘制分支线和分支登陆站
-        if (point.type === 'branching' && (point as any).branchTo) {
-          const branchTo = (point as any).branchTo
+        // 如果是分支器且有分支目标，绘制分支登陆站图标
+        // 分支线段已由 route.segments 绘制，无需重复画线
+        const branchTargets: Array<{ coord: [number, number]; name: string; depth?: number }> =
+          (point.type === 'branching' && ((point as any).branchTargets || ((point as any).branchTo ? [(point as any).branchTo] : [])))
+          || []
+        for (const branchTo of branchTargets) {
+          // 检查该分支登陆站是否已在 route.points 中被绘制（避免重复图标）
+          const alreadyDrawn = route.points.some(p =>
+            p.type === 'landing' &&
+            Math.abs(p.coordinates[0] - branchTo.coord[0]) < 1e-6 &&
+            Math.abs(p.coordinates[1] - branchTo.coord[1]) < 1e-6
+          )
+          if (alreadyDrawn) continue
 
-        // 绘制分支线（海缆段模式下已由 segGeos 包含绘制，无需重复画线）
-          const branchHasFine = isRouteSelected && cableSegmentStore.segments.length > 0 && !isEditingRoute.value
-          if (!branchHasFine) {
-            const branchLineFeature = new Feature({
-              geometry: new LineString([
-                point.coordinates,
-                branchTo.coord
-              ]),
-              routeId: route.id,
-              isBranchLine: true,
-              branchFromPointIndex: pointIndex,
-              branchToName: branchTo.name,
-              fromPointId: point.id,
-            })
-            branchLineFeature.setStyle(new Style({
-              stroke: new Stroke({
-                color: isRouteSelected ? '#ef4444' : '#a855f7',
-                width: isRouteSelected ? 4 : 2,
-                lineDash: isRouteSelected ? undefined : [6, 4],
-              }),
-            }))
-            routeSource!.addFeature(branchLineFeature)
-          }
-
-          // 绘制分支目标登陆站
           const branchStationFeature = new Feature({
             geometry: new Point(branchTo.coord),
             routeId: route.id,
             pointType: 'landing',
             pointName: branchTo.name,
             isBranchStation: true,
-            branchFromPointIndex: pointIndex, // 分支来源的分支器点索引
-            // 生成一个临时 pointId 以便在拖拽时通过 id 匹配
-            pointId: `branch-${point.id}`,
+            branchFromPointIndex: pointIndex,
+            pointId: `branch-${point.id}-${branchTo.name}`,
           })
-          // 分支登陆站根据 depth 判断岸上/水下站点
           const branchIconUrl = (branchTo.depth && branchTo.depth > 0) ? '/image/underwater.png' : '/image/landing.png'
           branchStationFeature.setStyle(new Style({
             image: new Icon({

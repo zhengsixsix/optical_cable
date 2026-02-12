@@ -577,14 +577,15 @@ export const useRouteStore = defineStore('route', () => {
         })
       }
       
-      // 设置单一分支目标（默认取第一个分支登陆站）
-      const firstBranch = branchLandings[0]
-      if (firstBranch) {
-        ;(bu as any).branchTo = {
-          coord: firstBranch.coordinates,
-          name: firstBranch.name,
-          depth: firstBranch.depth || 0
-        }
+      // 设置所有分支目标
+      const branchTargetsList = branchLandings.map(l => ({
+        coord: l.coordinates as [number, number],
+        name: l.name || '',
+      }))
+      bu.branchTargets = branchTargetsList
+      // 保留 branchTo 指向第一个分支（向后兼容）
+      if (branchTargetsList.length > 0) {
+        bu.branchTo = branchTargetsList[0]
       }
     } else if (buPoints.length >= 2) {
       // 多个 BU：主干线连接 BU，每个 BU 连接最近的登陆站
@@ -666,18 +667,19 @@ export const useRouteStore = defineStore('route', () => {
         }
       })
 
-      // 为每个 BU 设置一个分支目标（用于 UI 展示）
+      // 为每个 BU 设置所有分支目标
       buPoints.forEach(bu => {
         const candidates = (buToBranchLandings.get(bu.id) || []).filter(
           l => l.id !== trunkStart?.id && l.id !== trunkEnd?.id
         )
-        const firstBranch = candidates[0]
-        if (firstBranch) {
-          ;(bu as any).branchTo = {
-            coord: firstBranch.coordinates,
-            name: firstBranch.name,
-            depth: firstBranch.depth || 0
-          }
+        const targets = candidates.map(l => ({
+          coord: l.coordinates as [number, number],
+          name: l.name || '',
+        }))
+        bu.branchTargets = targets
+        // 保留 branchTo 指向第一个分支（向后兼容）
+        if (targets.length > 0) {
+          bu.branchTo = targets[0]
         }
       })
 
