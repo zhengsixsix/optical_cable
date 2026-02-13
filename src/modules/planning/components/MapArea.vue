@@ -660,7 +660,7 @@ const getSegmentInfo = (routeId: string, segmentIndex: number) => {
 const initMap = () => {
   if (!mapContainer.value) return
 
-  const tifFiles = ['/output2.tif']
+  const tifFiles = ['/output2_cog.tif']
   const rgbStyle = {color: ['array', ['band', 1], ['band', 2], ['band', 3], 1]}
 
   let loadedCount = 0

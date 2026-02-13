@@ -234,6 +234,8 @@ export interface SpanScanPoint {
   meetTarget: boolean
   /** GSNR 余量 (dB) */
   gsnrMarginDb: number
+  /** 放大器数量 */
+  numAmplifiers?: number
 }
 
 /** Span 扫描结果 (Step 6 输出) */
@@ -478,11 +480,11 @@ export interface SimulationInput {
   
   // WDM 配置
   wdm: WDMSystemParams & {
-    launchPowerMode: 'uniform' | 'per_channel'
+    launchPowerMode: 'uniform' | 'per_channel' | 'grouped' | 'import'
     launchPowerVector?: number[]
-    initialAseMode: 'zero' | 'custom'
+    initialAseMode: 'zero' | 'custom' | 'default'
     initialAseValue?: number
-    initialNliMode: 'zero' | 'custom'
+    initialNliMode: 'zero' | 'custom' | 'default'
     initialNliValue?: number
   }
   

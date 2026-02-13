@@ -1937,6 +1937,9 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
 
   <!-- 弹框组件 -->
   <ConnectorDialog
+    :visible="showConnectorDialog"
+    :editId="editConnectorId"
+    @close="showConnectorDialog = false"
     @saved="showConnectorDialog = false" />
   <WDMConfigDialog 
     :visible="showWDMConfigDialog" 

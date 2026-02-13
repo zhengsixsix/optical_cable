@@ -6,6 +6,9 @@
 import { API_ENDPOINTS } from '@/config/api'
 import type { SpanScanResult, SpanScanPoint } from '@/types/simulation'
 
+// 导出类型供外部使用
+export type { SpanScanResult }
+
 // ========== 请求类型 ==========
 
 /** Span 策略 */

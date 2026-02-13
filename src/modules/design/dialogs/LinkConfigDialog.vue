@@ -77,6 +77,7 @@ export interface LinkConfig {
 interface BUConfig {
   id: string
   name: string
+  kp: number
   portCount: number
   trunkLoss: number
   branchLoss: number
@@ -929,7 +930,14 @@ const startCalculation = async () => {
       deviceSequence: devices,
     })
 
-    spanScanData.value = response.spanScanResult
+    spanScanData.value = {
+      linkId: selectedRouteId.value,
+      scannedAt: new Date(),
+      model: selectedFiberModel.value as import('@/types/simulation').SimulationModel,
+      gsnrPerSpanDb: [],
+      osnrPerSpanDb: [],
+      ...response.spanScanResult
+    }
     calculationResult.value = response.detailedResult as CalculationResult
   } catch (err: unknown) {
     calculationError.value = err instanceof Error ? err.message : '仿真计算失败，请检查后端服务是否启动'

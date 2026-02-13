@@ -205,6 +205,6 @@ export type ProjectFile = USEProject
 // ==================== 类型守卫 ====================
 
 /** 判断是否为 USE 项目 */
-export function isUSEProject(project: Record<string, unknown>): project is USEProject {
-  return project.type === 'use'
+export function isUSEProject(project: Record<string, unknown> | USEProject): project is USEProject {
+  return (project as USEProject).type === 'use'
 }

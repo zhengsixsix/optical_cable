@@ -150,7 +150,7 @@ export async function buildSimulationInput(
     channelSpacing: config.wdmParams.channelSpacing,
     centerWavelength: frequencyToWavelength(config.wdmParams.centerFreq),
     symbolRate: config.wdmParams.baudRate,
-    modulationFormat: config.wdmParams.modulation,
+    modulationFormat: config.wdmParams.modulation as import('@/types/simulation').ModulationFormat,
     launchPowerPerChannel: config.wdmParams.launchPower,
     fecType: 'SD-FEC' as const,
     fecOverhead: 15,
