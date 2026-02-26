@@ -86,6 +86,8 @@ const getDeviceIcon = (device: MonitorDevice) => {
       return `/image/amplifier-w${suffix}.png`
     case 'Repeater':
       return `/image/amplifier-e${suffix}.png`
+    case 'ola':
+      return `/image/amplifier-e${suffix}.png`
     case 'bu':
     case 'BU':
       return `/image/bu${suffix}.png`

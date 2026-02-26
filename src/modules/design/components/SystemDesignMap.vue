@@ -573,10 +573,31 @@ const drawFiberLines = () => {
   // 光纤段交替配色
   const fiberColors = ['#f59e0b', '#fb923c']
 
+  // 辅助函数：按 KP 查找最近的非光纤设备
+  const allDevices = connectorStore.elements.filter(e => e.type !== 'fiber')
+  const findDeviceByKp = (targetKp: number) => {
+    let best: typeof allDevices[0] | null = null
+    let bestDist = Infinity
+    for (const d of allDevices) {
+      const dist = Math.abs(d.kp - targetKp)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = d
+      }
+    }
+    return bestDist < 2 ? best : null  // 2km 容差
+  }
+
   fibers.forEach((fiber, idx) => {
-    // 获取起止设备坐标
-    const fromDev = connectorStore.elements.find(e => e.id === fiber.fromDeviceId)
-    const toDev = connectorStore.elements.find(e => e.id === fiber.toDeviceId)
+    // 获取起止设备坐标（优先 ID 匹配，回退 KP 匹配）
+    let fromDev = connectorStore.elements.find(e => e.id === fiber.fromDeviceId) || null
+    let toDev = connectorStore.elements.find(e => e.id === fiber.toDeviceId) || null
+    if (!fromDev && fiber.kp !== undefined) {
+      fromDev = findDeviceByKp(fiber.kp)
+    }
+    if (!toDev && fiber.endKp !== undefined) {
+      toDev = findDeviceByKp(fiber.endKp)
+    }
     if (!fromDev || !toDev) return
 
     const startProj = projectToNearestSegment([fromDev.longitude, fromDev.latitude])
@@ -1000,18 +1021,23 @@ const initMap = () => {
 let redrawTimer: ReturnType<typeof setTimeout> | null = null
 let lastDeviceCount = -1
 let lastRouteId: string | null = null
+// 累积标志：多个 watcher 在防抖窗口内触发时，取最大值而非覆盖
+let pendingFitView = false
+let pendingDrawRoute = false
 
 const scheduleRedraw = (fitView = false, drawRoute = true) => {
   if (!map) return
+  pendingFitView = pendingFitView || fitView
+  pendingDrawRoute = pendingDrawRoute || drawRoute
   if (redrawTimer) {
     clearTimeout(redrawTimer)
   }
   redrawTimer = setTimeout(() => {
-    if (drawRoute) {
+    if (pendingDrawRoute) {
       drawRouteLine()
     }
     drawPoints()
-    if (fitView && routeSource && routeSource.getFeatures().length > 0) {
+    if (pendingFitView && routeSource && routeSource.getFeatures().length > 0) {
       const extent = routeSource.getExtent()
       if (extent && extent[0] !== Infinity) {
         map!.getView().fit(extent, { 
@@ -1020,6 +1046,8 @@ const scheduleRedraw = (fitView = false, drawRoute = true) => {
         })
       }
     }
+    pendingFitView = false
+    pendingDrawRoute = false
     redrawTimer = null
   }, 200)
 }

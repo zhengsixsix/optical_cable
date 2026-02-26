@@ -1588,8 +1588,35 @@ const applyAndClose = async () => {
       }
     }
     
-    // 3) 批量添加（一次性响应式更新，避免页面卡顿）
-    const addedIds = connectorStore.addElements(newElements)
+    // 3) 先添加非光纤元素（放大器等），再根据实际 store ID 修正光纤段的 fromDeviceId/toDeviceId
+    const ampElements = newElements.filter(e => e.type !== 'fiber')
+    const fiberElements = newElements.filter(e => e.type === 'fiber')
+    
+    connectorStore.addElements(ampElements, false)
+    
+    // 构建 KP → 实际设备的映射，修正光纤段的 fromDeviceId/toDeviceId
+    const allDevices = connectorStore.elements.filter(e => e.type !== 'fiber')
+    const findDeviceByKp = (targetKp: number) => {
+      let best: typeof allDevices[0] | null = null
+      let bestDist = Infinity
+      for (const d of allDevices) {
+        const dist = Math.abs(d.kp - targetKp)
+        if (dist < bestDist) { bestDist = dist; best = d }
+      }
+      return bestDist < 2 ? best : null
+    }
+    
+    const fixedFibers = fiberElements.map(fiber => {
+      const fromDev = findDeviceByKp(fiber.kp)
+      const toDev = fiber.endKp !== undefined ? findDeviceByKp(fiber.endKp) : null
+      return {
+        ...fiber,
+        fromDeviceId: fromDev?.id || fiber.fromDeviceId || '',
+        toDeviceId: toDev?.id || fiber.toDeviceId || '',
+      }
+    })
+    
+    const addedIds = connectorStore.addElements(fixedFibers, false)
     
     // 传递计算结果给父组件（包含完整 Span 扫描数据和用户选择）
     const activeSpan = spanUserSelectedSpan.value ?? spanScanData.value?.recommendedSpanKm

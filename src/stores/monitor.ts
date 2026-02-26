@@ -79,8 +79,9 @@ export const useMonitorStore = defineStore('monitor', () => {
 
   // 设备列表 - 从 connectorStore 派生
   const devices = computed<MonitorDevice[]>(() => {
-    // 过滤掉光纤段，只保留设备
-    const elements = connectorStore.elements.filter(e => e.type !== 'fiber')
+    // 过滤掉非设备类型（光纤段、海缆段），只保留实际设备
+    const nonDeviceTypes = ['fiber', 'cable_segment']
+    const elements = connectorStore.elements.filter(e => !nonDeviceTypes.includes(e.type))
     
     return elements.map(elem => {
       const runtime = runtimeData.value[elem.id] || defaultRuntimeData

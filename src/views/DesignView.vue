@@ -1051,6 +1051,8 @@ const generateFiberSpans = (sortedRepeaters: Record<string, any>[]) => {
       name: `${fiberName}-${String(i + 1).padStart(2, '0')}`,
       kp: startNode.kp,
       endKp: endNode.kp,
+      fromDeviceId: startNode.id,
+      toDeviceId: endNode.id,
       longitude: (startNode.longitude + endNode.longitude) / 2,
       latitude: (startNode.latitude + endNode.latitude) / 2,
       depth: (startNode.depth + endNode.depth) / 2,
@@ -1079,6 +1081,8 @@ const generateFiberSpans = (sortedRepeaters: Record<string, any>[]) => {
         name: `${fiberName}-分支-${String(branchFiberIndex++).padStart(2, '0')}`,
         kp: branchingUnit.kp,
         endKp: branchingUnit.kp + length,
+        fromDeviceId: branchingUnit.id,
+        toDeviceId: branchStation.id,
         longitude: (branchingUnit.longitude + branchStation.longitude) / 2,
         latitude: (branchingUnit.latitude + branchStation.latitude) / 2,
         depth: (branchingUnit.depth + branchStation.depth) / 2,
@@ -1221,11 +1225,8 @@ const handleApplyRecommendation = (spanKm: number) => {
       connectorStore.createTable(`${currentRoute?.name || '链路'}_接线元`, currentRoute?.id)
     }
     
-    // 先删除旧的放大器（避免重复）
-    const existingAmps = connectorStore.elements.filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w')
-    existingAmps.forEach(amp => {
-      connectorStore.deleteElement(amp.id, false)
-    })
+    // 先删除旧的放大器和光纤段（包括 ola/amplifier_e/amplifier_w/fiber，保留 landing/bu）
+    connectorStore.deleteElementsByType(['ola', 'amplifier_e', 'amplifier_w', 'fiber'])
     
     // 添加新的放大器
     autoPlacementResult.value.positions.forEach((pos: { kp: number; longitude: number; latitude: number; isBranch?: boolean }, index: number) => {
@@ -1241,6 +1242,9 @@ const handleApplyRecommendation = (spanKm: number) => {
         remarks: pos.isBranch ? '分支放大器' : 'EDFA'
       }, false)
     })
+    
+    // 自动生成光纤段（连接相邻节点）
+    generateFiberSpans(autoPlacementResult.value.positions)
   }
   
   // 切换到地图视图以显示放大器位置
