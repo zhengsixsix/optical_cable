@@ -2510,26 +2510,19 @@ const handleRunPlanning = async () => {
   try {
     appStore.showNotification({ type: 'info', message: '正在计算路由规划...' })
     
-    // 多点模式如果有 BU，使用前端生成（后端暂不支持 BU）
-    const hasBU = config.mode === 'multi-point' && config.buList && config.buList.length > 0
-    
-    if (hasBU) {
-      // 前端生成分支网络拓扑
-      routeStore.generateParetoRoutesFromSettings()
-    } else {
-      try {
-        const result = await fetchRoutePlanning(request)
-        // 将后端返回的路由数据设置到 store
-        if (result.routes && result.routes.length > 0) {
-          routeStore.setParetoRoutesFromApi(result.routes, config)
-        } else {
-          // 如果后端没返回路由，使用前端生成
-          routeStore.generateParetoRoutesFromSettings()
-        }
-      } catch {
-        // 后端API失败时，回退到前端生成路由（确保多点规划仍有路由和海缆段）
+    // 统一走后端 A* 规划（含多点+BU 分支网络）
+    try {
+      const result = await fetchRoutePlanning(request)
+      // 将后端返回的路由数据设置到 store
+      if (result.routes && result.routes.length > 0) {
+        routeStore.setParetoRoutesFromApi(result.routes, config)
+      } else {
+        // 如果后端没返回路由，使用前端生成
         routeStore.generateParetoRoutesFromSettings()
       }
+    } catch {
+      // 后端API失败时，回退到前端生成路由（确保多点规划仍有路由和海缆段）
+      routeStore.generateParetoRoutesFromSettings()
     }
 
     // 在地图上绘制路径

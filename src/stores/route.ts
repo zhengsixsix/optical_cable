@@ -926,7 +926,7 @@ export const useRouteStore = defineStore('route', () => {
 
   /**
    * 从后端 API 设置 Pareto 路径数据
-   * @param apiRoutes 后端返回的路由数据
+   * @param apiRoutes 后端返回的路由数据（支持分支网络格式：含 points/branches）
    * @param config 规划配置，用于获取实际的站点名称
    */
   function setParetoRoutesFromApi(apiRoutes: any[], config?: any) {
@@ -945,7 +945,20 @@ export const useRouteStore = defineStore('route', () => {
             coordToInfo[key] = { 
               name: wp.name || '登陆站', 
               type: 'landing',
-              depth: wp.depth || 0  // 0 表示岸上站点，>0 表示水下站点
+              depth: wp.depth || 0
+            }
+          }
+        })
+      }
+      // BU 分支器
+      if (config.buList) {
+        config.buList.forEach((bu: any) => {
+          if (bu && bu.lon && bu.lat) {
+            const key = `${bu.lon.toFixed(4)},${bu.lat.toFixed(4)}`
+            coordToInfo[key] = {
+              name: bu.name || 'BU',
+              type: 'branching',
+              depth: 0
             }
           }
         })
@@ -972,7 +985,14 @@ export const useRouteStore = defineStore('route', () => {
     }
     
     const convertedRoutes: Route[] = apiRoutes.map((apiRoute, index) => {
-      // 将 API 返回的路由转换为内部 Route 类型
+      // 检测是否为分支网络格式（含 points + branches）
+      const isBranchingNetwork = apiRoute.points && apiRoute.branches
+
+      if (isBranchingNetwork) {
+        return _convertBranchingNetworkRoute(apiRoute, coordToInfo, now, index)
+      }
+
+      // 标准格式（点对点/无BU多点）
       const points: RoutePoint[] = apiRoute.coordinates?.map((coord: [number, number], i: number) => {
         const coordLon = coord?.[0] ?? 0
         const coordLat = coord?.[1] ?? 0
@@ -986,7 +1006,7 @@ export const useRouteStore = defineStore('route', () => {
           coordinates: coord,
           type: matched?.type || (isFirst || isLast ? 'landing' : 'waypoint'),
           name: matched?.name || (isFirst ? '起点' : isLast ? '终点' : `路径点${i}`),
-          depth: matched?.depth ?? 0  // 水深，0 表示岸上站点
+          depth: matched?.depth ?? 0
         }
       }) || []
 
@@ -1026,7 +1046,8 @@ export const useRouteStore = defineStore('route', () => {
         },
         distance: Math.round(totalLength),
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        rawTrunkCoordinates: apiRoute.coordinates || [],
       }
     })
 
@@ -1035,6 +1056,221 @@ export const useRouteStore = defineStore('route', () => {
     if (convertedRoutes.length > 0) {
       currentRouteId.value = convertedRoutes[0].id
       selectedRouteIds.value = [convertedRoutes[0].id]
+    }
+  }
+
+  /**
+   * 转换分支网络路由（后端返回 points + branches 格式）
+   * 构建树形拓扑：主干路径 + 分支路径，设置 branchTo/branchTargets
+   */
+  function _convertBranchingNetworkRoute(
+    apiRoute: any,
+    coordToInfo: Record<string, any>,
+    now: Date,
+    index: number
+  ): Route {
+    const routeId = apiRoute.id || `branching-route-${index + 1}`
+    
+    // 1) 创建命名点（landing/branching）的 ID 映射
+    const namedPointMap: Record<string, RoutePoint> = {}
+    const apiNamedPoints: any[] = apiRoute.points || []
+    for (const np of apiNamedPoints) {
+      const key = `${(np.lon).toFixed(4)},${(np.lat).toFixed(4)}`
+      const configInfo = coordToInfo[key]
+      namedPointMap[np.id] = {
+        id: np.id,
+        coordinates: [np.lon, np.lat] as [number, number],
+        type: np.type === 'branching' ? 'branching' : 'landing',
+        name: configInfo?.name || np.name || (np.type === 'branching' ? 'BU' : '登陆站'),
+        depth: configInfo?.depth ?? 0
+      }
+    }
+
+    // 2) 主干路径点
+    const trunkCoords: [number, number][] = apiRoute.coordinates || []
+    const allPoints: RoutePoint[] = []
+    const allSegments: RouteSegment[] = []
+    let pointIdx = 0
+    
+    // 主干路径点（首尾和命名点从 namedPointMap 取，中间为 waypoint）
+    for (let i = 0; i < trunkCoords.length; i++) {
+      const coord = trunkCoords[i]
+      const coordKey = `${coord[0].toFixed(4)},${coord[1].toFixed(4)}`
+      
+      // 尝试匹配命名点
+      let matched: RoutePoint | null = null
+      for (const np of Object.values(namedPointMap)) {
+        const npKey = `${np.coordinates[0].toFixed(4)},${np.coordinates[1].toFixed(4)}`
+        if (npKey === coordKey) {
+          matched = np
+          break
+        }
+      }
+      
+      if (matched) {
+        allPoints.push(matched)
+      } else {
+        allPoints.push({
+          id: `${routeId}-tp${pointIdx++}`,
+          coordinates: coord,
+          type: 'waypoint',
+          name: `路径点`
+        })
+      }
+    }
+
+    // 主干 segments（基于主干路径点）
+    const trunkSegs: any[] = apiRoute.segments?.filter((s: any) => s.id?.startsWith('trunk-')) || []
+    for (let i = 0; i < allPoints.length - 1 && i < trunkSegs.length; i++) {
+      const seg = trunkSegs[i]
+      allSegments.push({
+        id: seg.id || `trunk-s${i}`,
+        startPointId: allPoints[i].id,
+        endPointId: allPoints[i + 1].id,
+        length: seg.length || 0,
+        depth: seg.depth || 1000,
+        cableType: seg.cableType || 'LW',
+        riskLevel: seg.riskLevel || 'low',
+        cost: seg.length ? Math.round(seg.length * 30000) : 0
+      })
+    }
+    // 如果 trunk segments 数量不匹配点数（简化路径导致），按点距离补全
+    if (trunkSegs.length === 0 && allPoints.length >= 2) {
+      for (let i = 0; i < allPoints.length - 1; i++) {
+        const len = calculateDistance(allPoints[i].coordinates, allPoints[i + 1].coordinates)
+        allSegments.push({
+          id: `trunk-s${i}`,
+          startPointId: allPoints[i].id,
+          endPointId: allPoints[i + 1].id,
+          length: Math.round(len),
+          depth: 2000,
+          cableType: 'LW',
+          riskLevel: 'low',
+          cost: Math.round(len * 30000)
+        })
+      }
+    }
+
+    // 3) 分支路径
+    const branches: any[] = apiRoute.branches || []
+    const buBranchTargets: Record<string, Array<{ coord: [number, number]; name: string }>> = {}
+
+    for (const branch of branches) {
+      const branchCoords: [number, number][] = branch.coordinates || []
+      if (branchCoords.length < 2) continue
+
+      const branchPoints: RoutePoint[] = []
+      for (let i = 0; i < branchCoords.length; i++) {
+        const coord = branchCoords[i]
+        const coordKey = `${coord[0].toFixed(4)},${coord[1].toFixed(4)}`
+        
+        // 首点是 BU，尾点是登陆站
+        let matched: RoutePoint | null = null
+        for (const np of Object.values(namedPointMap)) {
+          const npKey = `${np.coordinates[0].toFixed(4)},${np.coordinates[1].toFixed(4)}`
+          if (npKey === coordKey) {
+            matched = np
+            break
+          }
+        }
+        
+        if (matched) {
+          branchPoints.push(matched)
+          // 如果该点不在 allPoints 中（分支末端登陆站），添加
+          if (!allPoints.find(p => p.id === matched!.id)) {
+            ;(matched as any).isBranchStation = true
+            ;(matched as any).branchFrom = namedPointMap[branch.fromBuId]?.name || 'BU'
+            allPoints.push(matched)
+          }
+        } else {
+          const bp: RoutePoint = {
+            id: `${routeId}-bp${pointIdx++}`,
+            coordinates: coord,
+            type: 'waypoint',
+            name: `分支路径点`
+          }
+          branchPoints.push(bp)
+          allPoints.push(bp)
+        }
+      }
+
+      // 分支 segments
+      const branchSegs: any[] = branch.segments || []
+      for (let i = 0; i < branchPoints.length - 1; i++) {
+        const seg = branchSegs[i] || {}
+        allSegments.push({
+          id: seg.id || `branch-s${allSegments.length}`,
+          startPointId: branchPoints[i].id,
+          endPointId: branchPoints[i + 1].id,
+          length: seg.length || Math.round(calculateDistance(branchPoints[i].coordinates, branchPoints[i + 1].coordinates)),
+          depth: seg.depth || 2000,
+          cableType: seg.cableType || 'LW',
+          riskLevel: seg.riskLevel || 'low',
+          cost: seg.length ? Math.round(seg.length * 30000) : 0
+        })
+      }
+
+      // 收集 BU 的 branchTargets
+      const buId = branch.fromBuId
+      if (!buBranchTargets[buId]) buBranchTargets[buId] = []
+      const lastCoord = branchCoords[branchCoords.length - 1]
+      buBranchTargets[buId].push({
+        coord: lastCoord,
+        name: branch.toLandingName || ''
+      })
+    }
+
+    // 4) 设置 BU 点的 branchTo / branchTargets
+    for (const [buId, targets] of Object.entries(buBranchTargets)) {
+      const buPoint = allPoints.find(p => p.id === buId)
+      if (buPoint) {
+        buPoint.branchTargets = targets
+        if (targets.length > 0) {
+          buPoint.branchTo = targets[0]
+        }
+      }
+    }
+
+    const totalLength = apiRoute.totalLength || allSegments.reduce((sum: number, s) => sum + s.length, 0)
+    const totalCost = apiRoute.totalCost || Math.round(totalLength * 30000)
+
+    return {
+      id: routeId,
+      name: apiRoute.name || '分支网络路线',
+      points: allPoints,
+      segments: allSegments,
+      totalLength: Math.round(totalLength),
+      totalCost,
+      riskScore: apiRoute.avgRisk || 0.3,
+      cost: {
+        cable: Math.round(totalCost * 0.7),
+        installation: Math.round(totalCost * 0.2),
+        equipment: Math.round(totalCost * 0.1),
+        total: totalCost
+      },
+      risk: {
+        seismic: apiRoute.avgRisk || 0.3,
+        volcanic: (apiRoute.avgRisk || 0.3) * 0.9,
+        depth: (apiRoute.avgRisk || 0.3) * 0.85,
+        overall: apiRoute.avgRisk || 0.3
+      },
+      distance: Math.round(totalLength),
+      createdAt: now,
+      updatedAt: now,
+      // 保留原始 A* 路径坐标，供后端放大器落位使用
+      rawTrunkCoordinates: trunkCoords,
+      rawBranches: branches.map((b: any) => ({
+        fromBuId: b.fromBuId || '',
+        toLandingName: b.toLandingName || '',
+        coordinates: b.coordinates || [],
+      })),
+      rawNamedPoints: apiNamedPoints.map((np: any) => ({
+        id: np.id,
+        type: np.type,
+        lon: np.lon,
+        lat: np.lat,
+        name: np.name || '',
+      })),
     }
   }
 

@@ -1426,47 +1426,209 @@ const applyAndClose = async () => {
       return
     }
     
-    // 获取 RPL 记录用于经纬度计算
-    const rplTable = rplStore.tables.find(t => t.id === selectedRplId.value)
-    const rplRecords = rplTable?.records || []
-    // 仿真使用 trunkLength 生成放大器，KP 位置基于主干长度
-    // kpToCoord 映射必须用同一基准，否则放大器会被"压缩"到路径前半部分
     const configTotalLength = linkInfo.value?.trunkLength || linkInfo.value?.totalLength || 0
+    const spanLengthVal = calculationResult.value.systemConfig.avgSpanLength || 80
+    const ampType = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
+    const fiberType = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
+    const simAmplifiers = calculationResult.value.amplifiers
     
-    // 预先计算主干路径坐标序列（避免每个放大器都重复计算）
-    const pathCoords = buildPathCoords(route, rplRecords)
-    // 计算路径总长和线段长度
-    let actualTotalLength = 0
-    const segmentLengths: number[] = []
-    for (let i = 0; i < pathCoords.length - 1; i++) {
-      const segLen = calculateDistance(pathCoords[i], pathCoords[i + 1])
-      segmentLengths.push(segLen)
-      actualTotalLength += segLen
-    }
-    const totalLen = configTotalLength || actualTotalLength
+    // ── 构建主干/分支路径坐标（优先 rawTrunkCoordinates，否则从 segment 拓扑重建） ──
+    let trunkCoords: [number, number][] = (route as any).rawTrunkCoordinates || []
+    let rawBranches: Array<{ fromBuId: string; toLandingName: string; coordinates: [number, number][] }> = (route as any).rawBranches || []
+    let rawNamedPoints: Array<{ id: string; type: string; lon: number; lat: number; name: string }> = (route as any).rawNamedPoints || []
     
-    // 快速 KP → 经纬度 插值函数
-    const kpToCoord = (targetKP: number) => {
-      if (pathCoords.length < 2) return { longitude: 0, latitude: 0 }
-      const ratio = Math.min(targetKP / totalLen, 1)
-      const targetActualKP = ratio * actualTotalLength
-      let cumKP = 0
-      for (let i = 0; i < segmentLengths.length; i++) {
-        if (cumKP + segmentLengths[i] >= targetActualKP) {
-          const p1 = pathCoords[i], p2 = pathCoords[i + 1]
-          const lr = segmentLengths[i] > 0 ? (targetActualKP - cumKP) / segmentLengths[i] : 0
-          return {
-            longitude: p1[0] + (p2[0] - p1[0]) * lr,
-            latitude: p1[1] + (p2[1] - p1[1]) * lr
+    // 如果原始坐标未储存（旧路由），从 segment 拓扑重建
+    const hasTrunkSegs = route.segments?.some((s: any) => s.id?.startsWith('trunk-'))
+    const hasBranchSegs = route.segments?.some((s: any) => s.id?.startsWith('branch-'))
+    const ptMap = new Map(route.points.map((p: any) => [p.id, p]))
+    
+    if (trunkCoords.length < 2 && hasTrunkSegs) {
+      // 仅用 trunk-* segment 构建主干邻接表（排除分支点）
+      const trunkAdj = new Map<string, string[]>()
+      for (const seg of route.segments) {
+        if (!seg.id?.startsWith('trunk-')) continue
+        if (!trunkAdj.has(seg.startPointId)) trunkAdj.set(seg.startPointId, [])
+        if (!trunkAdj.has(seg.endPointId)) trunkAdj.set(seg.endPointId, [])
+        trunkAdj.get(seg.startPointId)!.push(seg.endPointId)
+        trunkAdj.get(seg.endPointId)!.push(seg.startPointId)
+      }
+      const mainLandings = route.points.filter((p: any) =>
+        p.type === 'landing' && !(p as any).isBranchStation && trunkAdj.has(p.id)
+      )
+      if (mainLandings.length >= 2) {
+        const startPt = mainLandings[0]
+        const endPt = mainLandings[mainLandings.length - 1]
+        const queue = [startPt.id]
+        const visited = new Set([startPt.id])
+        const prev = new Map<string, string | null>([[startPt.id, null]])
+        while (queue.length > 0) {
+          const cur = queue.shift()!
+          if (cur === endPt.id) break
+          for (const n of (trunkAdj.get(cur) || [])) {
+            if (!visited.has(n)) { visited.add(n); prev.set(n, cur); queue.push(n) }
           }
         }
-        cumKP += segmentLengths[i]
+        if (visited.has(endPt.id)) {
+          const ids: string[] = []
+          let c: string | null = endPt.id
+          while (c) { ids.push(c); c = prev.get(c) || null }
+          ids.reverse()
+          trunkCoords = ids.map(id => ptMap.get(id)?.coordinates).filter(Boolean) as [number, number][]
+        }
       }
-      const last = pathCoords[pathCoords.length - 1]
-      return { longitude: last[0], latitude: last[1] }
+    }
+    // 最终回退
+    if (trunkCoords.length < 2) {
+      trunkCoords = route.points
+        .filter((p: any) => !(p as any).isBranchStation)
+        .map((p: any) => p.coordinates)
     }
     
-    // 0) 确保接线元表格存在（若无则自动创建）
+    if (rawBranches.length === 0 && hasBranchSegs) {
+      // 从 branch-* segment 拓扑重建分支路径（不依赖 isBranchStation 标记）
+      const branchAdj = new Map<string, string[]>()
+      const branchPointIds = new Set<string>()
+      for (const seg of route.segments) {
+        if (!seg.id?.startsWith('branch-')) continue
+        branchPointIds.add(seg.startPointId)
+        branchPointIds.add(seg.endPointId)
+        if (!branchAdj.has(seg.startPointId)) branchAdj.set(seg.startPointId, [])
+        if (!branchAdj.has(seg.endPointId)) branchAdj.set(seg.endPointId, [])
+        branchAdj.get(seg.startPointId)!.push(seg.endPointId)
+        branchAdj.get(seg.endPointId)!.push(seg.startPointId)
+      }
+      // BU = branching 类型且在分支邻接表中
+      const buPoints = route.points.filter((p: any) =>
+        (p.type === 'branching' || p.type === 'bu') && branchAdj.has(p.id)
+      )
+      // 分支登陆站 = 在分支 segment 中的 landing 点（非 BU）
+      // 找分支图中度数1的 landing 点（叶子节点）
+      const branchLandings = route.points.filter((p: any) => {
+        if (p.type === 'branching' || p.type === 'bu') return false
+        if (!branchPointIds.has(p.id)) return false
+        // 确认是分支图中的叶子节点（landing）或明确标记
+        return p.type === 'landing' || (p as any).isBranchStation
+      })
+      console.log(`🔍 分支重建: ${buPoints.length} BU, ${branchLandings.length} 分支登陆站, ${branchPointIds.size} 分支点`)
+      const done = new Set<string>()
+      for (const bu of buPoints) {
+        for (const landing of branchLandings) {
+          const key = `${bu.id}->${landing.id}`
+          if (done.has(key)) continue
+          const queue = [bu.id]
+          const visited = new Set([bu.id])
+          const prev = new Map<string, string | null>([[bu.id, null]])
+          while (queue.length > 0) {
+            const cur = queue.shift()!
+            if (cur === landing.id) break
+            for (const n of (branchAdj.get(cur) || [])) {
+              if (!visited.has(n)) { visited.add(n); prev.set(n, cur); queue.push(n) }
+            }
+          }
+          if (visited.has(landing.id)) {
+            done.add(key)
+            const ids: string[] = []
+            let c: string | null = landing.id
+            while (c) { ids.push(c); c = prev.get(c) || null }
+            ids.reverse()
+            const coords = ids.map(id => ptMap.get(id)?.coordinates).filter(Boolean) as [number, number][]
+            if (coords.length >= 2) {
+              rawBranches.push({ fromBuId: bu.id, toLandingName: landing.name || '登陆站', coordinates: coords })
+              console.log(`  ✅ 分支: ${bu.name || bu.id} → ${landing.name || landing.id}, ${coords.length} 点`)
+            }
+          }
+        }
+      }
+      // ★ 备用策略：如果上面找不到 landing，尝试用分支图中度数1且非 BU 的任意点作为终点
+      if (rawBranches.length === 0 && buPoints.length > 0) {
+        // 找分支图中的叶子节点（degree=1 且非 BU）
+        const buIdSet = new Set(buPoints.map((p: any) => p.id))
+        for (const [pid, neighbors] of branchAdj) {
+          if (buIdSet.has(pid)) continue
+          if (neighbors.length !== 1) continue // 叶子节点
+          const leafPt = ptMap.get(pid)
+          if (!leafPt) continue
+          // BFS 从最近的 BU 到这个叶子
+          for (const bu of buPoints) {
+            const key2 = `${bu.id}->${pid}`
+            if (done.has(key2)) continue
+            const q2 = [bu.id]
+            const v2 = new Set([bu.id])
+            const p2 = new Map<string, string | null>([[bu.id, null]])
+            while (q2.length > 0) {
+              const cur = q2.shift()!
+              if (cur === pid) break
+              for (const n of (branchAdj.get(cur) || [])) {
+                if (!v2.has(n)) { v2.add(n); p2.set(n, cur); q2.push(n) }
+              }
+            }
+            if (v2.has(pid)) {
+              done.add(key2)
+              const ids: string[] = []
+              let c2: string | null = pid
+              while (c2) { ids.push(c2); c2 = p2.get(c2) || null }
+              ids.reverse()
+              const coords = ids.map(id => ptMap.get(id)?.coordinates).filter(Boolean) as [number, number][]
+              if (coords.length >= 2) {
+                rawBranches.push({ fromBuId: bu.id, toLandingName: leafPt.name || '登陆站', coordinates: coords })
+                console.log(`  ✅ 分支(叶子): ${bu.name || bu.id} → ${leafPt.name || pid}, ${coords.length} 点`)
+              }
+              break // 每个叶子只配一个 BU
+            }
+          }
+        }
+      }
+    }
+    
+    if (rawNamedPoints.length === 0) {
+      rawNamedPoints = route.points
+        .filter((p: any) => p.type === 'landing' || p.type === 'branching')
+        .map((p: any) => ({ id: p.id, type: p.type, lon: p.coordinates[0], lat: p.coordinates[1], name: p.name || '' }))
+    }
+    
+    console.log(`📡 落位数据: 主干 ${trunkCoords.length} 点, ${rawBranches.length} 分支, ${rawNamedPoints.length} 命名点`)
+    rawBranches.forEach((b, i) => {
+      console.log(`  分支[${i}]: ${b.fromBuId} → ${b.toLandingName}, ${b.coordinates.length} 坐标点`)
+    })
+    
+    let backendAmps: any[] = []
+    let backendFibers: any[] = []
+    
+    try {
+      const resp = await fetch('/api/route/amplifier-placement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trunkCoordinates: trunkCoords,
+          branches: rawBranches,
+          namedPoints: rawNamedPoints,
+          spanLength: spanLengthVal,
+          amplifierKPs: simAmplifiers.map((a: any) => ({
+            position: a.position,
+            name: a.name,
+            gain: a.gain,
+            noiseFigure: a.noiseFigure,
+            precedingSpan: a.precedingSpan,
+          })),
+        }),
+      })
+      const data = await resp.json()
+      if (data.success) {
+        backendAmps = data.amplifiers || []
+        backendFibers = data.fibers || []
+        const branchAmps = backendAmps.filter((a: any) => a.isBranch)
+        console.log(`✅ 后端落位成功: ${backendAmps.length} 放大器 (主干 ${backendAmps.length - branchAmps.length}, 分支 ${branchAmps.length}), ${backendFibers.length} 光纤段`)
+        if (data.debug) {
+          console.log(`📊 后端诊断:`, JSON.stringify(data.debug))
+        }
+      } else {
+        console.warn('后端落位失败, 回退前端落位:', data.error)
+      }
+    } catch (err) {
+      console.warn('后端落位 API 调用失败, 回退前端落位:', err)
+    }
+    
+    // 0) 确保接线元表格存在
     if (!connectorStore.currentTable) {
       const routeName = route.name || '链路'
       connectorStore.createTable(`${routeName}_接线元`, route.id)
@@ -1475,135 +1637,167 @@ const applyAndClose = async () => {
     // 1) 清除旧的放大器和光纤段
     connectorStore.deleteElementsByType(['ola', 'amplifier_e', 'amplifier_w', 'fiber'])
     
-    // 2) 构建放大器 + 光纤段接线元
-    const amplifiers = calculationResult.value.amplifiers
-    const ampType = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
-    const fiberType = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
-    
+    // 2) 构建接线元
     const newElements: Omit<import('@/types').ConnectorElement, 'id'>[] = []
     
-    for (let i = 0; i < amplifiers.length; i++) {
-      const amp = amplifiers[i]
-      const coord = kpToCoord(amp.position)
-      
-      // 放大器接线元
-      newElements.push({
-        name: amp.name,
-        type: 'ola',
-        kp: amp.position,
-        longitude: coord.longitude,
-        latitude: coord.latitude,
-        depth: 0,
-        status: 'planned',
-        specifications: ampType ? `${ampType.name} | G=${amp.gain}dB NF=${amp.noiseFigure}dB` : `G=${amp.gain}dB`,
-        componentRefId: selectedAmplifierTypeId.value,
-        remarks: `系统规划自动生成 | 跨段${amp.precedingSpan}km`
-      })
-      
-      // 光纤段接线元（当前放大器到下一个放大器之间）
-      const nextKp = (i < amplifiers.length - 1) ? amplifiers[i + 1].position : configTotalLength
-      const spanLen = nextKp - amp.position
-      if (spanLen > 0) {
+    if (backendAmps.length > 0) {
+      // ── 使用后端落位结果（精确坐标） ──
+      for (let i = 0; i < backendAmps.length; i++) {
+        const amp = backendAmps[i]
         newElements.push({
-          name: `光纤段 ${amp.name}-${i < amplifiers.length - 1 ? amplifiers[i + 1].name : 'Rx'}`,
+          name: amp.name,
+          type: 'ola',
+          kp: amp.kp,
+          longitude: amp.longitude,
+          latitude: amp.latitude,
+          depth: 0,
+          status: 'planned',
+          specifications: ampType
+            ? `${ampType.name} | G=${amp.gain || 0}dB NF=${amp.noiseFigure || 0}dB`
+            : `G=${amp.gain || 0}dB`,
+          componentRefId: selectedAmplifierTypeId.value,
+          remarks: amp.isBranch
+            ? `分支放大器 | ${amp.branchInfo || ''}`
+            : `系统规划自动生成 | 跨段${amp.precedingSpan || spanLengthVal}km`
+        })
+      }
+      // 光纤段
+      for (const fib of backendFibers) {
+        newElements.push({
+          name: fib.name,
           type: 'fiber',
-          kp: amp.position,
-          endKp: nextKp,
-          longitude: coord.longitude,
-          latitude: coord.latitude,
+          kp: fib.kp,
+          endKp: fib.endKp,
+          longitude: fib.longitude,
+          latitude: fib.latitude,
           depth: 0,
           status: 'planned',
           specifications: fiberType?.name || '',
           fiberRefId: selectedFiberTypeId.value,
-          fromDeviceId: amp.id,
-          toDeviceId: i < amplifiers.length - 1 ? amplifiers[i + 1].id : '',
-          length: spanLen,
-          remarks: ''
+          length: fib.length,
+          remarks: fib.isBranch ? '分支光纤' : ''
         })
       }
-    }
-    
-    // 第一段光纤（Tx 到第一个放大器）
-    if (amplifiers.length > 0 && amplifiers[0].position > 0) {
-      const startCoord = kpToCoord(0)
-      newElements.unshift({
-        name: `光纤段 Tx-${amplifiers[0].name}`,
-        type: 'fiber',
-        kp: 0,
-        endKp: amplifiers[0].position,
-        longitude: startCoord.longitude,
-        latitude: startCoord.latitude,
-        depth: 0,
-        status: 'planned',
-        specifications: fiberType?.name || '',
-        fiberRefId: selectedFiberTypeId.value,
-        length: amplifiers[0].position,
-        remarks: ''
-      })
-    }
-    
-    // 2.5) 在分支线上生成额外的放大器
-    // 仿真结果只覆盖主干线（buildPathCoords 路径），其余 BU→登陆站 段需单独落位
-    const spanLength = calculationResult.value.systemConfig.avgSpanLength || 80
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pointMap = new Map(route.points.map((p: any) => [p.id, p]))
-    
-    // 主干路径的起/终点坐标 —— 在此路径上的登陆站已由仿真覆盖
-    const mainStart = pathCoords[0]
-    const mainEnd = pathCoords[pathCoords.length - 1]
-    const EPS = 0.0005 // ≈50m，用于坐标比较
-    const isMainEndpoint = (c: [number, number]) =>
-      (Math.abs(c[0] - mainStart[0]) < EPS && Math.abs(c[1] - mainStart[1]) < EPS) ||
-      (Math.abs(c[0] - mainEnd[0]) < EPS && Math.abs(c[1] - mainEnd[1]) < EPS)
-    
-    let branchAmpIndex = amplifiers.length
-    
-    // 遍历所有段，找到 BU→登陆站 且登陆站不在主干路径端点上的分支段
-    for (const seg of (route.segments || [])) {
-      const startP = pointMap.get(seg.startPointId)
-      const endP = pointMap.get(seg.endPointId)
-      if (!startP || !endP) continue
+    } else {
+      // ── 回退：使用前端简化落位（仅主干） ──
+      const pathCoords = trunkCoords.length >= 2 ? trunkCoords : route.points.map(p => p.coordinates)
+      let actualTotalLength = 0
+      const segmentLens: number[] = []
+      for (let i = 0; i < pathCoords.length - 1; i++) {
+        const sl = calculateDistance(pathCoords[i], pathCoords[i + 1])
+        segmentLens.push(sl)
+        actualTotalLength += sl
+      }
+      const totalLen = configTotalLength || actualTotalLength
       
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let buPoint: any, landingPoint: any
-      if (startP.type === 'branching' && endP.type === 'landing') {
-        buPoint = startP; landingPoint = endP
-      } else if (endP.type === 'branching' && startP.type === 'landing') {
-        buPoint = endP; landingPoint = startP
-      } else {
-        continue
+      const kpToCoord = (targetKP: number) => {
+        if (pathCoords.length < 2) return { longitude: 0, latitude: 0 }
+        const ratio = Math.min(targetKP / totalLen, 1)
+        const targetActualKP = ratio * actualTotalLength
+        let cumKP = 0
+        for (let i = 0; i < segmentLens.length; i++) {
+          if (cumKP + segmentLens[i] >= targetActualKP) {
+            const p1 = pathCoords[i], p2 = pathCoords[i + 1]
+            const lr = segmentLens[i] > 0 ? (targetActualKP - cumKP) / segmentLens[i] : 0
+            return {
+              longitude: p1[0] + (p2[0] - p1[0]) * lr,
+              latitude: p1[1] + (p2[1] - p1[1]) * lr
+            }
+          }
+          cumKP += segmentLens[i]
+        }
+        const last = pathCoords[pathCoords.length - 1]
+        return { longitude: last[0], latitude: last[1] }
       }
       
-      // 主干路径端点的登陆站已由仿真放大器覆盖，跳过
-      if (isMainEndpoint(landingPoint.coordinates)) continue
-      
-      const branchLength = seg.length || calculateDistance(buPoint.coordinates, landingPoint.coordinates)
-      if (branchLength < spanLength) continue
-      
-      const buCoord = buPoint.coordinates as [number, number]
-      const endCoord = landingPoint.coordinates as [number, number]
-      const count = Math.floor(branchLength / spanLength)
-      
-      for (let j = 1; j <= count; j++) {
-        const ratio = (j * spanLength) / branchLength
-        if (ratio >= 1) break
-        
-        const lon = buCoord[0] + (endCoord[0] - buCoord[0]) * ratio
-        const lat = buCoord[1] + (endCoord[1] - buCoord[1]) * ratio
-        
-        branchAmpIndex++
+      for (let i = 0; i < simAmplifiers.length; i++) {
+        const amp = simAmplifiers[i]
+        const coord = kpToCoord(amp.position)
         newElements.push({
-          name: `AMP-${String(branchAmpIndex).padStart(2, '0')}`,
+          name: amp.name,
           type: 'ola',
-          kp: j * spanLength,  // 分支线上的相对 KP
-          longitude: lon,
-          latitude: lat,
+          kp: amp.position,
+          longitude: coord.longitude,
+          latitude: coord.latitude,
           depth: 0,
           status: 'planned',
-          specifications: ampType ? `${ampType.name} | 分支放大器` : '分支放大器',
+          specifications: ampType ? `${ampType.name} | G=${amp.gain}dB NF=${amp.noiseFigure}dB` : `G=${amp.gain}dB`,
           componentRefId: selectedAmplifierTypeId.value,
-          remarks: `分支放大器 | ${buPoint.name || 'BU'} → ${landingPoint.name || '登陆站'}`
+          remarks: `系统规划自动生成 | 跨段${amp.precedingSpan}km`
         })
+        const nextKp = (i < simAmplifiers.length - 1) ? simAmplifiers[i + 1].position : configTotalLength
+        const sl = nextKp - amp.position
+        if (sl > 0) {
+          newElements.push({
+            name: `光纤段 ${amp.name}-${i < simAmplifiers.length - 1 ? simAmplifiers[i + 1].name : 'Rx'}`,
+            type: 'fiber', kp: amp.position, endKp: nextKp,
+            longitude: coord.longitude, latitude: coord.latitude,
+            depth: 0, status: 'planned', specifications: fiberType?.name || '',
+            fiberRefId: selectedFiberTypeId.value, length: sl, remarks: ''
+          })
+        }
+      }
+      if (simAmplifiers.length > 0 && simAmplifiers[0].position > 0) {
+        const startCoord = kpToCoord(0)
+        newElements.unshift({
+          name: `光纤段 Tx-${simAmplifiers[0].name}`,
+          type: 'fiber', kp: 0, endKp: simAmplifiers[0].position,
+          longitude: startCoord.longitude, latitude: startCoord.latitude,
+          depth: 0, status: 'planned', specifications: fiberType?.name || '',
+          fiberRefId: selectedFiberTypeId.value, length: simAmplifiers[0].position, remarks: ''
+        })
+      }
+    }
+    
+    // 2.5) 分支放大器 fallback — 如果有分支但后端未返回分支放大器，前端自己沿分支坐标生成
+    const branchAmpCount = newElements.filter(e => e.remarks?.includes('分支放大器')).length
+    if (rawBranches.length > 0 && branchAmpCount === 0) {
+      console.log(`⚠️ 后端未返回分支放大器，前端自行落位 ${rawBranches.length} 个分支`)
+      let branchAmpIdx = newElements.filter(e => e.type === 'ola').length
+      for (const branch of rawBranches) {
+        const bCoords = branch.coordinates
+        if (!bCoords || bCoords.length < 2) continue
+        // 计算分支累积距离
+        const bSegLens: number[] = []
+        let bTotalLen = 0
+        for (let k = 0; k < bCoords.length - 1; k++) {
+          const sl = calculateDistance(bCoords[k], bCoords[k + 1])
+          bSegLens.push(sl)
+          bTotalLen += sl
+        }
+        console.log(`  分支 ${branch.toLandingName}: ${bCoords.length} 点, ${Math.round(bTotalLen)}km`)
+        if (bTotalLen < spanLengthVal) continue
+        const ampCount = Math.floor(bTotalLen / spanLengthVal)
+        for (let j = 1; j <= ampCount; j++) {
+          const targetKm = j * spanLengthVal
+          if (targetKm >= bTotalLen) break
+          // 沿路径插值
+          let cumLen = 0
+          let lon = bCoords[0][0], lat = bCoords[0][1]
+          for (let k = 0; k < bSegLens.length; k++) {
+            if (cumLen + bSegLens[k] >= targetKm) {
+              const r = bSegLens[k] > 0 ? (targetKm - cumLen) / bSegLens[k] : 0
+              lon = bCoords[k][0] + (bCoords[k + 1][0] - bCoords[k][0]) * r
+              lat = bCoords[k][1] + (bCoords[k + 1][1] - bCoords[k][1]) * r
+              break
+            }
+            cumLen += bSegLens[k]
+          }
+          branchAmpIdx++
+          newElements.push({
+            name: `AMP-${String(branchAmpIdx).padStart(2, '0')}`,
+            type: 'ola',
+            kp: targetKm,
+            longitude: lon,
+            latitude: lat,
+            depth: 0,
+            status: 'planned',
+            specifications: ampType ? `${ampType.name} | 分支放大器` : '分支放大器',
+            componentRefId: selectedAmplifierTypeId.value,
+            remarks: `分支放大器 | ${branch.fromBuId || 'BU'} → ${branch.toLandingName || '登陆站'}`
+          })
+        }
+        console.log(`  ✅ 分支 ${branch.toLandingName}: 生成 ${ampCount} 个放大器`)
       }
     }
     
@@ -1614,6 +1808,7 @@ const applyAndClose = async () => {
     connectorStore.addElements(ampElements, false)
     
     // 构建 KP → 实际设备的映射，修正光纤段的 fromDeviceId/toDeviceId
+    // ★ 容差 10km（后端用 haversine 计算总长可能与前端 segment KP 有差异）
     const allDevices = connectorStore.elements.filter(e => e.type !== 'fiber')
     const findDeviceByKp = (targetKp: number) => {
       let best: typeof allDevices[0] | null = null
@@ -1622,7 +1817,7 @@ const applyAndClose = async () => {
         const dist = Math.abs(d.kp - targetKp)
         if (dist < bestDist) { bestDist = dist; best = d }
       }
-      return bestDist < 2 ? best : null
+      return bestDist < 10 ? best : null
     }
     
     // 按 KP 排序的登陆站，用于首尾光纤段的端点匹配

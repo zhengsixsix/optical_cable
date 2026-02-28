@@ -135,31 +135,83 @@ onMounted(() => {
   }
 })
 
+// 上次初始化使用的路由 ID（用于检测路由是否变更）
+let lastInitRouteId: string | null = null
+
 // 从路由规划初始化登陆站和分支器数据
 const initLandingStationsFromRoute = () => {
   const selectedRoute = routeStore.selectedRoute
   if (!selectedRoute || selectedRoute.points.length === 0) return
   
-  // 检查 connectorStore 是否已有登陆站数据（monitorStore.devices 从 connectorStore 派生）
-  const hasLandingStations = connectorStore.elements.some(e => e.type === 'landing')
+  // ★ 检测路由是否变更：如果当前路由与上次初始化的路由不同，清除旧数据
+  const hasLandingStations = connectorStore.elements.some(e => e.type === 'landing' || e.type === 'underwater')
   if (hasLandingStations) {
-    return
+    if (lastInitRouteId === selectedRoute.id) {
+      return // 同一路由，无需重新初始化
+    }
+    // 路由已变更，清除旧的 connector 数据
+    connectorStore.clearData()
+    connectorStore.createTable(`${selectedRoute.name || '路由'}_接线元`, selectedRoute.id)
+  }
+  lastInitRouteId = selectedRoute.id
+  
+  // 确保 connectorStore 有当前表（首次初始化时可能不存在）
+  if (!connectorStore.currentTable) {
+    connectorStore.createTable(`${selectedRoute.name || '路由'}_接线元`, selectedRoute.id)
   }
   
-  // 统计登陆站数量，用于命名
+  // ★ 使用 segment 累计长度计算每个命名点的 KP（正确处理分支拓扑）
+  const hasBranching = selectedRoute.points.some(p => p.type === 'branching')
+  const pointKpMap: Record<string, number> = {}  // pointId → KP
+  
+  if (hasBranching && selectedRoute.segments && selectedRoute.segments.length > 0) {
+    // 分支拓扑：从 segments 构建邻接图，BFS 计算每个点到起点的路径长度
+    const adj = new Map<string, Array<{ neighbor: string; length: number; isBranch: boolean }>>()
+    for (const seg of selectedRoute.segments) {
+      if (!adj.has(seg.startPointId)) adj.set(seg.startPointId, [])
+      if (!adj.has(seg.endPointId)) adj.set(seg.endPointId, [])
+      const isBranch = seg.id?.startsWith('branch-') || false
+      adj.get(seg.startPointId)!.push({ neighbor: seg.endPointId, length: seg.length || 0, isBranch })
+      adj.get(seg.endPointId)!.push({ neighbor: seg.startPointId, length: seg.length || 0, isBranch })
+    }
+    // BFS 从第一个 landing 点出发
+    const startPoint = selectedRoute.points.find(p => p.type === 'landing')
+    if (startPoint) {
+      const queue: Array<{ id: string; kp: number }> = [{ id: startPoint.id, kp: 0 }]
+      const visited = new Set([startPoint.id])
+      pointKpMap[startPoint.id] = 0
+      while (queue.length > 0) {
+        const { id, kp } = queue.shift()!
+        for (const edge of (adj.get(id) || [])) {
+          if (!visited.has(edge.neighbor)) {
+            visited.add(edge.neighbor)
+            const neighborKp = kp + edge.length
+            pointKpMap[edge.neighbor] = neighborKp
+            queue.push({ id: edge.neighbor, kp: neighborKp })
+          }
+        }
+      }
+    }
+  } else {
+    // 线性拓扑：按顺序累计
+    let cumulativeKp = 0
+    selectedRoute.points.forEach((point, index) => {
+      if (index > 0) {
+        const prevPoint = selectedRoute.points[index - 1]
+        cumulativeKp += geoCalcDistance(
+          prevPoint.coordinates as [number, number],
+          point.coordinates as [number, number]
+        )
+      }
+      pointKpMap[point.id] = cumulativeKp
+    })
+  }
+  
+  // 收集需要添加的设备（landing + branching，不含 waypoint）
   const landingPoints = selectedRoute.points.filter(p => p.type === 'landing')
-  const isFirstLanding = (index: number) => {
-    const landingIndex = landingPoints.findIndex(p => p === selectedRoute.points[index])
-    return landingIndex === 0
-  }
-  const isLastLanding = (index: number) => {
-    const landingIndex = landingPoints.findIndex(p => p === selectedRoute.points[index])
-    return landingIndex === landingPoints.length - 1
-  }
+  // 主干登陆站：非 isBranchStation 的 landing
+  const trunkLandings = landingPoints.filter(p => !(p as any).isBranchStation)
   
-  let cumulativeKp = 0
-  
-  // 按 KP 排序收集所有设备
   const devicesToAdd: Array<{
     type: string
     name: string
@@ -173,74 +225,53 @@ const initLandingStationsFromRoute = () => {
     isBranch?: boolean
   }> = []
   
-  selectedRoute.points.forEach((point, index) => {
-    // 计算 KP（使用 Haversine 公式，与放大器落位的 KP 一致）
-    if (index > 0) {
-      const prevPoint = selectedRoute.points[index - 1]
-      cumulativeKp += geoCalcDistance(
-        prevPoint.coordinates as [number, number],
-        point.coordinates as [number, number]
-      )
-    }
+  // 已添加的点 ID（避免重复）
+  const addedIds = new Set<string>()
+  
+  selectedRoute.points.forEach((point) => {
+    if (point.type !== 'landing' && point.type !== 'branching') return
+    if (addedIds.has(point.id)) return
+    addedIds.add(point.id)
     
-    // 只添加登陆站和分支器，不添加 waypoint
-    if (point.type === 'landing' || point.type === 'branching') {
-      // 根据水深判断站点类型：depth > 0 为水下站点，否则为岸上站点
-      const pointDepth = (point as any).depth || 0
-      const isUnderwater = pointDepth > 0
-      const deviceType = point.type === 'branching' ? 'bu' : (isUnderwater ? 'underwater' : 'landing')
-      
-      // 站点命名：根据是否在水下区分
-      let deviceName = point.name
-      if (point.type === 'landing') {
-        const stationType = isUnderwater ? '水下站点' : '岸上站点'
-        if (isFirstLanding(index)) {
+    const kp = pointKpMap[point.id] ?? 0
+    const pointDepth = (point as any).depth || 0
+    const isUnderwater = pointDepth > 0
+    const isBranchStation = (point as any).isBranchStation || false
+    
+    let deviceType: string
+    let deviceName = point.name
+    
+    if (point.type === 'branching') {
+      deviceType = 'bu'
+      deviceName = point.name || '分支器'
+    } else {
+      deviceType = isUnderwater ? 'underwater' : 'landing'
+      const stationType = isUnderwater ? '水下站点' : '岸上站点'
+      if (!isBranchStation && trunkLandings.length > 0) {
+        if (point === trunkLandings[0]) {
           deviceName = point.name || `${stationType}-起点`
-        } else if (isLastLanding(index)) {
+        } else if (point === trunkLandings[trunkLandings.length - 1]) {
           deviceName = point.name || `${stationType}-终点`
         } else {
           deviceName = point.name || stationType
         }
       } else {
-        deviceName = point.name || '分支器'
-      }
-      
-      devicesToAdd.push({
-        type: deviceType,
-        name: deviceName,
-        kp: cumulativeKp,
-        longitude: point.coordinates[0],
-        latitude: point.coordinates[1],
-        depth: pointDepth,
-        status: 'active',
-        specifications: point.type === 'landing' ? 'LTE' : 'BU',
-        remarks: `KP ${cumulativeKp.toFixed(1)}`
-      })
-      
-      // 如果是分支器，添加分支登陆站
-      if (point.type === 'branching' && point.branchTo) {
-        const branchDist = geoCalcDistance(
-          point.coordinates as [number, number],
-          point.branchTo.coord as [number, number]
-        )
-        
-        // 分支登陆站也根据水深判断
-        const branchDepth = (point.branchTo as any).depth || 0
-        const isBranchUnderwater = branchDepth > 0
-        devicesToAdd.push({
-          type: isBranchUnderwater ? 'underwater' : 'landing',
-          name: point.branchTo.name || (isBranchUnderwater ? '水下站点-分支' : '岸上站点-分支'),
-          kp: cumulativeKp + branchDist,
-          longitude: point.branchTo.coord[0],
-          latitude: point.branchTo.coord[1],
-          depth: branchDepth,
-          status: 'active',
-          specifications: 'LTE',
-          remarks: `Branch from ${point.name}`,
-          isBranch: true
-        })
+        deviceName = point.name || stationType
       }
     }
+    
+    devicesToAdd.push({
+      type: deviceType,
+      name: deviceName,
+      kp,
+      longitude: point.coordinates[0],
+      latitude: point.coordinates[1],
+      depth: pointDepth,
+      status: 'active',
+      specifications: point.type === 'landing' ? 'LTE' : 'BU',
+      remarks: `KP ${kp.toFixed(1)}`,
+      isBranch: isBranchStation
+    })
   })
   
   if (devicesToAdd.length > 0) {
