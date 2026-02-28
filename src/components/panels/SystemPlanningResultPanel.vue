@@ -12,7 +12,7 @@
 
 import { ref, computed } from 'vue'
 import { Button } from '@/shared/components/base'
-import { Activity, ChevronDown, ChevronUp, Download, TrendingUp, Cpu, DollarSign } from 'lucide-vue-next'
+import { Activity, ChevronDown, ChevronUp, Download, TrendingUp, Cpu, DollarSign, Clock } from 'lucide-vue-next'
 import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
 import SpanComparisonPanel from '@/components/panels/SpanComparisonPanel.vue'
 import type { SpanScanResult } from '@/types/simulation'
@@ -40,6 +40,21 @@ const props = defineProps<{
   }
   /** 链路名称 */
   linkName?: string
+  /** EOL 老化余量数据 */
+  eolMargin?: {
+    designLifeYears: number
+    degradation: {
+      totalPenalty_dB: number
+      osnrDegradation_dB: number
+      gsnrDegradation_dB: number
+      breakdown: Record<string, { label: string; value_dB: number; description: string }>
+    }
+    bol: { gsnr: { min: number; avg: number; max: number }; osnr: { min: number; avg: number; max: number } }
+    eol: { gsnr: { min: number; avg: number; max: number }; osnr: { min: number; avg: number; max: number } }
+    eolMeetsTarget: boolean
+    eolGsnrMargin_dB: number
+    targetGsnr_dB: number
+  } | null
 }>()
 
 const emit = defineEmits<{
@@ -53,7 +68,7 @@ const emit = defineEmits<{
 }>()
 
 // Tab 视图
-const activeTab = ref<'overview' | 'performance' | 'amplifier' | 'cost'>('overview')
+const activeTab = ref<'overview' | 'performance' | 'amplifier' | 'cost' | 'eol'>('overview')
 
 // 展开/折叠状态
 const expandedSections = ref({
@@ -173,6 +188,15 @@ const handleExportReport = () => {
       >
         <DollarSign class="w-3 h-3" />
         成本
+      </button>
+      <button
+        v-if="eolMargin"
+        class="flex-1 px-2 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1"
+        :class="activeTab === 'eol' ? 'text-orange-600 border-b-2 border-orange-500 bg-white' : 'text-gray-500 hover:text-gray-700'"
+        @click="activeTab = 'eol'"
+      >
+        <Clock class="w-3 h-3" />
+        EOL
       </button>
     </div>
 
@@ -327,6 +351,70 @@ const handleExportReport = () => {
           </div>
         </div>
         <div v-else class="text-sm text-gray-400 text-center py-8">请在工程设置中配置成本参数</div>
+      </div>
+
+      <!-- === EOL 老化余量 Tab === -->
+      <div v-else-if="activeTab === 'eol' && eolMargin" class="space-y-4">
+        <!-- EOL 状态卡片 -->
+        <div class="p-3 rounded-lg border"
+          :class="eolMargin.eolMeetsTarget ? 'bg-gradient-to-br from-green-50 to-green-100 border-green-200' : 'bg-gradient-to-br from-red-50 to-red-100 border-red-200'"
+        >
+          <div class="text-xs mb-1" :class="eolMargin.eolMeetsTarget ? 'text-green-600' : 'text-red-600'">
+            {{ eolMargin.designLifeYears }} 年 EOL 状态
+          </div>
+          <div class="text-xl font-bold" :class="eolMargin.eolMeetsTarget ? 'text-green-800' : 'text-red-800'">
+            {{ eolMargin.eolMeetsTarget ? '✅ 达标' : '❌ 不达标' }}
+          </div>
+          <div class="text-xs mt-1" :class="eolMargin.eolMeetsTarget ? 'text-green-600' : 'text-red-600'">
+            EOL GSNR 余量: {{ eolMargin.eolGsnrMargin_dB.toFixed(1) }} dB
+          </div>
+        </div>
+
+        <!-- BOL / EOL 对比 -->
+        <div class="border rounded-lg overflow-hidden">
+          <div class="p-3 bg-gray-50 text-sm font-medium text-gray-700">BOL / EOL 性能对比</div>
+          <div class="divide-y text-sm">
+            <div class="grid grid-cols-4 px-3 py-1.5 bg-gray-50 text-xs text-gray-500 font-medium">
+              <span>指标</span><span class="text-right">BOL</span><span class="text-right">EOL</span><span class="text-right">退化</span>
+            </div>
+            <div class="grid grid-cols-4 px-3 py-2">
+              <span class="text-gray-600 text-xs">GSNR min</span>
+              <span class="text-right font-mono text-xs text-blue-600">{{ eolMargin.bol.gsnr.min.toFixed(1) }} dB</span>
+              <span class="text-right font-mono text-xs text-orange-600">{{ eolMargin.eol.gsnr.min.toFixed(1) }} dB</span>
+              <span class="text-right font-mono text-xs text-red-500">-{{ eolMargin.degradation.totalPenalty_dB.toFixed(1) }} dB</span>
+            </div>
+            <div class="grid grid-cols-4 px-3 py-2">
+              <span class="text-gray-600 text-xs">GSNR avg</span>
+              <span class="text-right font-mono text-xs text-blue-600">{{ eolMargin.bol.gsnr.avg.toFixed(1) }} dB</span>
+              <span class="text-right font-mono text-xs text-orange-600">{{ eolMargin.eol.gsnr.avg.toFixed(1) }} dB</span>
+              <span class="text-right font-mono text-xs text-red-500">-{{ eolMargin.degradation.totalPenalty_dB.toFixed(1) }} dB</span>
+            </div>
+            <div class="grid grid-cols-4 px-3 py-2">
+              <span class="text-gray-600 text-xs">OSNR avg</span>
+              <span class="text-right font-mono text-xs text-blue-600">{{ eolMargin.bol.osnr.avg.toFixed(1) }} dB</span>
+              <span class="text-right font-mono text-xs text-orange-600">{{ eolMargin.eol.osnr.avg.toFixed(1) }} dB</span>
+              <span class="text-right font-mono text-xs text-red-500">-{{ eolMargin.degradation.osnrDegradation_dB.toFixed(1) }} dB</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 退化分项明细 -->
+        <div class="border rounded-lg overflow-hidden">
+          <div class="p-3 bg-gray-50 text-sm font-medium text-gray-700">退化分项明细</div>
+          <div class="divide-y">
+            <div
+              v-for="(item, key) in eolMargin.degradation.breakdown"
+              :key="key"
+              class="flex items-center justify-between px-3 py-2"
+            >
+              <div>
+                <div class="text-xs text-gray-700">{{ item.label }}</div>
+                <div class="text-[10px] text-gray-400">{{ item.description }}</div>
+              </div>
+              <span class="font-mono text-xs text-red-500">{{ item.value_dB.toFixed(2) }} dB</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

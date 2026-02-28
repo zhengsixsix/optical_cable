@@ -448,6 +448,27 @@ export const useRPLStore = defineStore('rpl', () => {
     return { valid: errors.length === 0, errors, warnings }
   }
 
+  /**
+   * 根据海底地形动态计算余缆率 (%)
+   * 公式: slack = base_slack + slope_factor * slope_angle
+   *   - base_slack: 基础余缆率 (%, 用于补偿海底起伏和施工张力)
+   *   - slope_factor: 坡度系数 (%/°)
+   *   - slope_angle: 海底坡度 (度)
+   */
+  function calculateDynamicSlack(prevDepth: number, currentDepth: number, segmentLengthKm: number): number {
+    const BASE_SLACK = 1.5       // 基础余缆率 (%)
+    const SLOPE_FACTOR = 0.15    // 坡度系数 (%/°)
+    const MAX_SLACK = 8.0        // 余缆率上限 (%)
+
+    // 计算坡度角度 (degrees)
+    const elevDiffM = Math.abs(currentDepth - prevDepth)
+    const horizDistM = segmentLengthKm * 1000
+    const slopeAngle = horizDistM > 0 ? Math.atan(elevDiffM / horizDistM) * (180 / Math.PI) : 0
+
+    const slack = BASE_SLACK + SLOPE_FACTOR * slopeAngle
+    return Math.min(parseFloat(slack.toFixed(1)), MAX_SLACK)
+  }
+
   // 从路由生成RPL表格
   function generateFromRoute(routeId: string, routeName: string, points: Array<{
     coordinates: [number, number]
@@ -461,9 +482,20 @@ export const useRPLStore = defineStore('rpl', () => {
     const table = createTable(`${routeName}_RPL`, routeId)
     
     let cumulativeLength = 0
+    let prevDepth = 0
     points.forEach((point, index) => {
       const segment = segments[index] || segments[segments.length - 1] || { length: 0, depth: 0, cableType: 'LW' }
       cumulativeLength += segment.length
+
+      // 动态余缆率计算
+      const slack = calculateDynamicSlack(prevDepth, segment.depth, segment.length)
+      prevDepth = segment.depth
+
+      // 埋深推荐: 浅水区(< 1500m) 需埋设保护
+      let burialDepth = 0
+      if (segment.depth < 200) burialDepth = 1.5
+      else if (segment.depth < 500) burialDepth = 1.0
+      else if (segment.depth < 1500) burialDepth = 0.6
 
       const record: Omit<RPLRecord, 'id' | 'sequence'> = {
         kp: cumulativeLength,
@@ -474,8 +506,8 @@ export const useRPLStore = defineStore('rpl', () => {
         cableType: mapCableType(segment.cableType),
         segmentLength: segment.length,
         cumulativeLength,
-        slack: 2.5,
-        burialDepth: segment.depth < 1500 ? 1.0 : 0,
+        slack,
+        burialDepth,
         remarks: point.name || '',
       }
       

@@ -39,6 +39,13 @@ export interface RedundancyPlanningConfig {
   absoluteCostLimit?: number    // 绝对成本上限（万元）
 }
 
+// 避障区域配置
+export interface AvoidanceZone {
+  id: string
+  name?: string
+  points: Coordinate[]  // 多边形顶点
+}
+
 // 规划请求参数
 export interface RoutePlanningRequest {
   mode: 'point-to-point' | 'multi-point'
@@ -56,6 +63,8 @@ export interface RoutePlanningRequest {
     highRiskThreshold: number
     mediumRiskThreshold: number
   }
+  // 避障区域
+  avoidanceZones?: AvoidanceZone[]
   // 铠装映射配置
   armorMappings?: ArmorMappingConfig[]
   // BU 分支器配置

@@ -5,6 +5,7 @@ export type { DeviceLink, DataChangeEvent } from './DataLinkService'
 export { 
   exportRPLFile,
   exportToExcel,
+  exportToXML as exportRPLToXML,
   useRPLExport, 
   RPL_STANDARD_HEADERS,
   RPL_HEADER_GROUPS,

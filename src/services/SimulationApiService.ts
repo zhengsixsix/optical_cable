@@ -27,8 +27,8 @@ export interface SimulationRequest {
   linkId: string
   linkName: string
   totalLengthKm: number
-  fiberModel: 'GN' | 'EGN' | 'SSFM'
-  amplifierModel: 'EDFA_Simple' | 'EDFA_Full'
+  fiberModel: 'GN' | 'EGN' | 'SSFM' | 'RAMAN' | 'HYBRID'
+  amplifierModel: 'EDFA_Simple' | 'EDFA_Full' | 'EDFA_Raman'
   fiberParams: {
     attenuation: number
     effectiveArea: number

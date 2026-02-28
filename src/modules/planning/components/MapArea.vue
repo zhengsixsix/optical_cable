@@ -1384,10 +1384,10 @@ const drawParetoRoutes = async () => {
           // ====== 有海缆段且非编辑模式，直接按段画主干线（每段自带颜色、标签） ======
           const cableSegs = cableSegmentStore.segments
 
-          // 构建 segGeos（包含所有段，per-segGeo 绘制方式确保不会跨分支跳线）
+          // 构建 segGeos：仅使用主干段，排除分支段避免 KP 空间错乱
           let kpOff = 0
           const segGeos: Array<{ startKp: number; endKp: number; startCoord: [number, number]; endCoord: [number, number] }> = []
-          for (const seg of route.segments) {
+          for (const seg of (hasBranching ? trunkSegments : route.segments)) {
             const sc = pointMap[seg.startPointId]
             const ec = pointMap[seg.endPointId]
             if (!sc || !ec) { kpOff += (seg.length || 0); continue }
@@ -1627,14 +1627,40 @@ const drawParetoRoutes = async () => {
           ptMap[p.id] = p.coordinates
         }
 
-        // 按 route.segments 顺序构建每条线段的 KP 范围和几何（包含所有段）
+        // 按主干线 segments 顺序构建 KP 范围和几何（排除分支段）
+        const hasBranchPts = selectedRoute.points.some(p => p.type === 'branching')
+        const branchLandingIdSet = new Set<string>()
+        if (hasBranchPts) {
+          selectedRoute.points.forEach(p => {
+            if (p.branchTo) {
+              const found = selectedRoute.points.find(op =>
+                Math.abs(op.coordinates[0] - p.branchTo!.coord[0]) < 1e-6 &&
+                Math.abs(op.coordinates[1] - p.branchTo!.coord[1]) < 1e-6
+              )
+              if (found) branchLandingIdSet.add(found.id)
+            }
+            p.branchTargets?.forEach(bt => {
+              const found = selectedRoute.points.find(op =>
+                Math.abs(op.coordinates[0] - bt.coord[0]) < 1e-6 &&
+                Math.abs(op.coordinates[1] - bt.coord[1]) < 1e-6
+              )
+              if (found) branchLandingIdSet.add(found.id)
+            })
+          })
+        }
+        const nodeSegments = hasBranchPts
+          ? selectedRoute.segments.filter(seg =>
+              !branchLandingIdSet.has(seg.startPointId) && !branchLandingIdSet.has(seg.endPointId)
+            )
+          : selectedRoute.segments
+
         let kpOffset = 0
         const segGeos: Array<{
           startKp: number; endKp: number;
           startCoord: [number, number]; endCoord: [number, number];
         }> = []
 
-        for (const seg of selectedRoute.segments) {
+        for (const seg of nodeSegments) {
           const sc = ptMap[seg.startPointId]
           const ec = ptMap[seg.endPointId]
           if (!sc || !ec) { kpOffset += (seg.length || 0); continue }
@@ -2453,7 +2479,9 @@ const handleRunPlanning = async () => {
       costLimitType: config.redundancyConfig.costLimitType,
       relativeCostPercent: config.redundancyConfig.relativeCostPercent,
       absoluteCostLimit: config.redundancyConfig.absoluteCostLimit
-    } : undefined
+    } : undefined,
+    // 避障区域
+    avoidanceZones: config.avoidanceZones || undefined,
   }
 
   if (config.mode === 'multi-point') {

@@ -545,17 +545,70 @@ export async function exportToExcel(table: RPLTable): Promise<Blob> {
   return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
 }
 
+/**
+ * 导出 RPL 为 XML 格式
+ * 符合 IHO S-100 风格的 RPL XML 架构
+ */
+export function exportToXML(table: RPLTable): string {
+  const calculatedRecords = calculateAllRecords(table.records)
+  const escXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+  const records = calculatedRecords.map((r, i) => `
+    <RoutePoint id="RP-${String(i + 1).padStart(4, '0')}">
+      <SequenceNumber>${i + 1}</SequenceNumber>
+      <Position>
+        <Latitude>${r.latitude.toFixed(6)}</Latitude>
+        <Longitude>${r.longitude.toFixed(6)}</Longitude>
+        <LatitudeDMS>${escXml(r.latitudeDMS)}</LatitudeDMS>
+        <LongitudeDMS>${escXml(r.longitudeDMS)}</LongitudeDMS>
+      </Position>
+      <Navigation>
+        <BearingTrue>${r.bearingT.toFixed(2)}</BearingTrue>
+        <DistanceNm>${r.distanceNmiles.toFixed(3)}</DistanceNm>
+        <DistanceKm>${r.routeDistanceBetween.toFixed(3)}</DistanceKm>
+        <CumulativeKm>${r.routeDistanceCumulative.toFixed(3)}</CumulativeKm>
+      </Navigation>
+      <Cable>
+        <Type>${escXml(r.cableType)}</Type>
+        <SegmentLength>${(r.segmentLength ?? 0).toFixed(3)}</SegmentLength>
+        <Slack>${(r.slack ?? 0).toFixed(1)}</Slack>
+        <CableDistance>${r.cableDistanceBetween.toFixed(3)}</CableDistance>
+        <CumulativeCable>${r.cableDistanceCumulative.toFixed(3)}</CumulativeCable>
+      </Cable>
+      <Seabed>
+        <ApproxDepth>${r.approxDepth.toFixed(1)}</ApproxDepth>
+        <BurialDepth>${r.plannedBurialDepth.toFixed(2)}</BurialDepth>
+      </Seabed>
+      <Features>${escXml(r.additionalFeatures || '')}</Features>
+    </RoutePoint>`).join('')
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<RoutePositionList xmlns="urn:submarine-cable:rpl:1.0" version="1.0">
+  <Metadata>
+    <ProjectName>${escXml(table.name)}</ProjectName>
+    <RouteId>${escXml(table.routeId || '')}</RouteId>
+    <GeneratedAt>${new Date().toISOString()}</GeneratedAt>
+    <TotalPoints>${table.records.length}</TotalPoints>
+    <TotalLengthKm>${table.metadata.totalLength.toFixed(3)}</TotalLengthKm>
+    <TotalCableLengthKm>${((table.metadata as unknown as Record<string, unknown>).totalCableLength as number | undefined)?.toFixed(3) ?? table.metadata.totalLength.toFixed(3)}</TotalCableLengthKm>
+  </Metadata>
+  <RoutePoints>${records}
+  </RoutePoints>
+</RoutePositionList>`
+}
+
 // 导出RPL文件主函数
-export async function exportRPLFile(table: RPLTable, format: 'xlsx' | 'csv' = 'xlsx') {
+export async function exportRPLFile(table: RPLTable, format: 'xlsx' | 'csv' | 'xml' = 'xlsx') {
   const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   const baseName = `RPL_${table.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${timestamp}`
   
   if (format === 'xlsx') {
-    // 导出 Excel 格式（带边框）
     const blob = await exportToExcel(table)
     downloadBlob(blob, `${baseName}.xlsx`)
+  } else if (format === 'xml') {
+    const content = exportToXML(table)
+    downloadFile(content, `${baseName}.xml`, 'application/xml;charset=utf-8')
   } else {
-    // 导出 CSV 格式
     const content = exportToCSV(table)
     downloadFile(content, `${baseName}.csv`, 'text/csv;charset=utf-8')
   }
@@ -565,6 +618,7 @@ export async function exportRPLFile(table: RPLTable, format: 'xlsx' | 'csv' = 'x
 export function useRPLExport() {
   return {
     exportToCSV,
+    exportToXML,
     exportRPLFile,
     downloadFile,
     RPL_STANDARD_HEADERS,

@@ -5,7 +5,10 @@ import { Card, CardHeader, CardContent, Button, Select } from '@/shared/componen
 import MonitorPanel from '@/modules/monitoring/panels/MonitorPanel.vue'
 import PerformanceChart from '@/components/charts/PerformanceChart.vue'
 import MonitoringMap from '@/modules/monitoring/components/MonitoringMap.vue'
-import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin, ChevronRight, ChevronDown, Filter, TrendingDown, TrendingUp, Minus, Link2, Download, Trash2, Search } from 'lucide-vue-next'
+import TrendChart from '@/modules/monitoring/components/TrendChart.vue'
+import FaultLocationPanel from '@/modules/monitoring/panels/FaultLocationPanel.vue'
+import MaintenancePanel from '@/modules/monitoring/panels/MaintenancePanel.vue'
+import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin, ChevronRight, ChevronDown, Filter, TrendingDown, TrendingUp, Minus, Link2, Download, Trash2, Search, Crosshair, ClipboardList, TrendingUp as TrendIcon } from 'lucide-vue-next'
 import type { LogCategory } from '@/types'
 import { useConnectorStore, useMonitorStore, useRouteStore, useAppStore } from '@/stores'
 
@@ -440,6 +443,12 @@ const timeChartSeries = computed(() => {
   }]
 })
 
+// === 右侧面板 Tab ===
+const rightPanelTab = ref<'link' | 'fault' | 'maintenance'>('link')
+
+// === 中心区域底部 Tab ===
+const centerBottomTab = ref<'log' | 'trend'>('log')
+
 // === 链路设备子设备层级 ===
 // 展开的子设备节点
 const expandedSubDevices = ref<Set<string>>(new Set())
@@ -674,8 +683,29 @@ const getSubDevices = (device: any) => {
         </CardContent>
       </Card>
 
+      <!-- 底部区域 Tab 切换 -->
+      <div class="flex border-b shrink-0 bg-white rounded-t-lg">
+        <button
+          :class="['flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
+            centerBottomTab === 'log' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700']"
+          @click="centerBottomTab = 'log'">
+          <Activity class="w-3.5 h-3.5" /> 系统日志
+        </button>
+        <button
+          :class="['flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
+            centerBottomTab === 'trend' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700']"
+          @click="centerBottomTab = 'trend'">
+          <TrendingUp class="w-3.5 h-3.5" /> 性能趋势
+        </button>
+      </div>
+
+      <!-- 性能趋势图 -->
+      <div v-if="centerBottomTab === 'trend'" class="shrink-0">
+        <TrendChart :device-id="selectedDevice" />
+      </div>
+
       <!-- 系统运行日志 -->
-      <Card class="shrink-0 h-[260px] flex flex-col overflow-hidden">
+      <Card v-if="centerBottomTab === 'log'" class="shrink-0 h-[260px] flex flex-col overflow-hidden">
         <CardHeader class="shrink-0">
           <span class="font-semibold text-sm flex items-center gap-2">
             <Activity class="w-4 h-4" />
@@ -780,7 +810,36 @@ const getSubDevices = (device: any) => {
     </template>
 
     <template #right>
-      <!-- 链路状态 -->
+      <!-- 右侧面板 Tab -->
+      <div class="flex border-b shrink-0 bg-white rounded-t-lg mb-2">
+        <button
+          :class="['flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
+            rightPanelTab === 'link' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700']"
+          @click="rightPanelTab = 'link'">
+          <Link2 class="w-3.5 h-3.5" /> 链路
+        </button>
+        <button
+          :class="['flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
+            rightPanelTab === 'fault' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700']"
+          @click="rightPanelTab = 'fault'">
+          <Crosshair class="w-3.5 h-3.5" /> 故障定位
+        </button>
+        <button
+          :class="['flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
+            rightPanelTab === 'maintenance' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700']"
+          @click="rightPanelTab = 'maintenance'">
+          <ClipboardList class="w-3.5 h-3.5" /> 工单
+        </button>
+      </div>
+
+      <!-- 故障定位面板 -->
+      <FaultLocationPanel v-if="rightPanelTab === 'fault'" />
+
+      <!-- 维护工单面板 -->
+      <MaintenancePanel v-if="rightPanelTab === 'maintenance'" />
+
+      <!-- 链路状态 (原有内容) -->
+      <template v-if="rightPanelTab === 'link'">
       <Card class="shrink-0">
         <CardHeader>
           <span class="font-semibold text-sm flex items-center gap-2">
@@ -934,6 +993,7 @@ const getSubDevices = (device: any) => {
           </div>
         </CardContent>
       </Card>
+      </template>
     </template>
   </MainLayout>
 

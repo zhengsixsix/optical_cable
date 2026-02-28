@@ -7,7 +7,7 @@ import type { LinkSimulationResult, LinkBudget } from '@/types/simulation'
 import type { SLDTable, SLDMetadata } from '@/types/sld'
 
 // 报告类型
-export type ReportType = 'cost' | 'performance' | 'summary' | 'full'
+export type ReportType = 'cost' | 'performance' | 'summary' | 'full' | 'feasibility'
 
 // 报告格式
 export type ReportFormat = 'txt' | 'json' | 'html' | 'csv'
@@ -633,6 +633,132 @@ export class ReportExportService {
     const content = this.generatePerformanceReport(data, format)
     const dateStr = new Date().toISOString().split('T')[0]
     this.downloadReport(content, `性能分析报告_${dateStr}`, format)
+  }
+
+  // ========== 可行性报告 ==========
+
+  /**
+   * 生成可行性分析报告
+   * 综合评估链路性能、成本、EOL 余量是否满足设计要求
+   */
+  generateFeasibilityReport(params: {
+    projectName: string
+    totalLengthKm: number
+    amplifierCount: number
+    buCount: number
+    channelCount: number
+    modulation: string
+    fiberModel: string
+    // BOL 性能
+    bolGsnr: { min: number; avg: number; max: number }
+    bolOsnr: { min: number; avg: number; max: number }
+    targetGsnr: number
+    // EOL 性能 (可选)
+    eol?: {
+      designLifeYears: number
+      totalPenalty: number
+      eolGsnrMin: number
+      eolMeetsTarget: boolean
+      breakdown?: Array<{ label: string; value: number; description: string }>
+    }
+    // 成本
+    cost?: {
+      cableCost: number
+      amplifierCost: number
+      buCost: number
+      totalCost: number
+    }
+    // 推荐配置
+    recommendedSpanKm?: number
+    feasibleRange?: [number, number] | null
+  }, format: ReportFormat = 'html'): string {
+    const p = params
+    const bolMargin = p.bolGsnr.min - p.targetGsnr
+    const bolFeasible = bolMargin >= 0
+    const eolFeasible = p.eol ? p.eol.eolMeetsTarget : null
+    const overallFeasible = bolFeasible && (eolFeasible === null || eolFeasible)
+
+    if (format === 'json') {
+      return JSON.stringify({
+        reportType: 'feasibility',
+        generatedAt: new Date().toISOString(),
+        project: { name: p.projectName, totalLengthKm: p.totalLengthKm },
+        system: { amplifierCount: p.amplifierCount, buCount: p.buCount, channelCount: p.channelCount, modulation: p.modulation, fiberModel: p.fiberModel },
+        bol: { gsnr: p.bolGsnr, osnr: p.bolOsnr, margin: bolMargin, feasible: bolFeasible },
+        eol: p.eol || null,
+        cost: p.cost || null,
+        recommendation: { spanKm: p.recommendedSpanKm, feasibleRange: p.feasibleRange },
+        overallFeasible,
+      }, null, 2)
+    }
+
+    // HTML 格式
+    const statusBadge = (ok: boolean) => `<span style="padding:3px 10px;border-radius:12px;background:${ok ? '#dcfce7' : '#fee2e2'};color:${ok ? '#166534' : '#991b1b'};font-weight:bold">${ok ? '✅ 达标' : '❌ 不达标'}</span>`
+
+    let eolSection = ''
+    if (p.eol) {
+      const breakdownRows = (p.eol.breakdown || []).map(b =>
+        `<tr><td>${b.label}</td><td style="text-align:right;font-family:monospace">${b.value.toFixed(2)} dB</td><td>${b.description}</td></tr>`
+      ).join('\n')
+      eolSection = `
+      <h2>EOL 老化余量 (${p.eol.designLifeYears} 年)</h2>
+      <p><strong>EOL 状态:</strong> ${statusBadge(p.eol.eolMeetsTarget)}</p>
+      <p>总退化: <strong>${p.eol.totalPenalty.toFixed(1)} dB</strong>, EOL GSNR min: <strong>${p.eol.eolGsnrMin.toFixed(1)} dB</strong></p>
+      ${breakdownRows ? `<table><tr><th>项目</th><th>值</th><th>说明</th></tr>${breakdownRows}</table>` : ''}`
+    }
+
+    let costSection = ''
+    if (p.cost) {
+      costSection = `
+      <h2>成本概算</h2>
+      <table>
+        <tr><td>海缆</td><td style="text-align:right">${this.formatCurrency(p.cost.cableCost)}</td></tr>
+        <tr><td>放大器</td><td style="text-align:right">${this.formatCurrency(p.cost.amplifierCost)}</td></tr>
+        <tr><td>分支器</td><td style="text-align:right">${this.formatCurrency(p.cost.buCost)}</td></tr>
+        <tr style="font-weight:bold;background:#e3f2fd"><td>总计</td><td style="text-align:right">${this.formatCurrency(p.cost.totalCost)}</td></tr>
+      </table>`
+    }
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>可行性分析报告 - ${p.projectName}</title>
+<style>body{font-family:Arial,sans-serif;max-width:900px;margin:0 auto;padding:20px}h1{color:#333;border-bottom:2px solid #6366f1;padding-bottom:10px}h2{color:#555;margin-top:20px}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f5f5f5}.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.kpi-card{background:#f9fafb;border-radius:8px;padding:12px;text-align:center}.kpi-val{font-size:20px;font-weight:bold;color:#3b82f6}.kpi-lbl{font-size:11px;color:#666}</style></head>
+<body>
+  <h1>可行性分析报告</h1>
+  <p><strong>项目:</strong> ${p.projectName} | <strong>生成时间:</strong> ${new Date().toLocaleString('zh-CN')}</p>
+  <p><strong>综合评估:</strong> ${statusBadge(overallFeasible)}</p>
+
+  <h2>系统配置</h2>
+  <div class="kpi">
+    <div class="kpi-card"><div class="kpi-val">${p.totalLengthKm.toFixed(0)} km</div><div class="kpi-lbl">总长度</div></div>
+    <div class="kpi-card"><div class="kpi-val">${p.amplifierCount}</div><div class="kpi-lbl">放大器</div></div>
+    <div class="kpi-card"><div class="kpi-val">${p.channelCount}ch</div><div class="kpi-lbl">波道数</div></div>
+    <div class="kpi-card"><div class="kpi-val">${p.fiberModel}</div><div class="kpi-lbl">仿真模型</div></div>
+  </div>
+  ${p.recommendedSpanKm ? `<p>推荐 Span: <strong>${p.recommendedSpanKm} km</strong>${p.feasibleRange ? ` (可行区间: ${p.feasibleRange[0]}-${p.feasibleRange[1]} km)` : ''}</p>` : ''}
+
+  <h2>BOL 性能</h2>
+  <p>BOL 状态: ${statusBadge(bolFeasible)} | GSNR 余量: <strong>${bolMargin.toFixed(1)} dB</strong></p>
+  <div class="kpi">
+    <div class="kpi-card"><div class="kpi-val">${p.bolGsnr.min.toFixed(1)} dB</div><div class="kpi-lbl">GSNR min</div></div>
+    <div class="kpi-card"><div class="kpi-val">${p.bolGsnr.avg.toFixed(1)} dB</div><div class="kpi-lbl">GSNR avg</div></div>
+    <div class="kpi-card"><div class="kpi-val">${p.bolOsnr.avg.toFixed(1)} dB</div><div class="kpi-lbl">OSNR avg</div></div>
+    <div class="kpi-card"><div class="kpi-val">${p.targetGsnr.toFixed(1)} dB</div><div class="kpi-lbl">目标 GSNR</div></div>
+  </div>
+
+  ${eolSection}
+  ${costSection}
+
+  <hr><p style="color:#999;font-size:11px">报告由海底光缆智能规划系统自动生成</p>
+</body></html>`
+  }
+
+  /**
+   * 导出可行性报告
+   */
+  exportFeasibilityReport(params: Parameters<ReportExportService['generateFeasibilityReport']>[0], format: ReportFormat = 'html'): void {
+    const content = this.generateFeasibilityReport(params, format)
+    const dateStr = new Date().toISOString().split('T')[0]
+    this.downloadReport(content, `可行性分析报告_${dateStr}`, format)
   }
 }
 

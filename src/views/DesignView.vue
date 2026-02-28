@@ -26,6 +26,7 @@ import type { SpanScanConfig } from '@/types/systemPlanning'
 import { MODULATION_PARAMS } from '@/types/simulation'
 import { connectorTypeLabels } from '@/types/connector'
 import { Cable, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle, DollarSign, Activity } from 'lucide-vue-next'
+import { calculateDistance as geoCalcDistance } from '@/utils/geo'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -173,14 +174,13 @@ const initLandingStationsFromRoute = () => {
   }> = []
   
   selectedRoute.points.forEach((point, index) => {
-    // 计算 KP
+    // 计算 KP（使用 Haversine 公式，与放大器落位的 KP 一致）
     if (index > 0) {
       const prevPoint = selectedRoute.points[index - 1]
-      const dist = Math.sqrt(
-        Math.pow(point.coordinates[0] - prevPoint.coordinates[0], 2) +
-        Math.pow(point.coordinates[1] - prevPoint.coordinates[1], 2)
-      ) * 111 // 粗略转换为 km
-      cumulativeKp += dist
+      cumulativeKp += geoCalcDistance(
+        prevPoint.coordinates as [number, number],
+        point.coordinates as [number, number]
+      )
     }
     
     // 只添加登陆站和分支器，不添加 waypoint
@@ -219,10 +219,10 @@ const initLandingStationsFromRoute = () => {
       
       // 如果是分支器，添加分支登陆站
       if (point.type === 'branching' && point.branchTo) {
-        const branchDist = Math.sqrt(
-          Math.pow(point.branchTo.coord[0] - point.coordinates[0], 2) +
-          Math.pow(point.branchTo.coord[1] - point.coordinates[1], 2)
-        ) * 111
+        const branchDist = geoCalcDistance(
+          point.coordinates as [number, number],
+          point.branchTo.coord as [number, number]
+        )
         
         // 分支登陆站也根据水深判断
         const branchDepth = (point.branchTo as any).depth || 0
@@ -538,6 +538,8 @@ const recommendedSpan = ref<number | null>(null)
 const userSelectedSpan = ref<number | null>(null)
 // 自动落位结果
 const autoPlacementResult = ref<any>(null)
+// ★ 存储放大器落位时使用的路由点（确保地图渲染使用相同的路由几何）
+const placementRoutePoints = ref<any[]>([])
 
 // 链路计算结果摘要（来自系统规划链路配置对话框）
 const linkCalcSummary = ref<{
@@ -815,9 +817,11 @@ const handleSpanSelect = (spanLength: number) => {
   gsnrData.value = calculateGSNRData()
   
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
-  // 传入路由点以支持分支结构
+  // ★ 修复：优先使用已保存的落位路由点，与 handleApplyRecommendation 保持一致
   const currentRoute = routeStore.selectedRoute
-  const routePoints = currentRoute?.points || []
+  const routePoints = placementRoutePoints.value.length > 0
+    ? placementRoutePoints.value
+    : (currentRoute?.points || [])
   autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
     totalLength,
     spanLength,
@@ -1072,9 +1076,9 @@ const generateFiberSpans = (sortedRepeaters: Record<string, any>[]) => {
     // 找到对应的分支器
     const branchingUnit = mainTrunkNodes.find(n => n.name === branchFromName && n.type === 'bu')
     if (branchingUnit) {
-      const length = Math.sqrt(
-        Math.pow((branchStation.longitude - branchingUnit.longitude) * 111, 2) +
-        Math.pow((branchStation.latitude - branchingUnit.latitude) * 111, 2)
+      const length = geoCalcDistance(
+        [branchingUnit.longitude, branchingUnit.latitude],
+        [branchStation.longitude, branchStation.latitude]
       )
       connectorStore.addElement({
         type: 'fiber',
@@ -1210,13 +1214,18 @@ const handleApplyRecommendation = (spanKm: number) => {
   
   // 重新生成 EDFA 放置方案
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  // ★ 优先使用已保存的落位路由点，确保与之前计算用的路由一致
   const currentRoute = routeStore.selectedRoute
-  const routePointsList = currentRoute?.points || []
+  const routePointsList = placementRoutePoints.value.length > 0 
+    ? placementRoutePoints.value 
+    : (currentRoute?.points || [])
   autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
     totalLength,
     spanKm,
     routePointsList
   )
+  // 更新落位路由点
+  placementRoutePoints.value = routePointsList
   
   // 将放大器添加到 connectorStore 以便地图显示
   if (autoPlacementResult.value && autoPlacementResult.value.positions.length > 0) {
@@ -1261,6 +1270,11 @@ const handleWizardStartCalculation = (config: WizardConfig) => {
   appStore.showNotification({ type: 'info', message: '正在执行 Span 扫描计算...' })
   appStore.addLog('INFO', `使用向导配置: 模型=${config.simulationModel}, 光纤α=${config.fiberParams.attenuation}dB/km, 放大器NF=${config.amplifierParams.noiseFigure}dB`)
   
+  // ★ 关键修复：在 setTimeout 之前捕获当前路由，防止 watcher 在延迟期间切换路由
+  const capturedRoute = routeStore.selectedRoute
+  const capturedRoutePoints = capturedRoute?.points ? [...capturedRoute.points] : []
+  console.log(`[Wizard] 捕获路由: id=${capturedRoute?.id}, points=${capturedRoutePoints.length}, name=${capturedRoute?.name}`)
+  
   // 获取调制格式对应的 GSNR 要求
   const modulationFormat = (config.wdmParams.modulation || 'DP-QPSK') as ModulationFormat
   const modParams = MODULATION_PARAMS[modulationFormat]
@@ -1301,14 +1315,15 @@ const handleWizardStartCalculation = (config: WizardConfig) => {
     )
     recommendedSpan.value = recommendation.recommendedSpanKm
     
-    // 生成 EDFA 放置方案
-    const currentRoute = routeStore.selectedRoute
-    const routePoints = currentRoute?.points || []
+    // ★ 使用预先捕获的路由点（而非重新读取可能已被 watcher 切换的路由）
     autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
       totalLength,
       recommendation.recommendedSpanKm,
-      routePoints
+      capturedRoutePoints
     )
+    
+    // 保存用于放大器落位的路由点（供地图光纤线渲染使用）
+    placementRoutePoints.value = capturedRoutePoints
     
     // 更新放大器间距
     repeaterSpacing.value = recommendation.recommendedSpanKm
@@ -1740,6 +1755,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
               :route-points="routePoints"
               :selected-point-id="selectedPointId"
               :draggable-amplifiers="!!autoPlacementResult"
+              :placement-route-points="placementRoutePoints"
               @point-click="handlePointClick"
               @bu-dblclick="handleBuDblclick"
               @line-click="handleLineClick"

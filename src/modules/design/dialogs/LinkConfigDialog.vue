@@ -135,6 +135,18 @@ const rplOptions = computed(() =>
 // 同步当前路由到 routeStore（保证 routeStore.selectedRoute 可用）
 watch(selectedRouteId, (id) => {
   routeStore.selectRoute(id || null)
+  // ★ 关键修复：切换路由时同步选择匹配的 RPL 表格
+  // 如果不同步，buildPathCoords 会使用旧 RPL（另一条路由）的坐标来插值放大器位置
+  if (id) {
+    const matchingRpl = rplStore.tables.find(t => t.routeId === id)
+    if (matchingRpl) {
+      selectedRplId.value = matchingRpl.id
+      rplStore.selectTable(matchingRpl.id)
+    } else {
+      // 没有匹配的 RPL 表格时，清空选择，让 buildPathCoords 回退到 route.points
+      selectedRplId.value = ''
+    }
+  }
 })
 
 // 当前选中链路的基本信息 - 与 BUConfigDialog 保持一致的数据源
@@ -193,7 +205,7 @@ const linkInfo = computed(() => {
 
 // ============ Step 2: 计算模型选择 ============
 const selectedFiberModel = ref<'GN' | 'EGN' | 'SSFM'>('GN')
-const selectedAmplifierModel = ref<'EDFA_Simple' | 'EDFA_Full'>('EDFA_Simple')
+const selectedAmplifierModel = ref<'EDFA_Simple' | 'EDFA_Full' | 'EDFA_Raman'>('EDFA_Simple')
 
 const fiberModelOptions = [
   { value: 'GN', label: 'GN-Model (高斯噪声)', desc: 'GN-Model 是一种高效的非线性传输模型，适用于长距离 WDM 系统的性能预测。' },
@@ -203,7 +215,8 @@ const fiberModelOptions = [
 
 const amplifierModelOptions = [
   { value: 'EDFA_Simple', label: 'EDFA 简化模型', desc: '基于增益、噪声系数等基本参数的 EDFA 模型。' },
-  { value: 'EDFA_Full', label: 'EDFA 物理模型', desc: '基于物理参数的 EDFA 模型，考虑增益、噪声系数等参数进行精确计算。' }
+  { value: 'EDFA_Full', label: 'EDFA 物理模型', desc: '基于物理参数的 EDFA 模型，考虑增益、噪声系数等参数进行精确计算。' },
+  { value: 'EDFA_Raman', label: 'Raman+EDFA 混合放大', desc: '分布式拉曼放大 + EDFA 级联，等效 NF 更低，适用于超长距离传输。' }
 ]
 
 // ============ Step 3: 光纤配置 ============
@@ -1320,14 +1333,20 @@ const getCoordinateByKP = (
 // 构建主干路径坐标序列（使用 BFS 沿 segments 寻径，包含所有 waypoint 拐点）
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const buildPathCoords = (route: Record<string, any>, rplRecords: Record<string, any>[]) => {
-  // 1) 优先使用 RPL — 但仅当有足够中间点描述弯曲路径时
+  // 1) 优先使用 RPL — 但仅当 RPL 与当前路由匹配且有足够中间点时
   if (rplRecords && rplRecords.length >= 3) {
-    const usableRecords = rplRecords.filter((r: any) => !(r as any).isBranchStation)
-    const orderedRecords = [...usableRecords].sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
-    const coords = orderedRecords
-      .map(r => [r.longitude, r.latitude] as [number, number])
-      .filter(c => typeof c[0] === 'number' && typeof c[1] === 'number')
-    if (coords.length >= 3) return coords
+    // ★ 关键修复：验证 RPL 表格的 routeId 是否与选中路由一致
+    // 如果不匹配，跳过 RPL 数据，使用 route.points 回退路径
+    const rplTable = rplStore.tables.find(t => t.id === selectedRplId.value)
+    const rplRouteMatch = !rplTable?.routeId || rplTable.routeId === route?.id
+    if (rplRouteMatch) {
+      const usableRecords = rplRecords.filter((r: any) => !(r as any).isBranchStation)
+      const orderedRecords = [...usableRecords].sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+      const coords = orderedRecords
+        .map(r => [r.longitude, r.latitude] as [number, number])
+        .filter(c => typeof c[0] === 'number' && typeof c[1] === 'number')
+      if (coords.length >= 3) return coords
+    }
   }
 
   // 2) 使用 segments 做 BFS 寻径（包含所有 waypoint，描述真实路径弯曲）
@@ -1606,13 +1625,33 @@ const applyAndClose = async () => {
       return bestDist < 2 ? best : null
     }
     
-    const fixedFibers = fiberElements.map(fiber => {
+    // 按 KP 排序的登陆站，用于首尾光纤段的端点匹配
+    // ★ 包含 'underwater' 类型（岸站水深>0时会被分类为 underwater）
+    const landingDevices = allDevices
+      .filter(d => d.type === 'landing' || d.type === 'underwater')
+      .sort((a, b) => a.kp - b.kp)
+    const startLanding = landingDevices[0] || null
+    const endLanding = landingDevices[landingDevices.length - 1] || null
+    
+    const fixedFibers = fiberElements.map((fiber, idx) => {
       const fromDev = findDeviceByKp(fiber.kp)
       const toDev = fiber.endKp !== undefined ? findDeviceByKp(fiber.endKp) : null
+      let resolvedFromId = fromDev?.id || fiber.fromDeviceId || ''
+      let resolvedToId = toDev?.id || fiber.toDeviceId || ''
+      
+      // ★ 首段光纤找不到起点时，使用起点登陆站
+      if (!resolvedFromId && idx === 0 && startLanding) {
+        resolvedFromId = startLanding.id
+      }
+      // ★ 末段光纤找不到终点时，使用终点登陆站
+      if (!resolvedToId && idx === fiberElements.length - 1 && endLanding) {
+        resolvedToId = endLanding.id
+      }
+      
       return {
         ...fiber,
-        fromDeviceId: fromDev?.id || fiber.fromDeviceId || '',
-        toDeviceId: toDev?.id || fiber.toDeviceId || '',
+        fromDeviceId: resolvedFromId,
+        toDeviceId: resolvedToId,
       }
     })
     

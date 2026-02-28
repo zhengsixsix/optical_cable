@@ -58,6 +58,13 @@ export interface RedundancyConfig {
   absoluteCostLimit?: number    // 绝对成本上限（万元）
 }
 
+// 避障区域配置
+export interface AvoidanceZoneConfig {
+  id: string
+  name?: string
+  points: { lon: number; lat: number }[]  // 多边形顶点
+}
+
 // 路径规划配置接口
 export interface RoutePlanningConfig {
   mode: 'point-to-point' | 'multi-point'
@@ -74,6 +81,7 @@ export interface RoutePlanningConfig {
   buList?: BUConfig[]              // BU 配置列表
   armorMappings?: ArmorMapping[]   // 海缆铠装映射规则
   redundancyConfig?: RedundancyConfig  // 冗余策略配置
+  avoidanceZones?: AvoidanceZoneConfig[]  // 避障区域
 }
 
 // 传输系统配置接口

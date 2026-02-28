@@ -38,8 +38,11 @@ const props = withDefaults(defineProps<{
   editable?: boolean
   /** Step 6.2: 启用放大器沿路由拖拽 */
   draggableAmplifiers?: boolean
+  /** 放大器落位时使用的路由点（用于光纤线跟随路由几何渲染） */
+  placementRoutePoints?: any[]
 }>(), {
-  draggableAmplifiers: false
+  draggableAmplifiers: false,
+  placementRoutePoints: () => []
 })
 
 const routeStore = useRouteStore()
@@ -88,11 +91,13 @@ const isAmplifierFeature = (feature: Feature) => {
   return ptype === 'ola' || ptype === 'amplifier_e' || ptype === 'amplifier_w'
 }
 
-/** 获取路由线段坐标序列（主干线） */
+/** 获取路由线段坐标序列（主干线，排除分支登陆站） */
 const getRouteLineCoords = (): [number, number][] => {
   const selectedRoute = routeStore.selectedRoute
   if (selectedRoute?.points?.length) {
-    return selectedRoute.points.map(p => p.coordinates as [number, number])
+    return selectedRoute.points
+      .filter((p: any) => !(p as any).isBranchStation)
+      .map(p => p.coordinates as [number, number])
   }
   // 回退：使用 sortedPoints
   return sortedPoints.value
@@ -397,27 +402,70 @@ const getAllRoutePoints = computed(() => {
   return []
 })
 
-// 绘制路径线（使用 segments 拓扑数据绘制，与路由规划地图一致）
+// 绘制路径线
 const drawRouteLine = () => {
   if (!routeSource) return
   routeSource.clear()
   
   const selectedRoute = routeStore.selectedRoute
   
-  // 优先使用路由的 segments 数据绘制（基于实际拓扑连接）
+  // ★ 关键：确定绘制哪条路由的底线
+  //   如果有 placementRoutePoints（放大器落位用的路由），优先用它绘制底线
+  //   确保底线、放大器、光纤线都在同一条路由上
+  const placementPts = props.placementRoutePoints
+  const hasFibers = connectorStore.elements.some(e => e.type === 'fiber')
+  
+  if (placementPts && placementPts.length > 2 && hasFibers) {
+    // ★ 有光纤段时不再绘制灰色路由底线，只保留分支段和光纤段
+    // 只绘制分支段（分支器 → 分支登陆站）
+    if (selectedRoute && selectedRoute.segments && selectedRoute.segments.length > 0) {
+      const ptMap: Record<string, [number, number]> = {}
+      for (const p of selectedRoute.points) {
+        ptMap[p.id] = p.coordinates
+      }
+      placementPts.forEach((p: any) => {
+        if (p.id && p.coordinates) ptMap[p.id] = p.coordinates
+      })
+      selectedRoute.segments.forEach((segment, i) => {
+        const isBranchSeg = segment.id?.startsWith('branch-')
+        if (!isBranchSeg) return  // 跳过主干段，光纤线会覆盖
+        const startCoords = ptMap[segment.startPointId]
+        const endCoords = ptMap[segment.endPointId]
+        if (!startCoords || !endCoords) return
+        const segmentFeature = new Feature({
+          geometry: new LineString([startCoords, endCoords]),
+          featureType: 'segment',
+          segmentIndex: i,
+          fromId: segment.startPointId,
+          toId: segment.endPointId
+        })
+        segmentFeature.setStyle(new Style({
+          stroke: new Stroke({ color: '#8b5cf6', width: 2, lineDash: [6, 4] })
+        }))
+        routeSource!.addFeature(segmentFeature)
+      })
+    }
+
+    // 绘制光纤段覆盖线
+    drawFiberLines()
+    return
+  }
+  
+  // 使用 routeStore.selectedRoute 的 segments 数据绘制
   if (selectedRoute && selectedRoute.segments && selectedRoute.segments.length > 0) {
-    // 构建点 ID 到坐标的映射
     const pointMap: Record<string, [number, number]> = {}
     for (const p of selectedRoute.points) {
       pointMap[p.id] = p.coordinates
     }
     
-    // 根据 segments 绘制线段
     selectedRoute.segments.forEach((segment, i) => {
       const startCoords = pointMap[segment.startPointId]
       const endCoords = pointMap[segment.endPointId]
-      
       if (!startCoords || !endCoords) return
+      
+      const isBranchSeg = segment.id?.startsWith('branch-')
+      // ★ 有光纤段时不绘制主干路由底线，只保留分支段
+      if (hasFibers && !isBranchSeg) return
       
       const segmentFeature = new Feature({
         geometry: new LineString([startCoords, endCoords]),
@@ -426,28 +474,22 @@ const drawRouteLine = () => {
         fromId: segment.startPointId,
         toId: segment.endPointId
       })
-      
-      // 使用灰色底线（光纤段存在时作为背景）
-      const hasFibers = connectorStore.elements.some(e => e.type === 'fiber')
       segmentFeature.setStyle(new Style({
         stroke: new Stroke({
-          color: hasFibers ? '#d1d5db' : '#ef4444',
-          width: hasFibers ? 2 : 4
+          color: isBranchSeg ? '#8b5cf6' : '#ef4444',
+          width: isBranchSeg ? 2 : 4,
+          lineDash: isBranchSeg ? [6, 4] : undefined
         })
       }))
-      
       routeSource!.addFeature(segmentFeature)
     })
     
-    // 绘制光纤段覆盖线
     drawFiberLines()
     return
   }
   
-  // 回退：如果没有 segments，使用原始路由点绘制（不包括放大器）
+  // 回退：使用原始路由点绘制
   if (!selectedRoute || selectedRoute.points.length < 2) return
-  
-  // 使用原始路由点绘制线路，不使用 sortedPoints（避免放大器参与绘制）
   const routePoints = selectedRoute.points
   
   for (let i = 0; i < routePoints.length - 1; i++) {
@@ -456,23 +498,18 @@ const drawRouteLine = () => {
     const isSelected = selectedSegmentIndex.value === i
     
     const segmentFeature = new Feature({
-      geometry: new LineString([
-        startPoint.coordinates,
-        endPoint.coordinates
-      ]),
+      geometry: new LineString([startPoint.coordinates, endPoint.coordinates]),
       featureType: 'segment',
       segmentIndex: i,
       fromId: startPoint.id,
       toId: endPoint.id
     })
-    
     segmentFeature.setStyle(new Style({
       stroke: new Stroke({
         color: isSelected ? '#f59e0b' : '#ef4444',
         width: isSelected ? 5 : 4
       })
     }))
-    
     routeSource.addFeature(segmentFeature)
   }
   
@@ -487,168 +524,103 @@ const drawRouteLine = () => {
         featureType: 'branch',
         fromId: point.id
       })
-      
       branchFeature.setStyle(new Style({
-        stroke: new Stroke({
-          color: '#8b5cf6',  // 紫色表示分支
-          width: 3,
-          lineDash: [6, 4]
-        })
+        stroke: new Stroke({ color: '#8b5cf6', width: 3, lineDash: [6, 4] })
       }))
-      
       routeSource.addFeature(branchFeature)
     }
   })
 }
 
-// 绘制光纤段（放大器之间的连线，参考路由规划的海缆段显示）
+// 绘制光纤段（放大器之间的连线）
+// 使用最近点索引法沿路由几何绘制，不依赖 KP 值匹配
+
+/** 找到距离给定坐标最近的路由点索引（纯几何距离） */
+const findNearestRoutePointIndex = (routeCoords: [number, number][], lon: number, lat: number): number => {
+  let bestIdx = 0
+  let bestDist = Infinity
+  for (let i = 0; i < routeCoords.length; i++) {
+    const dx = routeCoords[i][0] - lon
+    const dy = routeCoords[i][1] - lat
+    const dist = dx * dx + dy * dy
+    if (dist < bestDist) { bestDist = dist; bestIdx = i }
+  }
+  return bestIdx
+}
+
 const drawFiberLines = () => {
   if (!routeSource) return
 
-  // 从 connectorStore 获取光纤段元素
   const fibers = connectorStore.elements.filter(e => e.type === 'fiber')
   if (fibers.length === 0) return
 
-  const selectedRoute = routeStore.selectedRoute
-  if (!selectedRoute || !selectedRoute.segments || selectedRoute.segments.length === 0) return
-
-  // 构建点 ID → 坐标映射 & 无向图（遵循实际拓扑）
-  // 注意：不能使用 new Map()，因为 ol/Map 导入覆盖了全局 Map 构造函数
-  const pointMap: Record<string, [number, number]> = {}
-  for (const p of selectedRoute.points) pointMap[p.id] = p.coordinates
-  const adj: Record<string, string[]> = {}
-  selectedRoute.segments.forEach(seg => {
-    if (!adj[seg.startPointId]) adj[seg.startPointId] = []
-    if (!adj[seg.endPointId]) adj[seg.endPointId] = []
-    adj[seg.startPointId].push(seg.endPointId)
-    adj[seg.endPointId].push(seg.startPointId)
-  })
-
-  // 计算点到线段的投影（返回最近线段与投影坐标）
-  const projectToNearestSegment = (coord: [number, number]) => {
-    let best: { seg: any; t: number; snapped: [number, number] } | null = null
-    for (const seg of selectedRoute.segments) {
-      const a = pointMap[seg.startPointId]
-      const b = pointMap[seg.endPointId]
-      if (!a || !b) continue
-      const ax = a[0], ay = a[1], bx = b[0], by = b[1]
-      const dx = bx - ax, dy = by - ay
-      const len2 = dx * dx + dy * dy
-      if (len2 === 0) continue
-      let t = ((coord[0] - ax) * dx + (coord[1] - ay) * dy) / len2
-      t = Math.max(0, Math.min(1, t))
-      const sx = ax + t * dx, sy = ay + t * dy
-      const dist2 = (coord[0] - sx) * (coord[0] - sx) + (coord[1] - sy) * (coord[1] - sy)
-      if (!best || dist2 < ((best.snapped[0]-coord[0])**2 + (best.snapped[1]-coord[1])**2)) {
-        best = { seg, t, snapped: [sx, sy] }
-      }
-    }
-    return best
-  }
-
-  // BFS 寻找两点间的拓扑路径（以路由点为节点）
-  const bfsPath = (startId: string, endId: string): string[] => {
-    if (startId === endId) return [startId]
-    const q: string[] = [startId]
-    const prev: Record<string, string | null> = { [startId]: null }
-    while (q.length) {
-      const cur = q.shift()!
-      for (const nb of (adj[cur] || [])) {
-        if (!(nb in prev)) {
-          prev[nb] = cur
-          if (nb === endId) {
-            const path: string[] = []
-            let p: string | null = nb
-            while (p) { path.push(p); p = prev[p] ?? null }
-            path.reverse()
-            return path
-          }
-          q.push(nb)
-        }
-      }
-    }
-    return []
-  }
-
-  // 光纤段交替配色
   const fiberColors = ['#f59e0b', '#fb923c']
 
-  // 辅助函数：按 KP 查找最近的非光纤设备
+  // ★ 获取路由点坐标序列：过滤掉分支登陆站，只保留主干线点
+  const routePts = (props.placementRoutePoints && props.placementRoutePoints.length > 2)
+    ? props.placementRoutePoints
+    : routeStore.selectedRoute?.points
+  const trunkPts = routePts && routePts.length >= 2
+    ? routePts.filter((p: any) => !(p as any).isBranchStation)
+    : []
+  const routeCoords: [number, number][] = trunkPts.length >= 2
+    ? trunkPts.map((p: any) => p.coordinates as [number, number])
+    : []
+
   const allDevices = connectorStore.elements.filter(e => e.type !== 'fiber')
   const findDeviceByKp = (targetKp: number) => {
     let best: typeof allDevices[0] | null = null
     let bestDist = Infinity
     for (const d of allDevices) {
       const dist = Math.abs(d.kp - targetKp)
-      if (dist < bestDist) {
-        bestDist = dist
-        best = d
-      }
+      if (dist < bestDist) { bestDist = dist; best = d }
     }
-    return bestDist < 2 ? best : null  // 2km 容差
+    return bestDist < 2 ? best : null
   }
 
+  // 登陆站/水下站点列表（用于首尾光纤段端点兆底）
+  const stationDevices = allDevices
+    .filter(d => d.type === 'landing' || d.type === 'underwater')
+    .sort((a, b) => a.kp - b.kp)
+
   fibers.forEach((fiber, idx) => {
-    // 获取起止设备坐标（优先 ID 匹配，回退 KP 匹配）
     let fromDev = connectorStore.elements.find(e => e.id === fiber.fromDeviceId) || null
     let toDev = connectorStore.elements.find(e => e.id === fiber.toDeviceId) || null
-    if (!fromDev && fiber.kp !== undefined) {
-      fromDev = findDeviceByKp(fiber.kp)
+    if (!fromDev && fiber.kp !== undefined) fromDev = findDeviceByKp(fiber.kp)
+    if (!toDev && fiber.endKp !== undefined) toDev = findDeviceByKp(fiber.endKp)
+    // ★ 首尾光纤段找不到端点时，用最近的登陆站/水下站点兆底
+    if (!fromDev && stationDevices.length > 0) {
+      fromDev = stationDevices[0]
     }
-    if (!toDev && fiber.endKp !== undefined) {
-      toDev = findDeviceByKp(fiber.endKp)
+    if (!toDev && stationDevices.length > 0) {
+      toDev = stationDevices[stationDevices.length - 1]
     }
     if (!fromDev || !toDev) return
 
-    const startProj = projectToNearestSegment([fromDev.longitude, fromDev.latitude])
-    const endProj = projectToNearestSegment([toDev.longitude, toDev.latitude])
-    if (!startProj || !endProj) return
-
-    // 选择起/终端靠近的端点作为 BFS 的起止节点
-    const startA = startProj.seg.startPointId, startB = startProj.seg.endPointId
-    const endA = endProj.seg.startPointId, endB = endProj.seg.endPointId
-
-    const choosePath = (s: string, t: string) => bfsPath(s, t)
-    const paths: Array<{ path: string[]; score: number; sId: string; tId: string }> = []
-    const cands = [
-      [startA, endA], [startA, endB], [startB, endA], [startB, endB]
-    ] as Array<[string, string]>
-    for (const [s, t] of cands) {
-      const p = choosePath(s, t)
-      if (p.length) {
-        // 粗略评分：路径节点数 + 与投影端点的距离
-        const sPt = pointMap[s]; const tPt = pointMap[t]
-        const sDist = Math.hypot(startProj.snapped[0]-sPt[0], startProj.snapped[1]-sPt[1])
-        const tDist = Math.hypot(endProj.snapped[0]-tPt[0], endProj.snapped[1]-tPt[1])
-        paths.push({ path: p, score: p.length + sDist + tDist, sId: s, tId: t })
-      }
-    }
-    if (paths.length === 0) return
-    paths.sort((a, b) => a.score - b.score)
-    const best = paths[0]
-
-    // 组装坐标：起点投影 → 路由点序列 → 终点投影
-    const coords: [number, number][] = []
-    coords.push(startProj.snapped)
-    for (const pid of best.path) coords.push(pointMap[pid])
-    coords.push(endProj.snapped)
-
-    // 去重相邻重复点
-    const clean: [number, number][] = []
-    for (const c of coords) {
-      if (clean.length === 0) clean.push(c)
-      else {
-        const last = clean[clean.length-1]
-        if (Math.hypot(c[0]-last[0], c[1]-last[1]) > 1e-8) clean.push(c)
-      }
-    }
-    if (clean.length < 2) return
+    const fromCoord: [number, number] = [fromDev.longitude, fromDev.latitude]
+    const toCoord: [number, number] = [toDev.longitude, toDev.latitude]
 
     const displayName = fiber.name || `F-${String(idx + 1).padStart(2, '0')}`
     const color = fiberColors[idx % 2]
 
+    // ★ 用最近点索引法沿路由绘制光纤线（不依赖 KP，纯几何匹配）
+    let lineCoords: [number, number][]
+    if (routeCoords.length >= 2) {
+      const fromIdx = findNearestRoutePointIndex(routeCoords, fromDev.longitude, fromDev.latitude)
+      const toIdx = findNearestRoutePointIndex(routeCoords, toDev.longitude, toDev.latitude)
+      const startIdx = Math.min(fromIdx, toIdx)
+      const endIdx = Math.max(fromIdx, toIdx)
+      lineCoords = [fromCoord]
+      for (let i = startIdx + 1; i < endIdx; i++) {
+        lineCoords.push(routeCoords[i])
+      }
+      lineCoords.push(toCoord)
+    } else {
+      lineCoords = [fromCoord, toCoord]
+    }
+
     const fiberFeature = new Feature({
-      geometry: new LineString(clean),
+      geometry: new LineString(lineCoords),
       featureType: 'fiber',
       fiberName: fiber.name,
       fiberIndex: idx,
@@ -657,11 +629,12 @@ const drawFiberLines = () => {
     fiberFeature.setStyle(new Style({ stroke: new Stroke({ color, width: 5 }) }))
     routeSource!.addFeature(fiberFeature)
 
-    // 文字标签：使用起止设备中点与方向
-    const midLon = (fromDev.longitude + toDev.longitude) / 2
-    const midLat = (fromDev.latitude + toDev.latitude) / 2
-    const dx = toDev.longitude - fromDev.longitude
-    const dy = toDev.latitude - fromDev.latitude
+    // 文字标签（放在光纤线中点）
+    const midIdx = Math.floor(lineCoords.length / 2)
+    const midLon = lineCoords[midIdx][0]
+    const midLat = lineCoords[midIdx][1]
+    const dx = toCoord[0] - fromCoord[0]
+    const dy = toCoord[1] - fromCoord[1]
     let rotation = -Math.atan2(dy, dx)
     if (rotation > Math.PI / 2) rotation -= Math.PI
     if (rotation < -Math.PI / 2) rotation += Math.PI
@@ -1092,6 +1065,16 @@ watch(
   () => {
     if (map) {
       scheduleRedraw(false, false)
+    }
+  }
+)
+
+// 监听 placementRoutePoints 变化 - 重绘光纤线跟随新路由几何
+watch(
+  () => props.placementRoutePoints?.length,
+  () => {
+    if (map && props.placementRoutePoints && props.placementRoutePoints.length > 0) {
+      scheduleRedraw(false, true)
     }
   }
 )
