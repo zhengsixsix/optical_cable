@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { useRouteStore } from '@/stores'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
@@ -14,6 +15,8 @@ import LineString from 'ol/geom/LineString'
 import { Style, Stroke, Icon, Text, Fill } from 'ol/style'
 import Overlay from 'ol/Overlay'
 import 'ol/ol.css'
+
+const routeStore = useRouteStore()
 
 interface MonitorDevice {
   id: string
@@ -107,14 +110,51 @@ const sortedDevices = computed(() => {
 // 选中的线段索引
 const selectedSegmentIndex = ref<number>(-1)
 
-// 绘制光缆线路（分段绘制，每段可独立选中）
+// 绘制光缆线路 —— 优先使用 routeStore 中的实际路由数据
 const drawCableLine = () => {
   if (!cableSource) return
   cableSource.clear()
   
+  const selectedRoute = routeStore.selectedRoute
+  
+  // ★ 优先使用后端路由数据绘制（与系统规划展示一致）
+  if (selectedRoute && selectedRoute.segments && selectedRoute.segments.length > 0) {
+    // 构建点坐标映射
+    const pointMap: Record<string, [number, number]> = {}
+    for (const p of selectedRoute.points) {
+      pointMap[p.id] = p.coordinates
+    }
+    
+    // 按 segment 绘制线路
+    selectedRoute.segments.forEach((segment, i) => {
+      const startCoords = pointMap[segment.startPointId]
+      const endCoords = pointMap[segment.endPointId]
+      if (!startCoords || !endCoords) return
+      
+      const isSelected = selectedSegmentIndex.value === i
+      const segmentFeature = new Feature({
+        geometry: new LineString([startCoords, endCoords]),
+        segmentIndex: i,
+        fromId: segment.startPointId,
+        toId: segment.endPointId
+      })
+      
+      segmentFeature.setStyle(new Style({
+        stroke: new Stroke({
+          color: isSelected ? '#f59e0b' : '#3b82f6',
+          width: isSelected ? 5 : 3,
+          lineDash: isSelected ? undefined : [8, 4]
+        })
+      }))
+      
+      cableSource!.addFeature(segmentFeature)
+    })
+    return
+  }
+  
+  // 回退：如果没有路由数据，按设备 KP 顺序连线
   if (sortedDevices.value.length < 2) return
   
-  // 分段绘制光纤线
   for (let i = 0; i < sortedDevices.value.length - 1; i++) {
     const startDevice = sortedDevices.value[i]
     const endDevice = sortedDevices.value[i + 1]
@@ -341,6 +381,11 @@ const initMap = () => {
 watch(() => props.devices, () => {
   drawCableLine()
   drawDevices()
+}, { deep: true })
+
+// 监听路由数据变化（后端路由加载后重新绘制线路）
+watch(() => routeStore.selectedRoute, () => {
+  drawCableLine()
 }, { deep: true })
 
 // 监听选中设备变化
