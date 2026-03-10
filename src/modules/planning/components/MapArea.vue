@@ -393,6 +393,27 @@ const handleSelectRoute = (routeId: string) => {
 
 // ========== 海缆段生成相关函数 ==========
 
+// 从路由段提取风险数据，供海缆段生成使用
+const buildRiskDataFromRoute = (route: { segments: Array<{ length: number; riskLevel: string; depth: number }> }): Array<{ kp: number; riskValue: number }> => {
+  const riskData: Array<{ kp: number; riskValue: number }> = []
+  const riskMap: Record<string, number> = { high: 3, medium: 2, low: 1 }
+  let cumulativeKp = 0
+
+  for (const seg of route.segments) {
+    const riskValue = riskMap[seg.riskLevel] || 1
+    // 在每段的起点和中点各插入一个风险采样点
+    riskData.push({ kp: cumulativeKp, riskValue })
+    riskData.push({ kp: cumulativeKp + (seg.length || 0) / 2, riskValue })
+    cumulativeKp += seg.length || 0
+  }
+  // 末尾点
+  if (cumulativeKp > 0) {
+    const lastRisk = riskMap[route.segments[route.segments.length - 1]?.riskLevel] || 1
+    riskData.push({ kp: cumulativeKp, riskValue: lastRisk })
+  }
+  return riskData
+}
+
 // 打开海缆段生成对话框
 const handleOpenCableSegmentGenerate = () => {
   // 检查是否已有选中的路由
@@ -420,8 +441,9 @@ const handleCableSegmentGenerate = (config: SegmentGenerateConfig) => {
     const selectedRoute = routeStore.paretoRoutes.find(r => r.id === currentSelectedRouteId)
     const routeLength = selectedRoute?.totalLength || 100
   
-  // 生成分段（暂无风险数据，使用空数组）
-  const segments = cableSegmentStore.generateSegments(routeLength, [])
+  // 从路由段提取风险数据
+  const riskData = selectedRoute?.segments ? buildRiskDataFromRoute(selectedRoute) : []
+  const segments = cableSegmentStore.generateSegments(routeLength, riskData)
   
   // 设置预览数据
   generatedSegments.value = segments
@@ -441,14 +463,42 @@ const handleCableSegmentConfirm = (segments: CableSegment[]) => {
   // 关闭弹窗
   showCableSegmentPreviewDialog.value = false
   
+  // ★ 同步海缆段缆型到 RPL 记录
+  syncCableSegmentsToRPL(segments)
+  
   appStore.showNotification({ 
     type: 'success', 
     message: `海缆段已确认入库，共 ${segments.length} 段，总长 ${segmentSummary.value?.totalLength.toFixed(2)} km` 
   })
-  appStore.addLog('INFO', `海缆段入库完成：${segments.length} 段`)
+  appStore.addLog('INFO', `海缆段入库完成：${segments.length} 段，已同步缆型到 RPL`)
 
   // 重绘路由以更新分段节点标记
   drawParetoRoutes()
+}
+
+// 将海缆段的缆型同步到 RPL 记录（按 KP 匹配）
+const syncCableSegmentsToRPL = (cableSegments: CableSegment[]) => {
+  const table = rplStore.currentTable
+  if (!table || !table.records || cableSegments.length === 0) return
+
+  let updatedCount = 0
+  for (const record of table.records) {
+    const kp = record.kp ?? record.cumulativeLength ?? 0
+    // 找到该 KP 所在的海缆段
+    const matchSeg = cableSegments.find(s => kp >= s.startKp && kp < s.endKp)
+      || cableSegments[cableSegments.length - 1] // 末尾点 fallback 到最后一段
+    if (matchSeg) {
+      // 从海缆段的 cableTypeName 提取短名（如 "DA (双铠装)" → "DA"）
+      const shortName = matchSeg.cableTypeName?.match(/^[A-Z]+/)?.[0] || matchSeg.cableTypeName || 'LW'
+      if (record.cableType !== shortName) {
+        rplStore.updateRecord(record.id, { cableType: shortName as any }, false)
+        updatedCount++
+      }
+    }
+  }
+  if (updatedCount > 0) {
+    appStore.addLog('INFO', `RPL 缆型已同步：${updatedCount} 条记录已更新`)
+  }
 }
 
 // 在地图中查看海缆段
@@ -486,8 +536,9 @@ const autoGenerateCableSegments = (): number => {
       targetLength
     })
 
-    // 生成分段（无风险数据，默认低风险）
-    const segments = cableSegmentStore.generateSegments(routeLength, [])
+    // 从路由段提取风险数据
+    const riskData = selectedRoute?.segments ? buildRiskDataFromRoute(selectedRoute) : []
+    const segments = cableSegmentStore.generateSegments(routeLength, riskData)
 
     // 更新预览数据
     generatedSegments.value = segments
@@ -660,7 +711,7 @@ const getSegmentInfo = (routeId: string, segmentIndex: number) => {
 const initMap = () => {
   if (!mapContainer.value) return
 
-  const tifFiles = ['/output2_cog.tif']
+  const tifFiles = ['/output2.tif']
   const rgbStyle = {color: ['array', ['band', 1], ['band', 2], ['band', 3], 1]}
 
   let loadedCount = 0
@@ -2444,6 +2495,26 @@ const handleRunPlanning = async () => {
     }
   }
 
+  // auto 模式：从地图视口自动计算规划范围
+  if ((!config.rangeMode || config.rangeMode === 'auto') && map) {
+    const extent = map.getView().calculateExtent(map.getSize())
+    // extent = [minX, minY, maxX, maxY] 在 EPSG:4326 下即 [minLon, minLat, maxLon, maxLat]
+    const projection = map.getView().getProjection().getCode()
+    let minLon = extent[0], minLat = extent[1], maxLon = extent[2], maxLat = extent[3]
+    if (projection === 'EPSG:3857') {
+      const sw = toLonLat([extent[0], extent[1]])
+      const ne = toLonLat([extent[2], extent[3]])
+      minLon = sw[0]; minLat = sw[1]; maxLon = ne[0]; maxLat = ne[1]
+    }
+    settingsStore.updateRoutePlanningConfig({
+      planningRange: {
+        northwest: { lon: minLon, lat: maxLat },
+        southeast: { lon: maxLon, lat: minLat }
+      }
+    })
+    appStore.addLog('INFO', `自动规划范围: [${minLon.toFixed(2)}, ${minLat.toFixed(2)}] ~ [${maxLon.toFixed(2)}, ${maxLat.toFixed(2)}]`)
+  }
+
   // 构建规划请求参数 - 包含所有配置参数
   const armorMappings = config.armorMappings || []
   const highRiskMapping = armorMappings.find(m => m.riskLevel === 'high')
@@ -2478,7 +2549,8 @@ const handleRunPlanning = async () => {
       enabled: config.redundancyConfig.enabled,
       costLimitType: config.redundancyConfig.costLimitType,
       relativeCostPercent: config.redundancyConfig.relativeCostPercent,
-      absoluteCostLimit: config.redundancyConfig.absoluteCostLimit
+      absoluteCostLimit: config.redundancyConfig.absoluteCostLimit,
+      criticalNodes: config.redundancyConfig.criticalNodes?.length ? config.redundancyConfig.criticalNodes : undefined
     } : undefined,
     // 避障区域
     avoidanceZones: config.avoidanceZones || undefined,
@@ -2511,18 +2583,18 @@ const handleRunPlanning = async () => {
     appStore.showNotification({ type: 'info', message: '正在计算路由规划...' })
     
     // 统一走后端 A* 规划（含多点+BU 分支网络）
-    try {
-      const result = await fetchRoutePlanning(request)
-      // 将后端返回的路由数据设置到 store
-      if (result.routes && result.routes.length > 0) {
-        routeStore.setParetoRoutesFromApi(result.routes, config)
-      } else {
-        // 如果后端没返回路由，使用前端生成
-        routeStore.generateParetoRoutesFromSettings()
-      }
-    } catch {
-      // 后端API失败时，回退到前端生成路由（确保多点规划仍有路由和海缆段）
-      routeStore.generateParetoRoutesFromSettings()
+    const result = await fetchRoutePlanning(request)
+    // 将后端返回的路由数据设置到 store
+    if (result.routes && result.routes.length > 0) {
+      routeStore.setParetoRoutesFromApi(result.routes, config)
+    } else {
+      isPlanningLoading.value = false
+      appStore.showNotification({
+        type: 'error',
+        message: '后端规划服务未返回有效路由，请检查配置参数或后端日志'
+      })
+      appStore.addLog('ERROR', '后端规划服务返回空路由')
+      return
     }
 
     // 在地图上绘制路径
@@ -2623,11 +2695,12 @@ onUnmounted(() => {
             生成海缆段
           </Button>
         </Tooltip>
-        <Tooltip :content="isPlanning ? '停止规划' : '运行规划'">
-          <Button :variant="isPlanning ? 'destructive' : 'default'" size="sm" @click="togglePlanning">
-            <Pause v-if="isPlanning" class="w-4 h-4 mr-1"/>
+        <Tooltip :content="isPlanningLoading ? '正在规划中...' : isPlanning ? '停止规划' : '运行规划'">
+          <Button :variant="isPlanning ? 'destructive' : 'default'" size="sm" :disabled="isPlanningLoading" @click="togglePlanning">
+            <Loader2 v-if="isPlanningLoading" class="w-4 h-4 mr-1 animate-spin"/>
+            <Pause v-else-if="isPlanning" class="w-4 h-4 mr-1"/>
             <Play v-else class="w-4 h-4 mr-1"/>
-            {{ isPlanning ? '停止' : '运行规划' }}
+            {{ isPlanningLoading ? '规划中...' : isPlanning ? '停止' : '运行规划' }}
           </Button>
         </Tooltip>
         <Tooltip content="导出RPL表格">

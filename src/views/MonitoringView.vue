@@ -10,12 +10,31 @@ import FaultLocationPanel from '@/modules/monitoring/panels/FaultLocationPanel.v
 import MaintenancePanel from '@/modules/monitoring/panels/MaintenancePanel.vue'
 import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin, ChevronRight, ChevronDown, Filter, TrendingDown, TrendingUp, Minus, Link2, Download, Trash2, Search, Crosshair, ClipboardList, TrendingUp as TrendIcon } from 'lucide-vue-next'
 import type { LogCategory } from '@/types'
-import { useConnectorStore, useMonitorStore, useRouteStore, useAppStore } from '@/stores'
+import { useConnectorStore, useMonitorStore, useRouteStore, useAppStore, useSettingsStore, useRPLStore } from '@/stores'
 
 const connectorStore = useConnectorStore()
 const monitorStore = useMonitorStore()
 const routeStore = useRouteStore()
 const appStore = useAppStore()
+const settingsStore = useSettingsStore()
+const rplStore = useRPLStore()
+
+// ★ 从仿真缓存派生链路性能指标（替代硬编码）
+const linkMetrics = computed(() => {
+  const cache = settingsStore.linkCalcSummaryCache
+  if (!cache?.metrics) return null
+  return cache.metrics
+})
+const linkMargin = computed(() => settingsStore.linkCalcSummaryCache?.margin || null)
+const linkTotalLength = computed(() => {
+  // 优先 RPL 元数据，其次 routeStore
+  return rplStore.currentTable?.metadata?.totalLength || routeStore.selectedRoute?.totalLength || 0
+})
+const linkFiberType = computed(() => {
+  // 从 settingsStore 的光纤类型中取第一个
+  const ft = settingsStore.fiberTypes?.[0]
+  return ft?.name || 'G.654.E'
+})
 
 // 筛选条件
 const filterByType = ref(false)
@@ -47,9 +66,25 @@ const devices = computed(() =>
     ...d,
     neType: d.type,
     location: `KP ${d.kp}`,
-    health: d.status === 'normal' ? 95 + Math.random() * 5 : d.status === 'warning' ? 60 + Math.random() * 20 : 20 + Math.random() * 30,
+    health: deriveDeviceHealth(d.status),
   }))
 )
+
+// 根据设备状态和仿真结果派生健康度（替代 Math.random）
+function deriveDeviceHealth(status: string): number {
+  const margin = linkMargin.value
+  // 基础分：仿真裕量越大，健康度越高
+  let base = 85
+  if (margin) {
+    // avgMargin 通常 0~10 dB，映射到 70~100
+    base = Math.min(100, 70 + margin.avgMargin * 3)
+    if (!margin.meetsRequirement) base = Math.min(base, 60)
+  }
+  // 根据设备状态进一步调整
+  if (status === 'normal') return Math.min(100, base + 5)
+  if (status === 'warning') return Math.max(40, base - 20)
+  return Math.max(10, base - 50) // error/fault
+}
 
 // 筛选后的设备列表
 const filteredDevices = computed(() => {
@@ -863,48 +898,48 @@ const getSubDevices = (device: any) => {
             </div>
             <div class="space-y-1">
               <div class="flex items-center justify-between py-1.5 border-b border-gray-100 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded"
-                   @click="openChartModal('OSNR', 'dB', 18.5)">
+                   @click="openChartModal('OSNR', 'dB', linkMetrics?.osnr?.avg ?? 18.5)">
                 <span class="text-xs text-gray-500">OSNR:</span>
                 <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-green-600">18.5 dB</span>
-                  <span class="text-xs text-green-500">✓</span>
+                  <span class="text-xs font-medium text-green-600">{{ (linkMetrics?.osnr?.avg ?? 18.5).toFixed(1) }} dB</span>
+                  <span class="text-xs" :class="linkMargin?.meetsRequirement !== false ? 'text-green-500' : 'text-red-500'">{{ linkMargin?.meetsRequirement !== false ? '✓' : '✗' }}</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-gray-100 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded"
-                   @click="openChartModal('GSNR', 'dB', 15.2)">
+                   @click="openChartModal('GSNR', 'dB', linkMetrics?.gsnr?.avg ?? 15.2)">
                 <span class="text-xs text-gray-500">GSNR:</span>
                 <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-green-600">15.2 dB</span>
-                  <span class="text-xs text-green-500">✓</span>
+                  <span class="text-xs font-medium text-green-600">{{ (linkMetrics?.gsnr?.avg ?? 15.2).toFixed(1) }} dB</span>
+                  <span class="text-xs" :class="linkMargin?.meetsRequirement !== false ? 'text-green-500' : 'text-red-500'">{{ linkMargin?.meetsRequirement !== false ? '✓' : '✗' }}</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-gray-100 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded"
-                   @click="openChartModal('BER', '', 1.2e-12)">
+                   @click="openChartModal('BER', '', linkMetrics ? Math.pow(10, -(linkMetrics.qFactor?.avg ?? 7) * 1.5) : 1.2e-12)">
                 <span class="text-xs text-gray-500">BER:</span>
                 <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-green-600">1.2e-12</span>
+                  <span class="text-xs font-medium text-green-600">{{ linkMetrics ? Math.pow(10, -(linkMetrics.qFactor?.avg ?? 7) * 1.5).toExponential(1) : '1.2e-12' }}</span>
                   <span class="text-xs text-green-500">✓</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-gray-100 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded"
-                   @click="openChartModal('Q因子', 'dB', 8.2)">
+                   @click="openChartModal('Q因子', 'dB', linkMetrics?.qFactor?.avg ?? 8.2)">
                 <span class="text-xs text-gray-500">Q因子:</span>
                 <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-green-600">8.2 dB</span>
+                  <span class="text-xs font-medium text-green-600">{{ (linkMetrics?.qFactor?.avg ?? 8.2).toFixed(1) }} dB</span>
                   <span class="text-xs text-green-500">✓</span>
                   <span class="text-xs text-blue-500 hover:underline">详情</span>
                 </div>
               </div>
               <div class="flex items-center justify-between py-1.5 border-b border-gray-100">
                 <span class="text-xs text-gray-500">总长度:</span>
-                <span class="text-xs font-medium text-gray-700">275 km</span>
+                <span class="text-xs font-medium text-gray-700">{{ linkTotalLength > 0 ? linkTotalLength.toFixed(1) + ' km' : '--' }}</span>
               </div>
               <div class="flex items-center justify-between py-1.5">
                 <span class="text-xs text-gray-500">光纤类型:</span>
-                <span class="text-xs font-medium text-gray-700">G.654.E</span>
+                <span class="text-xs font-medium text-gray-700">{{ linkFiberType }}</span>
               </div>
             </div>
           </div>

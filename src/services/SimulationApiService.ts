@@ -37,6 +37,12 @@ export interface SimulationRequest {
     nonlinearIndex: number
     nonlinearCoeff: number
     fiberName?: string
+    /** SSFM 模型专用参数 */
+    ssfmParams?: {
+      stepSize: number
+      samplePoints: number
+      maxIterations: number
+    }
   }
   amplifierParams: {
     gain: number

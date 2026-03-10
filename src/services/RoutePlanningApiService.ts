@@ -37,6 +37,7 @@ export interface RedundancyPlanningConfig {
   costLimitType: 'relative' | 'absolute'
   relativeCostPercent?: number  // 相对成本百分比
   absoluteCostLimit?: number    // 绝对成本上限（万元）
+  criticalNodes?: string[]      // 关键节点ID列表（仅为这些节点生成备份路径）
 }
 
 // 避障区域配置

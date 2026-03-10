@@ -207,6 +207,13 @@ const linkInfo = computed(() => {
 const selectedFiberModel = ref<'GN' | 'EGN' | 'SSFM'>('GN')
 const selectedAmplifierModel = ref<'EDFA_Simple' | 'EDFA_Full' | 'EDFA_Raman'>('EDFA_Simple')
 
+// SSFM 专用参数
+const ssfmParams = reactive({
+  stepSize: 100,       // 步长 (m)
+  samplePoints: 4096,  // 采样点数
+  maxIterations: 1000, // 最大迭代次数
+})
+
 const fiberModelOptions = [
   { value: 'GN', label: 'GN-Model (高斯噪声)', desc: 'GN-Model 是一种高效的非线性传输模型，适用于长距离 WDM 系统的性能预测。' },
   { value: 'EGN', label: 'EGN-Model (增强高斯噪声)', desc: 'EGN-Model 在 GN 基础上考虑更多非线性效应，精度更高。' },
@@ -911,6 +918,13 @@ const startCalculation = async () => {
         nonlinearIndex: fiberParams.nonlinearIndex,
         nonlinearCoeff: fiberParams.nonlinearCoeff,
         fiberName: fiberType?.name,
+        ...(selectedFiberModel.value === 'SSFM' ? {
+          ssfmParams: {
+            stepSize: ssfmParams.stepSize,
+            samplePoints: ssfmParams.samplePoints,
+            maxIterations: ssfmParams.maxIterations,
+          }
+        } : {}),
       },
       amplifierParams: {
         gain: amplifierParams.gain,
@@ -2079,6 +2093,34 @@ watch(() => props.visible, (visible) => {
                   </div>
                 </div>
                 
+                <!-- SSFM 专属参数面板 -->
+                <div v-if="selectedFiberModel === 'SSFM'" class="bg-orange-50 rounded-lg p-4 border border-orange-200">
+                  <div class="text-sm font-medium text-orange-800 mb-3">⚡ SSFM 仿真参数</div>
+                  <div class="grid grid-cols-3 gap-4">
+                    <div>
+                      <label class="block text-xs text-gray-600 mb-1">步长 (m)</label>
+                      <Input v-model.number="ssfmParams.stepSize" type="number" class="w-full" />
+                      <p class="text-xs text-gray-400 mt-1">越小越精确，计算越慢</p>
+                    </div>
+                    <div>
+                      <label class="block text-xs text-gray-600 mb-1">采样点数</label>
+                      <select v-model.number="ssfmParams.samplePoints" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg">
+                        <option :value="2048">2048</option>
+                        <option :value="4096">4096 (推荐)</option>
+                        <option :value="8192">8192 (高精度)</option>
+                        <option :value="16384">16384</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-xs text-gray-600 mb-1">最大迭代次数</label>
+                      <Input v-model.number="ssfmParams.maxIterations" type="number" class="w-full" />
+                    </div>
+                  </div>
+                  <div class="mt-3 p-2 bg-orange-100 rounded text-xs text-orange-700">
+                    ⚠️ SSFM 计算量较大，长链路可能需要 10-60 秒。采样点数和步长影响精度与速度的平衡。
+                  </div>
+                </div>
+
                 <div class="p-3 bg-amber-50 rounded-lg text-sm text-amber-700 flex items-start gap-2">
                   <AlertCircle class="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <span>💡 模型决定参数需求；器件仅用于匹配并回填已有参数</span>

@@ -56,6 +56,7 @@ export interface RedundancyConfig {
   costLimitType: 'relative' | 'absolute'
   relativeCostPercent?: number  // 相对成本百分比（如30%）
   absoluteCostLimit?: number    // 绝对成本上限（万元）
+  criticalNodes?: string[]      // 关键节点ID列表（仅为这些节点的链路生成备份路径）
 }
 
 // 避障区域配置
@@ -70,6 +71,7 @@ export interface RoutePlanningConfig {
   mode: 'point-to-point' | 'multi-point'
   startPoint: { name?: string; lon: number; lat: number; depth?: number }  // depth > 0 为水下站点
   endPoint: { name?: string; lon: number; lat: number; depth?: number }    // depth > 0 为水下站点
+  rangeMode: 'auto' | 'manual'  // 规划范围模式：auto=自动读取地图视口，manual=手动配置
   planningRange: {
     northwest: { lon: number; lat: number }
     southeast: { lon: number; lat: number }
@@ -163,6 +165,7 @@ const defaultRoutePlanningConfig: RoutePlanningConfig = {
   mode: 'point-to-point',
   startPoint: { lon: 0, lat: 0 },
   endPoint: { lon: 0, lat: 0 },
+  rangeMode: 'auto',
   planningRange: {
     northwest: { lon: 100, lat: 50 },
     southeast: { lon: 150, lat: 10 },

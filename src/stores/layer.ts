@@ -1,6 +1,6 @@
-﻿import { defineStore } from 'pinia'
+import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { LayerConfig } from '@/types'
+import type { LayerConfig, LayerData } from '@/types'
 import { createLayerRepository } from '@/repositories'
 
 export const useLayerStore = defineStore('layer', () => {
@@ -53,11 +53,41 @@ export const useLayerStore = defineStore('layer', () => {
     return layers.value.find(l => l.id === id)
   }
 
+  // 图层数据存储（用户上传的 GeoJSON / 栅格数据）
+  const layerDataMap = ref<Map<string, LayerData>>(new Map())
+
   function setLayerVisible(id: string, visible: boolean) {
     const layer = layers.value.find(l => l.id === id)
     if (layer) {
       layer.visible = visible
     }
+  }
+
+  /**
+   * 存储图层数据（用户上传的 GeoJSON / TIF 文件内容）
+   */
+  function setLayerData(id: string, data: LayerData) {
+    layerDataMap.value.set(id, data)
+    // 标记为已加载
+    const layer = layers.value.find(l => l.id === id)
+    if (layer) {
+      layer.loaded = true
+      layer.loading = false
+    }
+  }
+
+  /**
+   * 获取图层数据
+   */
+  function getLayerData(id: string): LayerData | undefined {
+    return layerDataMap.value.get(id)
+  }
+
+  /**
+   * 检查图层是否有实际数据（用户上传过文件）
+   */
+  function hasLayerData(id: string): boolean {
+    return layerDataMap.value.has(id)
   }
 
   function showAllLayers() {
@@ -100,6 +130,7 @@ export const useLayerStore = defineStore('layer', () => {
 
   return {
     layers,
+    layerDataMap,
     visibleLayers,
     loadedLayers,
     toggleLayer,
@@ -108,6 +139,9 @@ export const useLayerStore = defineStore('layer', () => {
     setLayerVisible,
     getLayerVisible,
     getLayerById,
+    setLayerData,
+    getLayerData,
+    hasLayerData,
     showAllLayers,
     hideAllLayers,
     loadLayers,

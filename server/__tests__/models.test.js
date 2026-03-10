@@ -9,6 +9,7 @@ import { computeEgnSpanNli } from '../services/egnModel.js'
 import { calculateRamanGain, calculateRamanNF } from '../services/ramanModel.js'
 import { calculateEolDegradation, DEFAULT_AGING_PARAMS } from '../services/eolModel.js'
 import { PHYS, dbmToW, wToDbm, dbToLinear, linearToDb } from '../utils/physics.js'
+import { computeAmplifierNoise } from '../utils/amplifier.js'
 
 // ── 工具函数测试 ──
 describe('physics utils', () => {
@@ -260,6 +261,151 @@ describe('EOL aging model', () => {
         })
         expect(result.designLifeYears).toBe(30)
         expect(result.breakdown.fiberAging.value_dB).toBeCloseTo(0.05 * 1000, 1)
+    })
+})
+
+// ── EDFA 放大器模型 ──
+describe('EDFA amplifier models', () => {
+    // 公共测试参数
+    const channelFrequencies = []
+    const channelCount = 96
+    const centerFreq = 193.1
+    const spacing = 0.05 // THz
+    for (let i = 0; i < channelCount; i++) {
+        channelFrequencies.push(parseFloat((centerFreq - (channelCount - 1) * spacing / 2 + i * spacing).toFixed(4)))
+    }
+    const spanLoss_dB = 12 // 典型 ~70km × 0.165 dB/km
+
+    it('EDFA_Simple returns uniform NF across all channels', () => {
+        const result = computeAmplifierNoise({
+            amplifierModel: 'EDFA_Simple',
+            amplifierParams: { noiseFigure: 5.0 },
+            channelFrequencies,
+            spanLoss_dB,
+        })
+        expect(result.asePerChannel).toHaveLength(channelCount)
+        expect(result.nfPerChannel).toHaveLength(channelCount)
+        expect(result.gainPerChannel).toHaveLength(channelCount)
+        // Simple: 所有信道 NF 相同
+        const uniqueNf = new Set(result.nfPerChannel)
+        expect(uniqueNf.size).toBe(1)
+        expect(result.nfPerChannel[0]).toBe(5.0)
+        // Simple: 增益 = 跨段损耗
+        expect(result.gainPerChannel[0]).toBe(spanLoss_dB)
+    })
+
+    it('EDFA_Full produces wavelength-dependent NF', () => {
+        const result = computeAmplifierNoise({
+            amplifierModel: 'EDFA_Full',
+            amplifierParams: { noiseFigure: 5.0 },
+            channelFrequencies,
+            spanLoss_dB,
+        })
+        expect(result.asePerChannel).toHaveLength(channelCount)
+        // Full: NF 应当信道间有变化
+        const uniqueNf = new Set(result.nfPerChannel)
+        expect(uniqueNf.size).toBeGreaterThan(1)
+    })
+
+    it('EDFA_Full edge channels have higher NF than center (parabolic tilt)', () => {
+        const result = computeAmplifierNoise({
+            amplifierModel: 'EDFA_Full',
+            amplifierParams: { noiseFigure: 5.0 },
+            channelFrequencies,
+            spanLoss_dB,
+        })
+        const midCh = Math.floor(channelCount / 2)
+        const nfCenter = result.nfPerChannel[midCh]
+        const nfEdge0 = result.nfPerChannel[0]
+        const nfEdgeLast = result.nfPerChannel[channelCount - 1]
+        // 边缘 NF 应高于中心 (抛物形倾斜)
+        expect(nfEdge0).toBeGreaterThan(nfCenter)
+        expect(nfEdgeLast).toBeGreaterThan(nfCenter)
+    })
+
+    it('EDFA_Full gain has tilt across channels', () => {
+        const result = computeAmplifierNoise({
+            amplifierModel: 'EDFA_Full',
+            amplifierParams: { noiseFigure: 5.0 },
+            channelFrequencies,
+            spanLoss_dB,
+        })
+        // 增益在信道间应有变化 (倾斜 + 波纹)
+        const uniqueGain = new Set(result.gainPerChannel)
+        expect(uniqueGain.size).toBeGreaterThan(1)
+        // 增益应围绕 spanLoss_dB 波动
+        const avgGain = result.gainPerChannel.reduce((a, b) => a + b, 0) / channelCount
+        expect(avgGain).toBeCloseTo(spanLoss_dB, 0)
+    })
+
+    it('EDFA_Full ASE differs from EDFA_Simple', () => {
+        const params = {
+            amplifierParams: { noiseFigure: 5.0 },
+            channelFrequencies,
+            spanLoss_dB,
+        }
+        const simple = computeAmplifierNoise({ ...params, amplifierModel: 'EDFA_Simple' })
+        const full = computeAmplifierNoise({ ...params, amplifierModel: 'EDFA_Full' })
+
+        // 中心信道 ASE 应近似（Full 在中心处 NF ≈ 基线值，差异 <15%）
+        const midCh = Math.floor(channelCount / 2)
+        const ratio = full.asePerChannel[midCh] / simple.asePerChannel[midCh]
+        expect(ratio).toBeGreaterThan(0.85)
+        expect(ratio).toBeLessThan(1.15)
+
+        // 边缘信道 ASE 应更高（Full NF 在边缘升高）
+        expect(full.asePerChannel[0]).toBeGreaterThan(simple.asePerChannel[0])
+        expect(full.asePerChannel[channelCount - 1]).toBeGreaterThan(simple.asePerChannel[channelCount - 1])
+    })
+
+    it('EDFA_Full respects custom edfaFullParams', () => {
+        const result = computeAmplifierNoise({
+            amplifierModel: 'EDFA_Full',
+            amplifierParams: {
+                noiseFigure: 5.0,
+                edfaFullParams: {
+                    nfTilt_dB: 2.0,        // 更大的 NF 倾斜
+                    gainTilt_dB: 3.0,       // 更大的增益倾斜
+                    gainFlattening: false,   // 关闭 GFF
+                    gainRipple_dB: 1.0,     // 更大的增益波纹
+                },
+            },
+            channelFrequencies,
+            spanLoss_dB,
+        })
+        // 更大倾斜 → 边缘 NF 差异更大
+        const midCh = Math.floor(channelCount / 2)
+        const nfDiff = result.nfPerChannel[0] - result.nfPerChannel[midCh]
+        expect(nfDiff).toBeGreaterThan(1.0) // nfTilt=2.0 → 边缘偏移 > 1 dB
+    })
+
+    it('EDFA_Full saturation reduces gain when output exceeds max', () => {
+        // 使用很低的 maxOutputPower 来触发饱和
+        const result = computeAmplifierNoise({
+            amplifierModel: 'EDFA_Full',
+            amplifierParams: {
+                noiseFigure: 5.0,
+                maxOutputPower: 5, // 5 dBm, 远低于 96 信道的总输出
+            },
+            channelFrequencies,
+            spanLoss_dB,
+        })
+        // 饱和后增益应低于 spanLoss_dB
+        const avgGain = result.gainPerChannel.reduce((a, b) => a + b, 0) / channelCount
+        expect(avgGain).toBeLessThan(spanLoss_dB)
+    })
+
+    it('EDFA_Full all ASE values are positive and finite', () => {
+        const result = computeAmplifierNoise({
+            amplifierModel: 'EDFA_Full',
+            amplifierParams: { noiseFigure: 5.0 },
+            channelFrequencies,
+            spanLoss_dB,
+        })
+        for (let i = 0; i < channelCount; i++) {
+            expect(result.asePerChannel[i]).toBeGreaterThan(0)
+            expect(isFinite(result.asePerChannel[i])).toBe(true)
+        }
     })
 })
 

@@ -239,672 +239,6 @@ export const useRouteStore = defineStore('route', () => {
   }
 
   /**
-   * 根据工程设置生成路径
-   * 支持单点（点对点）和多点规划模式
-   */
-  function generateParetoRoutesFromSettings(): Route[] {
-    const settingsStore = useSettingsStore()
-    const config = settingsStore.routePlanningConfig
-    
-    // 多点规划模式
-    if (config.mode === 'multi-point' && config.waypoints && config.waypoints.length >= 2) {
-      // 传递登陆站列表和 BU 列表
-      const mainRoutes = generateMultiPointRoutes(config.waypoints, config.buList || [])
-      
-      // 如果启用冗余策略，生成备份路径
-      if (config.redundancyConfig?.enabled && mainRoutes.length > 0) {
-        const redundantRoutes = generateRedundantRoutes(mainRoutes[0], config.redundancyConfig)
-        return [...mainRoutes, ...redundantRoutes]
-      }
-      return mainRoutes
-    }
-    
-    // 点对点模式
-    const mainRoutes = generateParetoRoutesWithCoords({
-      startPoint: { lon: config.startPoint.lon, lat: config.startPoint.lat, name: config.startPoint.name || '起点', depth: config.startPoint.depth },
-      endPoint: { lon: config.endPoint.lon, lat: config.endPoint.lat, name: config.endPoint.name || '终点', depth: config.endPoint.depth }
-    })
-    
-    // 如果启用冗余策略，为每条主路径生成备份
-    if (config.redundancyConfig?.enabled) {
-      const allRoutes: Route[] = []
-      for (const mainRoute of mainRoutes) {
-        allRoutes.push(mainRoute)
-        const redundantRoutes = generateRedundantRoutes(mainRoute, config.redundancyConfig)
-        allRoutes.push(...redundantRoutes)
-      }
-      routes.value = allRoutes
-      paretoRoutes.value = allRoutes
-      return allRoutes
-    }
-    
-    return mainRoutes
-  }
-
-  /**
-   * 生成冗余备份路径
-   */
-  function generateRedundantRoutes(
-    mainRoute: Route, 
-    redundancyConfig: { enabled: boolean; costLimitType: string; relativeCostPercent?: number; absoluteCostLimit?: number }
-  ): Route[] {
-    if (!redundancyConfig.enabled) return []
-    
-    const now = new Date()
-    const redundantRoutes: Route[] = []
-    
-    // 计算成本上限
-    let costLimit = mainRoute.totalCost * 2  // 默认上限
-    if (redundancyConfig.costLimitType === 'relative' && redundancyConfig.relativeCostPercent) {
-      costLimit = mainRoute.totalCost * (1 + redundancyConfig.relativeCostPercent / 100)
-    } else if (redundancyConfig.costLimitType === 'absolute' && redundancyConfig.absoluteCostLimit) {
-      costLimit = redundancyConfig.absoluteCostLimit * 10000  // 万元转元
-    }
-    
-    // 生成一条备份路径（偏移原路径）
-    if (mainRoute.points.length >= 2) {
-      const startCoord = mainRoute.points[0].coordinates
-      const endCoord = mainRoute.points[mainRoute.points.length - 1].coordinates
-      
-      // 计算垂直于起终点连线的偏移
-      const dLon = endCoord[0] - startCoord[0]
-      const dLat = endCoord[1] - startCoord[1]
-      const dist = Math.sqrt(dLon * dLon + dLat * dLat)
-      const offsetScale = dist * 0.15  // 偏移15%
-      const perpLon = -dLat / dist
-      const perpLat = dLon / dist
-      
-      const midLon = (startCoord[0] + endCoord[0]) / 2
-      const midLat = (startCoord[1] + endCoord[1]) / 2
-      
-      // 备份路径的中间点
-      const redundantMidCoord: [number, number] = [
-        midLon + perpLon * offsetScale,
-        midLat + perpLat * offsetScale
-      ]
-      
-      const points: RoutePoint[] = [
-        { ...mainRoute.points[0], id: `${mainRoute.id}-backup-p1` },
-        { id: `${mainRoute.id}-backup-p2`, coordinates: redundantMidCoord, type: 'waypoint', name: '备份路径点' },
-        { ...mainRoute.points[mainRoute.points.length - 1], id: `${mainRoute.id}-backup-p3` }
-      ]
-      
-      const segments: RouteSegment[] = []
-      let totalLength = 0
-      let totalCost = 0
-      
-      for (let i = 0; i < points.length - 1; i++) {
-        const segLength = calculateDistance(points[i].coordinates, points[i + 1].coordinates)
-        totalLength += segLength
-        const depth = 1000 + Math.random() * 3000
-        const riskLevel = getRiskLevelByDepth(depth)
-        const segCost = calculateSegmentCost(segLength, riskLevel)
-        totalCost += segCost
-        
-        segments.push({
-          id: `${mainRoute.id}-backup-s${i + 1}`,
-          startPointId: points[i].id,
-          endPointId: points[i + 1].id,
-          length: Math.round(segLength),
-          depth: Math.round(depth),
-          cableType: getCableTypeByRisk(riskLevel),
-          riskLevel,
-          cost: segCost
-        })
-      }
-      
-      // 检查是否超出成本限制
-      if (totalCost <= costLimit) {
-        redundantRoutes.push({
-          id: `${mainRoute.id}-backup`,
-          name: `${mainRoute.name} (备份)`,
-          points,
-          segments,
-          totalLength: Math.round(totalLength),
-          totalCost,
-          riskScore: mainRoute.riskScore * 0.8,  // 备份路径风险稍低
-          cost: {
-            cable: Math.round(totalCost * 0.7),
-            installation: Math.round(totalCost * 0.2),
-            equipment: Math.round(totalCost * 0.1),
-            total: totalCost
-          },
-          risk: {
-            seismic: mainRoute.risk.seismic * 0.8,
-            volcanic: mainRoute.risk.volcanic * 0.8,
-            depth: mainRoute.risk.depth * 0.9,
-            overall: mainRoute.risk.overall * 0.85
-          },
-          distance: Math.round(totalLength),
-          createdAt: now,
-          updatedAt: now
-        })
-      }
-    }
-    
-    return redundantRoutes
-  }
-
-  /**
-   * 多点规划路线生成
-   * 支持登陆站和BU（分支器）的分支网络拓扑
-   * @param landingStations 登陆站列表
-   * @param buList BU（分支器）列表
-   */
-  function generateMultiPointRoutes(
-    landingStations: Array<{ id: string; name: string; lon: number; lat: number; depth?: number }>,
-    buList: Array<{ id: string; name: string; lon: number; lat: number; portLimit?: number }>
-  ): Route[] {
-    const now = new Date()
-    
-    // 构建登陆站点（全部是 landing 类型）
-    const landingPoints: RoutePoint[] = landingStations.map((wp, i) => ({
-      id: wp.id || `landing-${i + 1}`,
-      coordinates: [wp.lon, wp.lat] as [number, number],
-      type: 'landing' as const,
-      name: wp.name || `登陆站${i + 1}`,
-      depth: wp.depth || 0
-    }))
-    
-    // 构建 BU 点（branching 类型）
-    const buPoints: RoutePoint[] = buList.map((bu, i) => ({
-      id: bu.id || `bu-${i + 1}`,
-      coordinates: [bu.lon, bu.lat] as [number, number],
-      type: 'branching' as const,
-      name: bu.name || `BU${i + 1}`,
-      depth: 0
-    }))
-    
-    // 如果有 BU，构建分支网络拓扑
-    if (buPoints.length > 0) {
-      return generateBranchingNetwork(landingPoints, buPoints, now)
-    }
-    
-    // 没有 BU，按顺序连接所有登陆站
-    const points = landingPoints
-    const segments: RouteSegment[] = []
-    let totalLength = 0
-    let totalCost = 0
-    
-    for (let i = 0; i < points.length - 1; i++) {
-      const segLength = calculateDistance(points[i].coordinates, points[i + 1].coordinates)
-      totalLength += segLength
-      const depth = 1000 + Math.random() * 3000
-      const riskLevel = getRiskLevelByDepth(depth)
-      const segCost = calculateSegmentCost(segLength, riskLevel)
-      totalCost += segCost
-      
-      segments.push({
-        id: `mp-s${i + 1}`,
-        startPointId: points[i].id,
-        endPointId: points[i + 1].id,
-        length: Math.round(segLength),
-        depth: Math.round(depth),
-        cableType: getCableTypeByRisk(riskLevel),
-        riskLevel,
-        cost: segCost
-      })
-    }
-
-    const route: Route = {
-      id: 'multi-point-route',
-      name: '多点规划路线',
-      points,
-      segments,
-      totalLength: Math.round(totalLength),
-      totalCost,
-      riskScore: 0.5,
-      cost: {
-        cable: Math.round(totalCost * 0.6),
-        installation: Math.round(totalCost * 0.25),
-        equipment: Math.round(totalCost * 0.15),
-        total: totalCost
-      },
-      risk: {
-        seismic: 0.4,
-        volcanic: 0.3,
-        depth: 0.5,
-        overall: 0.5
-      },
-      distance: Math.round(totalLength),
-      createdAt: now,
-      updatedAt: now
-    }
-    
-    routes.value = [route]
-    paretoRoutes.value = [route]
-    currentRouteId.value = 'multi-point-route'
-    selectedRouteIds.value = ['multi-point-route']
-    
-    return [route]
-  }
-  
-  /**
-   * 生成分支网络拓扑
-   * 每个 BU 连接多个登陆站，形成星形/树形网络
-   */
-  function generateBranchingNetwork(
-    landingPoints: RoutePoint[],
-    buPoints: RoutePoint[],
-    now: Date
-  ): Route[] {
-    const allPoints: RoutePoint[] = []
-    const segments: RouteSegment[] = []
-    let totalLength = 0
-    let segIndex = 1
-    
-    // 后续按主干/分支顺序构建 points
-    
-    let totalCost = 0
-    
-    // 如果只有一个 BU，所有登陆站都连接到这个 BU
-    if (buPoints.length === 1) {
-      const bu = buPoints[0]
-      
-      // 主干端点：使用用户输入顺序的首/尾登陆站
-      const trunkStart = landingPoints[0]
-      const trunkEnd = landingPoints.length > 1 ? landingPoints[landingPoints.length - 1] : landingPoints[0]
-      const branchLandings = landingPoints.filter(l => l.id !== trunkStart?.id && l.id !== trunkEnd?.id)
-      
-      // 标记分支登陆站（用于配置界面区分）
-      branchLandings.forEach(l => {
-        ;(l as any).isBranchStation = true
-        ;(l as any).branchFrom = bu.name
-      })
-      
-      // 构建 points 顺序：起点 -> BU -> 终点 -> 分支登陆站
-      if (trunkStart) allPoints.push(trunkStart)
-      allPoints.push(bu)
-      if (trunkEnd && trunkEnd.id !== trunkStart?.id) allPoints.push(trunkEnd)
-      allPoints.push(...branchLandings)
-      
-      // 主干段
-      if (trunkStart) {
-        const segLength = calculateDistance(bu.coordinates, trunkStart.coordinates)
-        totalLength += segLength
-        const depth = 1000 + Math.random() * 3000
-        const riskLevel = getRiskLevelByDepth(depth)
-        const segCost = calculateSegmentCost(segLength, riskLevel)
-        totalCost += segCost
-        segments.push({
-          id: `trunk-s${segIndex++}`,
-          startPointId: trunkStart.id,
-          endPointId: bu.id,
-          length: Math.round(segLength),
-          depth: Math.round(depth),
-          cableType: getCableTypeByRisk(riskLevel),
-          riskLevel,
-          cost: segCost
-        })
-      }
-      
-      if (trunkEnd && trunkEnd.id !== trunkStart?.id) {
-        const segLength = calculateDistance(bu.coordinates, trunkEnd.coordinates)
-        totalLength += segLength
-        const depth = 1000 + Math.random() * 3000
-        const riskLevel = getRiskLevelByDepth(depth)
-        const segCost = calculateSegmentCost(segLength, riskLevel)
-        totalCost += segCost
-        segments.push({
-          id: `trunk-s${segIndex++}`,
-          startPointId: bu.id,
-          endPointId: trunkEnd.id,
-          length: Math.round(segLength),
-          depth: Math.round(depth),
-          cableType: getCableTypeByRisk(riskLevel),
-          riskLevel,
-          cost: segCost
-        })
-      }
-      
-      // 分支段
-      for (const landing of branchLandings) {
-        const segLength = calculateDistance(bu.coordinates, landing.coordinates)
-        totalLength += segLength
-        const depth = 1000 + Math.random() * 3000
-        const riskLevel = getRiskLevelByDepth(depth)
-        const segCost = calculateSegmentCost(segLength, riskLevel)
-        totalCost += segCost
-        segments.push({
-          id: `branch-s${segIndex++}`,
-          startPointId: bu.id,
-          endPointId: landing.id,
-          length: Math.round(segLength),
-          depth: Math.round(depth),
-          cableType: getCableTypeByRisk(riskLevel),
-          riskLevel,
-          cost: segCost
-        })
-      }
-      
-      // 设置所有分支目标
-      const branchTargetsList = branchLandings.map(l => ({
-        coord: l.coordinates as [number, number],
-        name: l.name || '',
-      }))
-      bu.branchTargets = branchTargetsList
-      // 保留 branchTo 指向第一个分支（向后兼容）
-      if (branchTargetsList.length > 0) {
-        bu.branchTo = branchTargetsList[0]
-      }
-    } else if (buPoints.length >= 2) {
-      // 多个 BU：主干线连接 BU，每个 BU 连接最近的登陆站
-
-      // 1. BU 之间形成主干线
-      for (let i = 0; i < buPoints.length - 1; i++) {
-        const segLength = calculateDistance(buPoints[i].coordinates, buPoints[i + 1].coordinates)
-        totalLength += segLength
-        const depth = 1000 + Math.random() * 3000
-        const riskLevel = getRiskLevelByDepth(depth)
-        const segCost = calculateSegmentCost(segLength, riskLevel)
-        totalCost += segCost
-
-        segments.push({
-          id: `trunk-s${segIndex++}`,
-          startPointId: buPoints[i].id,
-          endPointId: buPoints[i + 1].id,
-          length: Math.round(segLength),
-          depth: Math.round(depth),
-          cableType: getCableTypeByRisk(riskLevel),
-          riskLevel,
-          cost: segCost
-        })
-      }
-
-      // 2. 每个登陆站连接到最近的 BU
-      const landingToNearestBU = new Map<string, RoutePoint>()
-      const buToBranchLandings = new Map<string, RoutePoint[]>()
-
-      for (const landing of landingPoints) {
-        // 找到最近的 BU
-        let nearestBU = buPoints[0]
-        let minDist = calculateDistance(landing.coordinates, buPoints[0].coordinates)
-
-        for (const bu of buPoints) {
-          const dist = calculateDistance(landing.coordinates, bu.coordinates)
-          if (dist < minDist) {
-            minDist = dist
-            nearestBU = bu
-          }
-        }
-
-        landingToNearestBU.set(landing.id, nearestBU)
-        if (!buToBranchLandings.has(nearestBU.id)) {
-          buToBranchLandings.set(nearestBU.id, [])
-        }
-        buToBranchLandings.get(nearestBU.id)!.push(landing)
-
-        const segLength = minDist
-        totalLength += segLength
-        const depth = 1000 + Math.random() * 3000
-        const riskLevel = getRiskLevelByDepth(depth)
-        const segCost = calculateSegmentCost(segLength, riskLevel)
-        totalCost += segCost
-
-        segments.push({
-          id: `branch-s${segIndex++}`,
-          startPointId: nearestBU.id,
-          endPointId: landing.id,
-          length: Math.round(segLength),
-          depth: Math.round(depth),
-          cableType: getCableTypeByRisk(riskLevel),
-          riskLevel,
-          cost: segCost
-        })
-      }
-
-      // 3. 构建 points 顺序：起点 -> BU链 -> 终点 -> 分支登陆站
-      const trunkStart = landingPoints[0]
-      const trunkEnd = landingPoints.length > 1 ? landingPoints[landingPoints.length - 1] : landingPoints[0]
-      const branchLandings = landingPoints.filter(l => l.id !== trunkStart?.id && l.id !== trunkEnd?.id)
-
-      // 标记分支登陆站并关联 BU
-      branchLandings.forEach(l => {
-        ;(l as any).isBranchStation = true
-        const nearestBU = landingToNearestBU.get(l.id)
-        if (nearestBU) {
-          ;(l as any).branchFrom = nearestBU.name
-        }
-      })
-
-      // 为每个 BU 设置所有分支目标
-      buPoints.forEach(bu => {
-        const candidates = (buToBranchLandings.get(bu.id) || []).filter(
-          l => l.id !== trunkStart?.id && l.id !== trunkEnd?.id
-        )
-        const targets = candidates.map(l => ({
-          coord: l.coordinates as [number, number],
-          name: l.name || '',
-        }))
-        bu.branchTargets = targets
-        // 保留 branchTo 指向第一个分支（向后兼容）
-        if (targets.length > 0) {
-          bu.branchTo = targets[0]
-        }
-      })
-
-      if (trunkStart) allPoints.push(trunkStart)
-      allPoints.push(...buPoints)
-      if (trunkEnd && trunkEnd.id !== trunkStart?.id) allPoints.push(trunkEnd)
-      allPoints.push(...branchLandings)
-    }
-    
-    const route: Route = {
-      id: 'branching-network-route',
-      name: '分支网络路线',
-      points: allPoints,
-      segments,
-      totalLength: Math.round(totalLength),
-      totalCost,
-      riskScore: 0.5,
-      cost: {
-        cable: Math.round(totalCost * 0.6),
-        installation: Math.round(totalCost * 0.25),
-        equipment: Math.round(totalCost * 0.15),
-        total: totalCost
-      },
-      risk: {
-        seismic: 0.4,
-        volcanic: 0.3,
-        depth: 0.5,
-        overall: 0.5
-      },
-      distance: Math.round(totalLength),
-      createdAt: now,
-      updatedAt: now
-    }
-    
-    routes.value = [route]
-    paretoRoutes.value = [route]
-    currentRouteId.value = 'branching-network-route'
-    selectedRouteIds.value = ['branching-network-route']
-    
-    return [route]
-  }
-
-  /**
-   * 根据起终点坐标生成 Pareto 路径
-   * 生成三条不同走向的路径供选择
-   */
-  function generateParetoRoutesWithCoords(params: PlanningParams): Route[] {
-    const { startPoint, endPoint } = params
-    const now = new Date()
-    const startCoord: [number, number] = [startPoint.lon, startPoint.lat]
-    const endCoord: [number, number] = [endPoint.lon, endPoint.lat]
-    
-    // 计算起终点的中间位置和偏移量
-    const midLon = (startCoord[0] + endCoord[0]) / 2
-    const midLat = (startCoord[1] + endCoord[1]) / 2
-    
-    // 计算垂直于起终点连线的偏移方向
-    const dLon = endCoord[0] - startCoord[0]
-    const dLat = endCoord[1] - startCoord[1]
-    const dist = Math.sqrt(dLon * dLon + dLat * dLat)
-    // 偏移量为距离的20%，使路线更明显区分
-    const offsetScale = dist * 0.2
-    // 垂直方向单位向量
-    const perpLon = -dLat / dist
-    const perpLat = dLon / dist
-    
-    // 生成三条不同走向的路径
-    const paretoData: Route[] = [
-      // 经济路线：直线（无中间点）
-      createRoute({
-        id: 'pareto-route-1',
-        name: '经济路线',
-        startCoord,
-        endCoord,
-        startName: startPoint.name || '起点',
-        endName: endPoint.name || '终点',
-        startDepth: startPoint.depth,
-        endDepth: endPoint.depth,
-        intermediatePoints: [],
-        riskMultiplier: 1.2,
-        costMultiplier: 0.85,
-        now
-      }),
-      // 均衡路线：向北偏移
-      createRoute({
-        id: 'pareto-route-2',
-        name: '均衡路线',
-        startCoord,
-        endCoord,
-        startName: startPoint.name || '起点',
-        endName: endPoint.name || '终点',
-        startDepth: startPoint.depth,
-        endDepth: endPoint.depth,
-        intermediatePoints: [
-          { coord: [midLon + perpLon * offsetScale, midLat + perpLat * offsetScale] as [number, number] }
-        ],
-        riskMultiplier: 0.7,
-        costMultiplier: 1.0,
-        now
-      }),
-      // 安全路线：向南偏移，多一个中间点
-      createRoute({
-        id: 'pareto-route-3',
-        name: '安全路线',
-        startCoord,
-        endCoord,
-        startName: startPoint.name || '起点',
-        endName: endPoint.name || '终点',
-        startDepth: startPoint.depth,
-        endDepth: endPoint.depth,
-        intermediatePoints: [
-          { coord: [startCoord[0] + dLon * 0.33 - perpLon * offsetScale * 1.5, startCoord[1] + dLat * 0.33 - perpLat * offsetScale * 1.5] as [number, number] },
-          { coord: [startCoord[0] + dLon * 0.66 - perpLon * offsetScale * 1.5, startCoord[1] + dLat * 0.66 - perpLat * offsetScale * 1.5] as [number, number] }
-        ],
-        riskMultiplier: 0.3,
-        costMultiplier: 1.5,
-        now
-      })
-    ]
-
-    routes.value = paretoData
-    paretoRoutes.value = paretoData
-    currentRouteId.value = 'pareto-route-2'
-    selectedRouteIds.value = ['pareto-route-2']  // 自动选中均衡路线
-    
-    return paretoData
-  }
-
-  /**
-   * 创建单条路径（纯路线，无器件）
-   */
-  function createRoute(params: {
-    id: string
-    name: string
-    startCoord: [number, number]
-    endCoord: [number, number]
-    startName: string
-    endName: string
-    startDepth?: number
-    endDepth?: number
-    intermediatePoints: Array<{ coord: [number, number]; name?: string }>
-    riskMultiplier: number
-    costMultiplier: number
-    now: Date
-  }): Route {
-    const { id, name, startCoord, endCoord, startName, endName, startDepth, endDepth, intermediatePoints, riskMultiplier, costMultiplier, now } = params
-    
-    // 构建所有点
-    const points: RoutePoint[] = [
-      { id: `${id}-p1`, coordinates: startCoord, type: 'landing', name: startName, depth: startDepth || 0 }
-    ]
-    
-    intermediatePoints.forEach((p, i) => {
-      points.push({
-        id: `${id}-p${i + 2}`,
-        coordinates: p.coord,
-        type: 'waypoint',
-        name: p.name || `途经点${i + 1}`
-      })
-    })
-    
-    points.push({
-      id: `${id}-p${points.length + 1}`,
-      coordinates: endCoord,
-      type: 'landing',
-      name: endName,
-      depth: endDepth || 0
-    })
-
-    // 构建分段
-    const segments: RouteSegment[] = []
-    let totalLength = 0
-    let totalCost = 0
-    
-    for (let i = 0; i < points.length - 1; i++) {
-      const segLength = calculateDistance(points[i].coordinates, points[i + 1].coordinates)
-      totalLength += segLength
-      const depth = 1000 + Math.random() * 3000
-      // 结合风险系数和水深判断风险等级
-      const baseRiskLevel = getRiskLevelByDepth(depth)
-      const riskLevel = riskMultiplier > 1 ? 'high' : riskMultiplier > 0.5 ? baseRiskLevel : 'low'
-      // 使用铠装映射单价计算成本，并应用成本系数
-      const segCost = Math.round(calculateSegmentCost(segLength, riskLevel) * costMultiplier)
-      totalCost += segCost
-      
-      segments.push({
-        id: `${id}-s${i + 1}`,
-        startPointId: points[i].id,
-        endPointId: points[i + 1].id,
-        length: Math.round(segLength),
-        depth: Math.round(depth),
-        cableType: getCableTypeByRisk(riskLevel),
-        riskLevel: riskLevel as 'low' | 'medium' | 'high',
-        cost: segCost
-      })
-    }
-    const overallRisk = Math.min(0.9, 0.2 + (riskMultiplier - 0.3) * 0.5)
-
-    return {
-      id,
-      name,
-      points,
-      segments,
-      totalLength: Math.round(totalLength),
-      totalCost,
-      riskScore: overallRisk,
-      cost: {
-        cable: Math.round(totalCost * 0.7),
-        installation: Math.round(totalCost * 0.2),
-        equipment: Math.round(totalCost * 0.1),
-        total: totalCost
-      },
-      risk: {
-        seismic: overallRisk * (0.9 + Math.random() * 0.2),
-        volcanic: overallRisk * (0.8 + Math.random() * 0.3),
-        depth: overallRisk * (0.85 + Math.random() * 0.25),
-        overall: overallRisk
-      },
-      distance: Math.round(totalLength),
-      createdAt: now,
-      updatedAt: now
-    }
-  }
-
-  /**
    * 清除 Pareto 路径数据
    */
   function clearParetoRoutes() {
@@ -1018,11 +352,11 @@ export const useRouteStore = defineStore('route', () => {
         depth: seg.depth || 1000,
         cableType: seg.cableType || 'lw',
         riskLevel: seg.riskLevel || 'low',
-        cost: seg.length ? Math.round(seg.length * 30000) : 0
+        cost: seg.length ? calculateSegmentCost(seg.length, seg.riskLevel || 'low') : 0
       })) || []
 
       const totalLength = apiRoute.totalLength || segments.reduce((sum: number, s: RouteSegment) => sum + s.length, 0)
-      const totalCost = apiRoute.totalCost || Math.round(totalLength * 30000)
+      const totalCost = apiRoute.totalCost || segments.reduce((sum: number, s: RouteSegment) => sum + s.cost, 0)
 
       return {
         id: apiRoute.id || `pareto-route-${index + 1}`,
@@ -1131,22 +465,23 @@ export const useRouteStore = defineStore('route', () => {
         depth: seg.depth || 1000,
         cableType: seg.cableType || 'LW',
         riskLevel: seg.riskLevel || 'low',
-        cost: seg.length ? Math.round(seg.length * 30000) : 0
+        cost: seg.length ? calculateSegmentCost(seg.length, seg.riskLevel || 'low') : 0
       })
     }
     // 如果 trunk segments 数量不匹配点数（简化路径导致），按点距离补全
     if (trunkSegs.length === 0 && allPoints.length >= 2) {
       for (let i = 0; i < allPoints.length - 1; i++) {
         const len = calculateDistance(allPoints[i].coordinates, allPoints[i + 1].coordinates)
+        const roundedLen = Math.round(len)
         allSegments.push({
           id: `trunk-s${i}`,
           startPointId: allPoints[i].id,
           endPointId: allPoints[i + 1].id,
-          length: Math.round(len),
+          length: roundedLen,
           depth: 2000,
-          cableType: 'LW',
+          cableType: getCableTypeByRisk('low'),
           riskLevel: 'low',
-          cost: Math.round(len * 30000)
+          cost: calculateSegmentCost(roundedLen, 'low')
         })
       }
     }
@@ -1206,7 +541,7 @@ export const useRouteStore = defineStore('route', () => {
           depth: seg.depth || 2000,
           cableType: seg.cableType || 'LW',
           riskLevel: seg.riskLevel || 'low',
-          cost: seg.length ? Math.round(seg.length * 30000) : 0
+          cost: seg.length ? calculateSegmentCost(seg.length, seg.riskLevel || 'low') : 0
         })
       }
 
@@ -1232,7 +567,7 @@ export const useRouteStore = defineStore('route', () => {
     }
 
     const totalLength = apiRoute.totalLength || allSegments.reduce((sum: number, s) => sum + s.length, 0)
-    const totalCost = apiRoute.totalCost || Math.round(totalLength * 30000)
+    const totalCost = apiRoute.totalCost || allSegments.reduce((sum: number, s) => sum + s.cost, 0)
 
     return {
       id: routeId,
@@ -1293,7 +628,7 @@ export const useRouteStore = defineStore('route', () => {
         const endPt = route.points.find(p => p.id === seg.endPointId)
         if (startPt && endPt) {
           seg.length = Math.round(calculateDistance(startPt.coordinates, endPt.coordinates))
-          seg.cost = Math.round(seg.length * 30000)
+          seg.cost = calculateSegmentCost(seg.length, seg.riskLevel)
         }
       }
     })
@@ -1346,7 +681,7 @@ export const useRouteStore = defineStore('route', () => {
       depth: segment.depth,
       cableType: segment.cableType,
       riskLevel: segment.riskLevel,
-      cost: Math.round(seg1Length * 30000)
+      cost: calculateSegmentCost(seg1Length, segment.riskLevel)
     }
     
     const newSeg2: RouteSegment = {
@@ -1357,7 +692,7 @@ export const useRouteStore = defineStore('route', () => {
       depth: segment.depth,
       cableType: segment.cableType,
       riskLevel: segment.riskLevel,
-      cost: Math.round(seg2Length * 30000)
+      cost: calculateSegmentCost(seg2Length, segment.riskLevel)
     }
     
     // 替换分段
@@ -1396,8 +731,6 @@ export const useRouteStore = defineStore('route', () => {
     clearParetoRoutes,
     setParetoRoutes,
     setParetoRoutesFromApi,
-    generateParetoRoutesFromSettings,
-    generateParetoRoutesWithCoords,
     updateRoutePoint,
     addRoutePoint,
   }

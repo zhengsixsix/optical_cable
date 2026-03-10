@@ -4,6 +4,7 @@
  */
 
 import { PHYS, dbmToW, dbToLinear, linearToDb } from '../utils/physics.js'
+import { computeAmplifierNoise } from '../utils/amplifier.js'
 
 /**
  * Step 3: 构建标准化仿真输入
@@ -129,14 +130,14 @@ export function spanIteration(simInput) {
     const wdm = parseWdmParams(wdmParams)
     const fiber = parseFiberPhysics(fiberParams, wdm.centerFreqTHz)
 
-    const noiseFigure_dB = amplifierParams.noiseFigure || 4.8
-    const NF_linear = dbToLinear(noiseFigure_dB)
-
     const B_ch = wdm.baudRateGBaud * 1e9
     const B_wdm = wdm.channelCount * wdm.spacingGHz * 1e9
 
     const totalBuLoss_dB = buConfigs.reduce((s, bu) => s + (bu.trunkLoss || 0), 0)
     const buCount = buConfigs.length
+
+    // 放大器模型标识 (从 simInput 透传)
+    const ampModel = simInput.amplifierModel || 'EDFA_Simple'
 
     const targetGsnr_dB = constraints.targetGSNR || 14.0
     const margin_dB = constraints.osnrMargin || 1.0
@@ -157,14 +158,21 @@ export function spanIteration(simInput) {
             spanLen_m, wdm.launchPower_W, B_ch, B_wdm
         )
 
+        // 逐信道放大器噪声 (支持 EDFA_Simple / EDFA_Full)
+        const ampNoise = computeAmplifierNoise({
+            amplifierModel: ampModel,
+            amplifierParams,
+            channelFrequencies: wdm.channelFrequencies,
+            spanLoss_dB: spanLoss_dB,
+        })
+
         const gsnrPerChannel = []
         const osnrPerChannel = []
         const powerPerChannel = []
         const nliPerChannel = []
 
         for (let ch = 0; ch < wdm.channelCount; ch++) {
-            const freq_Hz = wdm.channelFrequencies[ch] * 1e12
-            const P_ase_per_amp = PHYS.h * freq_Hz * NF_linear * (G_linear - 1) * PHYS.refBandwidth
+            const P_ase_per_amp = ampNoise.asePerChannel[ch]
 
             const totalAse_W = P_ase_per_amp * numAmps
             const totalNli_W = P_nli_per_span * numAmps

@@ -8,6 +8,7 @@
 
 import JSZip from 'jszip'
 import { useRouteStore, useRPLStore, useSLDStore, useSettingsStore, useUserStore, useConnectorStore, useMonitorStore, useLayerStore, useCableSegmentStore } from '@/stores'
+import { validateForExport } from './PhaseValidationService'
 import type {
   USEProjectData,
   USEEnvironmentContext,
@@ -934,7 +935,13 @@ class ProjectFileService {
    * @param allowOtherUsers 是否允许其他用户打开
    * @description 统一使用 .use 格式
    */
-  async exportProject(name: string, allowOtherUsers: boolean = false): Promise<void> {
+  async exportProject(name: string, allowOtherUsers: boolean = false): Promise<{ warnings: string[] }> {
+    // 导出前校验数据完整性
+    const validation = validateForExport()
+    if (!validation.canExport) {
+      throw new Error(validation.errors.join('; '))
+    }
+
     const projectData = this.createUSEProjectData(name, allowOtherUsers)
     
     // 更新时间戳
@@ -953,12 +960,14 @@ class ProjectFileService {
     // 统一使用 .use 扩展名
     const blob = await zip.generateAsync({ type: 'blob' })
     this.downloadBlob(blob, `${name}.use`)
+
+    return { warnings: validation.warnings }
   }
 
   /**
    * 导出 USE 文件 (ZIP 格式) - 向后兼容
    */
-  async exportUSE(name: string, allowOtherUsers: boolean = false): Promise<void> {
+  async exportUSE(name: string, allowOtherUsers: boolean = false): Promise<{ warnings: string[] }> {
     return this.exportProject(name, allowOtherUsers)
   }
 
@@ -966,10 +975,14 @@ class ProjectFileService {
    * 保存项目 (ZIP 格式)
    * @description 统一使用 .use 格式保存所有模块
    */
-  async saveProject(): Promise<{ success: boolean; error?: string }> {
+  async saveProject(): Promise<{ success: boolean; error?: string; warnings?: string[] }> {
     if (!this.currentProject) {
       return { success: false, error: '当前没有打开的项目，请先新建或打开项目' }
     }
+
+    // 保存前校验
+    const validation = validateForExport()
+    // 保存不阻止（即使有 error 也允许），但记录警告
     
     // 如果 currentProjectData 为空，从 stores 收集数据创建
     if (!this.currentProjectData) {
@@ -999,7 +1012,7 @@ class ProjectFileService {
     this.currentProject.type = 'use'
     
     this.isDirty = false
-    return { success: true }
+    return { success: true, warnings: validation.warnings }
   }
 
   /**

@@ -4,6 +4,7 @@ import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package
 import { useAppStore, useSettingsStore } from '@/stores'
 import { Button, Select } from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
+import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
 
 interface Props {
@@ -45,6 +46,25 @@ const emit = defineEmits<{
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 
+// 从 settingsStore 获取默认铠装映射（避免硬编码）
+const getDefaultArmorMappings = () => {
+  const defaults = settingsStore.routePlanningConfig.armorMappings || []
+  if (defaults.length > 0) {
+    return defaults.map(m => ({
+      riskLevel: m.riskLevel,
+      riskThreshold: String(m.riskThreshold),
+      cableTypeName: m.cableTypeName,
+      unitPrice: String(m.unitPrice),
+    }))
+  }
+  // 器件库为空时的极端回退
+  return [
+    { riskLevel: 'high', riskThreshold: '3', cableTypeName: '', unitPrice: '' },
+    { riskLevel: 'medium', riskThreshold: '2', cableTypeName: '', unitPrice: '' },
+    { riskLevel: 'low', riskThreshold: '0', cableTypeName: '', unitPrice: '' },
+  ]
+}
+
 // 步骤定义
 const steps = [
   { id: 1, title: '新建项目', icon: FilePlus, description: '填写项目基本信息' },
@@ -76,12 +96,8 @@ const waypoints = ref<Array<{ id: string; name: string; longitude: number; latit
 // BU 配置列表（多点模式） - max_ports 对应 USE 文件规范
 const buConfigs = ref<Array<{ id: string; name: string; longitude: number; latitude: number; max_ports: number }>>([])
 
-// 铠装映射配置
-const armorMappings = ref([
-  { riskLevel: 'high', riskThreshold: '3', cableTypeName: 'DA (双铠装)', unitPrice: '24.0' },
-  { riskLevel: 'medium', riskThreshold: '2', cableTypeName: 'SA (单铠装)', unitPrice: '19.5' },
-  { riskLevel: 'low', riskThreshold: '0', cableTypeName: 'LW (轻型)', unitPrice: '15.0' },
-])
+// 铠装映射配置（从 settingsStore 初始化，不再硬编码）
+const armorMappings = ref(getDefaultArmorMappings())
 const riskLevelLabels: Record<string, string> = { high: '高风险', medium: '中风险', low: '低风险' }
 
 // 风险等级到铠装类型的映射
@@ -158,12 +174,48 @@ const redundancyConfig = ref({
   enabled: false,
   costLimitType: 'relative' as 'relative' | 'absolute',
   relativeCostPercent: '30',
-  absoluteCostLimit: ''
+  absoluteCostLimit: '',
+  criticalNodes: [] as string[]  // 勾选的关键节点ID
 })
 const costLimitTypeOptions = [
   { value: 'relative', label: '相对成本（%）' },
   { value: 'absolute', label: '绝对成本（万元）' }
 ]
+
+// 切换关键节点选中状态
+const toggleCriticalNode = (id: string) => {
+  const idx = redundancyConfig.value.criticalNodes.indexOf(id)
+  if (idx >= 0) {
+    redundancyConfig.value.criticalNodes.splice(idx, 1)
+  } else {
+    redundancyConfig.value.criticalNodes.push(id)
+  }
+}
+
+// 地图选点时显示的已有标记点（让用户知道其他站点在哪）
+const existingMapMarkers = computed<MapMarker[]>(() => {
+  const markers: MapMarker[] = []
+  if (planningMode.value === 'multi-point') {
+    for (const wp of waypoints.value) {
+      if (wp.longitude !== 0 || wp.latitude !== 0) {
+        markers.push({ lon: wp.longitude, lat: wp.latitude, name: wp.name || wp.id, color: '#3b82f6' })
+      }
+    }
+    for (const bu of buConfigs.value) {
+      if (bu.longitude !== 0 || bu.latitude !== 0) {
+        markers.push({ lon: bu.longitude, lat: bu.latitude, name: bu.name || bu.id, color: '#f97316' })
+      }
+    }
+  } else {
+    if (startStation.value.longitude !== 0 || startStation.value.latitude !== 0) {
+      markers.push({ lon: startStation.value.longitude, lat: startStation.value.latitude, name: startStation.value.name || '起点', color: '#3b82f6' })
+    }
+    if (endStation.value.longitude !== 0 || endStation.value.latitude !== 0) {
+      markers.push({ lon: endStation.value.longitude, lat: endStation.value.latitude, name: endStation.value.name || '终点', color: '#22c55e' })
+    }
+  }
+  return markers
+})
 
 // GIS 配置 - 与工程设置对齐
 const gisConfig = ref({
@@ -305,12 +357,8 @@ const resetForm = () => {
     { id: 'wp-3', name: '登陆站3', longitude: 0, latitude: 0, isUnderwater: false }
   ]
   buConfigs.value = []
-  armorMappings.value = [
-    { riskLevel: 'high', riskThreshold: '3', cableTypeName: 'DA (双铠装)', unitPrice: '24.0' },
-    { riskLevel: 'medium', riskThreshold: '2', cableTypeName: 'SA (单铠装)', unitPrice: '19.5' },
-    { riskLevel: 'low', riskThreshold: '0', cableTypeName: 'LW (轻型)', unitPrice: '15.0' },
-  ]
-  redundancyConfig.value = { enabled: false, costLimitType: 'relative', relativeCostPercent: '30', absoluteCostLimit: '' }
+  armorMappings.value = getDefaultArmorMappings()
+  redundancyConfig.value = { enabled: false, costLimitType: 'relative', relativeCostPercent: '30', absoluteCostLimit: '', criticalNodes: [] }
   gisConfig.value = { rangeMode: 'auto', nwLon: '', nwLat: '', seLon: '', seLat: '', gridResolution: '500' }
   isGisExpanded.value = false
   layerList.value.forEach(item => {
@@ -370,11 +418,30 @@ const handleBrowseLayer = (item: LayerItem) => {
   layerInputRef.value?.click()
 }
 
-const handleLayerSelected = (e: Event) => {
+const handleLayerSelected = async (e: Event) => {
   const target = e.target as HTMLInputElement
   if (target.files && target.files.length > 0 && currentBrowseItem.value) {
-    currentBrowseItem.value.value = target.files[0].name
+    const file = target.files[0]
+    currentBrowseItem.value.value = file.name
     currentBrowseItem.value.checked = true
+
+    // 实际读取文件内容
+    try {
+      if (file.name.endsWith('.geojson') || file.name.endsWith('.json')) {
+        // GeoJSON: 解析为对象
+        const text = await file.text()
+        const geoData = JSON.parse(text)
+        ;(currentBrowseItem.value as any).geoData = geoData
+        appStore.showNotification({ type: 'success', message: `图层数据已解析: ${file.name}` })
+      } else if (file.name.endsWith('.tif') || file.name.endsWith('.tiff')) {
+        // 栅格数据: 存储 ArrayBuffer
+        const buffer = await file.arrayBuffer()
+        ;(currentBrowseItem.value as any).rasterData = buffer
+        appStore.showNotification({ type: 'success', message: `栅格数据已读取: ${file.name} (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)` })
+      }
+    } catch (err) {
+      appStore.showNotification({ type: 'warning', message: `图层文件解析失败: ${(err as Error).message}` })
+    }
   }
   target.value = ''
 }
@@ -542,7 +609,8 @@ const handleSubmit = async () => {
       enabled: redundancyConfig.value.enabled,
       costLimitType: redundancyConfig.value.costLimitType,
       relativeCostPercent: redundancyConfig.value.costLimitType === 'relative' ? parseFloat(redundancyConfig.value.relativeCostPercent) || 30 : undefined,
-      absoluteCostLimit: redundancyConfig.value.costLimitType === 'absolute' ? parseFloat(redundancyConfig.value.absoluteCostLimit) || undefined : undefined
+      absoluteCostLimit: redundancyConfig.value.costLimitType === 'absolute' ? parseFloat(redundancyConfig.value.absoluteCostLimit) || undefined : undefined,
+      criticalNodes: redundancyConfig.value.criticalNodes.length > 0 ? redundancyConfig.value.criticalNodes : undefined
     },
     gisConfig: {
       rangeMode: gisConfig.value.rangeMode,
@@ -558,7 +626,14 @@ const handleSubmit = async () => {
       } : null,
       gridResolution: parseFloat(gisConfig.value.gridResolution) || 500
     },
-    layers: layerList.value.filter(l => l.checked),
+    layers: layerList.value.filter(l => l.checked).map(l => ({
+      key: l.key,
+      label: l.label,
+      checked: l.checked,
+      value: l.value,
+      geoData: (l as any).geoData || undefined,
+      rasterData: (l as any).rasterData || undefined,
+    })),
     devices: deviceList.value,
   })
   emit('close')
@@ -894,7 +969,6 @@ const handleSubmit = async () => {
                       <div class="w-28 px-2">站点名称</div>
                       <div class="flex-1 px-2">经度</div>
                       <div class="flex-1 px-2">纬度</div>
-                      <div class="w-14 text-center">类型</div>
                       <div class="w-20 text-center">操作</div>
                     </div>
                     <div class="max-h-[240px] overflow-y-auto">
@@ -926,18 +1000,6 @@ const handleSubmit = async () => {
                             step="0.000001"
                             class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:border-blue-500 outline-none"
                           >
-                        </div>
-                        <div class="w-14 flex justify-center">
-                          <button
-                            class="px-1.5 py-0.5 text-xs rounded-full transition-colors"
-                            :class="wp.isUnderwater 
-                              ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
-                              : 'bg-green-100 text-green-700 hover:bg-green-200'"
-                            @click="wp.isUnderwater = !wp.isUnderwater"
-                            :title="wp.isUnderwater ? '点击切换为岸上站点' : '点击切换为水下站点'"
-                          >
-                            {{ wp.isUnderwater ? '水下' : '岸上' }}
-                          </button>
                         </div>
                         <div class="w-20 flex justify-center gap-1">
                           <button 
@@ -1205,6 +1267,35 @@ const handleSubmit = async () => {
                     <span class="text-sm text-gray-500">{{ redundancyConfig.enabled ? '已启用' : '未启用' }}</span>
                   </div>
                   <template v-if="redundancyConfig.enabled">
+                    <!-- 关键节点勾选 -->
+                    <div>
+                      <span class="text-sm font-medium text-gray-600 block mb-2">关键节点（仅为勾选节点的链路生成备份路径）：</span>
+                      <div class="flex flex-wrap gap-2">
+                        <button
+                          v-for="wp in waypoints"
+                          :key="wp.id"
+                          type="button"
+                          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border cursor-pointer transition-all text-sm"
+                          :class="redundancyConfig.criticalNodes.includes(wp.id) ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'"
+                          @click="toggleCriticalNode(wp.id)"
+                        >
+                          <MapPin class="w-3.5 h-3.5" />
+                          {{ wp.name || wp.id }}
+                        </button>
+                        <button
+                          v-for="bu in buConfigs"
+                          :key="bu.id"
+                          type="button"
+                          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border cursor-pointer transition-all text-sm"
+                          :class="redundancyConfig.criticalNodes.includes(bu.id) ? 'bg-purple-50 border-purple-300 text-purple-700' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'"
+                          @click="toggleCriticalNode(bu.id)"
+                        >
+                          <GitCommit class="w-3.5 h-3.5" />
+                          {{ bu.name || bu.id }}
+                        </button>
+                      </div>
+                      <p v-if="redundancyConfig.criticalNodes.length === 0" class="text-xs text-amber-600 mt-1">未勾选则默认为所有节点生成备份</p>
+                    </div>
                     <div class="flex items-center gap-4">
                       <span class="text-sm text-gray-600">限制类型：</span>
                       <Select v-model="redundancyConfig.costLimitType" :options="costLimitTypeOptions" class="w-36" />
@@ -1230,7 +1321,7 @@ const handleSubmit = async () => {
                   </template>
                   <p class="text-xs text-gray-500">
                     <span class="text-indigo-600 font-medium">提示：</span>
-                    冗余策略用于多点规划时为关键节点配置备份路径。
+                    启用后，后端 A* 规划将为勾选的关键节点链路生成地理分离的备份路径。
                   </p>
                 </div>
               </div>
@@ -1371,6 +1462,7 @@ const handleSubmit = async () => {
     v-model:visible="showMapSelect"
     :title="mapSelectTitle"
     :mode="mapSelectType === 'range' ? 'range' : 'point'"
+    :existing-markers="existingMapMarkers"
     @confirm="handleMapConfirm"
   />
 

@@ -40,15 +40,41 @@ export interface CreateProjectParams {
     latitude: number
     portLimit: number
   }>
+  /** 海缆铠装映射（风险等级 → 缆型 + 单价） */
+  armorMappings?: Array<{
+    riskLevel: string
+    riskThreshold: number
+    cableTypeId: string
+    cableTypeName: string
+    unitPrice: number
+  }>
+  /** 冗余策略配置（多点规划） */
+  redundancyConfig?: {
+    enabled: boolean
+    costLimitType: 'relative' | 'absolute'
+    relativeCostPercent?: number
+    absoluteCostLimit?: number
+    criticalNodes?: string[]
+  }
+  /** GIS 与路由算法设置 */
   gisConfig?: {
-    planningRange: string
-    gridSize: string
+    rangeMode: 'auto' | 'manual'
+    planningRange?: {
+      northwest: { lon: number; lat: number }
+      southeast: { lon: number; lat: number }
+    } | null
+    gridResolution: number
   }
   layers: Array<{
     key: string
     label: string
     checked: boolean
     value: string
+    /** GeoJSON 解析结果（.geojson/.json 文件） */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    geoData?: any
+    /** 栅格文件二进制数据（.tif/.tiff 文件） */
+    rasterData?: ArrayBuffer
   }>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   devices?: Array<{
@@ -215,10 +241,20 @@ export function useProjectManager() {
       
       if (result.success) {
         appStore.markProjectSaved()
-        appStore.showNotification({
-          type: 'success',
-          message: `项目已保存：${currentProjectName.value}`,
-        })
+        
+        // 显示校验警告（如果有）
+        if (result.warnings && result.warnings.length > 0) {
+          appStore.showNotification({
+            type: 'warning',
+            message: `项目已保存，但数据不完整：${result.warnings[0]}`,
+            duration: 5000,
+          })
+        } else {
+          appStore.showNotification({
+            type: 'success',
+            message: `项目已保存：${currentProjectName.value}`,
+          })
+        }
       } else {
         appStore.showNotification({
           type: 'error',
@@ -307,7 +343,7 @@ export function useProjectManager() {
    * 新建项目
    */
   async function createProject(params: CreateProjectParams): Promise<boolean> {
-    const { projectType, projectName, allowOtherUsers, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig, buConfigs } = params
+    const { projectType, projectName, allowOtherUsers, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig, buConfigs, armorMappings, redundancyConfig } = params
     
     // 检查当前是否有未保存的项目
     if (hasOpenProject.value && isDirty.value) {
@@ -342,39 +378,76 @@ export function useProjectManager() {
       appStore.setCurrentProject(newMetadata)
       projectFileService.setCurrentProject(newMetadata)
 
-      // 根据选择的图层加载数据
+      // 根据选择的图层加载数据（含实际文件内容）
       const layerStore = useLayerStore()
       for (const layer of layers) {
         if (layer.checked) {
           layerStore.setLayerVisible(layer.key, true)
+          // 如果有实际文件数据，存入 layerStore
+          if (layer.geoData || layer.rasterData) {
+            layerStore.setLayerData(layer.key, {
+              id: layer.key,
+              features: layer.geoData || undefined,
+              rasterData: layer.rasterData || undefined,
+              metadata: { source: layer.value || 'user-upload' },
+            })
+          }
         }
       }
 
-      // 如果有设置站点位置或GIS配置，更新工程设置
+      // 更新工程设置（站点 + GIS + 铠装映射 + 冗余策略）
       const settingsStore = useSettingsStore()
       
-      if (startStation || endStation || gisConfig || (waypoints && waypoints.length > 0)) {
-        settingsStore.updateRoutePlanningConfig({
-          mode: planningMode || 'point-to-point',
-          startPoint: startStation ? { name: startStation.name, lon: startStation.longitude, lat: startStation.latitude } : { lon: 0, lat: 0 },
-          endPoint: endStation ? { name: endStation.name, lon: endStation.longitude, lat: endStation.latitude } : { lon: 0, lat: 0 },
-          waypoints: waypoints ? waypoints.map(wp => ({
-            id: wp.id,
-            name: wp.name,
-            lon: wp.longitude,
-            lat: wp.latitude,
-            depth: wp.depth ?? 0
-          })) : [],
-          buList: buConfigs ? buConfigs.map(bu => ({
-            id: bu.id,
-            name: bu.name,
-            lon: bu.longitude,
-            lat: bu.latitude,
-            portLimit: bu.portLimit
-          })) : [],
-          isConfigured: true
-        })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const routeConfigUpdates: Record<string, any> = {
+        mode: planningMode || 'point-to-point',
+        startPoint: startStation ? { name: startStation.name, lon: startStation.longitude, lat: startStation.latitude } : { lon: 0, lat: 0 },
+        endPoint: endStation ? { name: endStation.name, lon: endStation.longitude, lat: endStation.latitude } : { lon: 0, lat: 0 },
+        waypoints: waypoints ? waypoints.map(wp => ({
+          id: wp.id,
+          name: wp.name,
+          lon: wp.longitude,
+          lat: wp.latitude,
+          depth: wp.depth ?? 0
+        })) : [],
+        buList: buConfigs ? buConfigs.map(bu => ({
+          id: bu.id,
+          name: bu.name,
+          lon: bu.longitude,
+          lat: bu.latitude,
+          portLimit: bu.portLimit
+        })) : [],
+        isConfigured: true,
       }
+
+      // Fix 1: 铠装映射写入 settingsStore
+      if (armorMappings && armorMappings.length > 0) {
+        routeConfigUpdates.armorMappings = armorMappings.map(m => ({
+          riskLevel: m.riskLevel as 'high' | 'medium' | 'low',
+          riskThreshold: m.riskThreshold,
+          cableTypeId: m.cableTypeId,
+          cableTypeName: m.cableTypeName,
+          unitPrice: m.unitPrice,
+        }))
+      }
+
+      // Fix 1b: 冗余策略写入 settingsStore
+      if (redundancyConfig) {
+        routeConfigUpdates.redundancyConfig = redundancyConfig
+      }
+
+      // Fix 2: GIS 配置写入 settingsStore（rangeMode + planningRange + gridResolution）
+      if (gisConfig) {
+        routeConfigUpdates.rangeMode = gisConfig.rangeMode || 'auto'
+        if (gisConfig.gridResolution) {
+          routeConfigUpdates.gridResolution = gisConfig.gridResolution
+        }
+        if (gisConfig.rangeMode === 'manual' && gisConfig.planningRange) {
+          routeConfigUpdates.planningRange = gisConfig.planningRange
+        }
+      }
+
+      settingsStore.updateRoutePlanningConfig(routeConfigUpdates)
       
       // 处理器件库文件
       if (params.devices && params.devices.length > 0) {

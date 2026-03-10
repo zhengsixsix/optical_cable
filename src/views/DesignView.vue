@@ -17,7 +17,7 @@ import SystemDesignMap from '@/modules/design/components/SystemDesignMap.vue'
 import GSNRMarginChart from '@/components/charts/GSNRMarginChart.vue'
 import SpanPerformanceChart from '@/components/charts/SpanPerformanceChart.vue'
 import SystemPlanningResultPanel from '@/components/panels/SystemPlanningResultPanel.vue'
-import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore, useRouteStore } from '@/stores'
+import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore, useRouteStore, useCableSegmentStore } from '@/stores'
 import { useRouter } from 'vue-router'
 import { opticalSimulationService, repeaterPlacementService } from '@/services'
 import { getFiberParamsFromLibrary, getAmplifierParamsFromLibrary, getSimulationParams } from '@/services/DeviceParamsService'
@@ -34,6 +34,7 @@ const connectorStore = useConnectorStore()
 const rplStore = useRPLStore()
 const monitorStore = useMonitorStore()
 const routeStore = useRouteStore()
+const cableSegmentStore = useCableSegmentStore()
 const router = useRouter()
 
 // 项目类型检测
@@ -113,6 +114,9 @@ const openNewProject = () => {
 }
 
 onMounted(() => {
+  // 确保有 RPL 数据（从路由守卫迁移至此，显式处理）
+  ensureRPLData()
+  
   // 从路由规划初始化登陆站和分支器到 monitorStore
   initLandingStationsFromRoute()
   
@@ -134,6 +138,44 @@ onMounted(() => {
     }
   }
 })
+
+// 确保 RPL 数据存在 — 若缺失则从当前路由自动生成
+const ensureRPLData = () => {
+  const hasRPLData = rplStore.tables.length > 0 &&
+    rplStore.tables.some(t => t.records && t.records.length > 0)
+  if (hasRPLData) return
+
+  const selectedRoute = routeStore.selectedRoute || routeStore.paretoRoutes[0]
+  if (!selectedRoute || !selectedRoute.points || selectedRoute.points.length < 2) return
+
+  try {
+    const segments = selectedRoute.segments || []
+    rplStore.generateFromRoute(
+      selectedRoute.id,
+      selectedRoute.name || '默认路由',
+      selectedRoute.points.map((p: any) => ({
+        coordinates: p.coordinates,
+        type: p.type || 'waypoint',
+        name: p.name
+      })),
+      segments.map((s: any) => ({
+        length: s.length || 0,
+        depth: s.depth || 0,
+        cableType: s.cableType || 'LW'
+      }))
+    )
+    appStore.showNotification({
+      type: 'success',
+      message: '已自动从当前路由生成 RPL 数据',
+    })
+    appStore.addLog('INFO', `自动生成 RPL: ${selectedRoute.name}`)
+  } catch (error) {
+    appStore.showNotification({
+      type: 'warning',
+      message: 'RPL 数据自动生成失败，请手动导入 RPL',
+    })
+  }
+}
 
 // 上次初始化使用的路由 ID（用于检测路由是否变更）
 let lastInitRouteId: string | null = null
@@ -463,8 +505,11 @@ const designResult = computed(() => {
   // 统计登陆站数量
   const landingStationCount = rplStore.currentTable?.metadata?.landingStations || 2
   
-  // 计算各项成本
-  const cableCost = totalLength * cableCostPerKm
+  // 计算各项成本 — 海缆成本优先使用 cableSegmentStore 的分段成本（来自路由规划风险数据）
+  const segmentSummary = cableSegmentStore.summary
+  const cableCost = (segmentSummary && segmentSummary.totalCost > 0)
+    ? segmentSummary.totalCost * 1000  // cableSegmentStore 单位是千元，转为元
+    : totalLength * cableCostPerKm
   const repeaterCost = repeaterCount * repeaterUnitCost
   const installationCost = totalLength * installationCostPerKm
   const stationCost = landingStationCount * landingStationCost
@@ -1740,6 +1785,24 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                 <span class="font-mono font-medium">{{ formatCost(linkCalcSummary.costData.buCost) }}</span>
               </div>
             </div>
+            <!-- ★ 海缆分段成本明细（来自路由规划的风险分段） -->
+            <div v-if="cableSegmentStore.summary" class="space-y-1">
+              <div class="text-[10px] text-gray-400">海缆分段明细（路由规划）</div>
+              <div class="divide-y rounded border text-[10px] overflow-hidden">
+                <div v-if="cableSegmentStore.summary.highRiskLength > 0" class="flex justify-between px-2 py-1 bg-red-50">
+                  <span class="text-red-700">高风险 (DA) {{ cableSegmentStore.summary.highRiskLength.toFixed(1) }}km</span>
+                  <span class="font-mono text-red-700">¥{{ (cableSegmentStore.summary.highRiskCost).toFixed(0) }}K</span>
+                </div>
+                <div v-if="cableSegmentStore.summary.mediumRiskLength > 0" class="flex justify-between px-2 py-1 bg-amber-50">
+                  <span class="text-amber-700">中风险 (SA) {{ cableSegmentStore.summary.mediumRiskLength.toFixed(1) }}km</span>
+                  <span class="font-mono text-amber-700">¥{{ (cableSegmentStore.summary.mediumRiskCost).toFixed(0) }}K</span>
+                </div>
+                <div v-if="cableSegmentStore.summary.lowRiskLength > 0" class="flex justify-between px-2 py-1 bg-green-50">
+                  <span class="text-green-700">低风险 (LW) {{ cableSegmentStore.summary.lowRiskLength.toFixed(1) }}km</span>
+                  <span class="font-mono text-green-700">¥{{ (cableSegmentStore.summary.lowRiskCost).toFixed(0) }}K</span>
+                </div>
+              </div>
+            </div>
             <!-- 成本构成条 -->
             <div v-if="linkCalcSummary.costData.totalCost > 0" class="space-y-1">
               <div class="text-[10px] text-gray-400">成本构成</div>
@@ -1754,6 +1817,28 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                 <span v-if="linkCalcSummary.costData.buCost > 0" class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500" />BU</span>
               </div>
             </div>
+          </div>
+          <!-- 仅有海缆分段数据（尚未做系统规划仿真时）-->
+          <div v-else-if="cableSegmentStore.summary" class="space-y-2">
+            <div class="p-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg border border-blue-200">
+              <div class="text-[10px] text-blue-600 mb-0.5">海缆分段成本（路由规划）</div>
+              <div class="text-lg font-bold text-blue-800">¥{{ (cableSegmentStore.summary.totalCost).toFixed(0) }}K</div>
+            </div>
+            <div class="divide-y rounded border text-xs overflow-hidden">
+              <div v-if="cableSegmentStore.summary.highRiskLength > 0" class="flex justify-between px-2 py-1 bg-red-50">
+                <span class="text-red-700">高风险 (DA) {{ cableSegmentStore.summary.highRiskSegments }}段 {{ cableSegmentStore.summary.highRiskLength.toFixed(1) }}km</span>
+                <span class="font-mono text-red-700">¥{{ (cableSegmentStore.summary.highRiskCost).toFixed(0) }}K</span>
+              </div>
+              <div v-if="cableSegmentStore.summary.mediumRiskLength > 0" class="flex justify-between px-2 py-1 bg-amber-50">
+                <span class="text-amber-700">中风险 (SA) {{ cableSegmentStore.summary.mediumRiskSegments }}段 {{ cableSegmentStore.summary.mediumRiskLength.toFixed(1) }}km</span>
+                <span class="font-mono text-amber-700">¥{{ (cableSegmentStore.summary.mediumRiskCost).toFixed(0) }}K</span>
+              </div>
+              <div v-if="cableSegmentStore.summary.lowRiskLength > 0" class="flex justify-between px-2 py-1 bg-green-50">
+                <span class="text-green-700">低风险 (LW) {{ cableSegmentStore.summary.lowRiskSegments }}段 {{ cableSegmentStore.summary.lowRiskLength.toFixed(1) }}km</span>
+                <span class="font-mono text-green-700">¥{{ (cableSegmentStore.summary.lowRiskCost).toFixed(0) }}K</span>
+              </div>
+            </div>
+            <div class="text-[10px] text-gray-400 text-center">完成系统规划后将显示完整成本</div>
           </div>
           <div v-else class="text-center py-4">
             <DollarSign class="w-8 h-8 mx-auto mb-1.5 text-gray-300" />

@@ -6,28 +6,37 @@ import { X, MapPin, Square } from 'lucide-vue-next'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
-import WebGLTileLayer from 'ol/layer/WebGLTile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import OSM from 'ol/source/OSM'
-import GeoTIFF from 'ol/source/GeoTIFF'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
-import { Style, Fill, Stroke, Circle as CircleStyle } from 'ol/style'
+import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style'
 import { DragBox } from 'ol/interaction'
 import { platformModifierKeyOnly } from 'ol/events/condition'
+import { boundingExtent } from 'ol/extent'
 import 'ol/ol.css'
+
+// 已有标记点（在地图上显示已配置的站点/BU）
+export interface MapMarker {
+  lon: number
+  lat: number
+  name: string
+  color?: string  // 默认 '#6366f1'
+}
 
 interface Props {
   visible: boolean
   title?: string
   mode?: 'point' | 'range'  // 选点模式 或 框选范围模式
+  existingMarkers?: MapMarker[]  // 已有标记点
 }
 
 const props = withDefaults(defineProps<Props>(), {
   title: '地图选点',
-  mode: 'point'
+  mode: 'point',
+  existingMarkers: () => []
 })
 
 const emit = defineEmits<{
@@ -46,6 +55,7 @@ const drawStartCoord = ref<{ lon: number; lat: number } | null>(null)
 let map: Map | null = null
 let markerSource: VectorSource | null = null
 let boxSource: VectorSource | null = null
+let existingMarkerSource: VectorSource | null = null
 
 const destroyMap = () => {
   if (map) {
@@ -53,6 +63,7 @@ const destroyMap = () => {
     map = null
     markerSource = null
     boxSource = null
+    existingMarkerSource = null
   }
 }
 
@@ -64,6 +75,13 @@ const initMap = () => {
 
   markerSource = new VectorSource()
   boxSource = new VectorSource()
+  existingMarkerSource = new VectorSource()
+
+  // 已有标记点图层 — 每个 feature 带独立样式
+  const existingMarkerLayer = new VectorLayer({
+    source: existingMarkerSource,
+    zIndex: 90,
+  })
 
   const markerLayer = new VectorLayer({
     source: markerSource,
@@ -87,25 +105,11 @@ const initMap = () => {
     zIndex: 99,
   })
 
-  // GeoTIFF图层
-  const rgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], 1] }
-  const geoTiffSource = new GeoTIFF({
-    sources: [{ url: '/output2_cog.tif' }],
-    normalize: true,
-    wrapX: true,
-  })
-  const geoTiffLayer = new WebGLTileLayer({
-    source: geoTiffSource,
-    style: rgbStyle,
-    visible: true,
-    opacity: 1
-  })
-
   map = new Map({
     target: mapContainer.value,
     layers: [
-      new TileLayer({ source: new OSM(), opacity: 0.5 }),
-      geoTiffLayer,
+      new TileLayer({ source: new OSM() }),
+      existingMarkerLayer,
       boxLayer,
       markerLayer,
     ],
@@ -115,6 +119,39 @@ const initMap = () => {
       zoom: 4,
     }),
   })
+
+  // 添加已有标记并自动缩放视图
+  if (props.existingMarkers.length > 0) {
+    const coords: [number, number][] = []
+    for (const m of props.existingMarkers) {
+      const feat = new Feature({ geometry: new Point([m.lon, m.lat]) })
+      const c = m.color || '#6366f1'
+      feat.setStyle(new Style({
+        image: new CircleStyle({
+          radius: 7,
+          fill: new Fill({ color: c }),
+          stroke: new Stroke({ color: '#fff', width: 2 }),
+        }),
+        text: new Text({
+          text: m.name,
+          offsetY: -16,
+          font: 'bold 12px sans-serif',
+          fill: new Fill({ color: c }),
+          stroke: new Stroke({ color: '#fff', width: 3 }),
+        }),
+      }))
+      existingMarkerSource!.addFeature(feat)
+      coords.push([m.lon, m.lat])
+    }
+    // 自动缩放到所有标记点
+    if (coords.length >= 2) {
+      const ext = boundingExtent(coords)
+      map.getView().fit(ext, { padding: [60, 60, 60, 60], maxZoom: 8 })
+    } else {
+      map.getView().setCenter(coords[0])
+      map.getView().setZoom(6)
+    }
+  }
 
   map.on('pointermove', (evt) => {
     hoverCoord.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }

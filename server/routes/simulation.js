@@ -7,6 +7,7 @@ import { Router } from 'express'
 import { buildSimulationInput, spanIteration, buildDetailedResult } from '../services/gnModel.js'
 import { egnSpanIteration, buildDetailedResult as egnBuildDetailedResult } from '../services/egnModel.js'
 import { ramanHybridSpanIteration, buildDetailedResult as ramanBuildDetailedResult } from '../services/ramanModel.js'
+import { ssfmSpanIteration, buildDetailedResult as ssfmBuildDetailedResult } from '../services/ssfmModel.js'
 import { addEolMarginToResult } from '../services/eolModel.js'
 
 export function createSimulationRouter() {
@@ -39,8 +40,9 @@ export function createSimulationRouter() {
                 iterationResult = ramanHybridSpanIteration(simInput)
                 detailBuilder = ramanBuildDetailedResult
             } else if (fiberModel === 'SSFM') {
-                console.log('  ⚙️ SSFM 模型尚未实现，回退到 GN')
-                iterationResult = spanIteration(simInput)
+                console.log('  ⚙️ 使用 SSFM 模型（对称分步傅里叶法）')
+                iterationResult = ssfmSpanIteration(simInput)
+                detailBuilder = ssfmBuildDetailedResult
             } else {
                 console.log('  ⚙️ 使用 GN 模型')
                 iterationResult = spanIteration(simInput)

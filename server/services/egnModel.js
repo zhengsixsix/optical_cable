@@ -12,6 +12,7 @@
  */
 
 import { PHYS, dbmToW, dbToLinear, linearToDb } from '../utils/physics.js'
+import { computeAmplifierNoise } from '../utils/amplifier.js'
 import { parseWdmParams, parseFiberPhysics, buildSimulationInput, buildDetailedResult } from './gnModel.js'
 
 // ── 调制格式参数表（Φ_mod 因子） ──
@@ -107,11 +108,11 @@ export function egnSpanIteration(simInput) {
     const wdm = parseWdmParams(wdmParams)
     const fiber = parseFiberPhysics(fiberParams, wdm.centerFreqTHz)
 
-    const noiseFigure_dB = amplifierParams.noiseFigure || 4.8
-    const NF_linear = dbToLinear(noiseFigure_dB)
-
     const B_ch = wdm.baudRateGBaud * 1e9
     const B_wdm = wdm.channelCount * wdm.spacingGHz * 1e9
+
+    // 放大器模型标识
+    const ampModel = simInput.amplifierModel || 'EDFA_Simple'
 
     // EGN 扩展参数
     const dispersionSlope = fiberParams.dispersionSlope || 0.06  // ps/nm²/km
@@ -164,14 +165,21 @@ export function egnSpanIteration(simInput) {
             modulationPhi: modFactor.phi,
         })
 
+        // 逐信道放大器噪声 (支持 EDFA_Simple / EDFA_Full)
+        const ampNoise = computeAmplifierNoise({
+            amplifierModel: ampModel,
+            amplifierParams,
+            channelFrequencies: wdm.channelFrequencies,
+            spanLoss_dB: spanLoss_dB,
+        })
+
         const gsnrPerChannel = []
         const osnrPerChannel = []
         const powerPerChannel = []
         const nliPerChannel = []
 
         for (let ch = 0; ch < wdm.channelCount; ch++) {
-            const freq_Hz = wdm.channelFrequencies[ch] * 1e12
-            const P_ase_per_amp = PHYS.h * freq_Hz * NF_linear * (G_linear - 1) * PHYS.refBandwidth
+            const P_ase_per_amp = ampNoise.asePerChannel[ch]
 
             const totalAse_W = P_ase_per_amp * numAmps
             // EGN: NLI 按 N^(1+ε) 累加，ε ≈ 0.05 for EGN (相干累积修正)
