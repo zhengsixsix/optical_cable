@@ -1,4 +1,4 @@
-﻿﻿<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useSLDStore, useAppStore, useRouteStore } from '@/stores'
 import { exportSLDFile, exportSLDFileFromRoute, exportEquipmentsToCSV as exportSLDEquipmentsToCSV } from '@/services/SLDExportService'
@@ -20,7 +20,7 @@ const props = defineProps<{
   visible?: boolean
 }>()
 
-const emit = defineEmits<{
+const emit = defineEmits<{  
   (e: 'close'): void
   (e: 'edit-equipment', equipmentId: string): void
   (e: 'edit-segment', segmentId: string): void

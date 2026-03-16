@@ -2,19 +2,11 @@
 export { GeoService, useGeoService } from './GeoService'
 export { dataLinkService, useDataLink } from './DataLinkService'
 export type { DeviceLink, DataChangeEvent } from './DataLinkService'
-export { 
+export {
   exportRPLFile,
   exportToExcel,
-  exportToXML as exportRPLToXML,
-  useRPLExport, 
-  RPL_STANDARD_HEADERS,
-  RPL_HEADER_GROUPS,
-  decimalToDMS,
-  calculateMeridionalParts,
-  calculateDistanceKm,
-  calculateAllRecords
+  useRPLExport
 } from './RPLExportService'
-export type { CalculatedRPLRecord } from './RPLExportService'
 export { 
   exportSLDFile, 
   useSLDExport, 
