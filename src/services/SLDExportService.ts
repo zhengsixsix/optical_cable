@@ -13,6 +13,10 @@ import type {
   SLDGlobalInfo,
   FiberPairType
 } from '@/types'
+import {
+  buildSldEquipmentConfigParams,
+  DEFAULT_SLD_EXPORT_TEMPLATE_VERSION,
+} from '@/services/sldDeviceRegistry'
 
 // ========== XML工具函数 ==========
 
@@ -44,8 +48,68 @@ const ELEMENT_TYPE_MAP: Record<string, string> = {
   'PFE': 'LandingStation',
   'REP': 'Repeater',
   'BU': 'BU',
+  'EQ': 'Equalizer',
   'JOINT': 'Joint',
   'OADM': 'OADM'
+}
+
+function readConfigString(configParams: SLDEquipment['configParams'], key: string): string | undefined {
+  const value = configParams?.[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function toJointSubType(value: string | undefined): SLDEquipment['jointSubType'] | undefined {
+  if (value === 'BJB' || value === 'SEJB' || value === 'BUJB' || value === 'SJB' || value === 'FJB' || value === 'LIJB') {
+    return value
+  }
+  return undefined
+}
+
+function toBuSubType(value: string | undefined): SLDEquipment['buSubType'] | undefined {
+  if (value === 'BU' || value === 'ROADM' || value === 'OADM') {
+    return value
+  }
+  return undefined
+}
+
+function getEqualizerRole(equipment: SLDEquipment): 'T' | 'S' {
+  if (equipment.equalizerRole === 'S' || equipment.equalizerRole === 'T') {
+    return equipment.equalizerRole
+  }
+  return readConfigString(equipment.configParams, 'EqualizerRole') === 'S' ? 'S' : 'T'
+}
+
+function isFixedEqualizer(equipment: SLDEquipment): boolean {
+  if (equipment.type !== 'EQ') return false
+  if (equipment.attenuationMode === 'fixed') return true
+  if (readConfigString(equipment.configParams, 'AttenuationMode') === 'fixed') return true
+  return readConfigString(equipment.configParams, 'DisplayLabel') === 'F-ATT'
+}
+
+function getJointSubType(equipment: SLDEquipment): SLDEquipment['jointSubType'] | undefined {
+  return equipment.jointSubType || toJointSubType(readConfigString(equipment.configParams, 'JointSubType'))
+}
+
+function getOadmSubType(equipment: SLDEquipment): SLDEquipment['buSubType'] | undefined {
+  return equipment.buSubType || toBuSubType(readConfigString(equipment.configParams, 'OADMType'))
+}
+
+function getCanonicalDisplayName(equipment: SLDEquipment): string {
+  const configured = readConfigString(equipment.configParams, 'DisplayName')
+  if (configured) return configured
+
+  switch (equipment.type) {
+    case 'REP':
+      return 'R'
+    case 'EQ':
+      return getEqualizerRole(equipment)
+    case 'JOINT':
+      return getJointSubType(equipment) || equipment.name
+    case 'OADM':
+      return getOadmSubType(equipment) === 'ROADM' ? 'ROADM' : 'OADM'
+    default:
+      return equipment.name
+  }
 }
 
 // 光纤段对应的Element_Type
@@ -57,7 +121,8 @@ const EQUIPMENT_TYPE_FULL_NAME: Record<string, string> = {
   'PFE': 'Power Feeding Equipment',
   'REP': 'Repeater',
   'BU': 'Branching Unit',
-  'JOINT': 'Joint',
+  'EQ': 'Equalizer',
+  'JOINT': 'Joint Box',
   'OADM': 'OADM'
 }
 
@@ -241,7 +306,7 @@ export function exportToXML(table: SLDTable, globalInfo?: Partial<SLDGlobalInfo>
     landingPoints: globalInfo?.landingPoints || landingPoints,
     createdDate: globalInfo?.createdDate || table.createdAt.toISOString(),
     lastModified: globalInfo?.lastModified || table.updatedAt.toISOString(),
-    version: globalInfo?.version || '1.0',
+    version: globalInfo?.version || table.metadata.exportTemplateVersion || '1.0',
     author: globalInfo?.author || 'System',
     description: globalInfo?.description
   }
@@ -252,7 +317,7 @@ export function exportToXML(table: SLDTable, globalInfo?: Partial<SLDGlobalInfo>
   // 9.2标准格式: SystemLineDiagram 根元素
   let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
   xml += `<!-- 海缆系统 SLD (System Line Diagram) 数据交换格式标准 9.2 -->\n`
-  xml += `<SystemLineDiagram project="${escapeXml(fullGlobalInfo.systemName)}" version="1.0" date="${dateStr}">\n\n`
+  xml += `<SystemLineDiagram project="${escapeXml(fullGlobalInfo.systemName)}" version="${escapeXml(fullGlobalInfo.version)}" date="${dateStr}">\n\n`
   
   // 全局链路基础信息
   xml += `${indent(1)}<!-- 全局链路基础信息 -->\n`
@@ -278,18 +343,9 @@ export function exportToXML(table: SLDTable, globalInfo?: Partial<SLDGlobalInfo>
     const hasDownstream = i < sortedEquipments.length - 1 || outgoingSegment
     
     // 构建配置参数
-    const configParams: Record<string, any> = {
-      ...(equipment.configParams || {})
-    }
+    const configParams = buildSldEquipmentConfigParams(equipment)
     
     // 添加设备特定参数
-    if (equipment.name) configParams['Name'] = equipment.name
-    if (equipment.type === 'TE' || equipment.type === 'PFE') {
-      configParams['StationName'] = equipment.name
-    }
-    if (equipment.specifications) configParams['Specifications'] = equipment.specifications
-    if (equipment.manufacturer) configParams['Manufacturer'] = equipment.manufacturer
-    
     // 生成设备Element
     const downstreamId = hasDownstream ? globalSequence + 1 : null
     const branchIdVal = equipment.branchId ? equipment.branchId : null
@@ -365,7 +421,9 @@ export function downloadFile(content: string, filename: string, mimeType: string
  */
 export function exportSLDFile(table: SLDTable, globalInfo?: Partial<SLDGlobalInfo>) {
   const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const baseName = `SLD_${table.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${timestamp}`
+  const version = (globalInfo?.version || table.metadata.exportTemplateVersion || '1.0')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+  const baseName = `SLD_${table.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${version}_${timestamp}`
   
   const content = exportToXML(table, globalInfo)
   downloadFile(content, `${baseName}.xml`, 'application/xml;charset=utf-8')
@@ -422,6 +480,7 @@ const ELEMENT_TYPE_REVERSE_MAP: Record<string, string> = {
   'LandingStation': 'TE',
   'Repeater': 'REP',
   'BU': 'BU',
+  'Equalizer': 'EQ',
   'Joint': 'JOINT',
   'OADM': 'OADM',
   'CableSpan': 'CABLE'  // 光缆段特殊标记
@@ -524,6 +583,10 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
           fiberSegments.push(segment)
         } else {
           // 这是设备
+          const jointSubType = toJointSubType(configParams['JointSubType'] || configParams['Name'])
+          const buSubType = toBuSubType(
+            configParams['OADMType'] || (internalType === 'OADM' ? configParams['Name'] : undefined)
+          )
           const equipment: SLDEquipment = {
             id: `eq-${Date.now()}-${equipmentSequence}`,
             sequence: equipmentSequence++,
@@ -543,6 +606,11 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
             downstreamId: downstreamId && downstreamId !== 'NULL' ? downstreamId : undefined,
             branchId: branchId || undefined,
             configParams: configParams,
+            equalizerRole: configParams['EqualizerRole'] === 'S' ? 'S' : configParams['EqualizerRole'] === 'T' ? 'T' : undefined,
+            attenuationMode: configParams['AttenuationMode'] === 'fixed' ? 'fixed' : configParams['AttenuationMode'] === 'adjustable' ? 'adjustable' : undefined,
+            attenuationDb: configParams['AttenuationDB'] ? parseFloat(configParams['AttenuationDB']) : undefined,
+            jointSubType: internalType === 'JOINT' ? jointSubType : undefined,
+            buSubType: internalType === 'OADM' ? buSubType : undefined,
           }
           equipments.push(equipment)
         }
@@ -602,6 +670,25 @@ export function parseFromXML(xmlContent: string): { table: Partial<SLDTable>, gl
         })
         if (Object.keys(configParams).length > 0) {
           equipment.configParams = configParams
+        }
+        if (configParams['EqualizerRole'] === 'T' || configParams['EqualizerRole'] === 'S') {
+          equipment.equalizerRole = configParams['EqualizerRole']
+        }
+        if (configParams['AttenuationMode'] === 'fixed' || configParams['AttenuationMode'] === 'adjustable') {
+          equipment.attenuationMode = configParams['AttenuationMode']
+        }
+        if (configParams['AttenuationDB']) {
+          equipment.attenuationDb = parseFloat(configParams['AttenuationDB'])
+        }
+        const legacyJointSubType = toJointSubType(configParams['JointSubType'] || configParams['Name'])
+        if (equipment.type === 'JOINT' && legacyJointSubType) {
+          equipment.jointSubType = legacyJointSubType
+        }
+        const legacyBuSubType = toBuSubType(
+          configParams['OADMType'] || (equipment.type === 'OADM' ? configParams['Name'] : undefined)
+        )
+        if (equipment.type === 'OADM' && legacyBuSubType) {
+          equipment.buSubType = legacyBuSubType
         }
         
         equipments.push(equipment)
@@ -714,7 +801,7 @@ export function exportSLDFromRoute(
   
   let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
   xml += `<!-- 海缆系统 SLD (System Line Diagram) 数据交换格式标准 9.2 -->\n`
-  xml += `<SystemLineDiagram project="${escapeXml(projectName)}" version="1.0" date="${dateStr}">\n\n`
+  xml += `<SystemLineDiagram project="${escapeXml(projectName)}" version="${escapeXml(DEFAULT_SLD_EXPORT_TEMPLATE_VERSION)}" date="${dateStr}">\n\n`
   
   // 全局链路基础信息
   xml += `${indent(1)}<!-- 全局链路基础信息 -->\n`
@@ -849,7 +936,7 @@ export function exportSLDFileFromRoute(
 ) {
   const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   const name = projectName || route.name || 'SLD'
-  const baseName = `SLD_${name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${timestamp}`
+  const baseName = `SLD_${name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${DEFAULT_SLD_EXPORT_TEMPLATE_VERSION}_${timestamp}`
   
   const content = exportSLDFromRoute(route, projectName, slackPercent)
   downloadFile(content, `${baseName}.xml`, 'application/xml;charset=utf-8')

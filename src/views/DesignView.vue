@@ -27,6 +27,8 @@ import { MODULATION_PARAMS } from '@/types/simulation'
 import { connectorTypeLabels } from '@/types/connector'
 import { Cable, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle, DollarSign, Activity } from 'lucide-vue-next'
 import { calculateDistance as geoCalcDistance } from '@/utils/geo'
+import { getRoutePositionAtKP } from '@/utils/routePosition'
+import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -384,13 +386,19 @@ const rplOptions = computed(() => (
     }))
 ))
 
+const routeConnectorElements = computed(() =>
+  connectorStore.getElementsForRoute(routeStore.currentRouteId || undefined)
+)
+
 const handleRouteSelect = (routeId: string) => {
   if (!routeId) {
     routeStore.selectRoute(null)
+    connectorStore.selectTable(null)
     return
   }
   routeStore.selectRoute(routeId)
   const matchTable = rplStore.tables.find(t => t.routeId === routeId)
+  connectorStore.selectTableByRoute(routeId, { clearOnMissing: true })
   if (matchTable && rplStore.currentTableId !== matchTable.id) {
     rplStore.selectTable(matchTable.id)
   } else if (!matchTable) {
@@ -410,22 +418,31 @@ const handleRplSelect = (tableId: string) => {
   if (table?.routeId && routeStore.currentRouteId !== table.routeId) {
     routeStore.selectRoute(table.routeId)
   }
+  connectorStore.selectTableByRoute(table?.routeId || null, { clearOnMissing: true })
 }
 
 watch(() => routeStore.currentRouteId, (routeId) => {
-  if (!routeId) return
+  if (!routeId) {
+    connectorStore.selectTable(null)
+    return
+  }
   const matchTable = rplStore.tables.find(t => t.routeId === routeId)
+  connectorStore.selectTableByRoute(routeId, { clearOnMissing: true })
   if (matchTable && rplStore.currentTableId !== matchTable.id) {
     rplStore.selectTable(matchTable.id)
   }
 })
 
 watch(() => rplStore.currentTableId, (tableId) => {
-  if (!tableId) return
+  if (!tableId) {
+    connectorStore.selectTable(null)
+    return
+  }
   const table = rplStore.tables.find(t => t.id === tableId)
   if (table?.routeId && routeStore.currentRouteId !== table.routeId) {
     routeStore.selectRoute(table.routeId)
   }
+  connectorStore.selectTableByRoute(table?.routeId || null, { clearOnMissing: true })
 })
 
 // 下拉选项
@@ -468,7 +485,8 @@ const costConfigForPanel = computed(() => {
   return {
     cablePerKm: costSettings?.cableCostPerKm,
     repeaterPerUnit: costSettings?.repeaterCost,
-    buPerUnit: (costSettings as any)?.buCost || 50000,
+    buPerUnit: costSettings?.branchingUnitCost || 0,
+    equalizerPerUnit: costSettings?.equalizerCost || 0,
     installationPerKm: costSettings?.installationCostPerKm || 5000
   }
 })
@@ -499,11 +517,15 @@ const designResult = computed(() => {
   const costSettings = settingsStore.costFactors || {}
   const cableCostPerKm = costSettings.cableCostPerKm || 0
   const repeaterUnitCost = costSettings.repeaterCost || 0
+  const buUnitCost = costSettings.branchingUnitCost || 0
+  const equalizerUnitCost = costSettings.equalizerCost || 0
   const installationCostPerKm = costSettings.installationCostPerKm || 0
   const landingStationCost = costSettings.landingStationCost || 0
   
   // 统计登陆站数量
   const landingStationCount = rplStore.currentTable?.metadata?.landingStations || 2
+  const buCount = routeConnectorElements.value.filter(e => e.type === 'bu').length
+  const equalizerCount = routeConnectorElements.value.filter(e => e.type === 'equalizer').length
   
   // 计算各项成本 — 海缆成本优先使用 cableSegmentStore 的分段成本（来自路由规划风险数据）
   const segmentSummary = cableSegmentStore.summary
@@ -511,6 +533,8 @@ const designResult = computed(() => {
     ? segmentSummary.totalCost * 1000  // cableSegmentStore 单位是千元，转为元
     : totalLength * cableCostPerKm
   const repeaterCost = repeaterCount * repeaterUnitCost
+  const buCost = buCount * buUnitCost
+  const equalizerCost = equalizerCount * equalizerUnitCost
   const installationCost = totalLength * installationCostPerKm
   const stationCost = landingStationCount * landingStationCost
 
@@ -518,11 +542,15 @@ const designResult = computed(() => {
     totalLength,
     repeaterCount,
     landingStationCount,
+    buCount,
+    equalizerCount,
     cableCost,
     repeaterCost,
+    buCost,
+    equalizerCost,
     installationCost,
     stationCost,
-    totalCost: cableCost + repeaterCost + installationCost + stationCost,
+    totalCost: cableCost + repeaterCost + buCost + equalizerCost + installationCost + stationCost,
     maxCapacity: cable.fiberCount * 10 // Tbps
   }
 })
@@ -631,7 +659,9 @@ const linkCalcSummary = ref<{
     amplifierCount: number
     avgSpanLength: number
     buCount: number
+    equalizerCount?: number
     totalBuLoss: number
+    totalEqualizerLoss?: number
     channelCount: number
     modulation: string
   }
@@ -645,6 +675,7 @@ const linkCalcSummary = ref<{
     cableCost: number
     amplifierCost: number
     buCost: number
+    equalizerCost: number
     totalCost: number
     costItems: Array<{ category: string; model: string; quantity: number | string; unit: string; unitPrice: number; subtotal: number }>
   }
@@ -656,12 +687,14 @@ const deviceStats = computed(() => {
     return linkCalcSummary.value.systemConfig
   }
   return {
-    amplifierCount: connectorStore.elements.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w').length,
-    buCount: connectorStore.elements.filter(e => e.type === 'bu').length,
+    amplifierCount: routeConnectorElements.value.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w').length,
+    buCount: routeConnectorElements.value.filter(e => e.type === 'bu').length,
+    equalizerCount: routeConnectorElements.value.filter(e => e.type === 'equalizer').length,
     avgSpanLength: 0,
     channelCount: 0,
     modulation: '-',
     totalBuLoss: 0,
+    totalEqualizerLoss: 0,
   }
 })
 
@@ -790,7 +823,11 @@ const openRPL = () => {
 // 打开接线元添加弹框
 const openConnectorAdd = () => {
   if (!connectorStore.currentTable) {
-    connectorStore.createTable('默认接线元表')
+    const currentRoute = routeStore.selectedRoute
+    connectorStore.createTable(
+      currentRoute?.name ? `${currentRoute.name}_接线元表` : '默认接线元表',
+      routeStore.currentRouteId || undefined
+    )
   }
   editConnectorId.value = null
   showConnectorDialog.value = true
@@ -1283,6 +1320,51 @@ const goToDeviceLibrarySettings = () => {
   router.push({ path: '/settings', query: { tab: 'equipment' } })
 }
 
+// ─── 均衡器落位辅助 ────────────────────────────────────────────────
+// 根据海缆段的 equalizerEnabled 配置，在段中点 KP 处自动生成均衡器接线元
+const syncEqualizersFromSegments = (routePointsList: any[]) => {
+  const segsWithEq = cableSegmentStore.segments.filter(s => s.equalizerEnabled && s.equalizerTypeId)
+  if (segsWithEq.length === 0) return 0
+
+  const route = routeStore.selectedRoute
+    ? { ...routeStore.selectedRoute, points: routePointsList.length > 0 ? routePointsList : routeStore.selectedRoute.points }
+    : null
+  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? calculateRouteTrunkLengthKm(routeStore.selectedRoute) ?? 0
+  const rplRecords = rplStore.currentTable?.records || []
+
+  // 删除旧的自动生成均衡器元素（保留手动添加的：无 remarks 前缀的不影响）
+  const oldAutoEq = connectorStore.elements.filter(
+    e => e.type === 'equalizer' && e.remarks?.startsWith('自动落位:')
+  )
+  oldAutoEq.forEach(e => connectorStore.deleteElement(e.id, false))
+
+  // 在段中点 KP 创建均衡器
+  segsWithEq.forEach((seg, idx) => {
+    const midKp = (seg.startKp + seg.endKp) / 2
+    const position = getRoutePositionAtKP(midKp, route, {
+      configuredTotalLength: totalLength,
+      rplRecords,
+    })
+    const eqType = settingsStore.equalizerTypes.find(e => e.id === seg.equalizerTypeId)
+    connectorStore.addElement({
+      type: 'equalizer',
+      name: `EQ-${String(idx + 1).padStart(2, '0')}`,
+      kp: midKp,
+      longitude: position.longitude,
+      latitude: position.latitude,
+      depth: position.depth,
+      status: 'active',
+      specifications: eqType?.name || seg.equalizerTypeName || '均衡器',
+      componentRefId: seg.equalizerTypeId || undefined,
+      equalizerRole: seg.equalizerRole || 'T',
+      attenuationMode: eqType?.attenuationMode || 'adjustable',
+      attenuationDb: eqType?.defaultAttenuationDb ?? 0,
+      remarks: `自动落位: 来自海缆段 KP${seg.startKp.toFixed(1)}-${seg.endKp.toFixed(1)}km`,
+    }, false)
+  })
+  return segsWithEq.length
+}
+
 // 应用推荐配置
 const handleApplyRecommendation = (spanKm: number) => {
   repeaterSpacing.value = spanKm
@@ -1314,14 +1396,14 @@ const handleApplyRecommendation = (spanKm: number) => {
     connectorStore.deleteElementsByType(['ola', 'amplifier_e', 'amplifier_w', 'fiber'])
     
     // 添加新的放大器
-    autoPlacementResult.value.positions.forEach((pos: { kp: number; longitude: number; latitude: number; isBranch?: boolean }, index: number) => {
+    autoPlacementResult.value.positions.forEach((pos: { kp: number; longitude: number; latitude: number; depth: number; isBranch?: boolean }, index: number) => {
       connectorStore.addElement({
         type: index % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
         name: `AMP-${String(index + 1).padStart(2, '0')}`,
         kp: pos.kp,
         longitude: pos.longitude,
         latitude: pos.latitude,
-        depth: 0,
+        depth: pos.depth ?? 0,
         status: 'active',
         specifications: `Span ${spanKm}km`,
         remarks: pos.isBranch ? '分支放大器' : 'EDFA'
@@ -1331,11 +1413,15 @@ const handleApplyRecommendation = (spanKm: number) => {
     // 自动生成光纤段（连接相邻节点）
     generateFiberSpans(autoPlacementResult.value.positions)
   }
-  
+
+  // 自动同步均衡器落位（来自海缆段配置）
+  const eqCount = syncEqualizersFromSegments(routePointsList)
+
   // 切换到地图视图以显示放大器位置
   centerViewMode.value = 'map'
   
-  appStore.showNotification({ type: 'success', message: `已应用推荐 Span 长度: ${spanKm} km，放大器数量: ${autoPlacementResult.value?.count || 0}` })
+  const eqMsg = eqCount > 0 ? `，均衡器 ${eqCount} 个` : ''
+  appStore.showNotification({ type: 'success', message: `已应用推荐 Span 长度: ${spanKm} km，放大器数量: ${autoPlacementResult.value?.count || 0}${eqMsg}` })
 }
 
 // 向导配置完成，开始计算
@@ -1400,7 +1486,10 @@ const handleWizardStartCalculation = (config: WizardConfig) => {
     
     // 保存用于放大器落位的路由点（供地图光纤线渲染使用）
     placementRoutePoints.value = capturedRoutePoints
-    
+
+    // 自动同步均衡器落位（来自海缆段配置）
+    syncEqualizersFromSegments(capturedRoutePoints)
+
     // 更新放大器间距
     repeaterSpacing.value = recommendation.recommendedSpanKm
     
@@ -1495,9 +1584,9 @@ const handleLinkConfigApplyResult = (result: Record<string, any>) => {
       linkCalcSummary.value = {
         linkName: result.linkName || '',
         metrics: result.metrics || { osnr: { min: 0, max: 0, avg: 0 }, gsnr: { min: 0, max: 0, avg: 0 }, power: { min: 0, max: 0, avg: 0 }, nli: { min: 0, max: 0, avg: 0 }, qFactor: { min: 0, max: 0, avg: 0 } },
-        systemConfig: result.systemConfig || { amplifierCount: amplifierCount, avgSpanLength: avgSpan, buCount: 0, totalBuLoss: 0, channelCount: 0, modulation: '-' },
+        systemConfig: result.systemConfig || { amplifierCount: amplifierCount, avgSpanLength: avgSpan, buCount: 0, equalizerCount: 0, totalBuLoss: 0, totalEqualizerLoss: 0, channelCount: 0, modulation: '-' },
         margin: result.margin || { targetOsnr: 0, worstMargin: 0, avgMargin: 0, meetsRequirement: false },
-        costData: result.costData || { cableCost: 0, amplifierCost: 0, buCost: 0, totalCost: 0, costItems: [] },
+        costData: result.costData || { cableCost: 0, amplifierCost: 0, buCost: 0, equalizerCost: 0, totalCost: 0, costItems: [] },
       }
       // 同步到 settingsStore 以便导出时保存
       settingsStore.linkCalcSummaryCache = linkCalcSummary.value
@@ -1784,6 +1873,10 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                 <span class="text-gray-600">分支器</span>
                 <span class="font-mono font-medium">{{ formatCost(linkCalcSummary.costData.buCost) }}</span>
               </div>
+              <div v-if="linkCalcSummary.costData.equalizerCost > 0" class="flex justify-between px-3 py-1.5 text-xs hover:bg-gray-50">
+                <span class="text-gray-600">均衡器</span>
+                <span class="font-mono font-medium">{{ formatCost(linkCalcSummary.costData.equalizerCost) }}</span>
+              </div>
             </div>
             <!-- ★ 海缆分段成本明细（来自路由规划的风险分段） -->
             <div v-if="cableSegmentStore.summary" class="space-y-1">
@@ -1810,11 +1903,13 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                 <div class="h-full bg-blue-500" :style="{ width: (linkCalcSummary.costData.cableCost / linkCalcSummary.costData.totalCost * 100) + '%' }" />
                 <div class="h-full bg-purple-500" :style="{ width: (linkCalcSummary.costData.amplifierCost / linkCalcSummary.costData.totalCost * 100) + '%' }" />
                 <div class="h-full bg-green-500" :style="{ width: (linkCalcSummary.costData.buCost / linkCalcSummary.costData.totalCost * 100) + '%' }" />
+                <div class="h-full bg-amber-500" :style="{ width: (linkCalcSummary.costData.equalizerCost / linkCalcSummary.costData.totalCost * 100) + '%' }" />
               </div>
               <div class="flex gap-3 text-[10px] text-gray-400">
                 <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500" />海缆</span>
                 <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-500" />放大器</span>
                 <span v-if="linkCalcSummary.costData.buCost > 0" class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500" />BU</span>
+                <span v-if="linkCalcSummary.costData.equalizerCost > 0" class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500" />EQ</span>
               </div>
             </div>
           </div>

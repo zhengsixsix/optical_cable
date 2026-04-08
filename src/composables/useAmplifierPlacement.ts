@@ -7,6 +7,8 @@ import { ref, type Ref } from 'vue'
 import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore, useRouteStore } from '@/stores'
 import { repeaterPlacementService } from '@/services'
 import { getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
+import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
+import { getRoutePositionAtKP } from '@/utils/routePosition'
 
 export function useAmplifierPlacement(deps: {
   repeaterSpacing: Ref<number>
@@ -185,7 +187,7 @@ export function useAmplifierPlacement(deps: {
     const allAmps = connectorStore.elements
       .filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
       .sort((a, b) => a.kp - b.kp)
-    const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+    const totalLength = calculateRouteTrunkLengthKm(routeStore.selectedRoute) || (rplStore.currentTable?.metadata?.totalLength ?? 0)
     let maxSpacing = 0
     let prevKp = 0
     for (const amp of allAmps) {
@@ -220,8 +222,8 @@ export function useAmplifierPlacement(deps: {
   const handleApplyRecommendation = (spanKm: number) => {
     deps.repeaterSpacing.value = spanKm
 
-    const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
     const currentRoute = routeStore.selectedRoute
+    const totalLength = calculateRouteTrunkLengthKm(currentRoute) || (rplStore.currentTable?.metadata?.totalLength ?? 0)
     const routePointsList = placementRoutePoints.value.length > 0
       ? placementRoutePoints.value
       : (currentRoute?.points || [])
@@ -238,16 +240,24 @@ export function useAmplifierPlacement(deps: {
       }
 
       connectorStore.deleteElementsByType(['ola', 'amplifier_e', 'amplifier_w', 'fiber'])
+      const routeForDepth = currentRoute
+        ? { ...currentRoute, points: routePointsList }
+        : null
+      const rplRecords = rplStore.currentTable?.records || []
 
       autoPlacementResult.value.positions.forEach(
-        (pos: { kp: number; longitude: number; latitude: number; isBranch?: boolean }, index: number) => {
+        (pos: { kp: number; longitude: number; latitude: number; depth: number; isBranch?: boolean }, index: number) => {
+          const position = getRoutePositionAtKP(pos.kp, routeForDepth, {
+            configuredTotalLength: totalLength,
+            rplRecords,
+          })
           connectorStore.addElement({
             type: index % 2 === 0 ? 'amplifier_e' : 'amplifier_w',
             name: `AMP-${String(index + 1).padStart(2, '0')}`,
             kp: pos.kp,
             longitude: pos.longitude,
             latitude: pos.latitude,
-            depth: 0,
+            depth: pos.depth ?? position.depth,
             status: 'active',
             specifications: `Span ${spanKm}km`,
             remarks: pos.isBranch ? '分支放大器' : 'EDFA',

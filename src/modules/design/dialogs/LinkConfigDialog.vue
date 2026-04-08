@@ -11,18 +11,23 @@
  * 6. BU参数配置
  */
 
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
-import { useSettingsStore, useRouteStore, useRPLStore, useConnectorStore, useBUConfigStore } from '@/stores'
+import { useAppStore, useSettingsStore, useRouteStore, useRPLStore, useConnectorStore, useBUConfigStore, useSLDStore, useCableSegmentStore } from '@/stores'
 import { 
   X, ChevronRight, ChevronLeft, Check, AlertCircle, 
   MapPin, Cpu, Cable, Radio, Waves, GitBranch, PlayCircle,
   CheckCircle2, Save, ChevronDown, ChevronUp, BarChart2,
-  Activity, TrendingUp, DollarSign, RefreshCw, Clock
+  Activity, TrendingUp, DollarSign, RefreshCw, Clock, Plus, Trash2
 } from 'lucide-vue-next'
+import type { ConnectorElement } from '@/types'
 import type { FiberParams, AmplifierParams } from '@/types/simulation'
 import { getFiberParamsFromLibrary, getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
+import { inferJointSubTypeByContext, normalizeCableTypeCode } from '@/services/sldDeviceRegistry'
 import { calculateDistance } from '@/utils/geo'
+import { getRoutePositionAtKP } from '@/utils/routePosition'
+import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
+import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
 import { runSimulation } from '@/services/SimulationApiService'
 import type { SpanScanResult, ScanPoint } from '@/services/SimulationApiService'
 
@@ -83,11 +88,27 @@ interface BUConfig {
   branchLoss: number
 }
 
+interface PlannedEqualizer {
+  tempId: string
+  id?: string
+  name: string
+  kp: number
+  componentRefId: string
+  equalizerRole: 'T' | 'S'
+  attenuationMode: 'adjustable' | 'fixed'
+  attenuationDb: number
+  specifications: string
+  remarks: string
+}
+
+const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const routeStore = useRouteStore()
 const rplStore = useRPLStore()
 const connectorStore = useConnectorStore()
+const sldStore = useSLDStore()
 const buConfigStore = useBUConfigStore()  // 使用共享的 BU 配置 store
+const cableSegmentStore = useCableSegmentStore()
 
 // 当前活动步骤
 const activeStep = ref<'link' | 'model' | 'fiber' | 'amplifier' | 'wdm' | 'bu' | 'result'>('link')
@@ -135,6 +156,11 @@ const rplOptions = computed(() =>
 // 同步当前路由到 routeStore（保证 routeStore.selectedRoute 可用）
 watch(selectedRouteId, (id) => {
   routeStore.selectRoute(id || null)
+  connectorStore.selectTableByRoute(id || null)
+  if (id) {
+    const routeName = routeStore.routes.find(route => route.id === id)?.name
+    ensureConnectorRouteTable(id, routeName)
+  }
   // ★ 关键修复：切换路由时同步选择匹配的 RPL 表格
   // 如果不同步，buildPathCoords 会使用旧 RPL（另一条路由）的坐标来插值放大器位置
   if (id) {
@@ -148,6 +174,308 @@ watch(selectedRouteId, (id) => {
     }
   }
 })
+
+const routeConnectorElements = computed(() =>
+  connectorStore.getElementsForRoute(selectedRouteId.value || routeStore.currentRouteId || null)
+)
+
+const equalizerTypeOptions = computed(() =>
+  settingsStore.equalizerTypes
+    .filter(type => type.id)
+    .map(type => ({ value: type.id, label: type.name }))
+)
+
+const equalizerRoleOptions = [
+  { value: 'T', label: 'T' },
+  { value: 'S', label: 'S' },
+]
+
+const equalizerModeOptions = [
+  { value: 'adjustable', label: '可调' },
+  { value: 'fixed', label: 'F-ATT' },
+]
+
+let plannedEqualizerSeed = 0
+const plannedEqualizers = ref<PlannedEqualizer[]>([])
+const AUTO_JOINT_REMARK_PREFIX = '自动落位:海缆段接头盒'
+const JOINT_KP_TOLERANCE = 0.2
+
+interface SegmentPlacementConfig {
+  startKp: number
+  endKp: number
+  cableTypeName?: string
+  equalizerEnabled?: boolean
+  equalizerTypeId?: string
+  equalizerTypeName?: string
+  equalizerRole?: 'T' | 'S'
+}
+
+const createPlannedEqualizer = (overrides: Partial<PlannedEqualizer> = {}): PlannedEqualizer => {
+  const defaultType = settingsStore.equalizerTypes.find(type => type.id === overrides.componentRefId) || settingsStore.equalizerTypes[0]
+  const normalized = normalizeEqualizerConfig({
+    equalizerRole: overrides.equalizerRole,
+    attenuationMode: overrides.attenuationMode ?? defaultType?.attenuationMode,
+    attenuationDb: overrides.attenuationDb ?? defaultType?.defaultAttenuationDb ?? 0,
+  })
+
+  return {
+    tempId: overrides.tempId || `eq-plan-${Date.now()}-${plannedEqualizerSeed++}`,
+    id: overrides.id,
+    name: overrides.name || `EQ-${String(plannedEqualizers.value.length + 1).padStart(2, '0')}`,
+    kp: overrides.kp ?? 0,
+    componentRefId: overrides.componentRefId || defaultType?.id || '',
+    equalizerRole: normalized.equalizerRole,
+    attenuationMode: normalized.attenuationMode,
+    attenuationDb: normalized.attenuationDb,
+    specifications: overrides.specifications || defaultType?.name || '均衡器',
+    remarks: overrides.remarks || '系统规划均衡器落位',
+  }
+}
+const collectCableSegmentsForRoute = (routeId: string | null): SegmentPlacementConfig[] => {
+  const normalizeSegment = (raw: Record<string, any>): SegmentPlacementConfig | null => {
+    const startKp = Number(raw.startKp ?? raw.kp ?? 0)
+    const endKp = Number(raw.endKp ?? raw.endKP ?? raw.kp ?? 0)
+    if (!Number.isFinite(startKp) || !Number.isFinite(endKp) || endKp <= startKp) {
+      return null
+    }
+    return {
+      startKp,
+      endKp,
+      cableTypeName: raw.cableTypeName || raw.cableType || '',
+      equalizerEnabled: Boolean(raw.equalizerEnabled),
+      equalizerTypeId: raw.equalizerTypeId || '',
+      equalizerTypeName: raw.equalizerTypeName || '',
+      equalizerRole: raw.equalizerRole === 'S' ? 'S' : 'T',
+    }
+  }
+
+  const merged = new Map<string, SegmentPlacementConfig>()
+  const upsertSegment = (segment: SegmentPlacementConfig | null) => {
+    if (!segment) return
+    const key = `${segment.startKp.toFixed(3)}-${segment.endKp.toFixed(3)}`
+    const current = merged.get(key)
+    if (!current) {
+      merged.set(key, segment)
+      return
+    }
+    merged.set(key, {
+      startKp: current.startKp,
+      endKp: current.endKp,
+      cableTypeName: current.cableTypeName || segment.cableTypeName,
+      equalizerEnabled: Boolean(current.equalizerEnabled || segment.equalizerEnabled),
+      equalizerTypeId: current.equalizerTypeId || segment.equalizerTypeId,
+      equalizerTypeName: current.equalizerTypeName || segment.equalizerTypeName,
+      equalizerRole: current.equalizerRole || segment.equalizerRole,
+    })
+  }
+
+  cableSegmentStore.segments
+    .filter(segment => !routeId || !segment.routeId || segment.routeId === routeId)
+    .forEach(segment => {
+      upsertSegment(normalizeSegment(segment as unknown as Record<string, any>))
+    })
+
+  connectorStore.getElementsForRoute(routeId)
+    .filter(element => element.type === 'cable_segment')
+    .forEach(element => {
+      upsertSegment(normalizeSegment(element as unknown as Record<string, any>))
+    })
+
+  return Array.from(merged.values()).sort((a, b) => a.startKp - b.startKp)
+}
+
+const getSelectedRplRecords = (routeId?: string | null) => {
+  if (!selectedRplId.value) return []
+  const table = rplStore.tables.find(item => item.id === selectedRplId.value)
+  if (!table) return []
+  if (routeId && table.routeId && table.routeId !== routeId) return []
+  return table.records || []
+}
+
+const getPositionByKP = (
+  targetKP: number,
+  route: Record<string, any> | null,
+  configTotalLength?: number,
+  rplRecords?: Record<string, any>[],
+) => getRoutePositionAtKP(targetKP, route as { points: any[]; segments: any[] } | null, {
+  configuredTotalLength: configTotalLength,
+  rplRecords: rplRecords as Array<{
+    sequence: number
+    kp: number
+    longitude: number
+    latitude: number
+    depth: number
+    cableType?: string
+    isBranchStation?: boolean
+  }> | undefined,
+})
+
+const findSegmentConfigAtKp = (segments: SegmentPlacementConfig[], kp: number) =>
+  segments.find(segment => kp >= segment.startKp - 0.001 && kp <= segment.endKp + 0.001)
+
+const inferAutoJointSubType = (
+  targetKp: number,
+  routeTotalLength: number,
+  depth: number,
+  cableTypeName: string | undefined,
+  routeElements: ConnectorElement[],
+) => {
+  const nearBranchingUnit = routeElements.some(element =>
+    element.type === 'bu' && Math.abs(element.kp - targetKp) <= 5,
+  )
+  return inferJointSubTypeByContext({
+    kp: targetKp,
+    totalLength: routeTotalLength,
+    depth,
+    cableType: normalizeCableTypeCode(cableTypeName),
+    nearBranchingUnit,
+  })
+}
+
+const buildPlannedEqualizersFromSegments = () => {
+  const routeId = selectedRouteId.value || routeStore.currentRouteId || null
+  const segmentConfigs = collectCableSegmentsForRoute(routeId)
+  const segmentEqualizers = segmentConfigs
+    .filter(segment => segment.equalizerEnabled && segment.equalizerTypeId)
+    .sort((a, b) => a.startKp - b.startKp)
+
+  if (segmentEqualizers.length === 0) {
+    const defaultType = settingsStore.equalizerTypes[0]
+    const totalLength = linkInfo.value?.trunkLength
+      || linkInfo.value?.totalLength
+      || segmentConfigs[segmentConfigs.length - 1]?.endKp
+      || 0
+    if (!defaultType || totalLength <= 0) return []
+    const defaultCount = Math.max(2, Math.min(10, Math.round(totalLength / 500)))
+    const candidateKps = Array.from({ length: defaultCount }, (_, index) =>
+      Number(((totalLength * (index + 1)) / (defaultCount + 1)).toFixed(1))
+    )
+    const uniqueKps = Array.from(new Set(candidateKps.map(kp => kp.toFixed(1))))
+      .map(value => Number(value))
+
+    return uniqueKps.map((kp, index) => createPlannedEqualizer({
+      name: `EQ-${String(index + 1).padStart(2, '0')}`,
+      kp,
+      componentRefId: defaultType.id,
+      equalizerRole: 'T',
+      attenuationMode: defaultType.attenuationMode,
+      attenuationDb: defaultType.defaultAttenuationDb,
+      specifications: defaultType.name,
+      remarks: '自动落位: 按链路长度推定均衡器',
+    }))
+  }
+
+  return segmentEqualizers.map((segment, index) => {
+    const equalizerType = settingsStore.equalizerTypes.find(type => type.id === segment.equalizerTypeId)
+    const midKp = Number(((segment.startKp + segment.endKp) / 2).toFixed(1))
+    return createPlannedEqualizer({
+      kp: midKp,
+      name: `EQ-${String(index + 1).padStart(2, '0')}`,
+      componentRefId: segment.equalizerTypeId || equalizerType?.id || '',
+      equalizerRole: segment.equalizerRole || 'T',
+      attenuationMode: equalizerType?.attenuationMode || 'adjustable',
+      attenuationDb: equalizerType?.defaultAttenuationDb ?? 0,
+      specifications: segment.equalizerTypeName || equalizerType?.name || '均衡器',
+      remarks: `自动落位: 来自海缆段 KP${segment.startKp.toFixed(1)}-${segment.endKp.toFixed(1)}km`,
+    })
+  })
+}
+
+const loadPlannedEqualizers = () => {
+  const existing = routeConnectorElements.value
+    .filter(element => element.type === 'equalizer')
+    .sort((a, b) => a.kp - b.kp)
+    .map(element => createPlannedEqualizer({
+      tempId: `eq-existing-${element.id}`,
+      id: element.id,
+      name: element.name,
+      kp: element.kp,
+      componentRefId: element.componentRefId || '',
+      equalizerRole: element.equalizerRole || 'T',
+      attenuationMode: element.attenuationMode || 'adjustable',
+      attenuationDb: element.attenuationDb ?? 0,
+      specifications: element.specifications || '',
+      remarks: element.remarks || '系统规划均衡器落位',
+    }))
+
+  plannedEqualizers.value = existing.length > 0
+    ? existing
+    : buildPlannedEqualizersFromSegments()
+}
+
+const ensurePlannedEqualizersReady = () => {
+  if (plannedEqualizers.value.length > 0) return
+  plannedEqualizers.value = buildPlannedEqualizersFromSegments()
+}
+
+const addPlannedEqualizer = () => {
+  if (settingsStore.equalizerTypes.length === 0) {
+    return
+  }
+
+  const defaultKp = plannedEqualizers.value.length > 0
+    ? plannedEqualizers.value[plannedEqualizers.value.length - 1].kp
+    : Number(((linkInfo.value?.trunkLength || linkInfo.value?.totalLength || 0) / 2).toFixed(1))
+
+  plannedEqualizers.value.push(createPlannedEqualizer({ kp: defaultKp }))
+}
+
+const removePlannedEqualizer = (tempId: string) => {
+  plannedEqualizers.value = plannedEqualizers.value.filter(item => item.tempId !== tempId)
+}
+
+const validatePlannedEqualizers = () => {
+  for (let index = 0; index < plannedEqualizers.value.length; index++) {
+    const equalizer = plannedEqualizers.value[index]
+    if (!equalizer.name.trim()) {
+      return `请填写第 ${index + 1} 个均衡器名称`
+    }
+    const validationMessage = validateEqualizerConfig(equalizer)
+    if (validationMessage) {
+      return `${equalizer.name || `均衡器${index + 1}`}: ${validationMessage}`
+    }
+  }
+  return null
+}
+const pickConnectorFallbackTable = (routeId: string, routeName?: string) => {
+  const exactByRoute = connectorStore.tables.find(table => table.routeId === routeId)
+  if (exactByRoute) return exactByRoute
+
+  if (routeName) {
+    const byName = connectorStore.tables.find(table => table.name.includes(routeName))
+    if (byName) return byName
+  }
+
+  const routeMain = connectorStore.tables.find(table => table.routeId === 'route-main')
+  if (routeMain) return routeMain
+
+  if (connectorStore.tables.length === 1) return connectorStore.tables[0]
+
+  return [...connectorStore.tables].sort((a, b) => (b.elements?.length || 0) - (a.elements?.length || 0))[0] || null
+}
+
+const ensureConnectorRouteTable = (routeId: string, routeName?: string) => {
+  if (connectorStore.selectTableByRoute(routeId || null)) return
+
+  const fallbackTable = pickConnectorFallbackTable(routeId, routeName)
+  if (fallbackTable) {
+    fallbackTable.routeId = routeId
+    connectorStore.selectTable(fallbackTable.id)
+    return
+  }
+
+  connectorStore.createTable(`${routeName || '链路'}_接线元`, routeId || undefined)
+}
+
+watch(
+  () => [props.visible, selectedRouteId.value, connectorStore.currentTableId],
+  ([visible]) => {
+    if (!visible) return
+    void nextTick(() => {
+      loadPlannedEqualizers()
+    })
+  }
+)
 
 // 当前选中链路的基本信息 - 与 BUConfigDialog 保持一致的数据源
 const linkInfo = computed(() => {
@@ -172,23 +500,15 @@ const linkInfo = computed(() => {
   const landingPoints = landingPointsAll.filter(p => !(p as any).isBranchStation)
   const buPoints = pointsWithKp.filter(p => p.type === 'branching')
   
-  // 计算主干线长度（排除分支段）
-  let trunkLen = 0
-  if (route.segments && route.segments.length > 0) {
-    // 分支登陆站 ID 集合
-    const branchLandingIds = new Set(branchLandingPoints.map(p => p.id))
-    for (const seg of route.segments) {
-      // 排除起点或终点为分支登陆站的段
-      if (branchLandingIds.has(seg.startPointId) || branchLandingIds.has(seg.endPointId)) continue
-      trunkLen += seg.length || 0
-    }
-  }
+  // 主干长度必须与分支隔离，避免分支长度污染放大器数量
+  const trunkLen = calculateRouteTrunkLengthKm(route)
   const totalLen = rpl?.metadata?.totalLength || route.totalLength || 0
+  const effectiveTrunkLength = trunkLen > 0 ? trunkLen : totalLen
   
   return {
     name: route.name,
     totalLength: totalLen,
-    trunkLength: trunkLen > 0 ? trunkLen : totalLen,  // 主干线长度（不含分支）
+    trunkLength: effectiveTrunkLength,  // 主干线长度（不含分支）
     startStation: landingPoints[0]?.name || '起点',
     endStation: landingPoints[landingPoints.length - 1]?.name || '终点',
     landingList: landingPoints.map(p => ({ id: p.id, name: p.name || '登陆站', kp: p.kp })),
@@ -463,7 +783,7 @@ const buConfigs = computed(() => {
   }
   
   // 回退到 connectorStore
-  return connectorStore.elements
+  return routeConnectorElements.value
     .filter(e => e.type === 'bu')
     .sort((a, b) => a.kp - b.kp)
     .map(bu => {
@@ -502,7 +822,7 @@ const buConfigs = computed(() => {
 // 获取下一跳节点名称
 const getNextHopName = (nodeId: string) => {
   if (!nodeId) return '-'
-  const node = connectorStore.elements.find(e => e.id === nodeId)
+  const node = routeConnectorElements.value.find(e => e.id === nodeId)
   return node?.name || '-'
 }
 
@@ -569,7 +889,7 @@ const allNodes = computed(() => {
   }
   
   if (nodes.length === 0) {
-    connectorStore.elements
+    routeConnectorElements.value
       .filter(e => e.type === 'landing' || e.type === 'underwater' || e.type === 'bu')
       .sort((a, b) => a.kp - b.kp)
       .forEach((e, idx) => {
@@ -633,7 +953,7 @@ const updateBuConfig = (buId: string, field: string, value: string | number | bo
   }
   
   // 同时更新 connectorStore
-  const existsInConnector = connectorStore.elements.find(e => e.id === buId)
+  const existsInConnector = routeConnectorElements.value.find(e => e.id === buId)
   if (existsInConnector) {
     connectorStore.updateElement(buId, { [field]: value })
   }
@@ -651,7 +971,7 @@ const loadBuParamsFromDevice = (buId: string, deviceId: string) => {
     })
     
     // 同时更新 connectorStore
-    const existsInConnector = connectorStore.elements.find(e => e.id === buId)
+    const existsInConnector = routeConnectorElements.value.find(e => e.id === buId)
     if (existsInConnector) {
       connectorStore.updateElement(buId, {
         componentRefId: deviceId,
@@ -809,6 +1129,8 @@ interface CalculationResult {
     avgSpanLength: number
     buCount: number
     totalBuLoss: number
+    equalizerCount: number
+    totalEqualizerLoss: number
     channelCount: number
     modulation: string
   }
@@ -853,6 +1175,7 @@ interface CalculationResult {
     cableCost: number
     amplifierCost: number
     buCost: number
+    equalizerCost: number
     totalCost: number
     costItems: CostItem[]
   }
@@ -881,12 +1204,29 @@ const selectedAmplifierIndex = ref<number | null>(null)
 
 // 执行计算并跳转到结果页
 const startCalculation = async () => {
+  ensurePlannedEqualizersReady()
+  const equalizerValidationMessage = validatePlannedEqualizers()
+  if (equalizerValidationMessage) {
+    calculationError.value = equalizerValidationMessage
+    appStore.showNotification({ type: 'error', message: equalizerValidationMessage })
+    activeStep.value = 'link'
+    return
+  }
+
   isCalculating.value = true
   calculationError.value = ''
   activeStep.value = 'result'
   
   try {
-    const devices: Array<{ id: string; name: string; type: string; kp: number }> = []
+    const devices: Array<{
+      id: string
+      name: string
+      type: string
+      kp: number
+      equalizerRole?: 'T' | 'S'
+      attenuationMode?: 'adjustable' | 'fixed'
+      attenuationDb?: number
+    }> = []
     const info = linkInfo.value
     if (info) {
       if (info.landingList) {
@@ -896,6 +1236,22 @@ const startCalculation = async () => {
         info.buList.forEach(bu => devices.push({ id: bu.id, name: bu.name, type: 'bu', kp: bu.kp }))
       }
     }
+
+    plannedEqualizers.value
+      .map(equalizer => normalizeEqualizerConfig(equalizer))
+      .sort((a, b) => a.kp - b.kp)
+      .forEach(eq => {
+        devices.push({
+          id: eq.id || eq.tempId,
+          name: eq.name,
+          type: 'equalizer',
+          kp: eq.kp,
+          equalizerRole: eq.equalizerRole,
+          attenuationMode: eq.attenuationMode,
+          attenuationDb: eq.attenuationDb,
+        })
+      })
+    devices.sort((a, b) => a.kp - b.kp)
 
     const spanStrategyPayload = spanStrategy.value === 'fixed'
       ? { mode: 'fixed' as const, fixedLength: fixedSpanLength.value }
@@ -932,6 +1288,7 @@ const startCalculation = async () => {
         maxOutputPower: amplifierParams.maxOutputPower,
         saturationPower: amplifierParams.saturationPower,
         unitPrice: ampType?.unitPrice,
+        equalizerUnitPrice: settingsStore.costFactors.equalizerCost,
         amplifierName: ampType?.name,
       },
       wdmParams: {
@@ -966,6 +1323,16 @@ const startCalculation = async () => {
       ...response.spanScanResult
     }
     calculationResult.value = response.detailedResult as CalculationResult
+
+    const route = routeStore.selectedRoute
+      || routeStore.paretoRoutes.find(item => item.id === selectedRouteId.value)
+      || routeStore.paretoRoutes[0]
+      || null
+    if (route) {
+      const configTotalLength = linkInfo.value?.trunkLength || linkInfo.value?.totalLength || 0
+      syncPlannedEqualizersToConnector(route as Record<string, any>, route.id, configTotalLength)
+      syncAutoJointsToConnector(route as Record<string, any>, route.id, configTotalLength)
+    }
   } catch (err: unknown) {
     calculationError.value = err instanceof Error ? err.message : '仿真计算失败，请检查后端服务是否启动'
   } finally {
@@ -982,7 +1349,7 @@ const formatCost = (cost: number): string => {
 
 // 计算成本占比
 const getCostPercent = (cost: number): string => {
-  if (!calculationResult.value) return '0'
+  if (!calculationResult.value || calculationResult.value.costData.totalCost <= 0) return '0'
   return ((cost / calculationResult.value.costData.totalCost) * 100).toFixed(1)
 }
 
@@ -1424,6 +1791,166 @@ const buildPathCoords = (route: Record<string, any>, rplRecords: Record<string, 
 // 应用配置并关闭 - 直接将放大器添加到 connectorStore
 const isApplying = ref(false)
 
+const syncPlannedEqualizersToConnector = (
+  route: Record<string, any>,
+  routeId: string,
+  configTotalLength: number
+) => {
+  ensureConnectorRouteTable(routeId, route.name)
+
+  const rplRecords = getSelectedRplRecords(routeId)
+
+  const existingEqualizers = connectorStore.getElementsForRoute(routeId)
+    .filter(element => element.type === 'equalizer')
+
+  const plannedIds = new Set(plannedEqualizers.value.map(item => item.id).filter(Boolean))
+
+  existingEqualizers
+    .filter(element => !plannedIds.has(element.id))
+    .forEach(element => {
+      connectorStore.deleteElement(element.id, false)
+    })
+
+  plannedEqualizers.value.forEach((equalizer, index) => {
+    const normalized = normalizeEqualizerConfig(equalizer)
+    const typeInfo = settingsStore.equalizerTypes.find(type => type.id === equalizer.componentRefId)
+    const position = getPositionByKP(equalizer.kp, route, configTotalLength, rplRecords)
+    const payload = {
+      name: equalizer.name.trim() || `EQ-${String(index + 1).padStart(2, '0')}`,
+      type: 'equalizer' as const,
+      kp: equalizer.kp,
+      longitude: position.longitude,
+      latitude: position.latitude,
+      depth: position.depth,
+      status: 'planned' as const,
+      specifications: typeInfo?.name || equalizer.specifications || '均衡器',
+      componentRefId: equalizer.componentRefId || undefined,
+      equalizerRole: normalized.equalizerRole,
+      attenuationMode: normalized.attenuationMode,
+      attenuationDb: normalized.attenuationDb,
+      remarks: equalizer.remarks || '系统规划均衡器落位',
+    }
+
+    if (equalizer.id) {
+      connectorStore.updateElement(equalizer.id, payload, false)
+    } else {
+      connectorStore.addElement(payload, false)
+    }
+  })
+}
+
+const syncAutoJointsToConnector = (
+  route: Record<string, any>,
+  routeId: string,
+  configTotalLength: number
+) => {
+  ensureConnectorRouteTable(routeId, route.name)
+  const segmentConfigs = collectCableSegmentsForRoute(routeId)
+  const rplRecords = getSelectedRplRecords(routeId)
+
+  const routeElements = connectorStore.getElementsForRoute(routeId)
+  const isAutoJoint = (element: ConnectorElement) =>
+    element.type === 'joint' && Boolean(element.remarks?.startsWith(AUTO_JOINT_REMARK_PREFIX))
+
+  const autoJoints = routeElements.filter(element => isAutoJoint(element))
+  const manualOrFixedDevices = routeElements.filter(element =>
+    element.type !== 'fiber' &&
+    element.type !== 'cable_segment' &&
+    !isAutoJoint(element)
+  )
+
+  const routeTotalLength = configTotalLength || linkInfo.value?.trunkLength || linkInfo.value?.totalLength || 0
+  const targetCandidates: Array<{ kp: number; reason: string }> = []
+  const boundarySet = new Set<string>()
+  segmentConfigs.forEach(segment => {
+    boundarySet.add(segment.startKp.toFixed(1))
+    boundarySet.add(segment.endKp.toFixed(1))
+  })
+  Array.from(boundarySet)
+    .map(value => Number(value))
+    .filter(kp => Number.isFinite(kp) && kp > 0 && (routeTotalLength <= 0 || kp < routeTotalLength))
+    .forEach(kp => {
+      targetCandidates.push({ kp, reason: '海缆段边界' })
+    })
+
+  if (targetCandidates.length === 0 && routeTotalLength > 0) {
+    const fallbackCount = Math.max(2, Math.min(24, Math.round(routeTotalLength / 180)))
+    const fallbackKps = Array.from({ length: fallbackCount }, (_, index) =>
+      Number(((routeTotalLength * (index + 1)) / (fallbackCount + 1)).toFixed(1))
+    )
+    fallbackKps.forEach(kp => {
+      targetCandidates.push({ kp, reason: '链路总长兜底' })
+    })
+  }
+
+  if (targetCandidates.length === 0) {
+    const longestSegment = [...segmentConfigs].sort((a, b) => (b.endKp - b.startKp) - (a.endKp - a.startKp))[0]
+    if (longestSegment) {
+      targetCandidates.push({
+        kp: Number(((longestSegment.startKp + longestSegment.endKp) / 2).toFixed(1)),
+        reason: '海缆段中点兜底',
+      })
+    }
+  }
+
+  const targetJointMap = targetCandidates.reduce<Map<string, { kp: number; reason: string }>>((acc, candidate) => {
+    if (!Number.isFinite(candidate.kp)) return acc
+    if (candidate.kp <= 0 || (routeTotalLength > 0 && candidate.kp >= routeTotalLength)) return acc
+    if (manualOrFixedDevices.some(device => Math.abs(device.kp - candidate.kp) < JOINT_KP_TOLERANCE)) return acc
+
+    const key = candidate.kp.toFixed(1)
+    if (!acc.has(key)) {
+      acc.set(key, { kp: Number(key), reason: candidate.reason })
+    }
+    return acc
+  }, new Map())
+
+  const targetJoints = Array.from(targetJointMap.values()).sort((a, b) => a.kp - b.kp)
+  if (targetJoints.length === 0) return
+
+  const targetKpKeys = new Set(targetJoints.map(item => item.kp.toFixed(1)))
+  const retainedAutoJoints = autoJoints.filter(element => targetKpKeys.has(element.kp.toFixed(1)))
+  autoJoints
+    .filter(element => !targetKpKeys.has(element.kp.toFixed(1)))
+    .forEach(element => connectorStore.deleteElement(element.id, false))
+
+  const defaultJointType = settingsStore.jointBoxTypes[0]
+  targetJoints.forEach((target, index) => {
+    const position = getPositionByKP(target.kp, route, configTotalLength, rplRecords)
+    const matchedSegment = findSegmentConfigAtKp(segmentConfigs, target.kp)
+    const jointSubType = inferAutoJointSubType(
+      target.kp,
+      routeTotalLength,
+      position.depth,
+      matchedSegment?.cableTypeName || position.cableType,
+      routeElements,
+    )
+    const jointType =
+      settingsStore.jointBoxTypes.find(type => type.subType === jointSubType) ||
+      settingsStore.jointBoxTypes.find(type => type.subType === 'BJB') ||
+      defaultJointType
+    const matched = retainedAutoJoints.find(element => Math.abs(element.kp - target.kp) < JOINT_KP_TOLERANCE)
+    const payload = {
+      name: `JB-${String(index + 1).padStart(2, '0')}`,
+      type: 'joint' as const,
+      kp: target.kp,
+      longitude: position.longitude,
+      latitude: position.latitude,
+      depth: position.depth,
+      status: 'planned' as const,
+      componentRefId: jointType?.id || undefined,
+      jointSubType,
+      specifications: jointType?.name || jointSubType,
+      remarks: `${AUTO_JOINT_REMARK_PREFIX} ${target.reason} KP${target.kp.toFixed(1)}km | ${jointSubType}`,
+    }
+    if (matched) {
+      connectorStore.updateElement(matched.id, payload, false)
+    } else {
+      connectorStore.addElement(payload, false)
+    }
+  })
+}
+
 const applyAndClose = async () => {
   if (isApplying.value) return
   isApplying.value = true
@@ -1439,8 +1966,15 @@ const applyAndClose = async () => {
       emit('close')
       return
     }
+
+    const equalizerValidationMessage = validatePlannedEqualizers()
+    if (equalizerValidationMessage) {
+      appStore.showNotification({ type: 'error', message: equalizerValidationMessage })
+      return
+    }
     
     const configTotalLength = linkInfo.value?.trunkLength || linkInfo.value?.totalLength || 0
+    const rplRecords = getSelectedRplRecords(route.id)
     const spanLengthVal = calculationResult.value.systemConfig.avgSpanLength || 80
     const ampType = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
     const fiberType = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
@@ -1649,22 +2183,27 @@ const applyAndClose = async () => {
     }
     
     // 1) 清除旧的放大器和光纤段
+    ensureConnectorRouteTable(route.id, route.name)
     connectorStore.deleteElementsByType(['ola', 'amplifier_e', 'amplifier_w', 'fiber'])
     
     // 2) 构建接线元
+    syncPlannedEqualizersToConnector(route, route.id, configTotalLength)
+    syncAutoJointsToConnector(route, route.id, configTotalLength)
+
     const newElements: Omit<import('@/types').ConnectorElement, 'id'>[] = []
     
     if (backendAmps.length > 0) {
       // ── 使用后端落位结果（精确坐标） ──
       for (let i = 0; i < backendAmps.length; i++) {
         const amp = backendAmps[i]
+        const ampPosition = getPositionByKP(amp.kp, route, configTotalLength, rplRecords)
         newElements.push({
           name: amp.name,
           type: 'ola',
           kp: amp.kp,
-          longitude: amp.longitude,
-          latitude: amp.latitude,
-          depth: 0,
+          longitude: amp.longitude ?? ampPosition.longitude,
+          latitude: amp.latitude ?? ampPosition.latitude,
+          depth: Number.isFinite(amp.depth) ? amp.depth : ampPosition.depth,
           status: 'planned',
           specifications: ampType
             ? `${ampType.name} | G=${amp.gain || 0}dB NF=${amp.noiseFigure || 0}dB`
@@ -1677,14 +2216,15 @@ const applyAndClose = async () => {
       }
       // 光纤段
       for (const fib of backendFibers) {
+        const fiberPosition = getPositionByKP(fib.kp, route, configTotalLength, rplRecords)
         newElements.push({
           name: fib.name,
           type: 'fiber',
           kp: fib.kp,
           endKp: fib.endKp,
-          longitude: fib.longitude,
-          latitude: fib.latitude,
-          depth: 0,
+          longitude: fib.longitude ?? fiberPosition.longitude,
+          latitude: fib.latitude ?? fiberPosition.latitude,
+          depth: Number.isFinite(fib.depth) ? fib.depth : fiberPosition.depth,
           status: 'planned',
           specifications: fiberType?.name || '',
           fiberRefId: selectedFiberTypeId.value,
@@ -1704,25 +2244,7 @@ const applyAndClose = async () => {
       }
       const totalLen = configTotalLength || actualTotalLength
       
-      const kpToCoord = (targetKP: number) => {
-        if (pathCoords.length < 2) return { longitude: 0, latitude: 0 }
-        const ratio = Math.min(targetKP / totalLen, 1)
-        const targetActualKP = ratio * actualTotalLength
-        let cumKP = 0
-        for (let i = 0; i < segmentLens.length; i++) {
-          if (cumKP + segmentLens[i] >= targetActualKP) {
-            const p1 = pathCoords[i], p2 = pathCoords[i + 1]
-            const lr = segmentLens[i] > 0 ? (targetActualKP - cumKP) / segmentLens[i] : 0
-            return {
-              longitude: p1[0] + (p2[0] - p1[0]) * lr,
-              latitude: p1[1] + (p2[1] - p1[1]) * lr
-            }
-          }
-          cumKP += segmentLens[i]
-        }
-        const last = pathCoords[pathCoords.length - 1]
-        return { longitude: last[0], latitude: last[1] }
-      }
+      const kpToCoord = (targetKP: number) => getPositionByKP(targetKP, route, totalLen, rplRecords)
       
       for (let i = 0; i < simAmplifiers.length; i++) {
         const amp = simAmplifiers[i]
@@ -1733,7 +2255,7 @@ const applyAndClose = async () => {
           kp: amp.position,
           longitude: coord.longitude,
           latitude: coord.latitude,
-          depth: 0,
+          depth: coord.depth,
           status: 'planned',
           specifications: ampType ? `${ampType.name} | G=${amp.gain}dB NF=${amp.noiseFigure}dB` : `G=${amp.gain}dB`,
           componentRefId: selectedAmplifierTypeId.value,
@@ -1746,7 +2268,7 @@ const applyAndClose = async () => {
             name: `光纤段 ${amp.name}-${i < simAmplifiers.length - 1 ? simAmplifiers[i + 1].name : 'Rx'}`,
             type: 'fiber', kp: amp.position, endKp: nextKp,
             longitude: coord.longitude, latitude: coord.latitude,
-            depth: 0, status: 'planned', specifications: fiberType?.name || '',
+            depth: coord.depth, status: 'planned', specifications: fiberType?.name || '',
             fiberRefId: selectedFiberTypeId.value, length: sl, remarks: ''
           })
         }
@@ -1757,7 +2279,7 @@ const applyAndClose = async () => {
           name: `光纤段 Tx-${simAmplifiers[0].name}`,
           type: 'fiber', kp: 0, endKp: simAmplifiers[0].position,
           longitude: startCoord.longitude, latitude: startCoord.latitude,
-          depth: 0, status: 'planned', specifications: fiberType?.name || '',
+          depth: startCoord.depth, status: 'planned', specifications: fiberType?.name || '',
           fiberRefId: selectedFiberTypeId.value, length: simAmplifiers[0].position, remarks: ''
         })
       }
@@ -1771,6 +2293,9 @@ const applyAndClose = async () => {
       for (const branch of rawBranches) {
         const bCoords = branch.coordinates
         if (!bCoords || bCoords.length < 2) continue
+        const branchSourcePoint = route.points.find((point: any) => point.id === branch.fromBuId)
+        const branchSourceDepth = branchSourcePoint?.depth
+        const branchDepth = Number.isFinite(branchSourceDepth) ? Number(branchSourceDepth) : 0
         // 计算分支累积距离
         const bSegLens: number[] = []
         let bTotalLen = 0
@@ -1804,7 +2329,7 @@ const applyAndClose = async () => {
             kp: targetKm,
             longitude: lon,
             latitude: lat,
-            depth: 0,
+            depth: branchDepth,
             status: 'planned',
             specifications: ampType ? `${ampType.name} | 分支放大器` : '分支放大器',
             componentRefId: selectedAmplifierTypeId.value,
@@ -1815,11 +2340,36 @@ const applyAndClose = async () => {
       }
     }
     
-    // 3) 先添加非光纤元素（放大器等），再根据实际 store ID 修正光纤段的 fromDeviceId/toDeviceId
+    // 3) 先添加非光线元素（放大器等），再根据实际 store ID 修正光线段的 fromDeviceId/toDeviceId
     const ampElements = newElements.filter(e => e.type !== 'fiber')
     const fiberElements = newElements.filter(e => e.type === 'fiber')
     
-    connectorStore.addElements(ampElements, false)
+    const addedAmpIds = connectorStore.addElements(ampElements, false)
+    const syncedAmpElements = addedAmpIds
+      .map(id => connectorStore.elements.find(e => e.id === id))
+      .filter((element): element is ConnectorElement => !!element && element.type !== 'fiber')
+
+    const activeRouteId = selectedRouteId.value || routeStore.currentRouteId || route.id
+    const currentSldRouteTable = sldStore.tables.find(table => table.routeId === activeRouteId)
+    if (currentSldRouteTable) {
+      sldStore.selectTable(currentSldRouteTable.id)
+    } else if (!sldStore.currentTable || sldStore.currentTable.routeId !== activeRouteId) {
+      sldStore.createTable(`${route.name || '链路'}_SLD`, activeRouteId)
+    }
+
+    const sldSyncElements = connectorStore.getElementsForRoute(activeRouteId).filter(element =>
+      element.type === 'landing' ||
+      element.type === 'underwater' ||
+      element.type === 'amplifier_e' ||
+      element.type === 'amplifier_w' ||
+      element.type === 'ola' ||
+      element.type === 'bu' ||
+      element.type === 'joint' ||
+      element.type === 'equalizer'
+    )
+
+    // 同步放大器到 SLD 表格管理
+    sldStore.syncAmplifiersFromConnector(sldSyncElements.length > 0 ? sldSyncElements : syncedAmpElements, { routeId: activeRouteId })
     
     // 构建 KP → 实际设备的映射，修正光纤段的 fromDeviceId/toDeviceId
     // ★ 容差 10km（后端用 haversine 计算总长可能与前端 segment KP 有差异）
@@ -1901,6 +2451,9 @@ watch(() => props.visible, (visible) => {
     }
     
     activeStep.value = 'link'
+    void nextTick(() => {
+      loadPlannedEqualizers()
+    })
   }
 }, { immediate: true })
 </script>
@@ -2066,6 +2619,75 @@ watch(() => props.visible, (visible) => {
               </div>
               
               <!-- Step 2: 计算模型选择 -->
+                <div v-if="activeStep === 'link'" class="bg-gray-50 rounded-lg p-4 space-y-4">
+                  <div class="flex items-start justify-between gap-4">
+                    <div>
+                      <div class="text-sm font-medium text-gray-700">均衡器落位</div>
+                      <div class="text-xs text-gray-500 mt-1">系统规划地图显示均衡器。接头盒只在接线元和 SLD 中维护，不在这里落位。</div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      :disabled="settingsStore.equalizerTypes.length === 0"
+                      @click="addPlannedEqualizer"
+                    >
+                      <Plus class="w-4 h-4 mr-1" />
+                      添加均衡器
+                    </Button>
+                  </div>
+
+                  <div v-if="settingsStore.equalizerTypes.length === 0" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                    器件库里还没有均衡器型号，请先到器件库管理补充型号。
+                  </div>
+
+                  <div v-else-if="plannedEqualizers.length === 0" class="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-sm text-gray-500 text-center">
+                    当前链路未配置均衡器。
+                  </div>
+
+                  <div v-else class="space-y-3">
+                    <div
+                      v-for="(eq, index) in plannedEqualizers"
+                      :key="eq.tempId"
+                      class="rounded-lg border bg-white p-3"
+                    >
+                      <div class="grid grid-cols-12 gap-3 items-end">
+                        <div class="col-span-2">
+                          <label class="block text-xs text-gray-500 mb-1">名称</label>
+                          <Input v-model="eq.name" class="w-full" />
+                        </div>
+                        <div class="col-span-2">
+                          <label class="block text-xs text-gray-500 mb-1">KP (km)</label>
+                          <Input v-model.number="eq.kp" type="number" min="0" step="0.1" class="w-full" />
+                        </div>
+                        <div class="col-span-3">
+                          <label class="block text-xs text-gray-500 mb-1">型号</label>
+                          <Select v-model="eq.componentRefId" :options="equalizerTypeOptions" class="w-full" />
+                        </div>
+                        <div class="col-span-1">
+                          <label class="block text-xs text-gray-500 mb-1">位号</label>
+                          <Select v-model="eq.equalizerRole" :options="equalizerRoleOptions" class="w-full" />
+                        </div>
+                        <div class="col-span-2">
+                          <label class="block text-xs text-gray-500 mb-1">模式</label>
+                          <Select v-model="eq.attenuationMode" :options="equalizerModeOptions" class="w-full" />
+                        </div>
+                        <div class="col-span-1">
+                          <label class="block text-xs text-gray-500 mb-1">dB</label>
+                          <Input v-model.number="eq.attenuationDb" type="number" min="0" step="0.1" class="w-full" />
+                        </div>
+                        <div class="col-span-1 flex justify-end">
+                          <Button variant="ghost" size="sm" class="text-red-600 hover:bg-red-50" @click="removePlannedEqualizer(eq.tempId)">
+                            <Trash2 class="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-400">
+                        均衡器 {{ index + 1 }} 会在应用配置后写入接线元，并同步到 SLD。
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
               <div v-else-if="activeStep === 'model'" class="space-y-6">
                 <h3 class="text-base font-semibold text-gray-800">计算模型选择</h3>
                 
@@ -2859,6 +3481,14 @@ watch(() => props.visible, (visible) => {
                           <span class="font-mono">{{ calculationResult.systemConfig.totalBuLoss.toFixed(1) }} dB</span>
                         </div>
                         <div class="flex justify-between">
+                          <span class="text-gray-500">均衡器数量：</span>
+                          <span class="font-medium">{{ calculationResult.systemConfig.equalizerCount ?? 0 }} 个</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-gray-500">均衡器总衰减：</span>
+                          <span class="font-mono">{{ (calculationResult.systemConfig.totalEqualizerLoss ?? 0).toFixed(1) }} dB</span>
+                        </div>
+                        <div class="flex justify-between">
                           <span class="text-gray-500">信道数量：</span>
                           <span class="font-medium">{{ calculationResult.systemConfig.channelCount }} ch</span>
                         </div>
@@ -3223,7 +3853,7 @@ watch(() => props.visible, (visible) => {
                   <!-- 链路成本视图 -->
                   <div v-else-if="resultViewTab === 'cost'" class="space-y-4">
                     <!-- 成本汇总卡片 -->
-                    <div class="grid grid-cols-4 gap-3">
+                    <div class="grid grid-cols-2 xl:grid-cols-5 gap-3">
                       <div class="p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200 text-center">
                         <div class="text-xs text-blue-600 mb-1">海缆成本</div>
                         <div class="text-lg font-bold text-blue-800">{{ formatCost(calculationResult.costData.cableCost) }}</div>
@@ -3235,6 +3865,10 @@ watch(() => props.visible, (visible) => {
                       <div class="p-3 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border border-green-200 text-center">
                         <div class="text-xs text-green-600 mb-1">BU成本</div>
                         <div class="text-lg font-bold text-green-800">{{ formatCost(calculationResult.costData.buCost) }}</div>
+                      </div>
+                      <div class="p-3 bg-gradient-to-br from-amber-50 to-amber-100 rounded-lg border border-amber-200 text-center">
+                        <div class="text-xs text-amber-600 mb-1">均衡器成本</div>
+                        <div class="text-lg font-bold text-amber-800">{{ formatCost(calculationResult.costData.equalizerCost) }}</div>
                       </div>
                       <div class="p-3 bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg border border-gray-300 text-center">
                         <div class="text-xs text-gray-600 mb-1">链路总成本</div>
@@ -3296,6 +3930,13 @@ watch(() => props.visible, (visible) => {
                           <span class="text-sm text-gray-500 w-12">{{ getCostPercent(calculationResult.costData.buCost) }}%</span>
                           <div class="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
                             <div class="h-full bg-green-500 rounded-full" :style="{ width: getCostPercent(calculationResult.costData.buCost) + '%' }"></div>
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm text-gray-600 w-20">均衡器</span>
+                          <span class="text-sm text-gray-500 w-12">{{ getCostPercent(calculationResult.costData.equalizerCost) }}%</span>
+                          <div class="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                            <div class="h-full bg-amber-500 rounded-full" :style="{ width: getCostPercent(calculationResult.costData.equalizerCost) + '%' }"></div>
                           </div>
                         </div>
                       </div>

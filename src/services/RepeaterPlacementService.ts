@@ -469,13 +469,13 @@ export class RepeaterPlacementService {
       const pointLon = point.coordinates[0]
       const pointLat = point.coordinates[1]
       // 没有 depth 属性，使用默认值 3000
-      const pointDepth = 3000
+      const pointDepth = Number.isFinite(point.depth) ? Number(point.depth) : 0
       
       if (i > 0) {
         const prev = routePoints[i - 1]
         const prevLon = prev.coordinates[0]
         const prevLat = prev.coordinates[1]
-        const prevDepth = 3000
+        const prevDepth = Number.isFinite(prev.depth) ? Number(prev.depth) : pointDepth
         const distance = this.calculateDistance(
           prevLon, prevLat,
           pointLon, pointLat
@@ -719,21 +719,21 @@ export class RepeaterPlacementService {
     spanLength: number,
     routePoints?: RoutePoint[]
   ): {
-    positions: Array<{ kp: number; longitude: number; latitude: number; isBranch?: boolean; branchId?: string }>
+    positions: Array<{ kp: number; longitude: number; latitude: number; depth: number; isBranch?: boolean; branchId?: string }>
     count: number
   } {
     if (!routePoints || routePoints.length === 0) {
       // 没有路由点，使用简单等间距
       const count = Math.ceil(totalLength / spanLength) - 1
-      const positions: Array<{ kp: number; longitude: number; latitude: number }> = []
+      const positions: Array<{ kp: number; longitude: number; latitude: number; depth: number }> = []
       
       for (let i = 1; i <= count; i++) {
-        positions.push({ kp: i * spanLength, longitude: 0, latitude: 0 })
+        positions.push({ kp: i * spanLength, longitude: 0, latitude: 0, depth: 0 })
       }
       return { positions, count }
     }
     
-    const positions: Array<{ kp: number; longitude: number; latitude: number; isBranch?: boolean; branchId?: string }> = []
+    const positions: Array<{ kp: number; longitude: number; latitude: number; depth: number; isBranch?: boolean; branchId?: string }> = []
     
     // 1. 识别主干线点（排除分支登陆站）
     const mainTrunkPoints = routePoints.filter(p => !this.isBranchStation(p, routePoints))
@@ -760,6 +760,7 @@ export class RepeaterPlacementService {
         kp, 
         longitude: interpolated.longitude, 
         latitude: interpolated.latitude,
+        depth: interpolated.depth,
         isBranch: false
       })
     }
@@ -814,6 +815,7 @@ export class RepeaterPlacementService {
             kp: branchKp,
             longitude: lon,
             latitude: lat,
+            depth: Number.isFinite(bu.depth) ? Number(bu.depth) : 0,
             isBranch: true,
             branchId: bu.id
           })

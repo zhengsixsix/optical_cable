@@ -257,11 +257,20 @@ const getPointIcon = (type: string, isSelected: boolean, elevation?: number) => 
       return `/image/amplifier-w${suffix}.png`
     case 'bu':
       return `/image/bu${suffix}.png`
+    case 'equalizer':
+      return `/image/equalizer${suffix}.svg`
+    case 'joint':
+      return `/image/joint${suffix}.svg`
     case 'underwater':
       return `/image/underwater${suffix}.png`
     default:
       return `/image/underwater${suffix}.png`
   }
+}
+
+const getPointIconScale = (type: string) => {
+  if (type === 'equalizer' || type === 'joint') return 0.24
+  return 0.18
 }
 
 // 按 KP 排序的点列表 - 优先使用 monitorStore 数据，然后是 Pareto 选中路线
@@ -351,21 +360,21 @@ const sortedPoints = computed(() => {
     
     // ★ 不再通过 branchTo 重复添加分支登陆站（它们已在 selectedRoute.points 中）
     
-    // 合并 connectorStore 中的放大器（系统规划应用配置后生成）
-    const ampTypes = ['ola', 'amplifier_e', 'amplifier_w']
+    // 合并 connectorStore 中的放大器/均衡器（系统规划应用配置后生成，接头盒不在地图显示）
+    const overlayTypes = ['ola', 'amplifier_e', 'amplifier_w', 'equalizer', 'joint']
     const existingIds = new Set(mainPoints.map(p => p.id))
-    const amplifiers = connectorStore.elements.filter(
-      e => ampTypes.includes(e.type) && !existingIds.has(e.id)
+    const overlayDevices = connectorStore.elements.filter(
+      e => overlayTypes.includes(e.type) && !existingIds.has(e.id)
     )
-    amplifiers.forEach(amp => {
+    overlayDevices.forEach(dev => {
       mainPoints.push({
-        id: amp.id,
-        name: amp.name,
-        type: amp.type,
-        longitude: amp.longitude,
-        latitude: amp.latitude,
-        kp: amp.kp,
-        depth: amp.depth || 0,
+        id: dev.id,
+        name: dev.name,
+        type: dev.type,
+        longitude: dev.longitude,
+        latitude: dev.latitude,
+        kp: dev.kp,
+        depth: dev.depth || 0,
       } as any)
     })
     
@@ -827,15 +836,15 @@ const drawFiberLines = () => {
   })
 }
 
-// 绘制设备节点 - 只显示系统设备（登陆站、放大器、分支器），不显示 waypoint
+// 绘制设备节点 - 只显示系统设备（登陆站、放大器、分支器、均衡器），不显示 waypoint
 const drawPoints = () => {
   if (!pointSource) return
   pointSource.clear()
   
   const source = pointSource
   
-  // 系统设备类型（需要显示的）
-  const systemDeviceTypes = ['landing', 'amplifier_e', 'amplifier_w', 'ola', 'bu', 'branching', 'underwater']
+  // 系统设备类型（需要显示的，接头盒不在地图显示）
+  const systemDeviceTypes = ['landing', 'amplifier_e', 'amplifier_w', 'ola', 'bu', 'branching', 'equalizer', 'joint', 'underwater']
   
   // 过滤只显示系统设备，排除 waypoint
   const systemDevices = sortedPoints.value.filter(point => 
@@ -857,7 +866,7 @@ const drawPoints = () => {
     feature.setStyle(new Style({
       image: new Icon({
         src: iconUrl,
-        scale: 0.18,
+        scale: getPointIconScale(point.type),
         anchor: [0.5, 0.5]
       }),
       text: new Text({
@@ -1356,6 +1365,14 @@ onUnmounted(() => {
         <div class="flex items-center gap-2">
           <img src="/image/bu.png" class="w-4 h-4 object-contain" />
           <span class="text-gray-600">分支器</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <img src="/image/equalizer.svg" class="w-4 h-4 object-contain" />
+          <span class="text-gray-600">均衡器</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <img src="/image/joint.svg" class="w-4 h-4 object-contain" />
+          <span class="text-gray-600">接头盒</span>
         </div>
         <div class="flex items-center gap-2">
           <img src="/image/underwater.png" class="w-4 h-4 object-contain" />

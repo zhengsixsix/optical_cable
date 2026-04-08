@@ -1,7 +1,12 @@
 ﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useSLDStore, useAppStore, useRouteStore } from '@/stores'
-import { exportSLDFile, exportSLDFileFromRoute, exportEquipmentsToCSV as exportSLDEquipmentsToCSV } from '@/services/SLDExportService'
+import { useSLDStore, useAppStore, useRouteStore, useSettingsStore } from '@/stores'
+import { exportSLDFile, exportSLDFileFromRoute } from '@/services/SLDExportService'
+import { exportSLDToExcel } from '@/services/SLDExcelExportService'
+import {
+  DEFAULT_SLD_EXPORT_TEMPLATE_VERSION,
+  SLD_EXPORT_TEMPLATE_OPTIONS,
+} from '@/services/sldDeviceRegistry'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { 
   Network, 
@@ -14,7 +19,7 @@ import {
   Cable,
   Radio
 } from 'lucide-vue-next'
-import type { SLDEquipmentType } from '@/types'
+import type { SLDEquipmentType, SLDExportTemplateVersion } from '@/types'
 
 const props = defineProps<{
   visible?: boolean
@@ -29,6 +34,7 @@ const emit = defineEmits<{
 const sldStore = useSLDStore()
 const appStore = useAppStore()
 const routeStore = useRouteStore()
+const settingsStore = useSettingsStore()
 
 const activeTab = ref<'equipments' | 'segments' | 'params'>('equipments')
 
@@ -37,13 +43,21 @@ const equipments = computed(() => sldStore.equipments)
 const fiberSegments = computed(() => sldStore.fiberSegments)
 const metadata = computed(() => currentTable.value?.metadata)
 const transmissionParams = computed(() => currentTable.value?.transmissionParams)
+const exportTemplateOptions = SLD_EXPORT_TEMPLATE_OPTIONS.map(option => ({
+  ...option,
+  label: option.value === 'legacy-v1' ? '兼容版 V1' : '标准版 2026.04',
+}))
+const exportTemplateVersion = computed<SLDExportTemplateVersion>(() =>
+  currentTable.value?.metadata?.exportTemplateVersion || DEFAULT_SLD_EXPORT_TEMPLATE_VERSION,
+)
 
 const equipmentTypeLabels: Record<SLDEquipmentType, string> = {
   TE: '终端设备',
   PFE: '供电设备',
   REP: '放大器',
   BU: '分支器',
-  JOINT: '接头',
+  EQ: '均衡器',
+  JOINT: '接头盒',
   OADM: '光分插复用器',
 }
 
@@ -53,10 +67,30 @@ const getEquipmentTypeClass = (type: SLDEquipmentType) => {
     PFE: 'bg-yellow-100 text-yellow-700',
     REP: 'bg-blue-100 text-blue-700',
     BU: 'bg-purple-100 text-purple-700',
+    EQ: 'bg-amber-100 text-amber-700',
     JOINT: 'bg-orange-100 text-orange-700',
     OADM: 'bg-cyan-100 text-cyan-700',
   }
   return classes[type] || 'bg-gray-100 text-gray-600'
+}
+
+const getEquipmentSpecification = (equipment: { type: SLDEquipmentType; componentRefId?: string; specifications?: string }) => {
+  if (equipment.specifications?.trim()) return equipment.specifications
+  if (!equipment.componentRefId) return ''
+
+  switch (equipment.type) {
+    case 'REP':
+      return settingsStore.amplifierTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+    case 'BU':
+    case 'OADM':
+      return settingsStore.branchingUnitTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+    case 'EQ':
+      return settingsStore.equalizerTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+    case 'JOINT':
+      return settingsStore.jointBoxTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+    default:
+      return ''
+  }
 }
 
 const handleDeleteEquipment = (id: string) => {
@@ -81,34 +115,43 @@ const handleValidate = () => {
   }
 }
 
-const handleExportEquipments = () => {
+const handleExportEquipments = async () => {
   if (!currentTable.value) return
-  const csv = exportSLDEquipmentsToCSV(currentTable.value)
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `${currentTable.value.name || 'SLD'}_设备表_${Date.now()}.csv`
-  link.click()
-  URL.revokeObjectURL(link.href)
-  appStore.showNotification({ type: 'success', message: '导出设备表成功' })
+  try {
+    await exportSLDToExcel(currentTable.value)
+    appStore.showNotification({ type: 'success', message: '导出设备表成功' })
+  } catch (e) {
+    appStore.showNotification({ type: 'error', message: '导出失败，请重试' })
+  }
 }
 
 const handleExportXML = () => {
-  // 优先从当前选中的路由导出
+  // 优先导出当前 SLD 表格，避免丢失同步进来的均衡器/接头盒等设备
+  if (currentTable.value && currentTable.value.equipments.length > 0) {
+    exportSLDFile(currentTable.value)
+    appStore.showNotification({ type: 'success', message: '导出 SLD XML 成功' })
+    return
+  }
+
+  // 当 SLD 表格为空时，回退到当前路由的基础导出
   const currentRoute = routeStore.currentRoute
   if (currentRoute && currentRoute.points.length > 0) {
     exportSLDFileFromRoute(currentRoute, currentRoute.name, 2)
     appStore.showNotification({ type: 'success', message: '从路由导出 SLD XML 成功' })
     return
   }
-  
-  // 否则从 SLD 表格导出
+
   if (!currentTable.value) {
     appStore.showNotification({ type: 'warning', message: '请先选择路由或 SLD 表格' })
     return
   }
-  exportSLDFile(currentTable.value)
-  appStore.showNotification({ type: 'success', message: '导出 SLD XML 成功' })
+  appStore.showNotification({ type: 'warning', message: '当前 SLD 表格没有设备可导出' })
+}
+
+const handleTemplateVersionChange = (event: Event) => {
+  const version = (event.target as HTMLSelectElement).value as SLDExportTemplateVersion
+  if (!currentTable.value) return
+  sldStore.setExportTemplateVersion(version)
 }
 
 </script>
@@ -128,7 +171,7 @@ const handleExportXML = () => {
     <CardContent class="flex-1 flex flex-col overflow-hidden p-0">
       <!-- 统计信息 -->
       <div v-if="metadata" class="px-4 py-3 bg-gray-50 border-b">
-        <div class="grid grid-cols-6 gap-4 text-sm">
+        <div class="grid grid-cols-4 xl:grid-cols-8 gap-4 text-sm">
           <div class="text-center">
             <div class="font-semibold text-blue-600">{{ metadata.totalLength?.toFixed(1) ?? '-' }}</div>
             <div class="text-xs text-gray-500">总长度(km)</div>
@@ -146,11 +189,19 @@ const handleExportXML = () => {
             <div class="text-xs text-gray-500">分支器</div>
           </div>
           <div class="text-center">
+            <div class="font-semibold text-amber-600">{{ metadata.equalizerCount }}</div>
+            <div class="text-xs text-gray-500">均衡器</div>
+          </div>
+          <div class="text-center">
+            <div class="font-semibold text-orange-600">{{ metadata.jointCount }}</div>
+            <div class="text-xs text-gray-500">接头盒</div>
+          </div>
+          <div class="text-center">
             <div class="font-semibold text-cyan-600">{{ metadata.totalFiberPairs }}</div>
             <div class="text-xs text-gray-500">光纤对</div>
           </div>
           <div class="text-center">
-            <div class="font-semibold text-orange-600">{{ metadata.estimatedCapacity }}</div>
+            <div class="font-semibold text-indigo-600">{{ metadata.estimatedCapacity }}</div>
             <div class="text-xs text-gray-500">容量(Tbps)</div>
           </div>
         </div>
@@ -179,6 +230,22 @@ const handleExportXML = () => {
           传输参数
         </button>
         <div class="flex-1" />
+        <label class="flex items-center gap-2 text-xs text-gray-500">
+          <span>导出版本</span>
+          <select
+            class="h-8 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700"
+            :value="exportTemplateVersion"
+            @change="handleTemplateVersionChange"
+          >
+            <option
+              v-for="option in exportTemplateOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
         <Button variant="outline" size="sm" @click="handleExportXML">
           <Download class="w-4 h-4 mr-1" />
           导出XML
@@ -229,7 +296,7 @@ const handleExportXML = () => {
                 </td>
                 <td class="px-2 py-1.5 text-right border-b font-mono">{{ eq.kp?.toFixed(1) ?? '-' }}</td>
                 <td class="px-2 py-1.5 text-right border-b">{{ eq.depth?.toFixed(0) ?? '-' }}</td>
-                <td class="px-2 py-1.5 border-b text-gray-600 text-xs">{{ eq.specifications }}</td>
+                <td class="px-2 py-1.5 border-b text-gray-600 text-xs">{{ getEquipmentSpecification(eq) }}</td>
                 <td class="px-2 py-1.5 text-center border-b">
                   <div class="flex items-center justify-center gap-1">
                     <button class="p-1 hover:bg-gray-200 rounded" @click="emit('edit-equipment', eq.id)">
@@ -355,6 +422,7 @@ const handleExportXML = () => {
       <!-- 底部状态栏 -->
       <div class="px-4 py-2 border-t bg-gray-50 flex items-center justify-between text-xs text-gray-500 shrink-0">
         <span>设备 {{ equipments.length }} 个 · 光纤段 {{ fiberSegments.length }} 段</span>
+        <span>模板 {{ exportTemplateVersion }}</span>
       </div>
     </CardContent>
   </Card>

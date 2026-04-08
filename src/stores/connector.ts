@@ -7,6 +7,12 @@ import { dataLinkService } from '@/services'
 export const useConnectorStore = defineStore('connector', () => {
   const tables = ref<ConnectorTable[]>([])
   const currentTableId = ref<string | null>(null)
+  let idCounter = 0
+
+  function createId(prefix: string) {
+    idCounter += 1
+    return `${prefix}-${Date.now()}-${idCounter}-${Math.random().toString(36).slice(2, 6)}`
+  }
 
   // 当前表格
   const currentTable = computed(() => 
@@ -19,7 +25,7 @@ export const useConnectorStore = defineStore('connector', () => {
   // 创建新表格
   function createTable(name: string, routeId?: string) {
     const newTable: ConnectorTable = {
-      id: `conn-${Date.now()}`,
+      id: createId('conn'),
       name,
       routeId,
       elements: [],
@@ -32,8 +38,33 @@ export const useConnectorStore = defineStore('connector', () => {
   }
 
   // 选择表格
-  function selectTable(tableId: string) {
+  function selectTable(tableId: string | null) {
     currentTableId.value = tableId
+  }
+
+  function getTableByRoute(routeId?: string | null) {
+    if (routeId) {
+      return tables.value.find(t => t.routeId === routeId) || null
+    }
+    return currentTable.value || tables.value[0] || null
+  }
+
+  function selectTableByRoute(routeId?: string | null, options: { clearOnMissing?: boolean } = {}) {
+    const matchedTable = getTableByRoute(routeId)
+    if (!matchedTable) {
+      if (options.clearOnMissing) {
+        currentTableId.value = null
+      }
+      return false
+    }
+    if (currentTableId.value !== matchedTable.id) {
+      currentTableId.value = matchedTable.id
+    }
+    return true
+  }
+
+  function getElementsForRoute(routeId?: string | null) {
+    return getTableByRoute(routeId)?.elements || []
   }
 
   // 添加接线元
@@ -42,7 +73,7 @@ export const useConnectorStore = defineStore('connector', () => {
     
     const newElement: ConnectorElement = {
       ...element,
-      id: `elem-${Date.now()}`
+      id: createId('elem')
     }
     currentTable.value.elements.push(newElement)
     currentTable.value.updatedAt = new Date().toISOString()
@@ -115,12 +146,11 @@ export const useConnectorStore = defineStore('connector', () => {
     if (!currentTable.value) return []
     
     const ids: string[] = []
-    const baseTime = Date.now()
     
     const newElements: ConnectorElement[] = elementsToAdd.map((element, index) => {
       const newElement: ConnectorElement = {
         ...element,
-        id: `elem-${baseTime}-${index}`
+        id: createId(`elem-${index}`)
       }
       ids.push(newElement.id)
       return newElement
@@ -240,6 +270,9 @@ export const useConnectorStore = defineStore('connector', () => {
     elements,
     createTable,
     selectTable,
+    selectTableByRoute,
+    getTableByRoute,
+    getElementsForRoute,
     addElement,
     addElements,
     updateElement,

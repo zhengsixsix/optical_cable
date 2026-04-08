@@ -94,12 +94,21 @@ const getDeviceIcon = (device: MonitorDevice) => {
     case 'bu':
     case 'BU':
       return `/image/bu${suffix}.png`
+    case 'equalizer':
+      return `/image/equalizer${suffix}.svg`
+    case 'joint':
+      return `/image/joint${suffix}.svg`
     case 'underwater':
     case 'PFE':
       return `/image/underwater${suffix}.png`
     default:
       return `/image/underwater${suffix}.png`
   }
+}
+
+const getDeviceIconScale = (type: string, isSelected: boolean) => {
+  const base = type === 'equalizer' || type === 'joint' ? 0.24 : 0.18
+  return isSelected ? base + 0.04 : base
 }
 
 // 按 KP 排序的设备列表
@@ -204,7 +213,7 @@ const drawDevices = () => {
     feature.setStyle(new Style({
       image: new Icon({
         src: iconUrl,
-        scale: isSelected ? 0.22 : 0.18,
+        scale: getDeviceIconScale(device.type, isSelected),
         anchor: [0.5, 0.5]
       }),
       text: new Text({
