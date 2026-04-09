@@ -12,7 +12,7 @@
 import { ref, watch, computed } from 'vue'
 import { Button, Input, Select } from '@/shared/components/base'
 import { X } from 'lucide-vue-next'
-import type { BranchingUnitType } from '@/types/settings'
+import type { BranchingUnitType, BranchingUnitSubType } from '@/types/settings'
 
 const props = defineProps<{
   visible: boolean
@@ -47,6 +47,13 @@ const portCountOptions = [
   { value: '8', label: '8 端口' }
 ]
 
+// 分支器子类型选项
+const subTypeOptions: Array<{ value: BranchingUnitSubType; label: string }> = [
+  { value: 'BU',    label: 'BU — 普通分支器' },
+  { value: 'ROADM', label: 'ROADM — 可重构光分插复用器' },
+  { value: 'OADM',  label: 'OADM — 光分插复用器(非重构)' },
+]
+
 // 货币选项
 const currencyOptions = [
   { value: 'USD', label: 'USD' },
@@ -64,6 +71,7 @@ watch(() => props.visible, (visible) => {
       formData.value = {
         id: `bu-${Date.now()}`,
         name: '',
+        subType: 'BU',
         portCount: 3,
         trunkInsertionLoss: 0.8,
         branchInsertionLoss: 3.5,
@@ -107,8 +115,14 @@ const title = computed(() => props.isNew ? '新增分支器类型' : '编辑分�
         <div class="flex-1 overflow-y-auto p-6 space-y-6">
           <!-- 基本信息 -->
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">器件名称 <span class="text-red-500">*</span></label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">器件名称 <span class="text-red-500">*</span></label>
             <Input v-model="formData.name" placeholder="如 BU-3Port" />
+          </div>
+
+          <!-- 子类型 -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">子类型 (SLD图标)</label>
+            <Select v-model="formData.subType" :options="subTypeOptions" />
           </div>
           
           <!-- 端口数 -->

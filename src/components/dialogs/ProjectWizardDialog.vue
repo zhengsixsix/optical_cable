@@ -6,6 +6,7 @@ import { Button, Select } from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
+import { deviceImportService } from '@/services/DeviceImportService'
 
 interface Props {
   visible: boolean
@@ -28,6 +29,8 @@ interface DeviceItem {
     fiberTypes?: any[]
     amplifierTypes?: any[]
     branchingUnitTypes?: any[]
+    equalizerTypes?: any[]
+    jointBoxTypes?: any[]
   }
 }
 
@@ -456,95 +459,30 @@ const handleDeviceFileSelected = async (e: Event) => {
   if (target.files && target.files.length > 0) {
     const file = target.files[0]
     
-    // 尝试解析 CSV 文件
-    let parsedData: { fiberTypes?: any[]; amplifierTypes?: any[]; branchingUnitTypes?: any[] } | undefined
+    // 统一使用 deviceImportService 解析
+    let parsedData: { fiberTypes?: any[]; amplifierTypes?: any[]; branchingUnitTypes?: any[]; equalizerTypes?: any[]; jointBoxTypes?: any[] } | undefined
     
-    if (file.name.endsWith('.csv')) {
-      try {
-        const text = await file.text()
-        const lines = text.split('\n').map(line => line.trim()).filter(line => line)
-        
-        let currentSection = ''
-        let headers: string[] = []
-        const fiberTypes: any[] = []
-        const amplifierTypes: any[] = []
-        const branchingUnitTypes: any[] = []
-        
-        for (const line of lines) {
-          if (line.startsWith('[') && line.endsWith(']')) {
-            currentSection = line.slice(1, -1)
-            headers = []
-            continue
-          }
-          
-          const values = line.split(',').map(v => v.trim())
-          
-          if (headers.length === 0) {
-            headers = values
-            continue
-          }
-          
-          const row: Record<string, any> = {}
-          headers.forEach((h, i) => {
-            const val = values[i] || ''
-            row[h] = isNaN(Number(val)) ? val : Number(val)
-          })
-          
-          if (currentSection === 'FiberTypes' && row.name) {
-            fiberTypes.push({
-              id: `fiber-${Date.now()}-${fiberTypes.length}`,
-              name: row.name,
-              fiberCategory: row.fiberCategory || '',
-              nonlinearCoeff: row.nonlinearCoeff || 0,
-              effectiveArea: row.effectiveArea || 0,
-              dispersion: row.dispersion || 0,
-              dispersionSlope: row.dispersionSlope || 0,
-              nonlinearRefractiveIndex: row.nonlinearRefractiveIndex || 0,
-              attenuationCoeff: row.attenuationCoeff || 0,
-              secondOrderDispersion: row.secondOrderDispersion || 0,
-              simulationModel: row.simulationModel || 'GN',
-            })
-          } else if (currentSection === 'AmplifierTypes' && row.name) {
-            amplifierTypes.push({
-              id: `amp-${Date.now()}-${amplifierTypes.length}`,
-              name: row.name,
-              gain: row.gain || 0,
-              bandwidth: row.bandwidth || 0,
-              gainFlatness: row.gainFlatness || 0,
-              noiseFigure: row.noiseFigure || 0,
-              pumpPower: row.pumpPower || 0,
-              outputPower: row.outputPower || 0,
-              saturationPower: row.saturationPower || 0,
-              gainRangePower: row.gainRangePower || 0,
-              operatingMode: row.operatingMode || 'fixed_gain',
-              unitPrice: row.unitPrice || 0,
-              currency: row.currency || 'USD',
-            })
-          } else if (currentSection === 'BranchingUnitTypes' && row.name) {
-            branchingUnitTypes.push({
-              id: `bu-${Date.now()}-${branchingUnitTypes.length}`,
-              name: row.name,
-              portCount: row.portCount || 0,
-              trunkInsertionLoss: row.trunkInsertionLoss || 0,
-              branchInsertionLoss: row.branchInsertionLoss || 0,
-              insertionLoss: row.trunkInsertionLoss || row.insertionLoss || 0,
-              wavelengthRange: row.wavelengthRange || 0,
-              unitPrice: row.unitPrice || 0,
-              currency: row.currency || 'USD',
-            })
-          }
+    try {
+      const result = await deviceImportService.importFile(file)
+      const s = result.summary
+      const total = s.fiberCount + s.amplifierCount + s.branchingUnitCount + s.equalizerCount + s.jointCount
+      if (total > 0) {
+        parsedData = {
+          fiberTypes: result.fiberTypes,
+          amplifierTypes: result.amplifierTypes,
+          branchingUnitTypes: result.branchingUnitTypes,
+          equalizerTypes: result.equalizerTypes,
+          jointBoxTypes: result.jointBoxTypes,
         }
-        
-        if (fiberTypes.length > 0 || amplifierTypes.length > 0 || branchingUnitTypes.length > 0) {
-          parsedData = { fiberTypes, amplifierTypes, branchingUnitTypes }
-          appStore.showNotification({
-            type: 'success',
-            message: `解析成功：光纤${fiberTypes.length}种，放大器${amplifierTypes.length}种，分支器${branchingUnitTypes.length}种`
-          })
-        }
-      } catch {
-        // CSV 解析失败时静默处理，文件仍会被添加到列表
+        appStore.showNotification({
+          type: 'success',
+          message: `解析成功：光纤${s.fiberCount}、放大器${s.amplifierCount}、分支器${s.branchingUnitCount}、均衡器${s.equalizerCount}、接头盒${s.jointCount}`
+        })
+      } else if (result.errors.length > 0) {
+        appStore.showNotification({ type: 'warning', message: result.errors[0].message })
       }
+    } catch (err) {
+      appStore.showNotification({ type: 'warning', message: `文件解析失败: ${(err as Error).message}` })
     }
     
     deviceList.value.push({

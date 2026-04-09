@@ -423,7 +423,7 @@ export const pointTypeOptions = [
   { value: 'landing', label: '登陆站' },
   { value: 'repeater', label: '放大器' },
   { value: 'branching', label: '分支器' },
-  { value: 'joint', label: '接头' },
+  { value: 'joint', label: '接头盒' },
   { value: 'waypoint', label: '路径点' },
 ]
 
@@ -440,7 +440,8 @@ export const equipmentTypeOptions = [
   { value: 'PFE', label: '供电设备 (PFE)' },
   { value: 'REP', label: '放大器 (REP)' },
   { value: 'BU', label: '分支器 (BU)' },
-  { value: 'JOINT', label: '接头 (JOINT)' },
+  { value: 'EQ', label: '均衡器 (EQ)' },
+  { value: 'JOINT', label: '接头盒 (JOINT)' },
   { value: 'OADM', label: '光分插复用器 (OADM)' },
 ]
 

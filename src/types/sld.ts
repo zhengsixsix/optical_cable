@@ -1,5 +1,6 @@
 // SLD (System Layout Diagram) 表格类型定义
 // 符合行业标准的系统布局图文件格式
+import type { JointBoxSubType, BranchingUnitSubType } from './settings'
 
 // 设备类型
 export type SLDEquipmentType = 
@@ -7,11 +8,34 @@ export type SLDEquipmentType =
   | 'PFE'          // 供电设备 Power Feeding Equipment
   | 'REP'          // 放大器 Repeater
   | 'BU'           // 分支器 Branching Unit
-  | 'JOINT'        // 接头 Joint
+  | 'EQ'           // 均衡器 Equalizer
+  | 'JOINT'        // 接头盒 Joint Box
   | 'OADM'         // 光分插复用器
 
 // 光纤对类型
 export type FiberPairType = 'working' | 'protection' | 'spare'
+export type SLDSyncSource = 'manual' | 'rpl' | 'connector-trunk'
+export type SLDExportTemplateVersion = 'legacy-v1' | 'standard-v2026.04'
+export type SLDDeviceSymbolCode =
+  | 'LAND'
+  | 'BJB'
+  | 'SEJB'
+  | 'BUJB'
+  | 'SJB'
+  | 'FJB'
+  | 'R'
+  | 'ROADM'
+  | 'OADM'
+  | 'T'
+  | 'S'
+export type SLDDeviceFunctionCode =
+  | 'terminal'
+  | 'power-feeding'
+  | 'joint-box'
+  | 'repeater'
+  | 'branching-unit'
+  | 'equalizer'
+export type SLDDepthOverlayMode = 'device' | 'none'
 
 // SLD全局信息 (XML导出用)
 export interface SLDGlobalInfo {
@@ -62,6 +86,18 @@ export interface SLDEquipment {
   // === BU 专用字段 ===
   portLimit?: number         // 端口上限（用户预设约束，3或4）
   actualPortCount?: number   // 实际端口数（路由规划后由算法推导）
+  // === 均衡器专用字段 ===
+  equalizerRole?: 'T' | 'S'  // 均衡器位号，T/S
+  attenuationMode?: 'adjustable' | 'fixed' // 可调/固定光衰
+  attenuationDb?: number     // 光衰値 (dB)
+  // === 接头盒子类型（决定 Excel 导出图标形状）===
+  jointSubType?: JointBoxSubType
+  // === 分支器子类型（备用）===
+  buSubType?: BranchingUnitSubType
+  symbolCode?: SLDDeviceSymbolCode
+  syncSource?: SLDSyncSource
+  syncRouteId?: string
+  sourceConnectorId?: string
 }
 
 // SLD光纤段
@@ -82,6 +118,8 @@ export interface SLDFiberSegment {
   
   // === 器件库引用 ===
   cableRefId?: string        // 引用的海缆器件库ID
+  syncSource?: SLDSyncSource
+  syncRouteId?: string
 }
 
 // SLD传输参数
@@ -117,9 +155,13 @@ export interface SLDMetadata {
   terminalCount: number      // 终端数量
   repeaterCount: number      // 放大器数量
   branchingUnitCount: number // 分支器数量
+  equalizerCount: number     // 均衡器数量
   jointCount: number         // 接头数量
   totalFiberPairs: number    // 总光纤对数
   estimatedCapacity: number  // 预估容量 (Tbps)
+  exportTemplateVersion?: SLDExportTemplateVersion
+  deviceDictionaryVersion?: string
+  algorithmProfileVersion?: string
 }
 
 // SLD导出格式

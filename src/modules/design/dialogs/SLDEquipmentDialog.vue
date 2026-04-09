@@ -5,6 +5,7 @@ import { Card, CardHeader, CardContent, Button, Select } from '@/shared/componen
 import { X, Save, Radio } from 'lucide-vue-next'
 import type { SLDEquipmentType } from '@/types'
 import { equipmentTypeOptions } from '@/data/mockData'
+import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
 
 const props = defineProps<{
   visible: boolean
@@ -21,6 +22,17 @@ const appStore = useAppStore()
 
 const isEdit = computed(() => !!props.equipmentId)
 const dialogTitle = computed(() => isEdit.value ? '编辑设备' : '添加设备')
+const isEqualizerType = computed(() => form.value.type === 'EQ')
+
+const equalizerRoleOptions = [
+  { value: 'T', label: 'T (蓝色)' },
+  { value: 'S', label: 'S (红色)' },
+]
+
+const attenuationModeOptions = [
+  { value: 'adjustable', label: '可调光衰' },
+  { value: 'fixed', label: '固定光衰 (F-ATT)' },
+]
 
 const form = ref({
   name: '',
@@ -33,6 +45,9 @@ const form = ref({
   specifications: '',
   manufacturer: '',
   remarks: '',
+  equalizerRole: 'T' as 'T' | 'S',
+  attenuationMode: 'adjustable' as 'adjustable' | 'fixed',
+  attenuationDb: 0,
 })
 
 watch(() => props.visible, (val) => {
@@ -51,6 +66,9 @@ watch(() => props.visible, (val) => {
           specifications: equipment.specifications,
           manufacturer: equipment.manufacturer || '',
           remarks: equipment.remarks,
+          equalizerRole: equipment.equalizerRole || 'T',
+          attenuationMode: equipment.attenuationMode || 'adjustable',
+          attenuationDb: equipment.attenuationDb ?? 0,
         }
       }
     } else {
@@ -71,6 +89,9 @@ function resetForm() {
     specifications: '',
     manufacturer: '',
     remarks: '',
+    equalizerRole: 'T',
+    attenuationMode: 'adjustable',
+    attenuationDb: 0,
   }
 }
 
@@ -80,11 +101,32 @@ function handleSave() {
     return
   }
 
+  if (isEqualizerType.value) {
+    const validationMessage = validateEqualizerConfig(form.value)
+    if (validationMessage) {
+      appStore.showNotification({ type: 'warning', message: validationMessage })
+      return
+    }
+  }
+
+  const equalizerFields = isEqualizerType.value
+    ? normalizeEqualizerConfig(form.value)
+    : {
+        equalizerRole: undefined,
+        attenuationMode: undefined,
+        attenuationDb: undefined,
+      }
+
+  const payload = {
+    ...form.value,
+    ...equalizerFields,
+  }
+
   if (isEdit.value && props.equipmentId) {
-    sldStore.updateEquipment(props.equipmentId, { ...form.value })
+    sldStore.updateEquipment(props.equipmentId, payload)
     appStore.showNotification({ type: 'success', message: '设备已更新' })
   } else {
-    sldStore.addEquipment({ ...form.value })
+    sldStore.addEquipment(payload)
     appStore.showNotification({ type: 'success', message: '设备已添加' })
   }
 
@@ -207,6 +249,27 @@ function handleSave() {
                 rows="2"
                 class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500 resize-none"
               />
+            </div>
+
+            <div v-if="isEqualizerType" class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">均衡器位号</label>
+                <Select v-model="form.equalizerRole" :options="equalizerRoleOptions" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">光衰模式</label>
+                <Select v-model="form.attenuationMode" :options="attenuationModeOptions" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">光衰值 (dB)</label>
+                <input
+                  v-model.number="form.attenuationDb"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
+                />
+              </div>
             </div>
           </div>
         </CardContent>

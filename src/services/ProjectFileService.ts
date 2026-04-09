@@ -317,7 +317,15 @@ class ProjectFileService {
       }
     }
 
-    // 6.7 保存图层设置
+    // 6.7 保存器件库扩展数据（均衡器型号、接头盒型号）
+    if (settingsStore.equalizerTypes && settingsStore.equalizerTypes.length > 0) {
+      projectData._app_extensions.equalizerTypes = JSON.parse(JSON.stringify(settingsStore.equalizerTypes))
+    }
+    if (settingsStore.jointBoxTypes && settingsStore.jointBoxTypes.length > 0) {
+      projectData._app_extensions.jointBoxTypes = JSON.parse(JSON.stringify(settingsStore.jointBoxTypes))
+    }
+
+    // 6.8 保存图层设置
     projectData._app_extensions.layerSettings = {
       oceanElevation: layerStore.getLayerVisible('elevation'),
       volcanoDistribution: layerStore.getLayerVisible('volcano'),
@@ -365,6 +373,7 @@ class ProjectFileService {
         installation_cost_per_km: costFactors.installationCostPerKm || 15000,
         repeater_cost: costFactors.repeaterCost || 250000,
         branching_unit_cost: costFactors.branchingUnitCost || 180000,
+        equalizer_cost: costFactors.equalizerCost || 15000,
         landing_station_cost: costFactors.landingStationCost || 5000000,
         currency: costFactors.currency || 'USD',
         // 路径规划成本参数
@@ -1375,7 +1384,7 @@ class ProjectFileService {
           landingStations: records.filter((r) => (r.pointType as string) === 'landing').length,
           repeaters: records.filter((r) => (r.pointType as string) === 'repeater').length,
           branchingUnits: records.filter((r) => (r.pointType as string) === 'branching').length,
-          joints: 0,
+          joints: records.filter((r) => (r.pointType as string) === 'joint').length,
           averageDepth: depths.length > 0 ? depths.reduce((a, b) => a + b, 0) / depths.length : 0,
           maxDepth: depths.length > 0 ? Math.max(...depths) : 0,
           minDepth: depths.length > 0 ? Math.min(...depths) : 0,
@@ -1394,7 +1403,7 @@ class ProjectFileService {
         .map(r => ({
           id: r.id,
           coordinates: [r.longitude, r.latitude] as [number, number],
-          type: r.pointType as 'landing' | 'branching' | 'repeater' | 'waypoint',
+          type: r.pointType as 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint',
           name: r.remarks || undefined,
         }))
       
@@ -1567,7 +1576,15 @@ class ProjectFileService {
         const displayPoints = sortedDevices.map(d => ({
           id: d.id,
           coordinates: [d.longitude, d.latitude] as [number, number],
-          type: d.type === 'LandingStation' ? 'landing' : d.type === 'Repeater' ? 'repeater' : d.type === 'BU' ? 'branching' : 'waypoint',
+          type: d.type === 'LandingStation'
+            ? 'landing'
+            : d.type === 'Repeater'
+              ? 'repeater'
+              : d.type === 'BU'
+                ? 'branching'
+                : d.type === 'Joint' || d.type === 'joint'
+                  ? 'joint'
+                  : 'waypoint',
           name: d.name,
         }))
         
@@ -1749,7 +1766,19 @@ class ProjectFileService {
       settingsStore.linkCalcSummaryCache = ext.designCache.linkCalcSummary
     }
 
-    // 14.7 恢复图层设置
+    // 14.7 恢复均衡器型号和接头盒型号
+    if (Array.isArray(ext.equalizerTypes) && ext.equalizerTypes.length > 0) {
+      const settingsStore = useSettingsStore()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      settingsStore.equalizerTypes = ext.equalizerTypes as any
+    }
+    if (Array.isArray(ext.jointBoxTypes) && ext.jointBoxTypes.length > 0) {
+      const settingsStore = useSettingsStore()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      settingsStore.jointBoxTypes = ext.jointBoxTypes as any
+    }
+
+    // 14.8 恢复图层设置
     if (ext.layerSettings) {
       const ls = ext.layerSettings
       layerStore.setLayerVisible('elevation', ls.oceanElevation ?? false)
@@ -2023,6 +2052,7 @@ class ProjectFileService {
         installationCostPerKm: cs.installation_cost_per_km,
         repeaterCost: cs.repeater_cost,
         branchingUnitCost: cs.branching_unit_cost,
+        equalizerCost: cs.equalizer_cost,
         landingStationCost: cs.landing_station_cost,
         currency: cs.currency,
         // 路径规划成本参数
@@ -2051,10 +2081,17 @@ class ProjectFileService {
   private mapEventTypeToPointType(eventType: string): string {
     const map: Record<string, string> = {
       'LandStation': 'landing',
+      'LandingStation': 'landing',
+      'Landing Station': 'landing',
       'EDFA': 'repeater',
       'EDFA_E': 'repeater_e',
       'EDFA_W': 'repeater_w',
       'BU': 'branching',
+      'Joint': 'joint',
+      'JOINT': 'joint',
+      'JointBox': 'joint',
+      'Joint Box': 'joint',
+      'JB': 'joint',
     }
     return map[eventType] || 'waypoint'
   }
@@ -2069,6 +2106,7 @@ class ProjectFileService {
       'repeater_e': 'amplifier_e',
       'repeater_w': 'amplifier_w',
       'branching': 'bu',
+      'joint': 'joint',
     }
     return map[pointType] || 'underwater'
   }
@@ -2082,6 +2120,7 @@ class ProjectFileService {
       'amplifier_e': '放大器东',
       'amplifier_w': '放大器西',
       'bu': '水下分支器',
+      'joint': '接头盒',
       'underwater': '水下站点',
     }
     return map[deviceType] || deviceType
@@ -2114,7 +2153,15 @@ class ProjectFileService {
           const displayPoints = sortedDevices.map(d => ({
             id: d.id,
             coordinates: [d.longitude, d.latitude] as [number, number],
-            type: d.type === 'LandingStation' ? 'landing' : d.type === 'Repeater' ? 'repeater' : d.type === 'BU' ? 'branching' : 'waypoint',
+            type: d.type === 'LandingStation'
+              ? 'landing'
+              : d.type === 'Repeater'
+                ? 'repeater'
+                : d.type === 'BU'
+                  ? 'branching'
+                  : d.type === 'Joint' || d.type === 'joint'
+                    ? 'joint'
+                    : 'waypoint',
             name: d.name,
           }))
           

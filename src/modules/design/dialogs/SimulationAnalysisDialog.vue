@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { Button } from '@/shared/components/base'
 import { BarChart2, X, RefreshCw, Filter, Cpu, ChevronDown, ChevronUp, Target, Info, FileText, AlertTriangle, Download } from 'lucide-vue-next'
-import { useAppStore, useSettingsStore, useConnectorStore } from '@/stores'
+import { useAppStore, useSettingsStore, useConnectorStore, useRouteStore } from '@/stores'
 import { buildSimulationCache } from '@/services/simulationDataBuilder'
 import type { SimulationCache } from '@/types/useFile'
 
@@ -19,6 +19,10 @@ const emit = defineEmits<{
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const connectorStore = useConnectorStore()
+const routeStore = useRouteStore()
+const routeConnectorElements = computed(() =>
+  connectorStore.getElementsForRoute(routeStore.currentRouteId || null)
+)
 
 // ============ 仿真配置状态 ============
 const selectedMetric = ref<'gsnr' | 'osnr' | 'snr_ase' | 'snr_nli'>('gsnr')
@@ -95,7 +99,7 @@ const hasBu = computed(() => {
   // 从已有仿真结果检查
   if (cache.value) return cache.value.positions.names.some(n => /^BU/i.test(n))
   // 从链路设计元素检查
-  return connectorStore.elements.some(e => e.type === 'bu')
+  return routeConnectorElements.value.some(e => e.type === 'bu')
 })
 
 // 计算模型选项（固定算法列表，与器件库 model_id 无关）
@@ -117,9 +121,10 @@ const buModelOptions = [
 const linkInfo = computed(() => {
   if (!cache.value) {
     // 从 connectorStore 统计
-    const elements = connectorStore.elements
+    const elements = routeConnectorElements.value
     const amps = elements.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w')
     const bus = elements.filter(e => e.type === 'bu')
+    const equalizers = elements.filter(e => e.type === 'equalizer')
     const landings = elements.filter(e => e.type === 'landing' || e.type === 'underwater')
     const fromStation = landings[0]?.name || 'Tx'
     const toStation = landings.length > 1 ? landings[landings.length - 1]?.name || 'Rx' : 'Rx'
@@ -128,17 +133,20 @@ const linkInfo = computed(() => {
       totalLength: 0,
       amplifierCount: amps.length,
       buCount: bus.length,
+      equalizerCount: equalizers.length,
       channelCount: settingsStore.systemPlanningConfig?.wdmParams?.channelCount || 96,
     }
   }
   // 从 cache 统计
   const ampCount = cache.value.positions.names.filter(n => n.startsWith('AMP')).length
   const buCount = cache.value.positions.names.filter(n => n.startsWith('BU')).length
+  const equalizerCount = cache.value.positions.names.filter(n => n.startsWith('EQ') || n.startsWith('F-ATT')).length
   return {
     linkName: `${cache.value.route_ref.from_station} ⇄ ${cache.value.route_ref.to_station}`,
     totalLength: cache.value.summary.total_length_km,
     amplifierCount: ampCount,
     buCount: buCount,
+    equalizerCount,
     channelCount: cache.value.channels.count,
   }
 })
@@ -845,7 +853,7 @@ const nodeDetail = computed(() => {
 function validateSimConfig(): string | null {
   if (!fiberModel.value) return '请选择光纤模型'
   if (!edfaModel.value) return '请选择 EDFA 模型'
-  const elements = connectorStore.elements
+  const elements = routeConnectorElements.value
   if (!elements || elements.length < 2) return '链路设计中无有效元素，请先完成链路设计'
   const hasFiber = elements.some(e => e.type === 'cable_segment' || e.type === 'fiber')
   if (!hasFiber) return '链路中无光纤段，无法计算'
@@ -875,7 +883,7 @@ const runSimulation = () => {
     try {
       const wdmConfig = settingsStore.systemPlanningConfig?.wdmParams
       const result = buildSimulationCache(
-        connectorStore.elements,
+        routeConnectorElements.value,
         {
           channelCount: wdmConfig?.channelCount || 96,
           centerFreqTHz: wdmConfig?.centerFreqTHz || 193.1,
@@ -994,6 +1002,7 @@ function generateReportHtml(): string {
       <tr><th>总长度</th><td>${c.summary.total_length_km.toFixed(1)} km</td></tr>
       <tr><th>放大器数量</th><td>${linkInfo.value.amplifierCount}</td></tr>
       <tr><th>BU 数量</th><td>${linkInfo.value.buCount}</td></tr>
+      <tr><th>均衡器数量</th><td>${linkInfo.value.equalizerCount}</td></tr>
       <tr><th>信道数</th><td>${c.channels.count}</td></tr>
       <tr><th>Span 数</th><td>${c.summary.total_span_count}</td></tr>
       <tr><th>仿真时间</th><td>${c.timestamp}</td></tr>
@@ -1208,6 +1217,10 @@ watch(() => props.visible, (visible) => {
                   <template v-if="hasBu">
                     <span>BU</span>
                     <span class="text-right font-mono text-gray-700">{{ linkInfo.buCount }}</span>
+                  </template>
+                  <template v-if="linkInfo.equalizerCount > 0">
+                    <span>均衡器</span>
+                    <span class="text-right font-mono text-gray-700">{{ linkInfo.equalizerCount }}</span>
                   </template>
                   <span>信道数</span>
                   <span class="text-right font-mono text-gray-700">{{ linkInfo.channelCount }}</span>

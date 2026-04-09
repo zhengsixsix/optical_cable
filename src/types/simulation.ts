@@ -118,7 +118,7 @@ export interface LinkNode {
   /** 节点ID */
   id: string
   /** 节点类型 */
-  type: 'terminal' | 'repeater' | 'branching' | 'joint'
+  type: 'terminal' | 'repeater' | 'branching' | 'joint' | 'equalizer'
   /** 节点名称 */
   name: string
   /** KP位置 (km) */
@@ -389,7 +389,7 @@ export const DEFAULT_AMPLIFIER_PARAMS: AmplifierParams = {
 export interface SimDeviceBase {
   id: string
   name: string
-  type: 'landing' | 'amplifier' | 'bu'
+  type: 'landing' | 'amplifier' | 'bu' | 'equalizer'
   kp: number
   longitude: number
   latitude: number
@@ -419,7 +419,14 @@ export interface SimLandingDevice extends SimDeviceBase {
   type: 'landing'
 }
 
-export type SimDevice = SimLandingDevice | SimAmplifierDevice | SimBUDevice
+export interface SimEqualizerDevice extends SimDeviceBase {
+  type: 'equalizer'
+  equalizerRole?: 'T' | 'S'
+  attenuationMode?: 'adjustable' | 'fixed'
+  attenuationDb: number
+}
+
+export type SimDevice = SimLandingDevice | SimAmplifierDevice | SimBUDevice | SimEqualizerDevice
 
 /** 仿真输入 - 光纤段 */
 export interface SimFiberSegment {

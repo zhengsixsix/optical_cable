@@ -14,12 +14,14 @@ import DeviceImportDialog from '@/components/dialogs/DeviceImportDialog.vue'
 import FiberTypeDialog from '@/components/dialogs/FiberTypeDialog.vue'
 import AmplifierTypeDialog from '@/components/dialogs/AmplifierTypeDialog.vue'
 import BranchingUnitTypeDialog from '@/components/dialogs/BranchingUnitTypeDialog.vue'
+import EqualizerTypeDialog from '@/components/dialogs/EqualizerTypeDialog.vue'
+import JointBoxTypeDialog from '@/components/dialogs/JointBoxTypeDialog.vue'
 import { useSettingsStore, useAppStore } from '@/stores'
 import { 
   Database, Upload, Plus, Edit2, Trash2, 
-  Zap, Radio, GitBranch, Download, Search, Save, RotateCcw
+  Zap, Radio, GitBranch, Download, Search, Save, RotateCcw, SlidersHorizontal, Box
 } from 'lucide-vue-next'
-import type { FiberType, AmplifierType, BranchingUnitType } from '@/types/settings'
+import type { FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types/settings'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -28,7 +30,7 @@ const appStore = useAppStore()
 const showImportDialog = ref(false)
 
 // 当前选中的标签页
-const activeTab = ref<'fiber' | 'amplifier' | 'branching'>('fiber')
+const activeTab = ref<'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'>('fiber')
 
 // 搜索关键词
 const searchKeyword = ref('')
@@ -37,9 +39,13 @@ const searchKeyword = ref('')
 const showFiberDialog = ref(false)
 const showAmplifierDialog = ref(false)
 const showBranchingDialog = ref(false)
+const showEqualizerDialog = ref(false)
+const showJointDialog = ref(false)
 const editingFiber = ref<FiberType | null>(null)
 const editingAmplifier = ref<AmplifierType | null>(null)
 const editingBranching = ref<BranchingUnitType | null>(null)
+const editingEqualizer = ref<EqualizerType | null>(null)
+const editingJoint = ref<JointBoxType | null>(null)
 const isNewItem = ref(false)
 
 // 过滤后的数据
@@ -67,12 +73,30 @@ const filteredBranchingUnitTypes = computed(() => {
   )
 })
 
+const filteredEqualizerTypes = computed(() => {
+  if (!searchKeyword.value) return settingsStore.equalizerTypes
+  const keyword = searchKeyword.value.toLowerCase()
+  return settingsStore.equalizerTypes.filter(e => 
+    e.name.toLowerCase().includes(keyword) || e.id.toLowerCase().includes(keyword)
+  )
+})
+
+const filteredJointBoxTypes = computed(() => {
+  if (!searchKeyword.value) return settingsStore.jointBoxTypes
+  const keyword = searchKeyword.value.toLowerCase()
+  return settingsStore.jointBoxTypes.filter(j => 
+    j.name.toLowerCase().includes(keyword) || j.id.toLowerCase().includes(keyword)
+  )
+})
+
 // 统计信息
 const statistics = computed(() => ({
   fiberCount: settingsStore.fiberTypes.length,
   amplifierCount: settingsStore.amplifierTypes.length,
   branchingCount: settingsStore.branchingUnitTypes.length,
-  totalCount: settingsStore.fiberTypes.length + settingsStore.amplifierTypes.length + settingsStore.branchingUnitTypes.length,
+  equalizerCount: settingsStore.equalizerTypes.length,
+  jointCount: settingsStore.jointBoxTypes.length,
+  totalCount: settingsStore.fiberTypes.length + settingsStore.amplifierTypes.length + settingsStore.branchingUnitTypes.length + settingsStore.equalizerTypes.length + settingsStore.jointBoxTypes.length,
   libraryFile: settingsStore.currentLibraryFile || '未导入'
 }))
 
@@ -84,6 +108,10 @@ const deleteItem = (type: string, id: string) => {
     settingsStore.removeAmplifierType(id)
   } else if (type === 'branching') {
     settingsStore.removeBranchingUnitType(id)
+  } else if (type === 'equalizer') {
+    settingsStore.removeEqualizerType(id)
+  } else if (type === 'joint') {
+    settingsStore.removeJointBoxType(id)
   }
   appStore.showNotification({ type: 'success', message: '已删除' })
 }
@@ -107,6 +135,20 @@ const editBranching = (bu: BranchingUnitType) => {
   editingBranching.value = bu
   isNewItem.value = false
   showBranchingDialog.value = true
+}
+
+// 编辑均衡器
+const editEqualizer = (eq: EqualizerType) => {
+  editingEqualizer.value = eq
+  isNewItem.value = false
+  showEqualizerDialog.value = true
+}
+
+// 编辑接头盒
+const editJoint = (jb: JointBoxType) => {
+  editingJoint.value = jb
+  isNewItem.value = false
+  showJointDialog.value = true
 }
 
 // 保存光纤
@@ -145,6 +187,30 @@ const saveBranching = (bu: BranchingUnitType) => {
   appStore.showNotification({ type: 'success', message: '分支器类型已保存' })
 }
 
+// 保存均衡器
+const saveEqualizer = (eq: EqualizerType) => {
+  if (isNewItem.value) {
+    settingsStore.addEqualizerType(eq)
+  } else {
+    settingsStore.updateEqualizerType(eq.id, eq)
+  }
+  showEqualizerDialog.value = false
+  editingEqualizer.value = null
+  appStore.showNotification({ type: 'success', message: '均衡器型号已保存' })
+}
+
+// 保存接头盒
+const saveJoint = (jb: JointBoxType) => {
+  if (isNewItem.value) {
+    settingsStore.addJointBoxType(jb)
+  } else {
+    settingsStore.updateJointBoxType(jb.id, jb)
+  }
+  showJointDialog.value = false
+  editingJoint.value = null
+  appStore.showNotification({ type: 'success', message: '接头盒型号已保存' })
+}
+
 // 添加新器件
 const addNewItem = () => {
   isNewItem.value = true
@@ -155,9 +221,15 @@ const addNewItem = () => {
   } else if (activeTab.value === 'amplifier') {
     editingAmplifier.value = null
     showAmplifierDialog.value = true
-  } else {
+  } else if (activeTab.value === 'branching') {
     editingBranching.value = null
     showBranchingDialog.value = true
+  } else if (activeTab.value === 'equalizer') {
+    editingEqualizer.value = null
+    showEqualizerDialog.value = true
+  } else {
+    editingJoint.value = null
+    showJointDialog.value = true
   }
 }
 
@@ -177,6 +249,8 @@ const exportLibrary = () => {
     fiberTypes: settingsStore.fiberTypes,
     amplifierTypes: settingsStore.amplifierTypes,
     branchingUnitTypes: settingsStore.branchingUnitTypes,
+    equalizerTypes: settingsStore.equalizerTypes,
+    jointBoxTypes: settingsStore.jointBoxTypes,
     exportedAt: new Date().toISOString()
   }
   
@@ -204,6 +278,12 @@ const clearLibrary = () => {
   }
   while (settingsStore.branchingUnitTypes.length > 0) {
     settingsStore.removeBranchingUnitType(settingsStore.branchingUnitTypes[0].id)
+  }
+  while (settingsStore.equalizerTypes.length > 0) {
+    settingsStore.removeEqualizerType(settingsStore.equalizerTypes[0].id)
+  }
+  while (settingsStore.jointBoxTypes.length > 0) {
+    settingsStore.removeJointBoxType(settingsStore.jointBoxTypes[0].id)
   }
   
   appStore.showNotification({ type: 'info', message: '器件库已清空' })
@@ -284,6 +364,34 @@ const clearLibrary = () => {
                 <span class="text-lg font-bold text-green-600">{{ statistics.branchingCount }}</span>
               </div>
             </div>
+
+            <div 
+              class="p-3 rounded-lg cursor-pointer transition-colors"
+              :class="activeTab === 'equalizer' ? 'bg-amber-100 border-amber-300' : 'bg-gray-50 hover:bg-gray-100'"
+              @click="activeTab = 'equalizer'"
+            >
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <SlidersHorizontal class="w-4 h-4 text-amber-500" />
+                  <span class="text-sm">均衡器型号</span>
+                </div>
+                <span class="text-lg font-bold text-amber-600">{{ statistics.equalizerCount }}</span>
+              </div>
+            </div>
+
+            <div 
+              class="p-3 rounded-lg cursor-pointer transition-colors"
+              :class="activeTab === 'joint' ? 'bg-slate-200 border-slate-400' : 'bg-gray-50 hover:bg-gray-100'"
+              @click="activeTab = 'joint'"
+            >
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <Box class="w-4 h-4 text-slate-500" />
+                  <span class="text-sm">接头盒型号</span>
+                </div>
+                <span class="text-lg font-bold text-slate-600">{{ statistics.jointCount }}</span>
+              </div>
+            </div>
           </div>
           
           <div class="pt-2 border-t">
@@ -322,6 +430,20 @@ const clearLibrary = () => {
                 @click="activeTab = 'branching'"
               >
                 <GitBranch class="w-3.5 h-3.5 inline mr-1" /> 分支器
+              </button>
+              <button 
+                class="px-3 py-1.5 text-sm rounded-lg transition-colors"
+                :class="activeTab === 'equalizer' ? 'bg-amber-100 text-amber-700' : 'hover:bg-gray-100'"
+                @click="activeTab = 'equalizer'"
+              >
+                <SlidersHorizontal class="w-3.5 h-3.5 inline mr-1" /> 均衡器
+              </button>
+              <button 
+                class="px-3 py-1.5 text-sm rounded-lg transition-colors"
+                :class="activeTab === 'joint' ? 'bg-slate-200 text-slate-700' : 'hover:bg-gray-100'"
+                @click="activeTab = 'joint'"
+              >
+                <Box class="w-3.5 h-3.5 inline mr-1" /> 接头盒
               </button>
             </div>
           </div>
@@ -443,6 +565,103 @@ const clearLibrary = () => {
             </table>
           </div>
           
+          <!-- 均衡器型号表格 -->
+          <div v-if="activeTab === 'equalizer'" class="overflow-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">型号名称</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">光衰模式</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">默认光衰值<br/><span class="text-xs text-gray-400">dB</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">单价</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">货币</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">备注</th>
+                  <th class="px-3 py-2 text-center font-medium text-gray-600">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="eq in filteredEqualizerTypes"
+                  :key="eq.id"
+                  class="border-b border-gray-100 hover:bg-gray-50"
+                >
+                  <td class="px-3 py-3 font-medium">{{ eq.name }}</td>
+                  <td class="px-3 py-3">
+                    <span class="px-2 py-0.5 text-xs rounded"
+                      :class="eq.attenuationMode === 'fixed' ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700'">
+                      {{ eq.attenuationMode === 'fixed' ? '固定光衰 (F-ATT)' : '可调光衰' }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ eq.defaultAttenuationDb }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ eq.unitPrice ?? '-' }}</td>
+                  <td class="px-3 py-3 text-gray-600">{{ eq.currency ?? '-' }}</td>
+                  <td class="px-3 py-3 text-gray-500 text-xs">{{ eq.remarks || '-' }}</td>
+                  <td class="px-3 py-3 text-center">
+                    <div class="flex items-center justify-center gap-1">
+                      <button class="p-1 hover:bg-gray-100 rounded" @click="editEqualizer(eq)">
+                        <Edit2 class="w-4 h-4 text-gray-500" />
+                      </button>
+                      <button class="p-1 hover:bg-red-100 rounded" @click="deleteItem('equalizer', eq.id)">
+                        <Trash2 class="w-4 h-4 text-red-500" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="filteredEqualizerTypes.length === 0">
+                  <td colspan="7" class="px-4 py-8 text-center text-gray-400">
+                    暂无数据，请导入或添加
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 接头盒型号表格 -->
+          <div v-if="activeTab === 'joint'" class="overflow-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">型号名称</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">接头盒插损<br/><span class="text-xs text-gray-400">dB</span></th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">最大光纤对数</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">单价</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">货币</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-600">备注</th>
+                  <th class="px-3 py-2 text-center font-medium text-gray-600">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="jb in filteredJointBoxTypes"
+                  :key="jb.id"
+                  class="border-b border-gray-100 hover:bg-gray-50"
+                >
+                  <td class="px-3 py-3 font-medium">{{ jb.name }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ jb.insertionLoss }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ jb.maxFiberPairs ?? '-' }}</td>
+                  <td class="px-3 py-3 font-mono text-gray-600">{{ jb.unitPrice ?? '-' }}</td>
+                  <td class="px-3 py-3 text-gray-600">{{ jb.currency ?? '-' }}</td>
+                  <td class="px-3 py-3 text-gray-500 text-xs">{{ jb.remarks || '-' }}</td>
+                  <td class="px-3 py-3 text-center">
+                    <div class="flex items-center justify-center gap-1">
+                      <button class="p-1 hover:bg-gray-100 rounded" @click="editJoint(jb)">
+                        <Edit2 class="w-4 h-4 text-gray-500" />
+                      </button>
+                      <button class="p-1 hover:bg-red-100 rounded" @click="deleteItem('joint', jb.id)">
+                        <Trash2 class="w-4 h-4 text-red-500" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="filteredJointBoxTypes.length === 0">
+                  <td colspan="7" class="px-4 py-8 text-center text-gray-400">
+                    暂无数据，请导入或添加
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
           <!-- 分支器类型表格 - 按甲方需求格式 -->
           <div v-if="activeTab === 'branching'" class="overflow-auto">
             <table class="w-full text-sm">
@@ -525,5 +744,23 @@ const clearLibrary = () => {
     :is-new="isNewItem"
     @close="showBranchingDialog = false"
     @save="saveBranching"
+  />
+
+  <!-- 均衡器型号编辑弹窗 -->
+  <EqualizerTypeDialog
+    :visible="showEqualizerDialog"
+    :equalizer="editingEqualizer"
+    :is-new="isNewItem"
+    @close="showEqualizerDialog = false"
+    @save="saveEqualizer"
+  />
+
+  <!-- 接头盒型号编辑弹窗 -->
+  <JointBoxTypeDialog
+    :visible="showJointDialog"
+    :joint-box="editingJoint"
+    :is-new="isNewItem"
+    @close="showJointDialog = false"
+    @save="saveJoint"
   />
 </template>

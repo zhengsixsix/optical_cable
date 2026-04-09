@@ -46,13 +46,64 @@ export interface WDMConfigInput {
   modulation: string
 }
 
+type PositionDeviceKind = 'landing' | 'amplifier' | 'bu' | 'equalizer'
+
+type ExtendedSimulationPositions = SimulationPositions & {
+  device_types?: PositionDeviceKind[]
+  effective_span_counts?: number[]
+  cumulative_passive_loss_db?: number[]
+}
+
+function isTrackedSimDevice(element: ConnectorElement): boolean {
+  return ['landing', 'underwater', 'amplifier_e', 'amplifier_w', 'ola', 'bu', 'equalizer'].includes(element.type)
+}
+
+function getPositionDeviceKind(element: ConnectorElement): PositionDeviceKind {
+  if (element.type === 'amplifier_e' || element.type === 'amplifier_w' || element.type === 'ola') return 'amplifier'
+  if (element.type === 'bu') return 'bu'
+  if (element.type === 'equalizer') return 'equalizer'
+  return 'landing'
+}
+
+function getPassiveLossDb(element: ConnectorElement): number {
+  if (element.type === 'bu') {
+    return Math.max(0, element.buTrunkLoss ?? 0.8)
+  }
+  if (element.type === 'equalizer') {
+    return Math.max(0, element.attenuationDb ?? 0)
+  }
+  return 0
+}
+
+function formatDeviceName(
+  element: ConnectorElement,
+  index: number,
+  total: number,
+  counters: Record<'amp' | 'bu' | 'eq', number>
+): string {
+  if (element.type === 'landing' || element.type === 'underwater') {
+    if (index === 0) return 'Tx'
+    if (index === total - 1) return 'Rx'
+    return element.name || `Station-${index}`
+  }
+  if (element.type === 'amplifier_e' || element.type === 'amplifier_w' || element.type === 'ola') {
+    return `AMP-${counters.amp++}`
+  }
+  if (element.type === 'bu') {
+    return `BU-${counters.bu++}`
+  }
+  const role = element.equalizerRole || 'T'
+  const prefix = element.attenuationMode === 'fixed' ? 'F-ATT' : 'EQ'
+  return `${prefix}-${role}-${counters.eq++}`
+}
+
 /**
  * 从设备序列构建位置维度
  */
 function buildPositions(elements: ConnectorElement[]): SimulationPositions {
   // 筛选有效设备（landing, amplifier, bu, ola），按 KP 排序
   const devices = elements
-    .filter(e => ['landing', 'amplifier_e', 'amplifier_w', 'ola', 'bu', 'underwater'].includes(e.type))
+    .filter(isTrackedSimDevice)
     .sort((a, b) => a.kp - b.kp)
 
   if (devices.length === 0) {
@@ -62,19 +113,26 @@ function buildPositions(elements: ConnectorElement[]): SimulationPositions {
   const names: string[] = []
   const distances_km: number[] = []
   const span_ids: string[] = []
-  let ampIdx = 1
-  let buIdx = 1
+  const device_types: PositionDeviceKind[] = []
+  const effective_span_counts: number[] = []
+  const cumulative_passive_loss_db: number[] = []
+  const counters = { amp: 1, bu: 1, eq: 1 }
+  let effectiveSpanCount = 0
+  let cumulativePassiveLoss = 0
 
   devices.forEach((dev, i) => {
-    if (dev.type === 'landing' || dev.type === 'underwater') {
-      if (i === 0) names.push('Tx')
-      else if (i === devices.length - 1) names.push('Rx')
-      else names.push(dev.name || `Station-${i}`)
-    } else if (dev.type === 'amplifier_e' || dev.type === 'amplifier_w' || dev.type === 'ola') {
-      names.push(`AMP-${ampIdx++}`)
-    } else if (dev.type === 'bu') {
-      names.push(`BU-${buIdx++}`)
+    const deviceType = getPositionDeviceKind(dev)
+
+    if (i > 0 && deviceType !== 'equalizer' && deviceType !== 'bu') {
+      effectiveSpanCount += 1
     }
+
+    cumulativePassiveLoss += getPassiveLossDb(dev)
+
+    names.push(formatDeviceName(dev, i, devices.length, counters))
+    device_types.push(deviceType)
+    effective_span_counts.push(effectiveSpanCount)
+    cumulative_passive_loss_db.push(Math.round(cumulativePassiveLoss * 100) / 100)
     distances_km.push(Math.round(dev.kp * 10) / 10)
 
     if (i > 0) {
@@ -87,7 +145,10 @@ function buildPositions(elements: ConnectorElement[]): SimulationPositions {
     names,
     distances_km,
     span_ids,
-  }
+    device_types,
+    effective_span_counts,
+    cumulative_passive_loss_db,
+  } as ExtendedSimulationPositions
 }
 
 /**
@@ -171,6 +232,7 @@ function computeMetricsMatrix(
   modelConfig?: { fiberModel: string; edfaModel: string; buModel: string | null },
   summary?: LinkCalcSummaryInput
 ): SimulationMetricsMatrix {
+  const extendedPositions = positions as ExtendedSimulationPositions
   const posCount = positions.count
   const chCount = channels.count
 
@@ -211,11 +273,13 @@ function computeMetricsMatrix(
     const gnEdfaCoeffs = getEdfaModelCoeffs('EDFA_Simple')
     const rxIdx = posCount - 1
     const rxDist = positions.distances_km[rxIdx]
-    const gnAvgSpanLen = rxDist / rxIdx
-    const gnSpanLoss = gnAvgSpanLen * alpha
+    const rxSpanCount = Math.max(1, extendedPositions.effective_span_counts?.[rxIdx] || rxIdx)
+    const gnAvgSpanLen = rxDist / rxSpanCount
+    const gnPassiveLoss = extendedPositions.cumulative_passive_loss_db?.[rxIdx] || 0
+    const gnSpanLoss = gnAvgSpanLen * alpha + gnPassiveLoss
     const gnNf = (ampParams.noiseFigure || 5.0) + gnEdfaCoeffs.nfOffset
-    const gnOsnr = launchPower - gnNf - 10 * Math.log10(rxIdx) - gnSpanLoss + gnEdfaCoeffs.osnrConst
-    const gnNli = Math.max(gnCoeffs.nliBase - gnCoeffs.nliAccum * Math.log10(rxIdx) - gammaCorrectionDb, 15)
+    const gnOsnr = launchPower - gnNf - 10 * Math.log10(rxSpanCount) - gnSpanLoss + gnEdfaCoeffs.osnrConst
+    const gnNli = Math.max(gnCoeffs.nliBase - gnCoeffs.nliAccum * Math.log10(rxSpanCount) - gammaCorrectionDb, 15)
     const gnGsnrLin = 1 / (1 / Math.pow(10, gnOsnr / 10) + 1 / Math.pow(10, gnNli / 10))
     const gnGsnr = 10 * Math.log10(gnGsnrLin)
     globalCalibration = refGsnrAvg - gnGsnr
@@ -228,6 +292,8 @@ function computeMetricsMatrix(
     const snrNliRow: number[] = []
 
     const dist = positions.distances_km[i]
+    const effectiveSpanIdx = Math.max(1, extendedPositions.effective_span_counts?.[i] || i || (dist > 0 ? 1 : 0))
+    const passiveLoss = extendedPositions.cumulative_passive_loss_db?.[i] || 0
     const spanIdx = i // 当前跨过的 span 数量
 
     for (let j = 0; j < chCount; j++) {
@@ -250,13 +316,13 @@ function computeMetricsMatrix(
       } else {
         // ASE 噪声累积 → OSNR
         // OSNR ≈ P_launch - NF_eff - 10*log10(spanCount) - spanLoss + C
-        const avgSpanLen = dist / spanIdx
-        const spanLoss = avgSpanLen * alpha
-        const osnr = launchPower - nf - 10 * Math.log10(spanIdx) - spanLoss + osnrConst - edgePenalty - ripplePenalty
+        const avgSpanLen = dist / Math.max(1, effectiveSpanIdx + spanIdx * 0)
+        const spanLoss = avgSpanLen * alpha + passiveLoss
+        const osnr = launchPower - nf - 10 * Math.log10(Math.max(1, effectiveSpanIdx + spanIdx * 0)) - spanLoss + osnrConst - edgePenalty - ripplePenalty
 
         // 非线性噪声 SNR_NLI（由光纤模型决定）
         const nliRaw = fiberCoeffs.nliBase
-          - fiberCoeffs.nliAccum * Math.log10(spanIdx)
+          - fiberCoeffs.nliAccum * Math.log10(Math.max(1, effectiveSpanIdx + spanIdx * 0))
           - edgePenalty * fiberCoeffs.edgeNliScale
           - gammaCorrectionDb  // 器件库非线性系数修正
         const snrNli = Math.max(nliRaw, 15)
@@ -295,6 +361,7 @@ function buildSummary(
   metrics: SimulationMetricsMatrix,
   wdm: WDMConfigInput
 ): SimulationSummary {
+  const extendedPositions = positions as ExtendedSimulationPositions
   const rxRow = metrics.gsnr_matrix_db[positions.count - 1] || []
   const rxOsnr = metrics.osnr_matrix_db[positions.count - 1] || []
 
@@ -321,6 +388,7 @@ function buildSummary(
   }
 
   const totalLength = positions.distances_km[positions.count - 1] || 0
+  const totalSpanCount = Math.max(1, extendedPositions.effective_span_counts?.[positions.count - 1] || positions.count - 1)
   // 容量 = 信道数 × 符号率(Gbaud) × 频谱效率 / 1000 (Tbps)
   const baudRate = 64 // Gbaud
   const spectralEff = wdm.modulation?.includes('16QAM') ? 4 : wdm.modulation?.includes('QPSK') ? 2 : 3
@@ -328,7 +396,7 @@ function buildSummary(
 
   return {
     total_length_km: totalLength,
-    total_span_count: positions.count - 1,
+    total_span_count: totalSpanCount,
     final_gsnr,
     final_osnr,
     system_capacity_tbps: capacity,

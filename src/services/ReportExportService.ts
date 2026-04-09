@@ -20,6 +20,7 @@ export interface CostReportData {
   cableCost: number
   repeaterCost: number
   branchingUnitCost: number
+  equalizerCost: number
   terminalEquipmentCost: number
   // 施工成本
   laborCost: number
@@ -220,6 +221,7 @@ export class ReportExportService {
     lines.push(`  海缆材料: ${this.formatCurrency(data.cableCost)}`)
     lines.push(`  放大器设备: ${this.formatCurrency(data.repeaterCost)}`)
     lines.push(`  分支器设备: ${this.formatCurrency(data.branchingUnitCost)}`)
+    lines.push(`  均衡器设备: ${this.formatCurrency(data.equalizerCost)}`)
     lines.push(`  终端设备: ${this.formatCurrency(data.terminalEquipmentCost)}`)
     lines.push('')
 
@@ -373,10 +375,14 @@ export class ReportExportService {
     <tr><td>海缆材料</td><td class="currency">${this.formatCurrency(data.cableCost)}</td></tr>
     <tr><td>放大器设备</td><td class="currency">${this.formatCurrency(data.repeaterCost)}</td></tr>
     <tr><td>分支器设备</td><td class="currency">${this.formatCurrency(data.branchingUnitCost)}</td></tr>
+    <tr><td>均衡器设备</td><td class="currency">${this.formatCurrency(data.equalizerCost)}</td></tr>
     <tr><td>终端设备</td><td class="currency">${this.formatCurrency(data.terminalEquipmentCost)}</td></tr>
     <tr><td>人工成本</td><td class="currency">${this.formatCurrency(data.laborCost)}</td></tr>
     <tr><td>勘测成本</td><td class="currency">${this.formatCurrency(data.surveyingCost)}</td></tr>
     <tr><td>船舶租赁</td><td class="currency">${this.formatCurrency(data.vesselCost)}</td></tr>
+    <tr><td>安装调试</td><td class="currency">${this.formatCurrency(data.installationCost)}</td></tr>
+    <tr><td>许可证费用</td><td class="currency">${this.formatCurrency(data.permitCost)}</td></tr>
+    <tr><td>保险费用</td><td class="currency">${this.formatCurrency(data.insuranceCost)}</td></tr>
     <tr><td>应急预算</td><td class="currency">${this.formatCurrency(data.contingency)}</td></tr>
     <tr class="total"><td>总计</td><td class="currency">${this.formatCurrency(data.total)}</td></tr>
   </table>
@@ -452,10 +458,14 @@ export class ReportExportService {
       `海缆材料,${data.cableCost}`,
       `放大器设备,${data.repeaterCost}`,
       `分支器设备,${data.branchingUnitCost}`,
+      `均衡器设备,${data.equalizerCost}`,
       `终端设备,${data.terminalEquipmentCost}`,
       `人工成本,${data.laborCost}`,
       `勘测成本,${data.surveyingCost}`,
       `船舶租赁,${data.vesselCost}`,
+      `安装调试,${data.installationCost}`,
+      `许可证费用,${data.permitCost}`,
+      `保险费用,${data.insuranceCost}`,
       `应急预算,${data.contingency}`,
       `总计,${data.total}`
     ]
@@ -530,15 +540,27 @@ export class ReportExportService {
       projectName: string
       totalLength: number
       repeaterCount: number
+      branchingUnitCount?: number
+      equalizerCount?: number
+      terminalEquipmentCount?: number
       cableType: string
       repeaterType: string
+      branchingUnitType?: string
+      equalizerType?: string
+      terminalEquipmentType?: string
       repeaterSpacing: number
       costs: {
         cable: number
         repeater: number
+        branchingUnit?: number
+        equalizer?: number
+        terminalEquipment?: number
         labor: number
         surveying: number
         vessel: number
+        installation?: number
+        permit?: number
+        insurance?: number
         contingency: number
         total: number
       }
@@ -551,20 +573,48 @@ export class ReportExportService {
       totalLength: params.totalLength,
       cableCost: params.costs.cable,
       repeaterCost: params.costs.repeater,
-      branchingUnitCost: 0,
-      terminalEquipmentCost: 0,
+      branchingUnitCost: params.costs.branchingUnit || 0,
+      equalizerCost: params.costs.equalizer || 0,
+      terminalEquipmentCost: params.costs.terminalEquipment || 0,
       laborCost: params.costs.labor,
       surveyingCost: params.costs.surveying,
       vesselCost: params.costs.vessel,
-      installationCost: 0,
-      permitCost: 0,
-      insuranceCost: 0,
+      installationCost: params.costs.installation || 0,
+      permitCost: params.costs.permit || 0,
+      insuranceCost: params.costs.insurance || 0,
       contingency: params.costs.contingency,
       subtotal: params.costs.total - params.costs.contingency,
       total: params.costs.total,
       costBreakdown: [
         { category: '材料', item: params.cableType + ' 海缆', quantity: params.totalLength, unit: 'km', unitCost: params.costs.cable / Math.max(params.totalLength, 1), totalCost: params.costs.cable, percentage: params.costs.cable / params.costs.total * 100 },
         { category: '设备', item: params.repeaterType + ' 放大器', quantity: params.repeaterCount, unit: '台', unitCost: params.costs.repeater / Math.max(params.repeaterCount, 1), totalCost: params.costs.repeater, percentage: params.costs.repeater / params.costs.total * 100 },
+        ...(params.costs.branchingUnit ? [{
+          category: '设备',
+          item: `${params.branchingUnitType || 'BU'} 分支器`,
+          quantity: params.branchingUnitCount || 0,
+          unit: '台',
+          unitCost: params.costs.branchingUnit / Math.max(params.branchingUnitCount || 1, 1),
+          totalCost: params.costs.branchingUnit,
+          percentage: params.costs.branchingUnit / params.costs.total * 100
+        }] : []),
+        ...(params.costs.equalizer ? [{
+          category: '设备',
+          item: `${params.equalizerType || 'EQ/F-ATT'} 均衡器`,
+          quantity: params.equalizerCount || 0,
+          unit: '台',
+          unitCost: params.costs.equalizer / Math.max(params.equalizerCount || 1, 1),
+          totalCost: params.costs.equalizer,
+          percentage: params.costs.equalizer / params.costs.total * 100
+        }] : []),
+        ...(params.costs.terminalEquipment ? [{
+          category: '设备',
+          item: `${params.terminalEquipmentType || 'Landing'} 终端设备`,
+          quantity: params.terminalEquipmentCount || 0,
+          unit: '站',
+          unitCost: params.costs.terminalEquipment / Math.max(params.terminalEquipmentCount || 1, 1),
+          totalCost: params.costs.terminalEquipment,
+          percentage: params.costs.terminalEquipment / params.costs.total * 100
+        }] : []),
       ]
     }
 

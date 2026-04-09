@@ -2,7 +2,8 @@
  * 前端关键服务单元测试
  */
 
-import { describe, it, expect } from 'vitest'
+import { beforeEach, describe, it, expect } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import {
   decimalToDMS,
   calculateMeridionalParts,
@@ -12,6 +13,9 @@ import {
   calculateBearingTrue,
 } from '@/services/RPLExportService'
 import { OpticalSimulationService } from '@/services/OpticalSimulationService'
+import { ReportExportService } from '@/services/ReportExportService'
+import { projectFileService } from '@/services/ProjectFileService'
+import { useSettingsStore } from '@/stores/settings'
 
 // ── RPL 计算函数 ──
 
@@ -152,5 +156,57 @@ describe('OpticalSimulationService - quickEstimateGSNR', () => {
     const lowAlpha = service.quickEstimateGSNR(5000, 80, 0, 5, 0.16)
     const highAlpha = service.quickEstimateGSNR(5000, 80, 0, 5, 0.22)
     expect(highAlpha.gsnr).toBeLessThan(lowAlpha.gsnr)
+  })
+})
+
+describe('project settings persistence', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    const storage = new Map<string, string>()
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => { storage.set(key, value) },
+        removeItem: (key: string) => { storage.delete(key) },
+        clear: () => { storage.clear() },
+      },
+      configurable: true,
+    })
+  })
+
+  it('exports equalizer cost into USE project settings', () => {
+    const settingsStore = useSettingsStore()
+    settingsStore.updateCostFactors({ equalizerCost: 23456 })
+
+    const projectData = projectFileService.createUSEProjectData('Equalizer Cost Test')
+
+    expect(projectData._app_extensions?.project_settings?.cost_settings.equalizer_cost).toBe(23456)
+  })
+})
+
+describe('ReportExportService - cost report', () => {
+  it('includes equalizer cost in generated reports', () => {
+    const service = new ReportExportService()
+    const report = service.generateCostReport({
+      projectName: 'Test',
+      totalLength: 100,
+      cableCost: 1000,
+      repeaterCost: 2000,
+      branchingUnitCost: 3000,
+      equalizerCost: 4000,
+      terminalEquipmentCost: 5000,
+      laborCost: 600,
+      surveyingCost: 700,
+      vesselCost: 800,
+      installationCost: 900,
+      permitCost: 100,
+      insuranceCost: 200,
+      contingency: 300,
+      subtotal: 14300,
+      total: 14600,
+      costBreakdown: [],
+    }, 'txt')
+
+    expect(report).toContain('均衡器设备')
   })
 })

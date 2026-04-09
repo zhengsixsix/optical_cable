@@ -10,6 +10,7 @@ import type {
   SimDevice,
   SimAmplifierDevice,
   SimBUDevice,
+  SimEqualizerDevice,
   SimLandingDevice,
   SimFiberSegment,
   SimulationProgress,
@@ -47,8 +48,8 @@ export async function buildSimulationInput(
   const linkName = route?.name || '未命名链路'
   
   // 1. 按 KP 排序整理器件序列
-  const elements = connectorStore.elements
-    .filter(e => ['landing', 'underwater', 'amplifier_e', 'amplifier_w', 'ola', 'bu'].includes(e.type))
+  const elements = connectorStore.getElementsForRoute(config.routeId)
+    .filter(e => ['landing', 'underwater', 'amplifier_e', 'amplifier_w', 'ola', 'bu', 'equalizer'].includes(e.type))
     .sort((a, b) => a.kp - b.kp)
   
   const deviceSequence: SimDevice[] = []
@@ -103,6 +104,18 @@ export async function buildSimulationInput(
         nextHopUpstream: el.buNextHopUpstream,
         nextHopDownstream: el.buNextHopDownstream
       } as SimBUDevice)
+    } else if (el.type === 'equalizer') {
+      deviceSequence.push({
+        id: el.id,
+        name: el.name,
+        type: 'equalizer',
+        kp: el.kp,
+        longitude: el.longitude,
+        latitude: el.latitude,
+        equalizerRole: el.equalizerRole,
+        attenuationMode: el.attenuationMode,
+        attenuationDb: Math.max(0, el.attenuationDb ?? 0)
+      } as SimEqualizerDevice)
     }
     
     totalLength = Math.max(totalLength, el.kp)
@@ -367,9 +380,18 @@ async function simulateSpanPerformance(
   const nf = input.amplifierModel?.params?.noiseFigure || 5
   const gain = input.amplifierModel?.params?.gain || 18
   const targetGsnr = input.constraints?.minGsnrDb || 15
+  const passiveLoss = input.deviceSequence.reduce((sum, device) => {
+    if (device.type === 'equalizer') {
+      return sum + Math.max(0, device.attenuationDb || 0)
+    }
+    if (device.type === 'bu') {
+      return sum + Math.max(0, device.trunkLoss || 0)
+    }
+    return sum
+  }, 0)
   
   // 模拟计算（使用简化的 GN 模型估算）
-  const spanLoss = spanLengthKm * attenuation
+  const spanLoss = spanLengthKm * attenuation + passiveLoss
   const spanCount = Math.max(1, Math.ceil(totalLength / spanLengthKm))
   
   // ASE 噪声累积
@@ -377,7 +399,7 @@ async function simulateSpanPerformance(
   const totalAseNoise = aseNoisePerSpan + 10 * Math.log10(spanCount)
   
   // OSNR 估算
-  const baseOsnr = launchPower - totalAseNoise + 58
+  const baseOsnr = launchPower - totalAseNoise + 58 - passiveLoss
   
   // NLI 噪声（简化 GN 模型）
   const nliCoeff = Math.max(0.001, 0.1 * channelCount * Math.pow(spanLengthKm / 100, 1.5))

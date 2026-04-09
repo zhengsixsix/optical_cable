@@ -2078,6 +2078,7 @@ const syncRouteToRPL = () => {
   // 从器件库获取默认设备（使用放大器类型）
   const defaultAmplifier = settingsStore.amplifierTypes[0]
   const defaultBU = settingsStore.branchingUnitTypes[0]
+  const defaultJointBox = settingsStore.jointBoxTypes[0]
   const defaultFiber = settingsStore.fiberTypes[0]
 
   // 将路由点转换为 RPL 记录
@@ -2085,6 +2086,7 @@ const syncRouteToRPL = () => {
   let cumulativeLength = 0
   let repeaterIndex = 0
   let branchingIndex = 0
+  let jointIndex = 0
 
   const orderedPoints = buildOrderedRoutePoints(selectedRoute)
 
@@ -2106,23 +2108,44 @@ const syncRouteToRPL = () => {
 
     // 从路由点获取设备信息（如果有）
     const deviceInfo = point.device
+    const normalizedDeviceType = String(deviceInfo?.deviceType || '').toLowerCase()
 
-    if (point.type === 'landing') {
+    if (
+      point.type === 'landing' ||
+      normalizedDeviceType === 'landing' ||
+      normalizedDeviceType === 'landstation' ||
+      normalizedDeviceType === 'landing_station'
+    ) {
       pointType = 'landing'
-    } else if (point.type === 'repeater') {
+    } else if (
+      point.type === 'repeater' ||
+      normalizedDeviceType === 'repeater' ||
+      normalizedDeviceType === 'amplifier' ||
+      normalizedDeviceType.includes('edfa')
+    ) {
       pointType = 'repeater'
       repeaterIndex++
       // 使用设备信息中的名称，否则使用器件库放大器名称
       pointName = deviceInfo?.deviceName || (defaultAmplifier
           ? `${defaultAmplifier.name}-${String(repeaterIndex).padStart(2, '0')}`
           : `放大器-${String(repeaterIndex).padStart(2, '0')}`)
-    } else if (point.type === 'branching') {
+    } else if (
+      point.type === 'branching' ||
+      normalizedDeviceType === 'bu' ||
+      normalizedDeviceType.includes('branch')
+    ) {
       pointType = 'branching'
       branchingIndex++
       // 使用设备信息中的名称，否则使用器件库分支器名称
       pointName = deviceInfo?.deviceName || (defaultBU
           ? `${defaultBU.name}-${String(branchingIndex).padStart(2, '0')}`
           : `分支器-${String(branchingIndex).padStart(2, '0')}`)
+    } else if (point.type === 'joint' || normalizedDeviceType.includes('joint')) {
+      pointType = 'joint'
+      jointIndex++
+      pointName = deviceInfo?.deviceName || (defaultJointBox
+          ? `${defaultJointBox.name}-${String(jointIndex).padStart(2, '0')}`
+          : `接头盒-${String(jointIndex).padStart(2, '0')}`)
     }
 
     const record: any = {
@@ -2216,7 +2239,7 @@ const syncRouteToRPL = () => {
     landingStations: records.filter(r => r.pointType === 'landing').length,
     repeaters: records.filter(r => r.pointType === 'repeater').length,
     branchingUnits: records.filter(r => r.pointType === 'branching').length,
-    joints: 0,
+    joints: records.filter(r => r.pointType === 'joint').length,
     averageDepth: 3000,
     maxDepth: 4000,
     minDepth: 2000,
@@ -2247,6 +2270,7 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
         'landing': 'landing',
         'repeater': 'amplifier_e',
         'branching': 'bu',
+        'joint': 'joint',
       }
       return map[pointType] || 'underwater'
     }
@@ -2257,6 +2281,7 @@ const syncRouteToConnector = (rplRecords: any[], routeName: string) => {
         'landing': '岸上站点',
         'amplifier_e': '放大器',
         'bu': '水下分支器',
+        'joint': '接头盒',
         'underwater': '水下站点',
       }
       return map[deviceType] || deviceType

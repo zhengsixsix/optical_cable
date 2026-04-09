@@ -21,6 +21,14 @@ const getComponentName = (type: ConnectorType, refId?: string) => {
     const bu = settingsStore.branchingUnitTypes.find(b => b.id === refId)
     return bu?.name || null
   }
+  if (type === 'joint') {
+    const jb = settingsStore.jointBoxTypes.find(j => j.id === refId)
+    return jb?.name || null
+  }
+  if (type === 'equalizer') {
+    const eq = settingsStore.equalizerTypes.find(e => e.id === refId)
+    return eq?.name || null
+  }
   return null
 }
 
@@ -59,11 +67,12 @@ const getTypeClass = (type: ConnectorType) => {
     amplifier_e: 'bg-green-100 text-green-700',
     amplifier_w: 'bg-green-100 text-green-700',
     bu: 'bg-purple-100 text-purple-700',
+    equalizer: 'bg-amber-100 text-amber-700',
     underwater: 'bg-gray-100 text-gray-700',
     cable_segment: 'bg-amber-100 text-amber-700',
     fiber: 'bg-orange-100 text-orange-700',
     ola: 'bg-green-100 text-green-700',
-    joint: 'bg-gray-100 text-gray-700'
+    joint: 'bg-slate-100 text-slate-700'
   }
   return classes[type] || 'bg-gray-100 text-gray-700'
 }
@@ -190,6 +199,9 @@ const handleDelete = (id: string) => {
                     光纤类型: {{ getFiberName(elem.fiberRefId) }}
                   </div>
                   <div v-if="elem.specifications" class="text-gray-400">规格: {{ elem.specifications }}</div>
+                  <div v-if="elem.type === 'equalizer'" class="text-amber-600">
+                    模式: {{ elem.equalizerRole || 'T' }} · {{ elem.attenuationMode === 'fixed' ? 'F-ATT' : '可调' }}<span v-if="elem.attenuationDb"> · {{ elem.attenuationDb }} dB</span>
+                  </div>
                 </div>
               </div>
               <div class="flex gap-1 flex-shrink-0">

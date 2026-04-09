@@ -1,5 +1,5 @@
 // 路由点类型
-export type RoutePointType = 'landing' | 'branching' | 'repeater' | 'waypoint'
+export type RoutePointType = 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint'
 
 // 风险等级
 export type RiskLevel = 'low' | 'medium' | 'high'

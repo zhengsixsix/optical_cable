@@ -14,8 +14,28 @@ EDFA-L 宽带型,16,50,0.6,6.0,180,15,18,12,fixed_gain,180000,CNY
 Hybrid C+L 双波段,20,70,0.4,5.2,400,19,22,16,apc,55000,USD
 
 [BranchingUnitTypes]
-name,portCount,trunkInsertionLoss,branchInsertionLoss,wavelengthRange,unitPrice,currency
-BU-3P 标准型,3,0.8,3.5,1550,15000,USD
-BU-4P,4,1.0,4.0,1550,22000,USD
-BU-6P 多分支型,6,1.5,5.2,1550,280000,CNY
-BU-8P 大型分支器,8,2.0,6.5,1550,45000,USD
+name,subType,portCount,trunkInsertionLoss,branchInsertionLoss,wavelengthRange,unitPrice,currency
+BU-3P 标准型,BU,3,0.8,3.5,1550,15000,USD
+BU-4P,BU,4,1.0,4.0,1550,22000,USD
+BU-6P 多分支型,BU,6,1.5,5.2,1550,280000,CNY
+BU-8P 大型分支器,BU,8,2.0,6.5,1550,45000,USD
+ROADM-3P 可重构型,ROADM,3,0.8,3.5,1550,55000,USD
+OADM-3P 非重构型,OADM,3,0.8,3.5,1550,35000,USD
+
+[EqualizerTypes]
+name,attenuationMode,defaultAttenuationDb,unitPrice,currency,remarks
+EQ-1000 可调型,adjustable,0,8000,USD,可调均衡器（出厂光衰为0）
+EQ-FATT-3dB,fixed,3,5000,USD,固定光衰F-ATT 3dB
+EQ-FATT-6dB,fixed,6,5500,USD,固定光衰F-ATT 6dB
+EQ-2000 可调型,adjustable,0,9500,USD,高精度可调均衡器
+
+[JointBoxTypes]
+name,subType,insertionLoss,maxFiberPairs,unitPrice,currency,remarks
+BJB-001,BJB,0.1,32,4000,USD,滩头接头盒（登陆直埋段用）
+SEJB-001,SEJB,0.05,48,6000,USD,可扩展接头盒（岗上备用）
+BUJB-001,BUJB,0.05,32,5500,USD,分支单元接头盒（与BU对接）
+SJB-500,SJB,0.05,16,3000,USD,浅海第500m级海底接头盒
+SJB-2000,SJB,0.05,32,5000,USD,深海第2000m级海底接头盒
+FJB-4000,FJB,0.04,32,8000,USD,深海第4000m级光纤接头盒
+FJB-8000,FJB,0.04,48,12000,USD,超深海第8000m级光纤接头盒
+LIJB-001,LIJB,0.08,32,4500,USD,登陆界面接头盒

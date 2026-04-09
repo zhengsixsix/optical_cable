@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, FileText, Download, CheckCircle, Loader2 } from 'lucide-vue-next'
-import { useAppStore, useSettingsStore, useRPLStore } from '@/stores'
+import { useAppStore, useSettingsStore, useRPLStore, useRouteStore, useConnectorStore } from '@/stores'
 import { reportExportService, type ReportFormat } from '@/services/ReportExportService'
 
 const props = defineProps<{
@@ -17,6 +17,8 @@ const emit = defineEmits<{
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const rplStore = useRPLStore()
+const routeStore = useRouteStore()
+const connectorStore = useConnectorStore()
 
 // 状态
 const isExporting = ref(false)
@@ -39,13 +41,21 @@ const dialogTitle = computed(() =>
 // 获取当前设计数据
 const designData = computed(() => {
   const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
+  const routeId = routeStore.currentRouteId || rplStore.currentTable?.routeId || undefined
+  const routeConnectorElements = connectorStore.getElementsForRoute(routeId)
   const repeaterSpacing = 80 // 默认放大器间距
-  const repeaterCount = Math.ceil(totalLength / repeaterSpacing)
+  const repeaterCount = routeConnectorElements.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w').length || Math.ceil(totalLength / repeaterSpacing)
+  const branchingUnitCount = routeConnectorElements.filter(e => e.type === 'bu').length
+  const equalizerCount = routeConnectorElements.filter(e => e.type === 'equalizer').length
+  const landingStationCount = rplStore.currentTable?.metadata?.landingStations || 2
   
   return {
     projectName: projectName.value,
     totalLength,
     repeaterCount,
+    branchingUnitCount,
+    equalizerCount,
+    landingStationCount,
     channelCount: settingsStore.transmissionConfig.channelCount,
     centerWavelength: settingsStore.transmissionConfig.centerWavelength,
   }
@@ -62,17 +72,58 @@ const doExport = async () => {
         projectName: projectName.value,
         totalLength: designData.value.totalLength,
         repeaterCount: designData.value.repeaterCount,
+        branchingUnitCount: designData.value.branchingUnitCount,
+        equalizerCount: designData.value.equalizerCount,
+        terminalEquipmentCount: designData.value.landingStationCount,
         cableType: 'G.654.E 大有效面积光纤',
         repeaterType: '标准放大器',
+        branchingUnitType: 'BU',
+        equalizerType: 'EQ/F-ATT',
+        terminalEquipmentType: 'Landing Station',
         repeaterSpacing: 80,
         costs: {
-          cable: designData.value.totalLength * 25000,
-          repeater: designData.value.repeaterCount * 800000,
-          labor: designData.value.totalLength * 5000,
-          surveying: 500000,
-          vessel: 2000000,
-          contingency: designData.value.totalLength * 3000,
-          total: designData.value.totalLength * 33000 + designData.value.repeaterCount * 800000 + 2500000
+          cable: designData.value.totalLength * (settingsStore.costFactors.cableCostPerKm || 25000),
+          repeater: designData.value.repeaterCount * (settingsStore.costFactors.repeaterCost || 800000),
+          branchingUnit: designData.value.branchingUnitCount * (settingsStore.costFactors.branchingUnitCost || 0),
+          equalizer: designData.value.equalizerCount * (settingsStore.costFactors.equalizerCost || 0),
+          terminalEquipment: designData.value.landingStationCount * (settingsStore.costFactors.landingStationCost || 0),
+          labor: designData.value.totalLength * (settingsStore.costFactors.laborCostPerKm || 5000),
+          surveying: designData.value.totalLength * (settingsStore.costFactors.surveyingCostPerKm || 2000),
+          vessel: Math.ceil(designData.value.totalLength / 50) * (settingsStore.costFactors.vesselCostPerDay || 50000),
+          installation: designData.value.totalLength * (settingsStore.costFactors.installationCostPerKm || 0),
+          contingency:
+            (
+              designData.value.totalLength * (settingsStore.costFactors.cableCostPerKm || 25000) +
+              designData.value.repeaterCount * (settingsStore.costFactors.repeaterCost || 800000) +
+              designData.value.branchingUnitCount * (settingsStore.costFactors.branchingUnitCost || 0) +
+              designData.value.equalizerCount * (settingsStore.costFactors.equalizerCost || 0) +
+              designData.value.landingStationCount * (settingsStore.costFactors.landingStationCost || 0) +
+              designData.value.totalLength * (settingsStore.costFactors.laborCostPerKm || 5000) +
+              designData.value.totalLength * (settingsStore.costFactors.surveyingCostPerKm || 2000) +
+              Math.ceil(designData.value.totalLength / 50) * (settingsStore.costFactors.vesselCostPerDay || 50000) +
+              designData.value.totalLength * (settingsStore.costFactors.installationCostPerKm || 0)
+            ) * ((settingsStore.costFactors.contingencyPercent || 15) / 100),
+          total:
+            designData.value.totalLength * (settingsStore.costFactors.cableCostPerKm || 25000) +
+            designData.value.repeaterCount * (settingsStore.costFactors.repeaterCost || 800000) +
+            designData.value.branchingUnitCount * (settingsStore.costFactors.branchingUnitCost || 0) +
+            designData.value.equalizerCount * (settingsStore.costFactors.equalizerCost || 0) +
+            designData.value.landingStationCount * (settingsStore.costFactors.landingStationCost || 0) +
+            designData.value.totalLength * (settingsStore.costFactors.laborCostPerKm || 5000) +
+            designData.value.totalLength * (settingsStore.costFactors.surveyingCostPerKm || 2000) +
+            Math.ceil(designData.value.totalLength / 50) * (settingsStore.costFactors.vesselCostPerDay || 50000) +
+            designData.value.totalLength * (settingsStore.costFactors.installationCostPerKm || 0) +
+            (
+              designData.value.totalLength * (settingsStore.costFactors.cableCostPerKm || 25000) +
+              designData.value.repeaterCount * (settingsStore.costFactors.repeaterCost || 800000) +
+              designData.value.branchingUnitCount * (settingsStore.costFactors.branchingUnitCost || 0) +
+              designData.value.equalizerCount * (settingsStore.costFactors.equalizerCost || 0) +
+              designData.value.landingStationCount * (settingsStore.costFactors.landingStationCost || 0) +
+              designData.value.totalLength * (settingsStore.costFactors.laborCostPerKm || 5000) +
+              designData.value.totalLength * (settingsStore.costFactors.surveyingCostPerKm || 2000) +
+              Math.ceil(designData.value.totalLength / 50) * (settingsStore.costFactors.vesselCostPerDay || 50000) +
+              designData.value.totalLength * (settingsStore.costFactors.installationCostPerKm || 0)
+            ) * ((settingsStore.costFactors.contingencyPercent || 15) / 100)
         }
       }, selectedFormat.value)
     } else {

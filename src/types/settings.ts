@@ -70,10 +70,14 @@ export interface AmplifierType {
   model_params?: Record<string, ComponentModelParamsConfig>
 }
 
+// 分支器子类型
+export type BranchingUnitSubType = 'BU' | 'ROADM' | 'OADM'
+
 // 分支器类型 (BU)
 export interface BranchingUnitType {
   id: string
   name: string                    // 分支器类型名称
+  subType?: BranchingUnitSubType  // 子类型：BU普通分支器/ROADM可重构/OADM非重构
   portCount: number               // 端口数量
   /** 主干插损 (dB) - BU 的主干路径插损 */
   trunkInsertionLoss: number
@@ -93,6 +97,39 @@ export interface BranchingUnitType {
 }
 
 // 电缆类型（保留兼容）
+export interface EqualizerType {
+  id: string
+  name: string
+  attenuationMode: 'adjustable' | 'fixed'
+  defaultAttenuationDb: number
+  unitPrice?: number
+  currency?: 'USD' | 'CNY' | 'EUR'
+  remarks?: string
+  supported_models?: string[]
+  model_params?: Record<string, ComponentModelParamsConfig>
+}
+
+// 接头盒子类型
+export type JointBoxSubType =
+  | 'BJB'   // 滩头接头盒
+  | 'SEJB'  // 可扩展接头盒（岗上，后续扩展用）
+  | 'BUJB'  // 分支单元接头盒（接 BU 用）
+  | 'SJB'   // 海底接头盒
+  | 'FJB'   // 光纤接头盒（普通海底接续）
+  | 'LIJB'  // 登陆界面接头盒
+
+// 接头盒型号
+export interface JointBoxType {
+  id: string
+  name: string                    // 型号名称
+  subType?: JointBoxSubType       // 子类型（对应 SLD 图标类型）
+  insertionLoss: number           // 接头盒插损 (dB)
+  maxFiberPairs?: number          // 最大光纤对数
+  unitPrice?: number              // 单价
+  currency?: 'USD' | 'CNY' | 'EUR'
+  remarks?: string
+}
+
 export interface CableType {
   id: string
   name: string
@@ -131,6 +168,7 @@ export interface CostFactors {
   installationCostPerKm?: number // 安装每公里成本
   repeaterCost?: number          // 放大器单价
   branchingUnitCost?: number     // 分支器单价
+  equalizerCost?: number         // 均衡器单价
   landingStationCost?: number    // 登陆站成本
   currency?: string              // 货币类型
   // 路径规划成本参数
@@ -150,6 +188,8 @@ export interface AppSettings {
   fiberTypes: FiberType[]
   amplifierTypes: AmplifierType[]
   branchingUnitTypes: BranchingUnitType[]
+  equalizerTypes: EqualizerType[]
+  jointBoxTypes: JointBoxType[]
   currentLibraryFile: string
 }
 
@@ -161,6 +201,12 @@ export const defaultAmplifierTypes: AmplifierType[] = []
 
 // 默认分支器类型（空数组，由用户自行添加）
 export const defaultBranchingUnitTypes: BranchingUnitType[] = []
+
+// 默认均衡器类型（空数组，由用户自行添加）
+export const defaultEqualizerTypes: EqualizerType[] = []
+
+// 默认接头盒型号（空数组，由用户自行添加）
+export const defaultJointBoxTypes: JointBoxType[] = []
 
 // 默认设置
 export const defaultSettings: AppSettings = {
@@ -187,11 +233,14 @@ export const defaultSettings: AppSettings = {
     installationCostPerKm: 15000,
     repeaterCost: 250000,
     branchingUnitCost: 180000,
+    equalizerCost: 15000,
     landingStationCost: 5000000,
     currency: 'USD',
   },
   fiberTypes: defaultFiberTypes,
   amplifierTypes: defaultAmplifierTypes,
   branchingUnitTypes: defaultBranchingUnitTypes,
+  equalizerTypes: defaultEqualizerTypes,
+  jointBoxTypes: defaultJointBoxTypes,
   currentLibraryFile: 'DefaultLibrary_v1.0.csv',
 }

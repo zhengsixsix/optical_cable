@@ -63,6 +63,7 @@ export interface CostSettings {
   installation_cost_per_km: number  // 安装每公里成本
   repeater_cost: number          // 放大器单价
   branching_unit_cost: number    // 分支器单价
+  equalizer_cost?: number        // 均衡器单价
   landing_station_cost: number   // 登陆站成本
   currency: string               // 货币类型
   // 路径规划成本参数
@@ -783,6 +784,8 @@ export interface DesignCacheExtension {
       avgSpanLength: number
       buCount: number
       totalBuLoss: number
+      equalizerCount: number
+      totalEqualizerLoss: number
       channelCount: number
       modulation: string
     }
@@ -812,6 +815,8 @@ export interface USEAppExtensions {
   cableSegments?: Record<string, unknown>        // 海缆段数据
   layerSettings?: LayerSettingsExtension         // 图层设置
   designCache?: DesignCacheExtension             // 设计视图缓存
+  equalizerTypes?: Record<string, unknown>[]     // 均衡器型号库
+  jointBoxTypes?: Record<string, unknown>[]      // 接头盒型号库
 }
 
 /** USE 项目数据 (project_data.json 内容) */

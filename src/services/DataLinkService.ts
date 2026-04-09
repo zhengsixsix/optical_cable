@@ -306,7 +306,7 @@ class DataLinkService {
       landing: '登陆站',
       amplifier_e: '放大器',
       bu: '分支器',
-      joint: '接头',
+      joint: '接头盒',
     }
 
     return {

@@ -32,7 +32,9 @@ import {
   Play
 } from 'lucide-vue-next'
 import type {FiberType, AmplifierType, BranchingUnitType} from '@/types'
+import type {EqualizerType, JointBoxType} from '@/types/settings'
 import type {BUConfig, ArmorMapping, RedundancyConfig} from '@/stores/settings'
+import { deviceImportService, applyImportResultToStore } from '@/services/DeviceImportService'
 import {
   fiberModelOptions,
   planningModeOptions,
@@ -79,7 +81,7 @@ const handleNewProject = () => {
 const handleOpenProject = () => {
   appStore.openDialog('open-project')
 }
-const deviceTypeTab = ref('fiber')
+const deviceTypeTab = ref<'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'>('fiber')
 
 const tabs = [
   {id: 'equipment', label: '器件库配置'},
@@ -92,6 +94,8 @@ const tabs = [
 const showAddFiberDialog = ref(false)
 const showAddAmplifierDialog = ref(false)
 const showAddBranchingDialog = ref(false)
+const showAddEqualizerDialog = ref(false)
+const showAddJointDialog = ref(false)
 const showMapSelectDialog = ref(false)
 const showCableTypeCreateDialog = ref(false)
 const cableTypePresetArmor = ref('')  // 预设的铠装类型
@@ -141,10 +145,21 @@ const defaultAmplifierForm = () => ({
   },
 })
 
-// 默认分支器表单值
+// 默认分支器表单値
 const defaultBranchingForm = () => ({
   name: '', portCount: 2, trunkInsertionLoss: 0, branchInsertionLoss: 0,
   unitPrice: 0, currency: 'USD' as const, insertionLoss: 0, wavelengthRange: 0,
+})
+
+// 默认均衡器表单値
+const defaultEqualizerForm = () => ({
+  name: '', attenuationMode: 'adjustable' as const,
+  defaultAttenuationDb: 0, unitPrice: 0, currency: 'USD' as const, remarks: ''
+})
+
+// 默认接头盒表单値
+const defaultJointForm = () => ({
+  name: '', insertionLoss: 0, maxFiberPairs: 0, unitPrice: 0, currency: 'USD' as const, remarks: ''
 })
 
 // 光纤表单
@@ -155,6 +170,12 @@ const newAmplifier = reactive<Omit<AmplifierType, 'id'>>(defaultAmplifierForm())
 
 // 分支器表单
 const newBranching = reactive<Omit<BranchingUnitType, 'id'>>(defaultBranchingForm())
+
+// 均衡器表单
+const newEqualizer = reactive<Omit<EqualizerType, 'id'>>(defaultEqualizerForm())
+
+// 接头盒表单
+const newJoint = reactive<Omit<JointBoxType, 'id'>>(defaultJointForm())
 
 // 端口数 string 桥接（Select 组件仅支持 string value）
 const portCountStr = computed({
@@ -252,114 +273,77 @@ const handleEditBranching = (bu: BranchingUnitType) => {
   showAddBranchingDialog.value = true
 }
 
+// 添加均衡器类型
+const handleAddEqualizer = () => {
+  if (!newEqualizer.name) {
+    appStore.showNotification({type: 'warning', message: '请输入均衡器型号名称'})
+    return
+  }
+  settingsStore.addEqualizerType({
+    id: `eq-${Date.now()}`,
+    ...newEqualizer,
+  })
+  showAddEqualizerDialog.value = false
+  Object.assign(newEqualizer, defaultEqualizerForm())
+  appStore.showNotification({type: 'success', message: '均衡器型号已添加'})
+}
+
+const handleDeleteEqualizer = (id: string) => {
+  settingsStore.removeEqualizerType(id)
+  appStore.showNotification({type: 'info', message: '均衡器型号已删除'})
+}
+
+const handleEditEqualizer = (eq: EqualizerType) => {
+  const { id, ...rest } = eq
+  Object.assign(newEqualizer, rest)
+  showAddEqualizerDialog.value = true
+}
+
+// 添加接头盒型号
+const handleAddJoint = () => {
+  if (!newJoint.name) {
+    appStore.showNotification({type: 'warning', message: '请输入接头盒型号名称'})
+    return
+  }
+  settingsStore.addJointBoxType({
+    id: `jb-${Date.now()}`,
+    ...newJoint,
+  })
+  showAddJointDialog.value = false
+  Object.assign(newJoint, defaultJointForm())
+  appStore.showNotification({type: 'success', message: '接头盒型号已添加'})
+}
+
+const handleDeleteJoint = (id: string) => {
+  settingsStore.removeJointBoxType(id)
+  appStore.showNotification({type: 'info', message: '接头盒型号已删除'})
+}
+
+const handleEditJoint = (jb: JointBoxType) => {
+  const { id, ...rest } = jb
+  Object.assign(newJoint, rest)
+  showAddJointDialog.value = true
+}
+
 // 导入器件库
 const handleImportLibrary = () => {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.csv'
+  input.accept = '.csv,.json'
   input.onchange = async (e: Event) => {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (!file) return
-
     try {
-      const text = await file.text()
-      const lines = text.split('\n').map(line => line.trim()).filter(line => line)
-
-      let currentSection = ''
-      let headers: string[] = []
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const fiberTypes: Record<string, any>[] = []
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const amplifierTypes: Record<string, any>[] = []
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const branchingUnitTypes: Record<string, any>[] = []
-
-      for (const line of lines) {
-        // 检测分区标记
-        if (line.startsWith('[') && line.endsWith(']')) {
-          currentSection = line.slice(1, -1)
-          headers = []
-          continue
-        }
-
-        const values = line.split(',').map(v => v.trim())
-
-        // 第一行是表头
-        if (headers.length === 0) {
-          headers = values
-          continue
-        }
-
-        // 解析数据行
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const row: Record<string, any> = {}
-        headers.forEach((h, i) => {
-          const val = values[i] || ''
-          // 数字字段转换
-          row[h] = isNaN(Number(val)) ? val : Number(val)
-        })
-
-        if (currentSection === 'FiberTypes' && row.name) {
-          fiberTypes.push({
-            id: `fiber-${Date.now()}-${fiberTypes.length}`,
-            name: row.name,
-            fiberCategory: row.fiberCategory || '',
-            nonlinearCoeff: row.nonlinearCoeff || 0,
-            effectiveArea: row.effectiveArea || 0,
-            dispersion: row.dispersion || 0,
-            dispersionSlope: row.dispersionSlope || 0,
-            nonlinearRefractiveIndex: row.nonlinearRefractiveIndex || 0,
-            attenuationCoeff: row.attenuationCoeff || 0,
-            secondOrderDispersion: row.secondOrderDispersion || 0,
-            simulationModel: row.simulationModel || 'GN',
-          })
-        } else if (currentSection === 'AmplifierTypes' && row.name) {
-          amplifierTypes.push({
-            id: `amp-${Date.now()}-${amplifierTypes.length}`,
-            name: row.name,
-            gain: row.gain || 0,
-            bandwidth: row.bandwidth || 0,
-            gainFlatness: row.gainFlatness || 0,
-            noiseFigure: row.noiseFigure || 0,
-            pumpPower: row.pumpPower || 0,
-            outputPower: row.outputPower || 0,
-            saturationPower: row.saturationPower || 0,
-            gainRangePower: row.gainRangePower || 0,
-            operatingMode: row.operatingMode || 'fixed_gain',
-            unitPrice: row.unitPrice || 0,
-            currency: row.currency || 'USD',
-          })
-        } else if (currentSection === 'BranchingUnitTypes' && row.name) {
-          branchingUnitTypes.push({
-            id: `bu-${Date.now()}-${branchingUnitTypes.length}`,
-            name: row.name,
-            portCount: row.portCount || 0,
-            trunkInsertionLoss: row.trunkInsertionLoss || 0,
-            branchInsertionLoss: row.branchInsertionLoss || 0,
-            insertionLoss: row.trunkInsertionLoss || row.insertionLoss || 0,
-            wavelengthRange: row.wavelengthRange || 0,
-            unitPrice: row.unitPrice || 0,
-            currency: row.currency || 'USD',
-          })
-        }
+      const result = await deviceImportService.importFile(file)
+      if (!result.success && result.errors.length > 0) {
+        appStore.showNotification({type: 'error', message: result.errors[0].message})
+        return
       }
-
-      // 更新 store
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      fiberTypes.forEach(f => settingsStore.addFiberType(f as any))
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      amplifierTypes.forEach(a => settingsStore.addAmplifierType(a as any))
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      branchingUnitTypes.forEach(b => settingsStore.addBranchingUnitType(b as any))
+      const msg = applyImportResultToStore(result, settingsStore)
       settingsStore.currentLibraryFile = file.name
-
-      const total = fiberTypes.length + amplifierTypes.length + branchingUnitTypes.length
-      appStore.showNotification({
-        type: 'success',
-        message: `器件库导入成功：光纤${fiberTypes.length}种，放大器${amplifierTypes.length}种，分支器${branchingUnitTypes.length}种`
-      })
+      appStore.showNotification({type: 'success', message: msg})
     } catch (err) {
-      appStore.showNotification({type: 'error', message: 'CSV文件解析失败'})
+      appStore.showNotification({type: 'error', message: `导入失败: ${(err as Error).message}`})
     }
   }
   input.click()
@@ -371,6 +355,8 @@ const handleExportLibrary = () => {
     fiberTypes: settingsStore.fiberTypes,
     amplifierTypes: settingsStore.amplifierTypes,
     branchingUnitTypes: settingsStore.branchingUnitTypes,
+    equalizerTypes: settingsStore.equalizerTypes,
+    jointBoxTypes: settingsStore.jointBoxTypes,
   }
   const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})
   const url = URL.createObjectURL(blob)
@@ -860,6 +846,30 @@ const transConfig = reactive({
   models: [...settingsStore.transmissionConfig.calculationModels],
 })
 
+const projectCostConfig = reactive({
+  cableCostPerKm: settingsStore.costFactors.cableCostPerKm || 35000,
+  installationCostPerKm: settingsStore.costFactors.installationCostPerKm || 15000,
+  repeaterCost: settingsStore.costFactors.repeaterCost || 250000,
+  branchingUnitCost: settingsStore.costFactors.branchingUnitCost || 180000,
+  equalizerCost: settingsStore.costFactors.equalizerCost || 15000,
+  landingStationCost: settingsStore.costFactors.landingStationCost || 5000000,
+  currency: settingsStore.costFactors.currency || 'USD',
+})
+
+watch(
+  () => settingsStore.costFactors,
+  (newConfig) => {
+    projectCostConfig.cableCostPerKm = newConfig.cableCostPerKm || 35000
+    projectCostConfig.installationCostPerKm = newConfig.installationCostPerKm || 15000
+    projectCostConfig.repeaterCost = newConfig.repeaterCost || 250000
+    projectCostConfig.branchingUnitCost = newConfig.branchingUnitCost || 180000
+    projectCostConfig.equalizerCost = newConfig.equalizerCost || 15000
+    projectCostConfig.landingStationCost = newConfig.landingStationCost || 5000000
+    projectCostConfig.currency = newConfig.currency || 'USD'
+  },
+  { deep: true, immediate: true }
+)
+
 const monitorConfig = reactive({
   dataSourceType: settingsStore.monitoringConfig.dataSourceType,
   connectionAddress: settingsStore.monitoringConfig.connectionAddress,
@@ -1021,6 +1031,16 @@ const handleSave = () => {
     calculationModels: [...transConfig.models],
   })
 
+  settingsStore.updateCostFactors({
+    cableCostPerKm: projectCostConfig.cableCostPerKm || 0,
+    installationCostPerKm: projectCostConfig.installationCostPerKm || 0,
+    repeaterCost: projectCostConfig.repeaterCost || 0,
+    branchingUnitCost: projectCostConfig.branchingUnitCost || 0,
+    equalizerCost: projectCostConfig.equalizerCost || 0,
+    landingStationCost: projectCostConfig.landingStationCost || 0,
+    currency: projectCostConfig.currency || 'USD',
+  })
+
   settingsStore.updateMonitoringConfig({
     dataSourceType: monitorConfig.dataSourceType as 'realtime' | 'history',
     connectionAddress: monitorConfig.connectionAddress,
@@ -1045,6 +1065,15 @@ const handleSave = () => {
 
 const handleReset = () => {
   settingsStore.resetToDefaults()
+  Object.assign(projectCostConfig, {
+    cableCostPerKm: settingsStore.costFactors.cableCostPerKm || 35000,
+    installationCostPerKm: settingsStore.costFactors.installationCostPerKm || 15000,
+    repeaterCost: settingsStore.costFactors.repeaterCost || 250000,
+    branchingUnitCost: settingsStore.costFactors.branchingUnitCost || 180000,
+    equalizerCost: settingsStore.costFactors.equalizerCost || 15000,
+    landingStationCost: settingsStore.costFactors.landingStationCost || 5000000,
+    currency: settingsStore.costFactors.currency || 'USD',
+  })
   Object.assign(routeConfig, {
     mode: settingsStore.routePlanningConfig.mode,
     startLon: settingsStore.routePlanningConfig.startPoint.lon,
@@ -1834,6 +1863,55 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
             </div>
           </div>
 
+          <Card>
+            <CardContent class="p-5 space-y-4">
+              <div class="flex items-center gap-2">
+                <Database class="w-4 h-4 text-primary"/>
+                <h4 class="font-medium text-gray-800 dark:text-gray-100">工程成本参数</h4>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">海缆单价</label>
+                  <Input v-model="projectCostConfig.cableCostPerKm" type="number" class="w-full"/>
+                  <p class="text-xs text-gray-400 mt-1">单位: {{ projectCostConfig.currency }}/km</p>
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">安装单价</label>
+                  <Input v-model="projectCostConfig.installationCostPerKm" type="number" class="w-full"/>
+                  <p class="text-xs text-gray-400 mt-1">单位: {{ projectCostConfig.currency }}/km</p>
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">放大器单价</label>
+                  <Input v-model="projectCostConfig.repeaterCost" type="number" class="w-full"/>
+                  <p class="text-xs text-gray-400 mt-1">单位: {{ projectCostConfig.currency }}/台</p>
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">分支器单价</label>
+                  <Input v-model="projectCostConfig.branchingUnitCost" type="number" class="w-full"/>
+                  <p class="text-xs text-gray-400 mt-1">单位: {{ projectCostConfig.currency }}/台</p>
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">均衡器单价</label>
+                  <Input v-model="projectCostConfig.equalizerCost" type="number" class="w-full"/>
+                  <p class="text-xs text-gray-400 mt-1">单位: {{ projectCostConfig.currency }}/台</p>
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">登陆站单价</label>
+                  <Input v-model="projectCostConfig.landingStationCost" type="number" class="w-full"/>
+                  <p class="text-xs text-gray-400 mt-1">单位: {{ projectCostConfig.currency }}/站</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="text-xs text-gray-500 shrink-0">货币</label>
+                <select v-model="projectCostConfig.currency"
+                        class="w-24 border rounded-md px-2 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                        style="border-color: var(--app-border-color)">
+                  <option v-for="opt in currencyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                </select>
+              </div>
+            </CardContent>
+          </Card>
+
           <div class="grid grid-cols-2 gap-5">
             <!-- 波道参数 -->
             <div class="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl p-5 space-y-4">
@@ -2083,6 +2161,24 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                         :style="deviceTypeTab === 'branching' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
                         @click="deviceTypeTab = 'branching'">分支器类型管理
                 </button>
+                <button :class="[
+                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+                  deviceTypeTab === 'equalizer'
+                    ? ''
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                ]"
+                        :style="deviceTypeTab === 'equalizer' ? { borderColor: '#f59e0b', color: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.05)' } : {}"
+                        @click="deviceTypeTab = 'equalizer'">均衡器型号管理
+                </button>
+                <button :class="[
+                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+                  deviceTypeTab === 'joint'
+                    ? ''
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                ]"
+                        :style="deviceTypeTab === 'joint' ? { borderColor: '#64748b', color: '#64748b', backgroundColor: 'rgba(100,116,139,0.05)' } : {}"
+                        @click="deviceTypeTab = 'joint'">接头盒型号管理
+                </button>
               </div>
 
               <!-- 光纤类型管理 -->
@@ -2231,6 +2327,94 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                   </table>
                 </div>
               </div>
+              <!-- 均衡器型号管理 -->
+              <div v-if="deviceTypeTab === 'equalizer'">
+                <div class="mb-3">
+                  <Button size="sm" class="bg-amber-500 hover:bg-amber-600 text-white"
+                          @click="showAddEqualizerDialog = true">
+                    <Plus class="w-4 h-4 mr-1"/>
+                    增加均衡器型号
+                  </Button>
+                </div>
+                <div class="border rounded-lg overflow-x-auto">
+                  <table class="w-full text-sm">
+                    <thead class="bg-gray-100 dark:bg-white/5">
+                    <tr>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">型号名称</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">光衰模式</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">默认光衰値 (dB)</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币</th>
+                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-if="settingsStore.equalizerTypes.length === 0">
+                      <td colspan="6" class="px-3 py-8 text-center text-gray-400">暂无数据，请先添加均衡器型号</td>
+                    </tr>
+                    <tr v-for="eq in settingsStore.equalizerTypes" :key="eq.id"
+                        class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
+                      <td class="px-3 py-2">{{ eq.name }}</td>
+                      <td class="px-3 py-2">{{ eq.attenuationMode === 'fixed' ? '固定光衰 (F-ATT)' : '可调光衰' }}</td>
+                      <td class="px-3 py-2">{{ eq.defaultAttenuationDb }}</td>
+                      <td class="px-3 py-2">{{ eq.unitPrice ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ eq.currency ?? '-' }}</td>
+                      <td class="px-3 py-2 text-center">
+                        <button class="text-amber-600 hover:text-amber-800 mx-1"
+                                @click="handleEditEqualizer(eq)">修改</button>
+                        <button class="text-red-500 hover:text-red-700 mx-1"
+                                @click="handleDeleteEqualizer(eq.id)">删除</button>
+                      </td>
+                    </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- 接头盒型号管理 -->
+              <div v-if="deviceTypeTab === 'joint'">
+                <div class="mb-3">
+                  <Button size="sm" class="bg-slate-600 hover:bg-slate-700 text-white"
+                          @click="showAddJointDialog = true">
+                    <Plus class="w-4 h-4 mr-1"/>
+                    增加接头盒型号
+                  </Button>
+                </div>
+                <div class="border rounded-lg overflow-x-auto">
+                  <table class="w-full text-sm">
+                    <thead class="bg-gray-100 dark:bg-white/5">
+                    <tr>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">型号名称</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">接头盒插损 (dB)</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">最大光纤对数</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币</th>
+                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-if="settingsStore.jointBoxTypes.length === 0">
+                      <td colspan="6" class="px-3 py-8 text-center text-gray-400">暂无数据，请先添加接头盒型号</td>
+                    </tr>
+                    <tr v-for="jb in settingsStore.jointBoxTypes" :key="jb.id"
+                        class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
+                      <td class="px-3 py-2">{{ jb.name }}</td>
+                      <td class="px-3 py-2">{{ jb.insertionLoss }}</td>
+                      <td class="px-3 py-2">{{ jb.maxFiberPairs ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ jb.unitPrice ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ jb.currency ?? '-' }}</td>
+                      <td class="px-3 py-2 text-center">
+                        <button class="text-slate-600 hover:text-slate-800 mx-1"
+                                @click="handleEditJoint(jb)">修改</button>
+                        <button class="text-red-500 hover:text-red-700 mx-1"
+                                @click="handleDeleteJoint(jb.id)">删除</button>
+                      </td>
+                    </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
             </CardContent>
           </Card>
         </div>
@@ -2561,8 +2745,107 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
     </div>
   </Teleport>
 
+  <!-- 新增均衡器型号弹窗 -->
+  <Teleport to="body">
+    <div v-if="showAddEqualizerDialog" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showAddEqualizerDialog = false"/>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[450px]">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100">均衡器型号</h3>
+          <button class="text-gray-400 hover:text-gray-600" @click="showAddEqualizerDialog = false">
+            <X class="w-5 h-5"/>
+          </button>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">型号名称：</label>
+            <Input v-model="newEqualizer.name" placeholder="如: EQ-1000" class="flex-1"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">光衰模式：</label>
+            <select v-model="newEqualizer.attenuationMode"
+                    class="flex-1 border rounded-md px-3 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-700"
+                    style="border-color: var(--app-border-color)">
+              <option value="adjustable">可调光衰</option>
+              <option value="fixed">固定光衰 (F-ATT)</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">默认光衰値：</label>
+            <Input v-model="newEqualizer.defaultAttenuationDb" type="number" min="0" step="0.1" class="flex-1"/>
+            <span class="text-xs text-gray-500 w-8">dB</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">单价：</label>
+            <Input v-model="newEqualizer.unitPrice" type="number" min="0" class="flex-1"/>
+            <select v-model="newEqualizer.currency"
+                    class="shrink-0 w-20 border rounded-md px-2 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-700"
+                    style="border-color: var(--app-border-color)">
+              <option v-for="opt in currencyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">备注：</label>
+            <Input v-model="newEqualizer.remarks" placeholder="可选" class="flex-1"/>
+          </div>
+        </div>
+        <div class="flex justify-center gap-4 p-4 border-t">
+          <Button class="bg-amber-500 hover:bg-amber-600 text-white px-6" @click="handleAddEqualizer">保存</Button>
+          <Button variant="outline" class="px-6" @click="showAddEqualizerDialog = false">取消</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 新增接头盒型号弹窗 -->
+  <Teleport to="body">
+    <div v-if="showAddJointDialog" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showAddJointDialog = false"/>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[450px]">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100">接头盒型号</h3>
+          <button class="text-gray-400 hover:text-gray-600" @click="showAddJointDialog = false">
+            <X class="w-5 h-5"/>
+          </button>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">型号名称：</label>
+            <Input v-model="newJoint.name" placeholder="如: JB-500" class="flex-1"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">接头盒插损：</label>
+            <Input v-model="newJoint.insertionLoss" type="number" min="0" step="0.01" class="flex-1"/>
+            <span class="text-xs text-gray-500 w-8">dB</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">最大光纤对数：</label>
+            <Input v-model="newJoint.maxFiberPairs" type="number" min="1" placeholder="可选" class="flex-1"/>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">单价：</label>
+            <Input v-model="newJoint.unitPrice" type="number" min="0" class="flex-1"/>
+            <select v-model="newJoint.currency"
+                    class="shrink-0 w-20 border rounded-md px-2 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-700"
+                    style="border-color: var(--app-border-color)">
+              <option v-for="opt in currencyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-28 text-sm text-gray-600 text-right shrink-0">备注：</label>
+            <Input v-model="newJoint.remarks" placeholder="可选" class="flex-1"/>
+          </div>
+        </div>
+        <div class="flex justify-center gap-4 p-4 border-t">
+          <Button class="bg-slate-600 hover:bg-slate-700 text-white px-6" @click="handleAddJoint">保存</Button>
+          <Button variant="outline" class="px-6" @click="showAddJointDialog = false">取消</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- 地图选点弹窗 -->
-  <MapSelectDialog 
+  <MapSelectDialog
     v-model:visible="showMapSelectDialog" 
     :title="mapSelectTitle" 
     :mode="mapSelectType === 'range' ? 'range' : 'point'"

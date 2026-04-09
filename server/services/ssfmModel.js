@@ -392,7 +392,7 @@ export function computeSsfmSpanNli(params) {
 export function ssfmSpanIteration(simInput) {
     const {
         totalLengthKm, fiberParams, amplifierParams, wdmParams,
-        spanStrategy, constraints, buConfigs,
+        spanStrategy, constraints, buConfigs, equalizerConfigs = [],
     } = simInput
 
     // 解析 SSFM 专用参数
@@ -424,6 +424,8 @@ export function ssfmSpanIteration(simInput) {
     const beta3 = S_SI * Math.pow(fiber.lambda_m, 4) / (4 * Math.PI * Math.PI * PHYS.c * PHYS.c)
 
     const buCount = buConfigs.length
+    const totalEqualizerLoss_dB = equalizerConfigs.reduce((sum, eq) => sum + Math.max(0, eq.attenuationDb || 0), 0)
+    const equalizerSignalPenalty = dbToLinear(totalEqualizerLoss_dB)
 
     const targetGsnr_dB = constraints.targetGSNR || 14.0
     const margin_dB = constraints.osnrMargin || 1.0
@@ -499,6 +501,7 @@ export function ssfmSpanIteration(simInput) {
 
         for (let ch = 0; ch < wdm.channelCount; ch++) {
             const P_ase_per_amp = ampNoise.asePerChannel[ch]
+            const signalPower_W = wdm.launchPower_W / equalizerSignalPenalty
 
             const totalAse_W = P_ase_per_amp * numAmps
             // SSFM NLI 按 N^1.0 累加 (SSFM 已含相干效应, 不需要额外修正)
@@ -506,10 +509,10 @@ export function ssfmSpanIteration(simInput) {
 
             const buAseExtra = buCount > 0 ? P_ase_per_amp * buCount * 0.3 : 0
 
-            const osnr_linear = wdm.launchPower_W / (totalAse_W + buAseExtra)
+            const osnr_linear = signalPower_W / (totalAse_W + buAseExtra)
             const osnr_dB = linearToDb(osnr_linear)
 
-            const gsnr_linear = wdm.launchPower_W / (totalAse_W + buAseExtra + totalNli_W)
+            const gsnr_linear = signalPower_W / (totalAse_W + buAseExtra + totalNli_W)
             const gsnr_dB = linearToDb(gsnr_linear)
 
             // SSFM 的边缘惩罚更小 (数值仿真本身已包含边缘效应)
@@ -518,7 +521,7 @@ export function ssfmSpanIteration(simInput) {
 
             gsnrPerChannel.push(parseFloat((gsnr_dB - edgePenalty).toFixed(2)))
             osnrPerChannel.push(parseFloat((osnr_dB - edgePenalty * 0.3).toFixed(2)))
-            powerPerChannel.push(parseFloat((wdm.launchPowerDbm - edgePenalty * 0.2).toFixed(2)))
+            powerPerChannel.push(parseFloat((wdm.launchPowerDbm - totalEqualizerLoss_dB - edgePenalty * 0.2).toFixed(2)))
             const nli_dBm = 10 * Math.log10(Math.max(totalNli_W * 1000, 1e-30))
             nliPerChannel.push(parseFloat((nli_dBm + edgePenalty * 0.3).toFixed(2)))
         }

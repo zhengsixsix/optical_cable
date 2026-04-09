@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseWdmParams, parseFiberPhysics, computeSpanNli, buildSimulationInput } from '../services/gnModel.js'
-import { computeEgnSpanNli } from '../services/egnModel.js'
-import { calculateRamanGain, calculateRamanNF } from '../services/ramanModel.js'
+import { parseWdmParams, parseFiberPhysics, computeSpanNli, buildSimulationInput, spanIteration, buildDetailedResult } from '../services/gnModel.js'
+import { computeEgnSpanNli, egnSpanIteration } from '../services/egnModel.js'
+import { calculateRamanGain, calculateRamanNF, ramanHybridSpanIteration } from '../services/ramanModel.js'
 import { calculateEolDegradation, DEFAULT_AGING_PARAMS } from '../services/eolModel.js'
 import { PHYS, dbmToW, wToDbm, dbToLinear, linearToDb } from '../utils/physics.js'
 import { computeAmplifierNoise } from '../utils/amplifier.js'
@@ -435,5 +435,163 @@ describe('buildSimulationInput', () => {
         expect(simInput.deviceSequence).toHaveLength(2)
         expect(simInput.fiberSegments).toHaveLength(1)
         expect(simInput.fiberSegments[0].length).toBe(500)
+    })
+})
+
+describe('equalizer integration', () => {
+    it('connector aging includes equalizers', () => {
+        const withoutEqualizers = calculateEolDegradation({
+            totalLengthKm: 5000,
+            numAmplifiers: 66,
+            avgSpanLengthKm: 75,
+            buCount: 1,
+            equalizerCount: 0,
+        })
+        const withEqualizers = calculateEolDegradation({
+            totalLengthKm: 5000,
+            numAmplifiers: 66,
+            avgSpanLengthKm: 75,
+            buCount: 1,
+            equalizerCount: 2,
+        })
+
+        expect(withEqualizers.breakdown.connectorAging.value_dB).toBeGreaterThan(withoutEqualizers.breakdown.connectorAging.value_dB)
+    })
+
+    it('EGN iteration applies equalizer attenuation to power spectrum', () => {
+        const result = egnSpanIteration({
+            totalLengthKm: 500,
+            fiberParams: {
+                attenuation: 0.165,
+                dispersion: 20.5,
+                dispersionSlope: 0.06,
+                nonlinearCoeff: 0.8,
+                nonlinearIndex: 2.6,
+                effectiveArea: 130,
+            },
+            amplifierParams: {
+                noiseFigure: 4.8,
+            },
+            wdmParams: {
+                channelCount: 16,
+                centerFreq: 193.1,
+                channelSpacing: 50,
+                baudRate: 64,
+                modulation: '16QAM',
+                launchPower: 0,
+            },
+            spanStrategy: {
+                mode: 'fixed',
+                fixedLength: 80,
+            },
+            constraints: {
+                targetGSNR: 14.0,
+                osnrMargin: 1.0,
+            },
+            buConfigs: [],
+            equalizerConfigs: [
+                {
+                    id: 'eq-1',
+                    name: 'F-ATT-S-1',
+                    kp: 180,
+                    equalizerRole: 'S',
+                    attenuationMode: 'fixed',
+                    attenuationDb: 3.5,
+                },
+            ],
+        })
+
+        expect(result.recommendedPoint.powerPerChannelDb[0]).toBeLessThan(0)
+    })
+
+    it('Raman iteration applies equalizer attenuation to power spectrum', () => {
+        const result = ramanHybridSpanIteration({
+            totalLengthKm: 500,
+            fiberParams: {
+                attenuation: 0.165,
+                dispersion: 20.5,
+                dispersionSlope: 0.06,
+                nonlinearCoeff: 0.8,
+                nonlinearIndex: 2.6,
+                effectiveArea: 130,
+            },
+            amplifierParams: {
+                noiseFigure: 4.8,
+                ramanParams: { pumpPower: 350 },
+            },
+            amplifierModel: 'EDFA_Raman',
+            wdmParams: {
+                channelCount: 16,
+                centerFreq: 193.1,
+                channelSpacing: 50,
+                baudRate: 64,
+                modulation: '16QAM',
+                launchPower: 0,
+            },
+            spanStrategy: {
+                mode: 'fixed',
+                fixedLength: 80,
+            },
+            constraints: {
+                targetGSNR: 14.0,
+                osnrMargin: 1.0,
+            },
+            buConfigs: [],
+            equalizerConfigs: [
+                {
+                    id: 'eq-1',
+                    name: 'F-ATT-S-1',
+                    kp: 180,
+                    equalizerRole: 'S',
+                    attenuationMode: 'fixed',
+                    attenuationDb: 3.5,
+                },
+            ],
+        })
+
+        expect(result.recommendedPoint.powerPerChannelDb[0]).toBeLessThan(0)
+    })
+
+    it('extracts equalizer configs and includes them in detailed positions', () => {
+        const body = {
+            linkId: 'eq-link',
+            linkName: 'Equalized Link',
+            totalLengthKm: 500,
+            fiberModel: 'GN',
+            amplifierModel: 'EDFA_Simple',
+            fiberParams: { attenuation: 0.165, effectiveArea: 130, dispersion: 20.5, dispersionSlope: 0.06, nonlinearIndex: 2.6, nonlinearCoeff: 0.8 },
+            amplifierParams: { gain: 18, noiseFigure: 4.8, maxOutputPower: 21, saturationPower: 23 },
+            wdmParams: { channelCount: 32, centerFreq: 193.1, channelSpacing: 50, baudRate: 64, modulation: '16QAM', launchPower: 0 },
+            spanStrategy: { mode: 'fixed', fixedLength: 80 },
+            constraints: { targetOSNR: 16, targetGSNR: 14, maxSpanLength: 120, minSpanLength: 30, osnrMargin: 1 },
+            buConfigs: [],
+            deviceSequence: [
+                { id: 'tx', name: 'Tx', type: 'landing', kp: 0 },
+                { id: 'eq-1', name: 'Main F-ATT', type: 'equalizer', kp: 180, equalizerRole: 'S', attenuationMode: 'fixed', attenuationDb: 3.5 },
+                { id: 'rx', name: 'Rx', type: 'landing', kp: 500 },
+            ],
+        }
+
+        const simInput = buildSimulationInput(body)
+        const { spanScanResult, recommendedPoint } = spanIteration(simInput)
+        const detailedResult = buildDetailedResult(simInput, recommendedPoint, spanScanResult)
+
+        expect(simInput.equalizerConfigs).toHaveLength(1)
+        expect(simInput.equalizerConfigs[0]).toMatchObject({
+            kp: 180,
+            equalizerRole: 'S',
+            attenuationMode: 'fixed',
+            attenuationDb: 3.5,
+        })
+        expect(detailedResult.systemConfig.equalizerCount).toBe(1)
+        expect(detailedResult.systemConfig.totalEqualizerLoss).toBeCloseTo(3.5, 6)
+        expect(detailedResult.performanceData.positionNames).toContain('F-ATT-S-1')
+        expect(detailedResult.costData.equalizerCost).toBeGreaterThan(0)
+        expect(detailedResult.costData.totalCost).toBe(
+            detailedResult.costData.cableCost +
+            detailedResult.costData.amplifierCost +
+            detailedResult.costData.buCost +
+            detailedResult.costData.equalizerCost
+        )
     })
 })

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType } from '@/types'
-import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes } from '@/types/settings'
+import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types'
+import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes, defaultEqualizerTypes, defaultJointBoxTypes } from '@/types/settings'
 import type { 
   SystemPlanningParams, 
   SimulationModelConfig,
@@ -227,6 +227,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const fiberTypes = ref<FiberType[]>([])
   const amplifierTypes = ref<AmplifierType[]>([])
   const branchingUnitTypes = ref<BranchingUnitType[]>([])
+  const equalizerTypes = ref<EqualizerType[]>([])
+  const jointBoxTypes = ref<JointBoxType[]>([])
   const currentLibraryFile = ref('')
   
   // 新增配置状态
@@ -266,33 +268,41 @@ export const useSettingsStore = defineStore('settings', () => {
   })
 
   // 从 localStorage 加载
-  // 注意：成本参数和项目配置不存储在 localStorage，只存储在项目文件中
   function loadFromLocalStorage() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
-        const data: AppSettings = JSON.parse(saved)
-        // 只加载器件库基础数据，不加载成本参数
+        const data = JSON.parse(saved)
         cableTypes.value = data.cableTypes || defaultSettings.cableTypes
         repeaterTypes.value = data.repeaterTypes || defaultSettings.repeaterTypes
         branchingUnits.value = data.branchingUnits || defaultSettings.branchingUnits
-        // costFactors 不从 localStorage 加载，使用默认值，由项目文件恢复
+        // 器件库数据（光纤/放大器/分支器/均衡器/接头盒）
+        if (Array.isArray(data.fiberTypes)) fiberTypes.value = data.fiberTypes
+        if (Array.isArray(data.amplifierTypes)) amplifierTypes.value = data.amplifierTypes
+        if (Array.isArray(data.branchingUnitTypes)) branchingUnitTypes.value = data.branchingUnitTypes
+        if (Array.isArray(data.equalizerTypes)) equalizerTypes.value = data.equalizerTypes
+        if (Array.isArray(data.jointBoxTypes)) jointBoxTypes.value = data.jointBoxTypes
+        if (data.currentLibraryFile) currentLibraryFile.value = data.currentLibraryFile
       }
     } catch {
-      // localStorage 加载失败时使用默认值
+      // localStorage 加载失败时使用默认値
     }
   }
 
   // 保存到 localStorage
-  // 注意：成本参数和项目配置不存储在 localStorage，只存储在项目文件中
   function saveToLocalStorage() {
     try {
-      // 只保存器件库基础数据，不保存成本参数和项目配置
       const data = {
         cableTypes: cableTypes.value,
         repeaterTypes: repeaterTypes.value,
         branchingUnits: branchingUnits.value,
-        // 不保存 costFactors，它应该只存储在项目文件 (.use) 中
+        // 器件库数据一并保存
+        fiberTypes: fiberTypes.value,
+        amplifierTypes: amplifierTypes.value,
+        branchingUnitTypes: branchingUnitTypes.value,
+        equalizerTypes: equalizerTypes.value,
+        jointBoxTypes: jointBoxTypes.value,
+        currentLibraryFile: currentLibraryFile.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch {
@@ -401,6 +411,44 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function removeBranchingUnitType(id: string) {
     branchingUnitTypes.value = branchingUnitTypes.value.filter(b => b.id !== id)
+    saveToLocalStorage()
+  }
+
+  // 均衡器类型管理
+  function addEqualizerType(eq: EqualizerType) {
+    equalizerTypes.value.push(eq)
+    saveToLocalStorage()
+  }
+
+  function updateEqualizerType(id: string, updates: Partial<EqualizerType>) {
+    const index = equalizerTypes.value.findIndex(e => e.id === id)
+    if (index >= 0) {
+      equalizerTypes.value[index] = { ...equalizerTypes.value[index], ...updates }
+      saveToLocalStorage()
+    }
+  }
+
+  function removeEqualizerType(id: string) {
+    equalizerTypes.value = equalizerTypes.value.filter(e => e.id !== id)
+    saveToLocalStorage()
+  }
+
+  // 接头盒型号管理
+  function addJointBoxType(jb: JointBoxType) {
+    jointBoxTypes.value.push(jb)
+    saveToLocalStorage()
+  }
+
+  function updateJointBoxType(id: string, updates: Partial<JointBoxType>) {
+    const index = jointBoxTypes.value.findIndex(j => j.id === id)
+    if (index >= 0) {
+      jointBoxTypes.value[index] = { ...jointBoxTypes.value[index], ...updates }
+      saveToLocalStorage()
+    }
+  }
+
+  function removeJointBoxType(id: string) {
+    jointBoxTypes.value = jointBoxTypes.value.filter(j => j.id !== id)
     saveToLocalStorage()
   }
 
@@ -596,6 +644,8 @@ export const useSettingsStore = defineStore('settings', () => {
     fiberTypes,
     amplifierTypes,
     branchingUnitTypes,
+    equalizerTypes,
+    jointBoxTypes,
     currentLibraryFile,
     loadFromLocalStorage,
     saveToLocalStorage,
@@ -619,6 +669,14 @@ export const useSettingsStore = defineStore('settings', () => {
     addBranchingUnitType,
     updateBranchingUnitType,
     removeBranchingUnitType,
+    // 均衡器类型
+    addEqualizerType,
+    updateEqualizerType,
+    removeEqualizerType,
+    // 接头盒型号
+    addJointBoxType,
+    updateJointBoxType,
+    removeJointBoxType,
     updateCostFactors,
     resetToDefaults,
     resetProjectSettings,

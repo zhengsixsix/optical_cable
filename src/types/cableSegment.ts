@@ -33,6 +33,11 @@ export interface CableSegment {
   slack: number           // 敷设余量(%)
   burialDepth: number     // 埋深(m)
   isLocked?: boolean      // 是否锁定配置
+  // 均衡器落位配置
+  equalizerEnabled?: boolean   // 是否在此段配置均衡器
+  equalizerTypeId?: string     // 均衡器型号ID（关联器件库）
+  equalizerTypeName?: string   // 均衡器型号名称
+  equalizerRole?: 'T' | 'S'   // 均衡器位号
   // 几何数据引用
   geometryStartIndex?: number  // 在路由几何数组中的起始索引
   geometryEndIndex?: number    // 在路由几何数组中的结束索引

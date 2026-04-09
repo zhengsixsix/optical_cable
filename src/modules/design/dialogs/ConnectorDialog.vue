@@ -5,6 +5,7 @@ import { useConnectorStore, useAppStore, useSettingsStore } from '@/stores'
 import { connectorTypeLabels, connectorStatusLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus, ConnectorElement } from '@/types'
 import { X, Save } from 'lucide-vue-next'
+import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
 
 const props = defineProps<{
   visible: boolean
@@ -38,11 +39,15 @@ const formData = ref({
   remarks: '',
   componentRefId: '__none__',
   fiberRefId: '__none__',
-  length: 0
+  length: 0,
+  equalizerRole: 'T' as 'T' | 'S',
+  attenuationMode: 'adjustable' as 'adjustable' | 'fixed',
+  attenuationDb: 0
 })
 
 // 是否为光纤段类型
 const isFiberType = computed(() => formData.value.type === 'fiber')
+const isEqualizerType = computed(() => formData.value.type === 'equalizer')
 
 // 器件库选项（根据类型动态生成）
 const componentOptions = computed(() => {
@@ -57,6 +62,16 @@ const componentOptions = computed(() => {
       .filter(b => b.id)
       .map(b => ({ value: b.id, label: b.name }))
   }
+  if (type === 'joint') {
+    return settingsStore.jointBoxTypes
+      .filter(j => j.id)
+      .map(j => ({ value: j.id, label: j.name }))
+  }
+  if (type === 'equalizer') {
+    return settingsStore.equalizerTypes
+      .filter(e => e.id)
+      .map(e => ({ value: e.id, label: e.name }))
+  }
   return []
 })
 
@@ -70,7 +85,7 @@ const fiberOptions = computed(() => {
 // 是否显示器件选择
 const showComponentSelect = computed(() => {
   const type = formData.value.type
-  return type === 'amplifier_e' || type === 'amplifier_w' || type === 'bu'
+  return type === 'amplifier_e' || type === 'amplifier_w' || type === 'bu' || type === 'joint' || type === 'equalizer'
 })
 
 // 是否显示光纤选择（光纤段必须选择光纤类型）
@@ -78,10 +93,20 @@ const showFiberSelect = computed(() => {
   return formData.value.type === 'fiber'
 })
 
-// 类型选项（排除光纤段，光纤段不能手动创建）
+const equalizerRoleOptions = [
+  { value: 'T', label: 'T (蓝色)' },
+  { value: 'S', label: 'S (红色)' },
+]
+
+const attenuationModeOptions = [
+  { value: 'adjustable', label: '可调光衰' },
+  { value: 'fixed', label: '固定光衰 (F-ATT)' },
+]
+
+// 类型选项（排除光纤段和海缆段，这两种不能手动创建）
 const typeOptions = computed(() => 
   Object.entries(connectorTypeLabels)
-    .filter(([value]) => value !== 'fiber')
+    .filter(([value]) => value !== 'fiber' && value !== 'cable_segment')
     .map(([value, label]) => ({ value, label }))
 )
 
@@ -107,7 +132,10 @@ const resetForm = () => {
     remarks: '',
     componentRefId: '__none__',
     fiberRefId: '__none__',
-    length: 0
+    length: 0,
+    equalizerRole: 'T',
+    attenuationMode: 'adjustable',
+    attenuationDb: 0
   }
 }
 
@@ -131,7 +159,10 @@ watch(() => [props.visible, props.editId], () => {
         remarks: elem.remarks || '',
         componentRefId: elem.componentRefId || '__none__',
         fiberRefId: elem.fiberRefId || '__none__',
-        length: elem.length || 0
+        length: elem.length || 0,
+        equalizerRole: elem.equalizerRole || 'T',
+        attenuationMode: elem.attenuationMode || 'adjustable',
+        attenuationDb: elem.attenuationDb ?? 0
       }
     }
   } else if (props.visible && !props.editId) {
@@ -142,6 +173,16 @@ watch(() => [props.visible, props.editId], () => {
   }
 }, { immediate: true })
 
+// 当均衡器型号选定时，自动填充默认光衰参数
+watch(() => formData.value.componentRefId, (newId) => {
+  if (formData.value.type !== 'equalizer' || !newId || newId === '__none__') return
+  const eq = settingsStore.equalizerTypes.find(e => e.id === newId)
+  if (eq) {
+    formData.value.attenuationMode = eq.attenuationMode
+    formData.value.attenuationDb = eq.defaultAttenuationDb
+  }
+})
+
 // 保存
 const handleSave = () => {
   if (!formData.value.name.trim()) {
@@ -149,9 +190,26 @@ const handleSave = () => {
     return
   }
 
+  if (isEqualizerType.value) {
+    const validationMessage = validateEqualizerConfig(formData.value)
+    if (validationMessage) {
+      appStore.showNotification({ type: 'error', message: validationMessage })
+      return
+    }
+  }
+
+  const equalizerFields = isEqualizerType.value
+    ? normalizeEqualizerConfig(formData.value)
+    : {
+        equalizerRole: undefined,
+        attenuationMode: undefined,
+        attenuationDb: undefined,
+      }
+
   // 处理占位符值
   const saveData = {
     ...formData.value,
+    ...equalizerFields,
     componentRefId: formData.value.componentRefId === '__none__' ? '' : formData.value.componentRefId,
     fiberRefId: formData.value.fiberRefId === '__none__' ? '' : formData.value.fiberRefId,
   }
@@ -244,13 +302,31 @@ const handleClose = () => {
               </div>
             </div>
 
+            <div v-if="isEqualizerType" class="border-t pt-4">
+              <h4 class="text-xs font-bold text-gray-700 mb-3">均衡器参数</h4>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">均衡器位号</label>
+                  <Select v-model="formData.equalizerRole" :options="equalizerRoleOptions" />
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">光衰模式</label>
+                  <Select v-model="formData.attenuationMode" :options="attenuationModeOptions" />
+                </div>
+                <div class="col-span-2">
+                  <label class="block text-xs font-medium text-gray-600 mb-1">光衰值 (dB)</label>
+                  <Input v-model="formData.attenuationDb" type="number" min="0" step="0.1" class="w-full" />
+                </div>
+              </div>
+            </div>
+
             <!-- 器件库选择 -->
             <div v-if="showComponentSelect || showFiberSelect || fiberOptions.length > 0" class="border-t pt-4">
               <h4 class="text-xs font-bold text-gray-700 mb-3">器件库关联</h4>
               <div class="grid grid-cols-2 gap-3">
                 <div v-if="showComponentSelect">
                   <label class="block text-xs font-medium text-gray-600 mb-1">
-                    {{ formData.type === 'bu' ? '分支器型号' : '放大器型号' }}
+                    {{ formData.type === 'bu' ? '分支器型号' : formData.type === 'joint' ? '接头盒型号' : formData.type === 'equalizer' ? '均衡器型号' : '放大器型号' }}
                   </label>
                   <Select 
                     v-model="formData.componentRefId" 

@@ -45,7 +45,7 @@ const pointTypeOptions = [
   { value: 'landing', label: '登陆站' },
   { value: 'repeater', label: '放大器' },
   { value: 'branching', label: '分支器' },
-  { value: 'joint', label: '接头' },
+  { value: 'joint', label: '接头盒' },
   { value: 'waypoint', label: '路径点' },
 ]
 

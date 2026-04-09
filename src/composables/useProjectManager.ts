@@ -6,6 +6,7 @@
 import { ref, computed } from 'vue'
 import { useAppStore, useUserStore, useProjectDataStore, useLayerStore, useRPLStore, useSettingsStore, useRouteStore, useConnectorStore, useMonitorStore } from '@/stores'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
+import { applyImportResultToStore } from '@/services/DeviceImportService'
 import { generateUUID } from '@/types/useFile'
 
 // 新建项目参数
@@ -87,6 +88,8 @@ export interface CreateProjectParams {
       fiberTypes?: Record<string, unknown>[]
       amplifierTypes?: Record<string, unknown>[]
       branchingUnitTypes?: Record<string, unknown>[]
+      equalizerTypes?: Record<string, unknown>[]
+      jointBoxTypes?: Record<string, unknown>[]
     }
   }>
 }
@@ -452,40 +455,38 @@ export function useProjectManager() {
       // 处理器件库文件
       if (params.devices && params.devices.length > 0) {
         const deviceFiles: string[] = []
-        let totalFibers = 0, totalAmplifiers = 0, totalBranchingUnits = 0
+        let importSummary = ''
         
         for (const device of params.devices) {
           deviceFiles.push(device.file || device.name)
-          
-          // 如果有解析后的数据，导入到 settingsStore
+          // 如果有解析后的数据，使用共享函数写入 settingsStore
           if (device.parsedData) {
-            const { fiberTypes, amplifierTypes, branchingUnitTypes } = device.parsedData
-            
-            if (fiberTypes && fiberTypes.length > 0) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              fiberTypes.forEach((f) => settingsStore.addFiberType(f as any))
-              totalFibers += fiberTypes.length
+            const pd = device.parsedData
+            // 构建一个兼容 ImportResult 结构的临时对象
+            const fakeResult = {
+              success: true,
+              fiberTypes: pd.fiberTypes || [],
+              amplifierTypes: pd.amplifierTypes || [],
+              branchingUnitTypes: pd.branchingUnitTypes || [],
+              equalizerTypes: pd.equalizerTypes || [],
+              jointBoxTypes: pd.jointBoxTypes || [],
+              errors: [], warnings: [],
+              summary: {
+                totalRows: 0, successCount: 0, errorCount: 0,
+                fiberCount: pd.fiberTypes?.length || 0,
+                amplifierCount: pd.amplifierTypes?.length || 0,
+                branchingUnitCount: pd.branchingUnitTypes?.length || 0,
+                equalizerCount: pd.equalizerTypes?.length || 0,
+                jointCount: pd.jointBoxTypes?.length || 0,
+              }
             }
-            if (amplifierTypes && amplifierTypes.length > 0) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              amplifierTypes.forEach((a) => settingsStore.addAmplifierType(a as any))
-              totalAmplifiers += amplifierTypes.length
-            }
-            if (branchingUnitTypes && branchingUnitTypes.length > 0) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              branchingUnitTypes.forEach((b) => settingsStore.addBranchingUnitType(b as any))
-              totalBranchingUnits += branchingUnitTypes.length
-            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            importSummary = applyImportResultToStore(fakeResult as any, settingsStore)
           }
         }
         
         settingsStore.setCurrentLibraryFile(deviceFiles.join(', '))
-        
-        if (totalFibers > 0 || totalAmplifiers > 0 || totalBranchingUnits > 0) {
-          appStore.addLog('INFO', `导入器件库: 光纤${totalFibers}种，放大器${totalAmplifiers}种，分支器${totalBranchingUnits}种`)
-        } else {
-          appStore.addLog('INFO', `导入器件库文件: ${deviceFiles.join(', ')}`)
-        }
+        appStore.addLog('INFO', importSummary || `导入器件库文件: ${deviceFiles.join(', ')}`)
       }
 
       // 如果是 USE 项目，初始化接线元表格
@@ -536,7 +537,7 @@ export function useProjectManager() {
               .map(r => ({
                 id: r.id,
                 coordinates: [r.longitude, r.latitude] as [number, number],
-                type: r.pointType as 'landing' | 'branching' | 'repeater' | 'waypoint',
+                type: r.pointType as 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint',
                 name: r.remarks || undefined,
               }))
             
@@ -700,6 +701,7 @@ export function useProjectManager() {
           'landing': 'landing',
           'repeater': 'amplifier_e',
           'branching': 'bu',
+          'joint': 'joint',
         }
         return map[pointType] || 'underwater'
       }
@@ -710,6 +712,7 @@ export function useProjectManager() {
           'landing': '岸上站点',
           'amplifier_e': '放大器',
           'bu': '水下分支器',
+          'joint': '接头盒',
           'underwater': '水下站点',
         }
         return map[deviceType] || deviceType

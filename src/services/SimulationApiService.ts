@@ -50,6 +50,7 @@ export interface SimulationRequest {
     maxOutputPower: number
     saturationPower: number
     unitPrice?: number
+    equalizerUnitPrice?: number
     amplifierName?: string
   }
   wdmParams: {
@@ -83,6 +84,9 @@ export interface SimulationRequest {
     name: string
     type: string
     kp: number
+    equalizerRole?: 'T' | 'S'
+    attenuationMode?: 'adjustable' | 'fixed'
+    attenuationDb?: number
   }>
 }
 

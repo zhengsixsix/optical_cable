@@ -20,6 +20,16 @@ export function buildSimulationInput(body) {
     } = body
 
     const devices = [...deviceSequence].sort((a, b) => a.kp - b.kp)
+    const equalizerConfigs = devices
+        .filter(device => device.type === 'equalizer')
+        .map((device, index) => ({
+            id: device.id,
+            name: device.name || `EQ-${index + 1}`,
+            kp: device.kp || 0,
+            equalizerRole: device.equalizerRole || 'T',
+            attenuationMode: device.attenuationMode || 'adjustable',
+            attenuationDb: Math.max(0, device.attenuationDb || 0),
+        }))
 
     const fiberSegments = []
     for (let i = 0; i < devices.length - 1; i++) {
@@ -46,6 +56,7 @@ export function buildSimulationInput(body) {
         spanStrategy,
         constraints,
         buConfigs,
+        equalizerConfigs,
         createdAt: new Date().toISOString(),
         version: '1.0',
     }
@@ -113,7 +124,7 @@ export function computeSpanNli(gamma_W_m, beta2, alpha_Np_per_m, spanLen_m, laun
 export function spanIteration(simInput) {
     const {
         totalLengthKm, fiberParams, amplifierParams, wdmParams,
-        spanStrategy, constraints, buConfigs
+        spanStrategy, constraints, buConfigs, equalizerConfigs = []
     } = simInput
 
     // 解析 span 扫描范围
@@ -135,6 +146,8 @@ export function spanIteration(simInput) {
 
     const totalBuLoss_dB = buConfigs.reduce((s, bu) => s + (bu.trunkLoss || 0), 0)
     const buCount = buConfigs.length
+    const totalEqualizerLoss_dB = equalizerConfigs.reduce((sum, eq) => sum + Math.max(0, eq.attenuationDb || 0), 0)
+    const equalizerSignalPenalty = dbToLinear(totalEqualizerLoss_dB)
 
     // 放大器模型标识 (从 simInput 透传)
     const ampModel = simInput.amplifierModel || 'EDFA_Simple'
@@ -173,16 +186,17 @@ export function spanIteration(simInput) {
 
         for (let ch = 0; ch < wdm.channelCount; ch++) {
             const P_ase_per_amp = ampNoise.asePerChannel[ch]
+            const signalPower_W = wdm.launchPower_W / equalizerSignalPenalty
 
             const totalAse_W = P_ase_per_amp * numAmps
             const totalNli_W = P_nli_per_span * numAmps
 
             const buAseExtra = buCount > 0 ? P_ase_per_amp * buCount * 0.3 : 0
 
-            const osnr_linear = wdm.launchPower_W / (totalAse_W + buAseExtra)
+            const osnr_linear = signalPower_W / (totalAse_W + buAseExtra)
             const osnr_dB = linearToDb(osnr_linear)
 
-            const gsnr_linear = wdm.launchPower_W / (totalAse_W + buAseExtra + totalNli_W)
+            const gsnr_linear = signalPower_W / (totalAse_W + buAseExtra + totalNli_W)
             const gsnr_dB = linearToDb(gsnr_linear)
 
             const normalized = (ch - wdm.channelCount / 2) / (wdm.channelCount / 2)
@@ -190,7 +204,7 @@ export function spanIteration(simInput) {
 
             gsnrPerChannel.push(parseFloat((gsnr_dB - edgePenalty).toFixed(2)))
             osnrPerChannel.push(parseFloat((osnr_dB - edgePenalty * 0.5).toFixed(2)))
-            powerPerChannel.push(parseFloat((wdm.launchPowerDbm - edgePenalty * 0.3).toFixed(2)))
+            powerPerChannel.push(parseFloat((wdm.launchPowerDbm - totalEqualizerLoss_dB - edgePenalty * 0.3).toFixed(2)))
             const nli_dBm = 10 * Math.log10(totalNli_W * 1000)
             nliPerChannel.push(parseFloat((nli_dBm + edgePenalty * 0.5).toFixed(2)))
         }
@@ -241,15 +255,53 @@ export function spanIteration(simInput) {
 /**
  * 用推荐的 span 长度生成详细结果
  */
+function formatEqualizerLabel(equalizer, index) {
+    const role = equalizer.equalizerRole || 'T'
+    return equalizer.attenuationMode === 'fixed'
+        ? `F-ATT-${role}-${index + 1}`
+        : `EQ-${role}-${index + 1}`
+}
+
+function buildPerformanceEvents(totalLengthKm, numAmps, avgSpanLength, buConfigs, equalizerConfigs) {
+    const amplifierEvents = Array.from({ length: numAmps }, (_, index) => ({
+        position: parseFloat((((index + 1) * avgSpanLength)).toFixed(1)),
+        name: `AMP-${index + 1}`,
+        kind: 'amplifier',
+        priority: 30,
+        lossDb: 0,
+    }))
+
+    const buEvents = buConfigs.map((bu, index) => ({
+        position: parseFloat(((bu.kp || 0)).toFixed(1)),
+        name: `BU-${index + 1}`,
+        kind: 'bu',
+        priority: 10,
+        lossDb: Math.max(0, bu.trunkLoss || 0),
+    }))
+
+    const equalizerEvents = equalizerConfigs.map((equalizer, index) => ({
+        position: parseFloat(((equalizer.kp || 0)).toFixed(1)),
+        name: formatEqualizerLabel(equalizer, index),
+        kind: 'equalizer',
+        priority: 20,
+        lossDb: Math.max(0, equalizer.attenuationDb || 0),
+    }))
+
+    return [...buEvents, ...equalizerEvents, ...amplifierEvents]
+        .filter(event => event.position > 0 && event.position < totalLengthKm)
+        .sort((a, b) => a.position - b.position || a.priority - b.priority)
+}
+
 export function buildDetailedResult(simInput, recommendedPoint, spanScanResult) {
     const {
         totalLengthKm, fiberParams, amplifierParams, wdmParams,
-        buConfigs, constraints, linkName
+        buConfigs, equalizerConfigs = [], constraints, linkName
     } = simInput
 
     const numAmps = recommendedPoint.numAmplifiers
     const channelCount = wdmParams.channelCount || 96
     const channelFrequencies = spanScanResult.channelFrequencies
+    const totalEqualizerLoss = equalizerConfigs.reduce((sum, eq) => sum + Math.max(0, eq.attenuationDb || 0), 0)
 
     const amplifiers = []
     const avgSpanLength = totalLengthKm / (numAmps + 1)
@@ -271,40 +323,40 @@ export function buildDetailedResult(simInput, recommendedPoint, spanScanResult) 
     }
 
     // 沿程演化数据
+    const txGsnr = recommendedPoint.avgGsnrDb + 12 + totalEqualizerLoss
+    const txOsnr = recommendedPoint.avgOsnrDb + 12 + totalEqualizerLoss
     const positions = [0]
     const positionNames = ['Tx']
-    const gsnrEvolution = [parseFloat((recommendedPoint.avgGsnrDb + 12).toFixed(1))]
-    const osnrEvolution = [parseFloat((recommendedPoint.avgOsnrDb + 12).toFixed(1))]
+    const gsnrEvolution = [parseFloat(txGsnr.toFixed(1))]
+    const osnrEvolution = [parseFloat(txOsnr.toFixed(1))]
 
-    let buIndex = 0
-    const buPositions = buConfigs.map(b => b.kp || 0).sort((a, b) => a - b)
+    const performanceEvents = buildPerformanceEvents(
+        totalLengthKm,
+        numAmps,
+        avgSpanLength,
+        buConfigs,
+        equalizerConfigs
+    )
+    let cumulativeEqualizerLoss = 0
 
-    for (let i = 0; i < numAmps; i++) {
-        const ampPos = (i + 1) * avgSpanLength
-        while (buIndex < buPositions.length && buPositions[buIndex] < ampPos) {
-            positions.push(parseFloat(buPositions[buIndex].toFixed(1)))
-            positionNames.push(`BU-${buIndex + 1}`)
-            const decayRatio = buPositions[buIndex] / totalLengthKm
-            const buGsnr = recommendedPoint.avgGsnrDb + 12 - decayRatio * 15 - 0.8
-            gsnrEvolution.push(parseFloat(buGsnr.toFixed(1)))
-            osnrEvolution.push(parseFloat((buGsnr + 2.5).toFixed(1)))
-            buIndex++
+    for (const event of performanceEvents) {
+        if (event.kind === 'equalizer') {
+            cumulativeEqualizerLoss += event.lossDb
         }
-        positions.push(parseFloat(ampPos.toFixed(1)))
-        positionNames.push(`AMP-${i + 1}`)
-        const decayRatio = ampPos / totalLengthKm
-        const ampGsnr = recommendedPoint.avgGsnrDb + 12 - decayRatio * 14
-        gsnrEvolution.push(parseFloat(ampGsnr.toFixed(1)))
-        osnrEvolution.push(parseFloat((ampGsnr + 2.5).toFixed(1)))
-    }
 
-    while (buIndex < buPositions.length) {
-        positions.push(parseFloat(buPositions[buIndex].toFixed(1)))
-        positionNames.push(`BU-${buIndex + 1}`)
-        const decayRatio = buPositions[buIndex] / totalLengthKm
-        gsnrEvolution.push(parseFloat((recommendedPoint.avgGsnrDb + 12 - decayRatio * 15 - 0.8).toFixed(1)))
-        osnrEvolution.push(parseFloat((recommendedPoint.avgOsnrDb + 12 - decayRatio * 12 - 0.5).toFixed(1)))
-        buIndex++
+        const decayRatio = totalLengthKm > 0 ? event.position / totalLengthKm : 0
+        let eventGsnr = txGsnr - decayRatio * 12 - cumulativeEqualizerLoss
+        let eventOsnr = txOsnr - decayRatio * 12 - cumulativeEqualizerLoss
+
+        if (event.kind === 'bu') {
+            eventGsnr -= 0.8
+            eventOsnr -= 0.5
+        }
+
+        positions.push(event.position)
+        positionNames.push(event.name)
+        gsnrEvolution.push(parseFloat(eventGsnr.toFixed(1)))
+        osnrEvolution.push(parseFloat(eventOsnr.toFixed(1)))
     }
 
     positions.push(totalLengthKm)
@@ -335,10 +387,12 @@ export function buildDetailedResult(simInput, recommendedPoint, spanScanResult) 
     const fiberPrice = 28000
     const ampPrice = amplifierParams.unitPrice || 850000
     const buPrice = 180000
+    const equalizerPrice = amplifierParams.equalizerUnitPrice || 15000
     const cableCost = totalLengthKm * fiberPrice
     const amplifierCost = numAmps * ampPrice
     const buCostTotal = buConfigs.length * buPrice
-    const totalCost = cableCost + amplifierCost + buCostTotal
+    const equalizerCost = equalizerConfigs.length * equalizerPrice
+    const totalCost = cableCost + amplifierCost + buCostTotal + equalizerCost
 
     return {
         linkName: linkName || '未命名链路',
@@ -356,6 +410,8 @@ export function buildDetailedResult(simInput, recommendedPoint, spanScanResult) 
             avgSpanLength: parseFloat(avgSpanLength.toFixed(1)),
             buCount: buConfigs.length,
             totalBuLoss: parseFloat(buConfigs.reduce((s, b) => s + (b.trunkLoss || 0), 0).toFixed(1)),
+            equalizerCount: equalizerConfigs.length,
+            totalEqualizerLoss: parseFloat(totalEqualizerLoss.toFixed(1)),
             channelCount,
             modulation: wdmParams.modulation || '16QAM',
             recommendedSpanKm: spanScanResult.recommendedSpanKm,
@@ -383,11 +439,13 @@ export function buildDetailedResult(simInput, recommendedPoint, spanScanResult) 
             cableCost,
             amplifierCost,
             buCost: buCostTotal,
+            equalizerCost,
             totalCost,
             costItems: [
                 { category: '海缆', model: fiberParams.fiberName || 'G.654.E ULL', quantity: `${totalLengthKm.toFixed(0)}km`, unit: 'km', unitPrice: fiberPrice, subtotal: cableCost },
                 { category: '放大器', model: amplifierParams.amplifierName || 'EDFA-RPT', quantity: numAmps, unit: '台', unitPrice: ampPrice, subtotal: amplifierCost },
                 { category: '分支器', model: 'BU-Standard', quantity: buConfigs.length, unit: '台', unitPrice: buPrice, subtotal: buCostTotal },
+                { category: '均衡器', model: 'EQ/F-ATT', quantity: equalizerConfigs.length, unit: '个', unitPrice: equalizerPrice, subtotal: equalizerCost },
             ]
         },
     }

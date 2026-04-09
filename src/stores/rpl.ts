@@ -522,6 +522,7 @@ export const useRPLStore = defineStore('rpl', () => {
       landing: 'landing',
       repeater: 'repeater',
       branching: 'branching',
+      joint: 'joint',
       waypoint: 'waypoint',
     }
     return map[type] || 'waypoint'

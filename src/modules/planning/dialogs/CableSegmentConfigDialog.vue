@@ -2,7 +2,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useAppStore, useSettingsStore, useCableSegmentStore } from '@/stores'
 import { Button, Input, Select } from '@/shared/components/base'
-import { X, Settings, Lock, Unlock, RotateCcw, Check, Cable } from 'lucide-vue-next'
+import { X, Settings, Lock, Unlock, RotateCcw, Check, Cable, SlidersHorizontal, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import type { CableSegment, RiskLevel } from '@/types/cableSegment'
 
 const props = defineProps<{
@@ -26,8 +26,15 @@ const editForm = reactive({
   cableTypeName: '',
   slack: 3,
   burialDepth: 1.0,
-  isLocked: false
+  isLocked: false,
+  equalizerEnabled: false,
+  equalizerTypeId: '',
+  equalizerTypeName: '',
+  equalizerRole: 'T' as 'T' | 'S'
 })
+
+// 均衡器配置面板是否展开
+const showEqualizerSection = ref(false)
 
 // 原始数据（用于重置）
 const originalData = ref<{
@@ -36,7 +43,23 @@ const originalData = ref<{
   slack: number
   burialDepth: number
   isLocked: boolean
+  equalizerEnabled: boolean
+  equalizerTypeId: string
+  equalizerTypeName: string
+  equalizerRole: 'T' | 'S'
 } | null>(null)
+
+// 均衡器型号选项
+const equalizerTypeOptions = computed(() => {
+  return settingsStore.equalizerTypes
+    .filter(e => e.id)
+    .map(e => ({ value: e.id, label: e.name }))
+})
+
+const equalizerRoleOptions = [
+  { value: 'T', label: 'T (蓝色)' },
+  { value: 'S', label: 'S (红色)' },
+]
 
 // 缆型选项
 const cableTypeOptions = computed(() => {
@@ -64,6 +87,11 @@ watch(() => props.segment, (newSegment) => {
     editForm.slack = newSegment.slack
     editForm.burialDepth = newSegment.burialDepth
     editForm.isLocked = newSegment.isLocked ?? false
+    editForm.equalizerEnabled = newSegment.equalizerEnabled ?? false
+    editForm.equalizerTypeId = newSegment.equalizerTypeId ?? ''
+    editForm.equalizerTypeName = newSegment.equalizerTypeName ?? ''
+    editForm.equalizerRole = newSegment.equalizerRole ?? 'T'
+    if (newSegment.equalizerEnabled) showEqualizerSection.value = true
     
     // 保存原始数据
     originalData.value = {
@@ -71,17 +99,27 @@ watch(() => props.segment, (newSegment) => {
       cableTypeName: newSegment.cableTypeName,
       slack: newSegment.slack,
       burialDepth: newSegment.burialDepth,
-      isLocked: newSegment.isLocked ?? false
+      isLocked: newSegment.isLocked ?? false,
+      equalizerEnabled: newSegment.equalizerEnabled ?? false,
+      equalizerTypeId: newSegment.equalizerTypeId ?? '',
+      equalizerTypeName: newSegment.equalizerTypeName ?? '',
+      equalizerRole: newSegment.equalizerRole ?? 'T'
     }
   }
 }, { immediate: true })
 
-// 当缆型选择变化时，更新名称
+// 当缩型选择变化时，更新名称
 watch(() => editForm.cableTypeId, (newId) => {
   const mapping = settingsStore.routePlanningConfig.armorMappings?.find(m => m.cableTypeId === newId)
   if (mapping) {
     editForm.cableTypeName = mapping.cableTypeName
   }
+})
+
+// 当均衡器型号选择变化时，同步型号名称
+watch(() => editForm.equalizerTypeId, (newId) => {
+  const eq = settingsStore.equalizerTypes.find(e => e.id === newId)
+  if (eq) editForm.equalizerTypeName = eq.name
 })
 
 // 切换锁定状态
@@ -129,7 +167,11 @@ const handleSave = () => {
     cableTypeName: editForm.cableTypeName,
     slack: editForm.slack,
     burialDepth: editForm.burialDepth,
-    isLocked: editForm.isLocked
+    isLocked: editForm.isLocked,
+    equalizerEnabled: editForm.equalizerEnabled,
+    equalizerTypeId: editForm.equalizerEnabled ? editForm.equalizerTypeId : undefined,
+    equalizerTypeName: editForm.equalizerEnabled ? editForm.equalizerTypeName : undefined,
+    equalizerRole: editForm.equalizerEnabled ? editForm.equalizerRole : undefined,
   }
   
   emit('save', updatedSegment)
@@ -236,6 +278,65 @@ const formatNumber = (num: number, decimals: number = 3) => {
                 class="flex-1"
               />
               <span class="text-sm text-gray-500 w-8">m</span>
+            </div>
+          </div>
+
+          <!-- 均衡器落位入口 -->
+          <div class="border border-amber-200 rounded-lg overflow-hidden">
+            <!-- 展开/收起头部 -->
+            <button
+              class="w-full flex items-center justify-between px-4 py-3 bg-amber-50 hover:bg-amber-100 transition-colors"
+              @click="showEqualizerSection = !showEqualizerSection"
+            >
+              <div class="flex items-center gap-2">
+                <SlidersHorizontal class="w-4 h-4 text-amber-600" />
+                <span class="text-sm font-medium text-amber-700">均衡器落位</span>
+                <span
+                  v-if="editForm.equalizerEnabled"
+                  class="text-[10px] px-1.5 py-0.5 rounded bg-amber-200 text-amber-800"
+                >已配置</span>
+              </div>
+              <ChevronDown v-if="showEqualizerSection" class="w-4 h-4 text-amber-500" />
+              <ChevronRight v-else class="w-4 h-4 text-amber-500" />
+            </button>
+
+            <!-- 均衡器配置内容 -->
+            <div v-if="showEqualizerSection" class="p-4 space-y-3 bg-white">
+              <!-- 是否启用 -->
+              <div class="flex items-center gap-3">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    v-model="editForm.equalizerEnabled"
+                    class="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span class="text-sm text-gray-700">在此段配置均衡器</span>
+                </label>
+              </div>
+
+              <template v-if="editForm.equalizerEnabled">
+                <!-- 型号选择 -->
+                <div class="flex items-center gap-4">
+                  <label class="w-20 text-sm text-gray-600 text-right shrink-0">均衡器型号：</label>
+                  <Select
+                    v-model="editForm.equalizerTypeId"
+                    :options="[{ value: '', label: '-- 请选择 --' }, ...equalizerTypeOptions]"
+                    class="flex-1"
+                  />
+                </div>
+                <div v-if="equalizerTypeOptions.length === 0" class="ml-24 text-xs text-gray-400">
+                  器件库中无均衡器型号，请先在器件库管理中添加
+                </div>
+                <!-- 位号选择 -->
+                <div class="flex items-center gap-4">
+                  <label class="w-20 text-sm text-gray-600 text-right shrink-0">均衡器位号：</label>
+                  <Select
+                    v-model="editForm.equalizerRole"
+                    :options="equalizerRoleOptions"
+                    class="flex-1"
+                  />
+                </div>
+              </template>
             </div>
           </div>
 

@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, Upload, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-vue-next'
 import { useSettingsStore, useAppStore } from '@/stores'
-import { deviceImportService, type ImportResult } from '@/services/DeviceImportService'
+import { deviceImportService, applyImportResultToStore, type ImportResult } from '@/services/DeviceImportService'
 
 const props = defineProps<{
   visible: boolean
@@ -110,33 +110,16 @@ const doImport = async () => {
 const confirmImport = () => {
   if (!importResult.value) return
   
-  const { fiberTypes, amplifierTypes, branchingUnitTypes } = importResult.value
+  const msg = applyImportResultToStore(importResult.value, settingsStore)
   
-  // 添加到设置
-  for (const fiber of fiberTypes) {
-    settingsStore.addFiberType(fiber)
-  }
-  for (const amp of amplifierTypes) {
-    settingsStore.addAmplifierType(amp)
-  }
-  for (const bu of branchingUnitTypes) {
-    settingsStore.addBranchingUnitType(bu)
-  }
-  
-  // 更新当前库文件名
   if (selectedFile.value) {
     settingsStore.currentLibraryFile = selectedFile.value.name
   }
   
-  appStore.showNotification({ 
-    type: 'success', 
-    message: '器件库已更新' 
-  })
-  
+  appStore.showNotification({ type: 'success', message: msg })
   emit('imported', importResult.value)
   emit('close')
 }
-
 // 下载模板
 const downloadTemplate = (format: 'json' | 'csv') => {
   let content: string
@@ -284,18 +267,26 @@ const reset = () => {
             </div>
             
             <!-- 统计摘要 -->
-            <div class="grid grid-cols-3 gap-3">
+            <div class="grid grid-cols-5 gap-2">
               <div class="bg-blue-50 rounded-lg p-3 text-center">
-                <div class="text-2xl font-bold text-blue-600">{{ importResult.summary.fiberCount }}</div>
-                <div class="text-xs text-gray-500">光纤类型</div>
+                <div class="text-xl font-bold text-blue-600">{{ importResult.summary.fiberCount }}</div>
+                <div class="text-xs text-gray-500">光纤</div>
               </div>
               <div class="bg-purple-50 rounded-lg p-3 text-center">
-                <div class="text-2xl font-bold text-purple-600">{{ importResult.summary.amplifierCount }}</div>
-                <div class="text-xs text-gray-500">放大器类型</div>
+                <div class="text-xl font-bold text-purple-600">{{ importResult.summary.amplifierCount }}</div>
+                <div class="text-xs text-gray-500">放大器</div>
               </div>
               <div class="bg-green-50 rounded-lg p-3 text-center">
-                <div class="text-2xl font-bold text-green-600">{{ importResult.summary.branchingUnitCount }}</div>
-                <div class="text-xs text-gray-500">分支器类型</div>
+                <div class="text-xl font-bold text-green-600">{{ importResult.summary.branchingUnitCount }}</div>
+                <div class="text-xs text-gray-500">分支器</div>
+              </div>
+              <div class="bg-amber-50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-amber-600">{{ importResult.summary.equalizerCount ?? 0 }}</div>
+                <div class="text-xs text-gray-500">均衡器</div>
+              </div>
+              <div class="bg-slate-50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-slate-600">{{ importResult.summary.jointCount ?? 0 }}</div>
+                <div class="text-xs text-gray-500">接头盒</div>
               </div>
             </div>
             

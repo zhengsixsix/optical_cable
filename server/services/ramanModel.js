@@ -106,7 +106,7 @@ export function calculateRamanNF(onOffGainLinear, temperature = 300) {
 export function ramanHybridSpanIteration(simInput) {
     const {
         totalLengthKm, fiberParams, amplifierParams, wdmParams,
-        spanStrategy, constraints, buConfigs
+        spanStrategy, constraints, buConfigs, equalizerConfigs = []
     } = simInput
 
     // 解析 span 扫描范围
@@ -137,6 +137,8 @@ export function ramanHybridSpanIteration(simInput) {
 
     const totalBuLoss_dB = buConfigs.reduce((s, bu) => s + (bu.trunkLoss || 0), 0)
     const buCount = buConfigs.length
+    const totalEqualizerLoss_dB = equalizerConfigs.reduce((sum, eq) => sum + Math.max(0, eq.attenuationDb || 0), 0)
+    const equalizerSignalPenalty = dbToLinear(totalEqualizerLoss_dB)
 
     const targetGsnr_dB = constraints.targetGSNR || 14.0
     const margin_dB = constraints.osnrMargin || 1.0
@@ -185,6 +187,7 @@ export function ramanHybridSpanIteration(simInput) {
 
         for (let ch = 0; ch < wdm.channelCount; ch++) {
             const freq_Hz = wdm.channelFrequencies[ch] * 1e12
+            const signalPower_W = wdm.launchPower_W / equalizerSignalPenalty
 
             // 级联噪声: Raman ASE + EDFA ASE
             const P_ase_raman = PHYS.h * freq_Hz * ramanNF_linear * (ramanGain_linear - 1) * PHYS.refBandwidth
@@ -198,10 +201,10 @@ export function ramanHybridSpanIteration(simInput) {
 
             const buAseExtra = buCount > 0 ? P_ase_per_amp * buCount * 0.3 : 0
 
-            const osnr_linear = wdm.launchPower_W / (totalAse_W + buAseExtra)
+            const osnr_linear = signalPower_W / (totalAse_W + buAseExtra)
             const osnr_dB = linearToDb(osnr_linear)
 
-            const gsnr_linear = wdm.launchPower_W / (totalAse_W + buAseExtra + totalNli_W)
+            const gsnr_linear = signalPower_W / (totalAse_W + buAseExtra + totalNli_W)
             const gsnr_dB = linearToDb(gsnr_linear)
 
             const normalized = (ch - wdm.channelCount / 2) / (wdm.channelCount / 2)
@@ -209,7 +212,7 @@ export function ramanHybridSpanIteration(simInput) {
 
             gsnrPerChannel.push(parseFloat((gsnr_dB - edgePenalty).toFixed(2)))
             osnrPerChannel.push(parseFloat((osnr_dB - edgePenalty * 0.5).toFixed(2)))
-            powerPerChannel.push(parseFloat((wdm.launchPowerDbm - edgePenalty * 0.3).toFixed(2)))
+            powerPerChannel.push(parseFloat((wdm.launchPowerDbm - totalEqualizerLoss_dB - edgePenalty * 0.3).toFixed(2)))
             const nli_dBm = 10 * Math.log10(totalNli_W * 1000)
             nliPerChannel.push(parseFloat((nli_dBm + edgePenalty * 0.5).toFixed(2)))
         }
