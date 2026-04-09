@@ -91,8 +91,10 @@ describe('SLD Excel drawing mapping', () => {
     const xml = buildSLDExcelDrawingXml(table)
 
     expect(xml).toContain('name="FJB-1"')
-    expect(xml).toContain('prst="hexagon"')
-    expect(xml).toContain('name="FJB-1_line"')
+    expect(xml).toContain('<a:noFill/>')
+    expect(xml).toContain('<a:pt x="98" y="0"/>')
+    expect(xml).toContain('<a:pt x="98" y="60"/>')
+    expect(xml).not.toContain('name="FJB-1_line"')
     expect(xml).not.toContain('A603AB')
   })
 

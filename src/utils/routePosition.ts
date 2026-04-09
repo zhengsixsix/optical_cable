@@ -28,6 +28,11 @@ export interface RoutePositionAtKP {
   source: 'rpl' | 'route-segment' | 'route-point' | 'none'
 }
 
+type OrderedRoutePointLike = {
+  coordinates: [number, number]
+  depth?: number
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
@@ -308,4 +313,33 @@ export function getRoutePositionAtKP(
     depth: 0,
     source: 'none',
   }
+}
+
+export function enrichOrderedRoutePointsWithDepth<T extends OrderedRoutePointLike>(
+  points: T[],
+  route?: RouteLike | null,
+  options: {
+    configuredTotalLength?: number
+    rplRecords?: RplLikeRecord[]
+  } = {},
+): T[] {
+  if (!Array.isArray(points) || points.length === 0) return []
+
+  let cumulativeKp = 0
+
+  return points.map((point, index) => {
+    if (index > 0) {
+      cumulativeKp += calculateDistance(points[index - 1].coordinates, point.coordinates)
+    }
+
+    if (isFiniteNumber(point.depth) && Math.abs(point.depth) > 0) {
+      return { ...point }
+    }
+
+    const position = getRoutePositionAtKP(cumulativeKp, route, options)
+    return {
+      ...point,
+      depth: isFiniteNumber(position.depth) ? position.depth : 0,
+    }
+  })
 }

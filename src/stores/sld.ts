@@ -13,7 +13,10 @@ import type {
 import { mockSLDEquipments, mockSLDFiberSegments, mockTransmissionParams, ROUTE_ID, ROUTE_NAME } from '@/data/mockData'
 import { dataLinkService } from '@/services'
 import { normalizeEqualizerConfig } from '@/utils/equalizer'
+import { getRoutePositionAtKP } from '@/utils/routePosition'
 import { useSettingsStore } from '@/stores/settings'
+import { useRPLStore } from '@/stores/rpl'
+import { useRouteStore } from '@/stores/route'
 import {
   buildSldEquipmentConfigParams,
   createSldMetadataVersionFields,
@@ -511,6 +514,8 @@ export const useSLDStore = defineStore('sld', () => {
     }
 
     const settingsStore = useSettingsStore()
+    const rplStore = useRPLStore()
+    const routeStore = useRouteStore()
     const connectorTypeToSld: Partial<Record<string, SLDEquipmentType>> = {
       amplifier_e: 'REP',
       amplifier_w: 'REP',
@@ -531,6 +536,26 @@ export const useSLDStore = defineStore('sld', () => {
       .sort((a, b) => a.kp - b.kp)
 
     if (syncElements.length === 0) return
+
+    const routeRplTable = routeId
+      ? (rplStore.tables.find(table => table.routeId === routeId) || (rplStore.currentTable?.routeId === routeId ? rplStore.currentTable : null))
+      : rplStore.currentTable
+    const routeForDepth = routeId
+      ? (routeStore.routes.find(route => route.id === routeId) || routeStore.selectedRoute)
+      : routeStore.selectedRoute
+    const routeRplRecords = routeRplTable?.records || []
+    const routeTotalLength = routeRplTable?.metadata?.totalLength ?? routeForDepth?.totalLength
+
+    const resolveElementPosition = (element: { kp: number; longitude: number; latitude: number; depth: number }) => {
+      const hasNonZeroDepth = Number.isFinite(element.depth) && Math.abs(element.depth) > 0
+      const hasCoordinates = Number.isFinite(element.longitude) && Number.isFinite(element.latitude)
+      if (hasNonZeroDepth && hasCoordinates) return null
+      if (!routeForDepth && routeRplRecords.length === 0) return null
+      return getRoutePositionAtKP(element.kp, routeForDepth as { points: any[]; segments: any[] } | null, {
+        configuredTotalLength: routeTotalLength,
+        rplRecords: routeRplRecords,
+      })
+    }
 
     const manualSegmentRefs = new Set(
       currentTable.value.fiberSegments
@@ -563,6 +588,11 @@ export const useSLDStore = defineStore('sld', () => {
       if (!sldType) return
 
       syncedConnectorIds.add(elem.id)
+
+      const resolvedPosition = resolveElementPosition(elem)
+      const resolvedLongitude = resolvedPosition ? resolvedPosition.longitude : elem.longitude
+      const resolvedLatitude = resolvedPosition ? resolvedPosition.latitude : elem.latitude
+      const resolvedDepth = resolvedPosition ? resolvedPosition.depth : elem.depth
 
       const normalizedEqualizer = sldType === 'EQ' ? normalizeEqualizerConfig(elem) : null
       const componentModelName =
@@ -611,9 +641,9 @@ export const useSLDStore = defineStore('sld', () => {
         symbolCode,
         location: `KP ${elem.kp.toFixed(1)}`,
         kp: elem.kp,
-        longitude: elem.longitude,
-        latitude: elem.latitude,
-        depth: elem.depth,
+        longitude: resolvedLongitude,
+        latitude: resolvedLatitude,
+        depth: resolvedDepth,
         specifications: elem.specifications || componentModelName || '',
         remarks: elem.remarks || '由系统规划同步生成',
         syncSource: 'connector-trunk',

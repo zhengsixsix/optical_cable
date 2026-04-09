@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useConnectorStore } from '@/stores/connector'
+import { useRPLStore } from '@/stores/rpl'
+import { useRouteStore } from '@/stores/route'
 import { useSLDStore } from '@/stores/sld'
 import { useSettingsStore } from '@/stores/settings'
 import { DEFAULT_SLD_EXPORT_TEMPLATE_VERSION } from '@/services/sldDeviceRegistry'
@@ -456,5 +458,94 @@ describe('SLD connector sync', () => {
     expect(joint?.jointSubType).toBe('FJB')
     expect(joint?.configParams?.JointSubType).toBe('FJB')
     expect(joint?.configParams?.DisplayName).toBe('FJB')
+  })
+
+  it('backfills SLD depth from the matching route and RPL table when connector depth is zero', () => {
+    const sldStore = useSLDStore()
+    const rplStore = useRPLStore()
+    const routeStore = useRouteStore()
+
+    routeStore.setParetoRoutes([{
+      id: 'route-depth',
+      name: 'Depth Route',
+      points: [
+        { id: 'p0', coordinates: [120, 30], type: 'landing', depth: 0 },
+        { id: 'p1', coordinates: [121, 31], type: 'joint', depth: 1800 },
+        { id: 'p2', coordinates: [122, 32], type: 'landing', depth: 0 },
+      ],
+      segments: [
+        { id: 'seg-1', startPointId: 'p0', endPointId: 'p1', length: 50, depth: 1800, cableType: 'LW', riskLevel: 'low', cost: 0 },
+        { id: 'seg-2', startPointId: 'p1', endPointId: 'p2', length: 50, depth: 1600, cableType: 'LW', riskLevel: 'low', cost: 0 },
+      ],
+      totalLength: 100,
+      totalCost: 0,
+      riskScore: 0,
+      cost: { cable: 0, installation: 0, equipment: 0, total: 0 },
+      risk: { seismic: 0, volcanic: 0, depth: 0, overall: 0 },
+      distance: 100,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }])
+
+    rplStore.createTable('Depth Route-RPL', 'route-depth')
+    rplStore.currentTable!.records = [
+      {
+        id: 'rec-1',
+        sequence: 1,
+        kp: 0,
+        longitude: 120,
+        latitude: 30,
+        depth: 0,
+        pointType: 'landing',
+        cableType: 'LW',
+        segmentLength: 0,
+        cumulativeLength: 0,
+        slack: 0,
+        burialDepth: 0,
+        remarks: 'Landing-A',
+      },
+      {
+        id: 'rec-2',
+        sequence: 2,
+        kp: 50,
+        longitude: 121,
+        latitude: 31,
+        depth: 1800,
+        pointType: 'joint',
+        cableType: 'LW',
+        segmentLength: 50,
+        cumulativeLength: 50,
+        slack: 0,
+        burialDepth: 0,
+        remarks: 'Joint-A',
+      },
+      {
+        id: 'rec-3',
+        sequence: 3,
+        kp: 100,
+        longitude: 122,
+        latitude: 32,
+        depth: 0,
+        pointType: 'landing',
+        cableType: 'LW',
+        segmentLength: 50,
+        cumulativeLength: 100,
+        slack: 0,
+        burialDepth: 0,
+        remarks: 'Landing-B',
+      },
+    ]
+
+    sldStore.createTable('Depth SLD', 'route-depth')
+    sldStore.syncAmplifiersFromConnector([
+      { id: 'land-a', name: 'LAND-A', type: 'landing', kp: 0, longitude: 120, latitude: 30, depth: 0 },
+      { id: 'joint-a', name: 'JOINT-A', type: 'joint', kp: 50, longitude: 0, latitude: 0, depth: 0 },
+      { id: 'land-b', name: 'LAND-B', type: 'landing', kp: 100, longitude: 122, latitude: 32, depth: 0 },
+    ], { routeId: 'route-depth' })
+
+    const joint = sldStore.currentTable!.equipments.find(e => e.sourceConnectorId === 'joint-a')
+    expect(joint?.depth).toBe(1800)
+    expect(joint?.longitude).toBe(121)
+    expect(joint?.latitude).toBe(31)
   })
 })

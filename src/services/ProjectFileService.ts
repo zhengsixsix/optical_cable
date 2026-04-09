@@ -1405,6 +1405,7 @@ class ProjectFileService {
           coordinates: [r.longitude, r.latitude] as [number, number],
           type: r.pointType as 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint',
           name: r.remarks || undefined,
+          depth: r.depth,
         }))
       
       // 如果没有关键点，使用所有点（但每隔N个取一个以避免过多）
@@ -1416,24 +1417,38 @@ class ProjectFileService {
               coordinates: [r.longitude, r.latitude] as [number, number],
               type: 'waypoint' as const,
               name: undefined,
+              depth: r.depth,
             }))
       
       // 构建点 id -> KP 的映射，用于计算 segment 长度
       const idToKp = new Map<string, number>()
       records.forEach(r => idToKp.set(r.id, r.kp))
+      const idToRecord = new Map(records.map(record => [record.id, record]))
 
       // 创建路由分段（length 基于 KP 计算）
       const routeSegments = displayPoints.slice(0, -1).map((point, i) => {
         const startKp = idToKp.get(point.id) || 0
         const endKp = idToKp.get(displayPoints[i + 1].id) || 0
+        const spanStart = Math.min(startKp, endKp)
+        const spanEnd = Math.max(startKp, endKp)
+        const spanRecords = records.filter(record => record.kp >= spanStart - 1e-6 && record.kp <= spanEnd + 1e-6)
+        const depthValues = spanRecords
+          .map(record => record.depth)
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+        const startRecord = idToRecord.get(point.id)
+        const endRecord = idToRecord.get(displayPoints[i + 1].id)
+        const depth = depthValues.length > 0
+          ? depthValues.reduce((sum, value) => sum + value, 0) / depthValues.length
+          : (((startRecord?.depth || 0) + (endRecord?.depth || 0)) / 2)
+        const cableType = spanRecords.find(record => record.cableType)?.cableType || startRecord?.cableType || endRecord?.cableType || 'LW'
         return {
           id: `seg-${i}`,
           startPointId: point.id,
           endPointId: displayPoints[i + 1].id,
           length: Math.abs(endKp - startKp),
-          depth: 0,
-          cableType: 'LW',
-          riskLevel: 'low' as const,
+          depth,
+          cableType,
+          riskLevel: depth < 500 ? 'high' as const : depth < 1500 ? 'medium' as const : 'low' as const,
           cost: 0,
         }
       })
@@ -1586,19 +1601,37 @@ class ProjectFileService {
                   ? 'joint'
                   : 'waypoint',
           name: d.name,
+          depth: d.depth,
         }))
         
+        const routeSegments = displayPoints.slice(0, -1).map((point, index) => {
+          const nextPoint = displayPoints[index + 1]
+          const startKp = sortedDevices[index]?.kp || 0
+          const endKp = sortedDevices[index + 1]?.kp || 0
+          const avgDepth = (((sortedDevices[index]?.depth || 0) + (sortedDevices[index + 1]?.depth || 0)) / 2)
+          return {
+            id: `seg-${index}`,
+            startPointId: point.id,
+            endPointId: nextPoint.id,
+            length: Math.abs(endKp - startKp),
+            depth: avgDepth,
+            cableType: 'LW',
+            riskLevel: avgDepth < 500 ? 'high' as const : avgDepth < 1500 ? 'medium' as const : 'low' as const,
+            cost: 0,
+          }
+        })
+
         const mainRoute = {
           id: 'route-main',
           name: projectData.metadata?.project_name || '导入路线',
           points: displayPoints,
-          segments: [],
-          totalLength: 0,
+          segments: routeSegments,
+          totalLength: sortedDevices[sortedDevices.length - 1]?.kp || 0,
           totalCost: 0,
           riskScore: 0,
           cost: { cable: 0, installation: 0, equipment: 0, total: 0 },
           risk: { seismic: 0, volcanic: 0, depth: 0, overall: 0 },
-          distance: 0,
+          distance: sortedDevices[sortedDevices.length - 1]?.kp || 0,
           createdAt: new Date(),
           updatedAt: new Date(),
         }

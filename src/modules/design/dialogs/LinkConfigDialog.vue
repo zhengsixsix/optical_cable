@@ -179,6 +179,25 @@ const routeConnectorElements = computed(() =>
   connectorStore.getElementsForRoute(selectedRouteId.value || routeStore.currentRouteId || null)
 )
 
+const resolveRplTableForRoute = (routeId?: string | null) => {
+  const selectedTable = selectedRplId.value
+    ? rplStore.tables.find(item => item.id === selectedRplId.value) || null
+    : null
+
+  if (selectedTable && (!routeId || !selectedTable.routeId || selectedTable.routeId === routeId)) {
+    return selectedTable
+  }
+
+  if (routeId) {
+    const matchedByRoute = rplStore.tables.find(item => item.routeId === routeId) || null
+    if (matchedByRoute) return matchedByRoute
+    if (rplStore.currentTable?.routeId === routeId) return rplStore.currentTable
+    return null
+  }
+
+  return selectedTable || rplStore.currentTable
+}
+
 const equalizerTypeOptions = computed(() =>
   settingsStore.equalizerTypes
     .filter(type => type.id)
@@ -285,11 +304,7 @@ const collectCableSegmentsForRoute = (routeId: string | null): SegmentPlacementC
 }
 
 const getSelectedRplRecords = (routeId?: string | null) => {
-  if (!selectedRplId.value) return []
-  const table = rplStore.tables.find(item => item.id === selectedRplId.value)
-  if (!table) return []
-  if (routeId && table.routeId && table.routeId !== routeId) return []
-  return table.records || []
+  return resolveRplTableForRoute(routeId)?.records || []
 }
 
 const getPositionByKP = (
@@ -331,6 +346,9 @@ const inferAutoJointSubType = (
     nearBranchingUnit,
   })
 }
+
+const selectJointBoxTypeForSubtype = (subType: ReturnType<typeof inferAutoJointSubType>) =>
+  settingsStore.jointBoxTypes.find(type => type.subType === subType)
 
 const buildPlannedEqualizersFromSegments = () => {
   const routeId = selectedRouteId.value || routeStore.currentRouteId || null
@@ -480,7 +498,7 @@ watch(
 // 当前选中链路的基本信息 - 与 BUConfigDialog 保持一致的数据源
 const linkInfo = computed(() => {
   const route = routeStore.selectedRoute
-  const rpl = rplStore.tables.find(t => t.id === selectedRplId.value)
+  const rpl = resolveRplTableForRoute(selectedRouteId.value || routeStore.currentRouteId || null)
   if (!route || route.points.length === 0) return null
   
   // 计算 KP（使用 Haversine 公式）
@@ -1914,7 +1932,6 @@ const syncAutoJointsToConnector = (
     .filter(element => !targetKpKeys.has(element.kp.toFixed(1)))
     .forEach(element => connectorStore.deleteElement(element.id, false))
 
-  const defaultJointType = settingsStore.jointBoxTypes[0]
   targetJoints.forEach((target, index) => {
     const position = getPositionByKP(target.kp, route, configTotalLength, rplRecords)
     const matchedSegment = findSegmentConfigAtKp(segmentConfigs, target.kp)
@@ -1925,10 +1942,7 @@ const syncAutoJointsToConnector = (
       matchedSegment?.cableTypeName || position.cableType,
       routeElements,
     )
-    const jointType =
-      settingsStore.jointBoxTypes.find(type => type.subType === jointSubType) ||
-      settingsStore.jointBoxTypes.find(type => type.subType === 'BJB') ||
-      defaultJointType
+    const jointType = selectJointBoxTypeForSubtype(jointSubType)
     const matched = retainedAutoJoints.find(element => Math.abs(element.kp - target.kp) < JOINT_KP_TOLERANCE)
     const payload = {
       name: `JB-${String(index + 1).padStart(2, '0')}`,
@@ -2203,7 +2217,7 @@ const applyAndClose = async () => {
           kp: amp.kp,
           longitude: amp.longitude ?? ampPosition.longitude,
           latitude: amp.latitude ?? ampPosition.latitude,
-          depth: Number.isFinite(amp.depth) ? amp.depth : ampPosition.depth,
+          depth: Number.isFinite(amp.depth) && Math.abs(amp.depth) > 0 ? amp.depth : ampPosition.depth,
           status: 'planned',
           specifications: ampType
             ? `${ampType.name} | G=${amp.gain || 0}dB NF=${amp.noiseFigure || 0}dB`
@@ -2224,7 +2238,7 @@ const applyAndClose = async () => {
           endKp: fib.endKp,
           longitude: fib.longitude ?? fiberPosition.longitude,
           latitude: fib.latitude ?? fiberPosition.latitude,
-          depth: Number.isFinite(fib.depth) ? fib.depth : fiberPosition.depth,
+          depth: Number.isFinite(fib.depth) && Math.abs(fib.depth) > 0 ? fib.depth : fiberPosition.depth,
           status: 'planned',
           specifications: fiberType?.name || '',
           fiberRefId: selectedFiberTypeId.value,
@@ -2440,7 +2454,7 @@ watch(() => props.visible, (visible) => {
   if (visible) {
     // 加载当前选中的路由和 RPL
     selectedRouteId.value = routeStore.currentRouteId || ''
-    selectedRplId.value = rplStore.currentTableId || ''
+    selectedRplId.value = resolveRplTableForRoute(routeStore.currentRouteId || null)?.id || ''
     
     // 加载器件库默认值
     if (settingsStore.fiberTypes.length > 0 && !selectedFiberTypeId.value) {

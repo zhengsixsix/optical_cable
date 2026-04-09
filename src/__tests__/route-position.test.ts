@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getRoutePositionAtKP } from '@/utils/routePosition'
+import { enrichOrderedRoutePointsWithDepth, getRoutePositionAtKP } from '@/utils/routePosition'
 import type { Route } from '@/types'
 
 describe('route position utility', () => {
@@ -44,5 +44,29 @@ describe('route position utility', () => {
       cableType: 'LW',
       source: 'route-segment',
     })
+  })
+
+  it('backfills ordered route point depth from matching RPL records', () => {
+    const route: Pick<Route, 'points' | 'segments'> = {
+      points: [
+        { id: 'land-a', coordinates: [120, 20], type: 'landing', name: 'A' },
+        { id: 'mid', coordinates: [121, 21], type: 'waypoint', name: 'M' },
+        { id: 'land-b', coordinates: [122, 22], type: 'landing', name: 'B' },
+      ],
+      segments: [],
+    }
+
+    const enriched = enrichOrderedRoutePointsWithDepth(route.points, route, {
+      configuredTotalLength: 200,
+      rplRecords: [
+        { sequence: 1, kp: 0, longitude: 120, latitude: 20, depth: 10, cableType: 'DA' },
+        { sequence: 2, kp: 100, longitude: 121, latitude: 21, depth: 1100, cableType: 'SA' },
+        { sequence: 3, kp: 200, longitude: 122, latitude: 22, depth: 2600, cableType: 'LW' },
+      ],
+    })
+
+    expect(enriched[0].depth).toBe(10)
+    expect(enriched[1].depth).toBeGreaterThan(10)
+    expect(enriched[2].depth).toBe(2600)
   })
 })

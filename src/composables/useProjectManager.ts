@@ -532,35 +532,34 @@ export function useProjectManager() {
             
             // 2. 同步到 routeStore 以便地图显示
             const totalLength = records.length > 0 ? records[records.length - 1].cumulativeLength : 0
-            const routePoints = records
-              .filter(r => r.pointType !== 'waypoint')
-              .map(r => ({
-                id: r.id,
-                coordinates: [r.longitude, r.latitude] as [number, number],
-                type: r.pointType as 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint',
-                name: r.remarks || undefined,
-              }))
-            
-            const displayPoints = routePoints.length > 0 
-              ? routePoints 
-              : records.filter((_, i) => i % Math.max(1, Math.floor(records.length / 20)) === 0 || i === records.length - 1)
-                  .map(r => ({
-                    id: r.id,
-                    coordinates: [r.longitude, r.latitude] as [number, number],
-                    type: 'waypoint' as const,
-                    name: undefined,
-                  }))
-            
-            const routeSegments = displayPoints.slice(0, -1).map((point, i) => ({
-              id: `seg-${i}`,
-              startPointId: point.id,
-              endPointId: displayPoints[i + 1].id,
-              length: 0,
-              depth: 0,
-              cableType: 'LW',
-              riskLevel: 'low' as const,
-              cost: 0,
+            const displayPoints = records.map(r => ({
+              id: r.id,
+              coordinates: [r.longitude, r.latitude] as [number, number],
+              type: r.pointType as 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint',
+              name: r.pointType === 'waypoint' ? undefined : (r.remarks || undefined),
+              depth: r.depth,
             }))
+            
+            const routeSegments = displayPoints.slice(0, -1).map((point, i) => {
+              const currentRecord = records[i]
+              const nextRecord = records[i + 1]
+              const startKp = Number(currentRecord?.kp ?? currentRecord?.cumulativeLength ?? 0)
+              const endKp = Number(nextRecord?.kp ?? nextRecord?.cumulativeLength ?? startKp)
+              const segmentDepth = Number.isFinite(nextRecord?.depth)
+                ? Number(nextRecord.depth)
+                : (Number.isFinite(currentRecord?.depth) ? Number(currentRecord.depth) : 0)
+
+              return {
+                id: `seg-${i}`,
+                startPointId: point.id,
+                endPointId: displayPoints[i + 1].id,
+                length: Math.max(0, endKp - startKp),
+                depth: segmentDepth,
+                cableType: nextRecord?.cableType || currentRecord?.cableType || 'LW',
+                riskLevel: 'low' as const,
+                cost: 0,
+              }
+            })
             
             const mainRoute = {
               id: 'route-main',
@@ -621,7 +620,7 @@ export function useProjectManager() {
                   endKp: toElem.kp,
                   longitude: 0,
                   latitude: 0,
-                  depth: 0,
+                  depth: (Number(fromElem.depth) + Number(toElem.depth)) / 2,
                   status: 'active',
                   specifications: '',
                   remarks: `${fromElem.name} → ${toElem.name}`,

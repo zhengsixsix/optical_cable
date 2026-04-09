@@ -55,6 +55,7 @@ export interface SLDJointInferenceContext {
   depth?: number
   cableType?: string
   nearBranchingUnit?: boolean
+  preferExpandable?: boolean
 }
 
 const DEVICE_DEFINITIONS: Record<SLDDeviceSymbolCode, SLDDeviceDefinition> = {
@@ -231,7 +232,7 @@ export function inferJointSubTypeByContext(context: SLDJointInferenceContext): J
   if (context.nearBranchingUnit) return 'BUJB'
 
   const cableType = normalizeCableTypeCode(context.cableType)
-  const depth = typeof context.depth === 'number' && Number.isFinite(context.depth)
+  const depth = typeof context.depth === 'number' && Number.isFinite(context.depth) && Math.abs(context.depth) > 0
     ? Math.abs(context.depth)
     : undefined
   const totalLength = typeof context.totalLength === 'number' && Number.isFinite(context.totalLength)
@@ -241,19 +242,23 @@ export function inferJointSubTypeByContext(context: SLDJointInferenceContext): J
     ? Math.min(35, Math.max(12, totalLength * 0.06))
     : 20
 
-  if (totalLength && (context.kp <= landingWindow || (totalLength - context.kp) <= landingWindow)) {
+  if (context.preferExpandable) {
     return 'SEJB'
   }
 
-  if (cableType === 'DA' || cableType === 'RA' || (depth !== undefined && depth <= 200)) {
-    return 'SEJB'
+  if (totalLength && (context.kp <= landingWindow || (totalLength - context.kp) <= landingWindow)) {
+    return 'BJB'
+  }
+
+  if (cableType === 'DA' || cableType === 'RA') {
+    return 'BJB'
   }
 
   if (cableType === 'SA' || cableType === 'SAS' || cableType === 'LWP' || (depth !== undefined && depth <= 1500)) {
     return 'SJB'
   }
 
-  if (cableType === 'LW' || cableType === 'LWS' || (depth !== undefined && depth >= 1500)) {
+  if (cableType === 'LW' || cableType === 'LWS' || (depth !== undefined && depth > 1500)) {
     return 'FJB'
   }
 

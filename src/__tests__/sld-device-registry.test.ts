@@ -83,7 +83,7 @@ describe('SLD device registry', () => {
       totalLength: 400,
       depth: 50,
       cableType: 'DA-01',
-    })).toBe('SEJB')
+    })).toBe('BJB')
 
     expect(inferJointSubTypeByContext({
       kp: 180,
@@ -106,5 +106,20 @@ describe('SLD device registry', () => {
       cableType: 'LW',
       nearBranchingUnit: true,
     })).toBe('BUJB')
+
+    expect(inferJointSubTypeByContext({
+      kp: 180,
+      totalLength: 400,
+      depth: 0,
+      cableType: 'LW',
+    })).toBe('FJB')
+
+    expect(inferJointSubTypeByContext({
+      kp: 18,
+      totalLength: 400,
+      depth: 20,
+      cableType: 'DA',
+      preferExpandable: true,
+    })).toBe('SEJB')
   })
 })

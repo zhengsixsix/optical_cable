@@ -27,7 +27,7 @@ import { MODULATION_PARAMS } from '@/types/simulation'
 import { connectorTypeLabels } from '@/types/connector'
 import { Cable, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle, DollarSign, Activity } from 'lucide-vue-next'
 import { calculateDistance as geoCalcDistance } from '@/utils/geo'
-import { getRoutePositionAtKP } from '@/utils/routePosition'
+import { enrichOrderedRoutePointsWithDepth, getRoutePositionAtKP } from '@/utils/routePosition'
 import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
 
 const settingsStore = useSettingsStore()
@@ -389,6 +389,16 @@ const rplOptions = computed(() => (
 const routeConnectorElements = computed(() =>
   connectorStore.getElementsForRoute(routeStore.currentRouteId || undefined)
 )
+
+const getRouteMatchedRplTable = (routeId?: string | null) => {
+  if (routeId) {
+    const matchedByRoute = rplStore.tables.find(table => table.routeId === routeId)
+    if (matchedByRoute) return matchedByRoute
+    if (rplStore.currentTable?.routeId === routeId) return rplStore.currentTable
+    return null
+  }
+  return rplStore.currentTable
+}
 
 const handleRouteSelect = (routeId: string) => {
   if (!routeId) {
@@ -1329,8 +1339,9 @@ const syncEqualizersFromSegments = (routePointsList: any[]) => {
   const route = routeStore.selectedRoute
     ? { ...routeStore.selectedRoute, points: routePointsList.length > 0 ? routePointsList : routeStore.selectedRoute.points }
     : null
-  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? calculateRouteTrunkLengthKm(routeStore.selectedRoute) ?? 0
-  const rplRecords = rplStore.currentTable?.records || []
+  const routeRplTable = getRouteMatchedRplTable(routeStore.currentRouteId)
+  const totalLength = routeRplTable?.metadata?.totalLength ?? calculateRouteTrunkLengthKm(routeStore.selectedRoute) ?? 0
+  const rplRecords = routeRplTable?.records || []
 
   // 删除旧的自动生成均衡器元素（保留手动添加的：无 remarks 前缀的不影响）
   const oldAutoEq = connectorStore.elements.filter(
@@ -1371,12 +1382,21 @@ const handleApplyRecommendation = (spanKm: number) => {
   recommendedSpan.value = spanKm
   
   // 重新生成 EDFA 放置方案
-  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
-  // ★ 优先使用已保存的落位路由点，确保与之前计算用的路由一致
   const currentRoute = routeStore.selectedRoute
-  const routePointsList = placementRoutePoints.value.length > 0 
-    ? placementRoutePoints.value 
+  const routeRplTable = getRouteMatchedRplTable(currentRoute?.id)
+  const totalLength = routeRplTable?.metadata?.totalLength ?? calculateRouteTrunkLengthKm(currentRoute) ?? 0
+  // ★ 优先使用已保存的落位路由点，确保与之前计算用的路由一致
+  const baseRoutePoints = placementRoutePoints.value.length > 0
+    ? placementRoutePoints.value
     : (currentRoute?.points || [])
+  const routePointsList = enrichOrderedRoutePointsWithDepth(
+    baseRoutePoints,
+    currentRoute,
+    {
+      configuredTotalLength: totalLength,
+      rplRecords: routeRplTable?.records || [],
+    },
+  )
   autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
     totalLength,
     spanKm,
@@ -1403,7 +1423,12 @@ const handleApplyRecommendation = (spanKm: number) => {
         kp: pos.kp,
         longitude: pos.longitude,
         latitude: pos.latitude,
-        depth: pos.depth ?? 0,
+        depth: Number.isFinite(pos.depth) && Math.abs(pos.depth) > 0
+          ? pos.depth
+          : getRoutePositionAtKP(pos.kp, currentRoute ? { ...currentRoute, points: routePointsList } : null, {
+              configuredTotalLength: totalLength,
+              rplRecords: routeRplTable?.records || [],
+            }).depth,
         status: 'active',
         specifications: `Span ${spanKm}km`,
         remarks: pos.isBranch ? '分支放大器' : 'EDFA'
@@ -1434,7 +1459,15 @@ const handleWizardStartCalculation = (config: WizardConfig) => {
   
   // ★ 关键修复：在 setTimeout 之前捕获当前路由，防止 watcher 在延迟期间切换路由
   const capturedRoute = routeStore.selectedRoute
-  const capturedRoutePoints = capturedRoute?.points ? [...capturedRoute.points] : []
+  const capturedRouteRplTable = getRouteMatchedRplTable(capturedRoute?.id)
+  const capturedRoutePoints = enrichOrderedRoutePointsWithDepth(
+    capturedRoute?.points ? [...capturedRoute.points] : [],
+    capturedRoute,
+    {
+      configuredTotalLength: capturedRouteRplTable?.metadata?.totalLength ?? calculateRouteTrunkLengthKm(capturedRoute) ?? 0,
+      rplRecords: capturedRouteRplTable?.records || [],
+    },
+  )
   console.log(`[Wizard] 捕获路由: id=${capturedRoute?.id}, points=${capturedRoutePoints.length}, name=${capturedRoute?.name}`)
   
   // 获取调制格式对应的 GSNR 要求

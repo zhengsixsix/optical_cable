@@ -8,7 +8,7 @@ import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonit
 import { repeaterPlacementService } from '@/services'
 import { getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
 import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
-import { getRoutePositionAtKP } from '@/utils/routePosition'
+import { enrichOrderedRoutePointsWithDepth, getRoutePositionAtKP } from '@/utils/routePosition'
 
 export function useAmplifierPlacement(deps: {
   repeaterSpacing: Ref<number>
@@ -22,6 +22,16 @@ export function useAmplifierPlacement(deps: {
   const rplStore = useRPLStore()
   const monitorStore = useMonitorStore()
   const routeStore = useRouteStore()
+
+  const getRouteMatchedRplTable = (routeId?: string | null) => {
+    if (routeId) {
+      const matchedByRoute = rplStore.tables.find(table => table.routeId === routeId)
+      if (matchedByRoute) return matchedByRoute
+      if (rplStore.currentTable?.routeId === routeId) return rplStore.currentTable
+      return null
+    }
+    return rplStore.currentTable
+  }
 
   // 自动落位结果
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -223,10 +233,19 @@ export function useAmplifierPlacement(deps: {
     deps.repeaterSpacing.value = spanKm
 
     const currentRoute = routeStore.selectedRoute
-    const totalLength = calculateRouteTrunkLengthKm(currentRoute) || (rplStore.currentTable?.metadata?.totalLength ?? 0)
-    const routePointsList = placementRoutePoints.value.length > 0
+    const routeRplTable = getRouteMatchedRplTable(currentRoute?.id)
+    const totalLength = calculateRouteTrunkLengthKm(currentRoute) || (routeRplTable?.metadata?.totalLength ?? 0)
+    const baseRoutePoints = placementRoutePoints.value.length > 0
       ? placementRoutePoints.value
       : (currentRoute?.points || [])
+    const routePointsList = enrichOrderedRoutePointsWithDepth(
+      baseRoutePoints,
+      currentRoute,
+      {
+        configuredTotalLength: totalLength,
+        rplRecords: routeRplTable?.records || [],
+      },
+    )
     autoPlacementResult.value = repeaterPlacementService.generateEDFAPlacement(
       totalLength,
       spanKm,
@@ -243,7 +262,7 @@ export function useAmplifierPlacement(deps: {
       const routeForDepth = currentRoute
         ? { ...currentRoute, points: routePointsList }
         : null
-      const rplRecords = rplStore.currentTable?.records || []
+      const rplRecords = routeRplTable?.records || []
 
       autoPlacementResult.value.positions.forEach(
         (pos: { kp: number; longitude: number; latitude: number; depth: number; isBranch?: boolean }, index: number) => {
@@ -257,7 +276,7 @@ export function useAmplifierPlacement(deps: {
             kp: pos.kp,
             longitude: pos.longitude,
             latitude: pos.latitude,
-            depth: pos.depth ?? position.depth,
+            depth: Number.isFinite(pos.depth) && Math.abs(pos.depth) > 0 ? pos.depth : position.depth,
             status: 'active',
             specifications: `Span ${spanKm}km`,
             remarks: pos.isBranch ? '分支放大器' : 'EDFA',
