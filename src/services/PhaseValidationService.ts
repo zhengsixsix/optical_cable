@@ -3,7 +3,10 @@
  * 检查各工作阶段的数据完整性，供 UI 提示和导出前校验使用
  */
 
-import { useRouteStore, useRPLStore, useConnectorStore, useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useConnectorStore } from '@/stores/connector'
+import { useRouteStore } from '@/stores/route'
+import { useRPLStore } from '@/stores/rpl'
 
 export interface PhaseValidationItem {
   key: string

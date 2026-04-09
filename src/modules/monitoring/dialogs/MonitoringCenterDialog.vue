@@ -2,14 +2,9 @@
 import { ref, computed, watch } from 'vue'
 import { Card, CardHeader, CardContent, Button, Select, Input } from '@/shared/components/base'
 import {
-  X, Activity, Monitor, AlertTriangle, Settings, Search,
-  RefreshCw, Download, Filter, CheckCircle, XCircle, Clock,
-  ChevronDown, List, BarChart3, Bell, Shield, Eye, ArrowLeft,
-  Zap, Info, Link2, FileText, Database, Save, HardDrive,
-  Mail, RotateCcw, Trash2, MessageSquare, Upload, Plus
+  X, Activity, Monitor, AlertTriangle, Settings, Search, RefreshCw, Download, Filter, CheckCircle, XCircle, Clock, ChevronDown, List, BarChart3, Bell, Shield, Eye, ArrowLeft, Zap, Info, Link2, FileText, Database, Save, HardDrive, Mail, RotateCcw, Trash2, MessageSquare, Upload, Plus
 } from 'lucide-vue-next'
-import { useMonitorStore } from '@/stores'
-
+import { useMonitorStore } from '@/stores/monitor'
 const props = defineProps<{
   visible: boolean
 }>()

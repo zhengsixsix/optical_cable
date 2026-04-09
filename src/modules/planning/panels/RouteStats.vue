@@ -1,8 +1,10 @@
 ﻿<script setup lang="ts">
+import { useRouteStore } from '@/stores/route'
 import { computed, watch } from 'vue'
 import { Card, CardHeader, CardContent } from '@/shared/components/base'
 import { Printer, Settings, X, MapPin } from 'lucide-vue-next'
-import { useRPLStore, useAppStore, useRouteStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useRPLStore } from '@/stores/rpl'
 
 const emit = defineEmits<{
   (e: 'close'): void

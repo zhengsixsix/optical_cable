@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { FilePlus, FolderOpen, Save, X, Loader2 } from 'lucide-vue-next'
-import { useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { Button, Select, Input } from '@/shared/components/base'
 
 interface Props {

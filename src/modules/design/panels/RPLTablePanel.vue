@@ -1,6 +1,7 @@
 ﻿﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useRPLStore, useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useRPLStore } from '@/stores/rpl'
 import { exportRPLFile } from '@/services'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { 

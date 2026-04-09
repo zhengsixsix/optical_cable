@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { Button, Input } from '@/shared/components/base'
 import { X, Eye, Check, AlertTriangle, Lock, Unlock, Settings, MapPin, ArrowLeft } from 'lucide-vue-next'
 import type { CableSegment, CableSegmentSummary } from '@/types/cableSegment'

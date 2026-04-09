@@ -3,8 +3,11 @@
  * 从 DesignView 提取的仿真计算逻辑
  */
 
+import { useAppStore } from '@/stores/app'
+import { useRouteStore } from '@/stores/route'
 import { ref, type Ref } from 'vue'
-import { useSettingsStore, useRPLStore, useAppStore, useRouteStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
+import { useRPLStore } from '@/stores/rpl'
 import { opticalSimulationService, repeaterPlacementService } from '@/services'
 import { getFiberParamsFromLibrary, getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
 import type { SpanScanResult, ModulationFormat } from '@/types/simulation'

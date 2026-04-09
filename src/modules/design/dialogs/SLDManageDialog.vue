@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { useConnectorStore } from '@/stores/connector'
+import { useRouteStore } from '@/stores/route'
 import { computed, ref, watch } from 'vue'
-import { useAppStore, useConnectorStore, useRouteStore, useRPLStore, useSLDStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useRPLStore } from '@/stores/rpl'
+import { useSLDStore } from '@/stores/sld'
 import { Card, CardContent, CardHeader, Button } from '@/shared/components/base'
 import { Network, Plus, Trash2, Wand2, RotateCcw, X } from 'lucide-vue-next'
 import SLDTablePanel from '@/modules/design/panels/SLDTablePanel.vue'

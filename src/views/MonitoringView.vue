@@ -1,4 +1,8 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
+import { useMonitorStore } from '@/stores/monitor'
+import { useRouteStore } from '@/stores/route'
+import { useSettingsStore } from '@/stores/settings'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
@@ -10,7 +14,8 @@ import FaultLocationPanel from '@/modules/monitoring/panels/FaultLocationPanel.v
 import MaintenancePanel from '@/modules/monitoring/panels/MaintenancePanel.vue'
 import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio, MapPin, ChevronRight, ChevronDown, Filter, TrendingDown, TrendingUp, Minus, Link2, Download, Trash2, Search, Crosshair, ClipboardList, TrendingUp as TrendIcon } from 'lucide-vue-next'
 import type { LogCategory } from '@/types'
-import { useConnectorStore, useMonitorStore, useRouteStore, useAppStore, useSettingsStore, useRPLStore } from '@/stores'
+import { useConnectorStore } from '@/stores/connector'
+import { useRPLStore } from '@/stores/rpl'
 
 const connectorStore = useConnectorStore()
 const monitorStore = useMonitorStore()

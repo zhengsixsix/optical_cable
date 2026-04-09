@@ -7,8 +7,7 @@ import MapArea from '@/modules/planning/components/MapArea.vue'
 import LogPanel from '@/components/panels/LogPanel.vue'
 import RightPanel from '@/components/panels/RightPanel.vue'
 import ImportGisDialog from '@/modules/planning/dialogs/ImportGisDialog.vue'
-import { useAppStore } from '@/stores'
-
+import { useAppStore } from '@/stores/app'
 const appStore = useAppStore()
 const selectedExtent = ref<[number, number, number, number] | undefined>()
 const showImportGisDialog = ref(false)

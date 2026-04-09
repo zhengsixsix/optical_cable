@@ -1,13 +1,11 @@
 <script setup lang="ts">
+import type { User } from '@/stores/user'
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button, Input } from '@/shared/components/base'
 import {
-  ClipboardList, Plus, Search, Filter, Clock, User,
-  CheckCircle, AlertTriangle, ArrowRight, ChevronRight,
-  Calendar, MapPin, Wrench, Ship, FileText, XCircle
+  ClipboardList, Plus, Search, Filter, Clock, CheckCircle, AlertTriangle, ArrowRight, ChevronRight, Calendar, MapPin, Wrench, Ship, FileText, XCircle
 } from 'lucide-vue-next'
-import { useMonitorStore } from '@/stores'
-
+import { useMonitorStore } from '@/stores/monitor'
 const monitorStore = useMonitorStore()
 
 // ---------- types ----------

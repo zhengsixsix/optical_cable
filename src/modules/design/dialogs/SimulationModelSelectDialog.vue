@@ -1,8 +1,9 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
 import { ref, computed, watch } from 'vue'
 import { Button, Tooltip } from '@/shared/components/base'
 import { Cpu, Radio, Zap, GitBranch, AlertTriangle, CheckCircle, X, Save, Settings } from 'lucide-vue-next'
-import { useSettingsStore, useAppStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import type { FiberSimModel, EDFAModel, BUModel, SimulationModelConfig } from '@/types/systemPlanning'
 
 const props = defineProps<{

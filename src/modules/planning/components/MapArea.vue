@@ -1,19 +1,16 @@
 ﻿<script setup lang="ts">
-import {ref, onMounted, onUnmounted, watch, toRef} from 'vue'
-import {
-  useMapStore,
-  useLayerStore,
-  useAppStore,
-  useRouteStore,
-  useSettingsStore,
-  useMonitorStore,
-  useRPLStore,
-  useConnectorStore
-} from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useConnectorStore } from '@/stores/connector'
+import { useLayerStore } from '@/stores/layer'
+import { useMonitorStore } from '@/stores/monitor'
+import { useRouteStore } from '@/stores/route'
+import { useSettingsStore } from '@/stores/settings'
+import { ref, onMounted, onUnmounted, watch, toRef} from 'vue'
+import { useMapStore } from '@/stores/map'
+import { useRPLStore } from '@/stores/rpl'
 import {Button, Tooltip} from '@/shared/components/base'
 import {
-  Square, Edit3,
-  Play, Pause, Loader2, FileSpreadsheet, Scissors
+  Square, Edit3, Play, Pause, Loader2, FileSpreadsheet, Scissors
 } from 'lucide-vue-next'
 
 // 新增组件导入
@@ -52,7 +49,7 @@ import {createColdCoralLayers, createFishingLayers, createShippingLayers} from '
 import volcanoIconUrl from '@/assets/volcano.svg'
 import earthquakeIconUrl from '@/assets/earthquake.svg'
 
-import { useCableSegmentStore } from '@/stores'
+import { useCableSegmentStore } from '@/stores/cableSegment'
 import type { SegmentGenerateConfig, CableSegment, CableSegmentSummary } from '@/types/cableSegment'
 import { fetchRoutePlanning, checkRoutePlanningService } from '@/services/RoutePlanningApiService'
 import type { RoutePlanningRequest } from '@/services/RoutePlanningApiService'

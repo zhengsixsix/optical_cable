@@ -1,6 +1,9 @@
 ﻿﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
+import { useMapStore } from '@/stores/map'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouteStore, useMapStore, useAppStore, useRPLStore } from '@/stores'
+import { useRouteStore } from '@/stores/route'
+import { useRPLStore } from '@/stores/rpl'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { 
   Edit3, 

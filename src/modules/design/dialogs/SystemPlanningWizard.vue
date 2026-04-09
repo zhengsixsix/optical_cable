@@ -11,9 +11,11 @@
  * Step 6: 参数完整性校验 → 开始计算
  */
 
+import { useRouteStore } from '@/stores/route'
 import { ref, computed, watch } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
-import { useSettingsStore, useRouteStore, useRPLStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
+import { useRPLStore } from '@/stores/rpl'
 import { 
   ChevronLeft, ChevronRight, Check, AlertCircle, 
   MapPin, Cpu, Cable, Radio, Waves, PlayCircle,

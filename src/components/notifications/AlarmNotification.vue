@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useAppStore } from '@/stores/app'
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useMonitorStore, useAppStore } from '@/stores'
+import { useMonitorStore } from '@/stores/monitor'
 import { useAlarmWebSocket } from '@/services/AlarmWebSocketService'
 import { AlertTriangle, XCircle, Info, X, Bell } from 'lucide-vue-next'
 import type { AlarmRecord } from '@/stores/monitor'

@@ -7,6 +7,7 @@
  * - 放大器类型管理（含工作模式、单价）
  * - 分支器类型管理（含主干/分支插损、单价）
  */
+import { useAppStore } from '@/stores/app'
 import { ref, computed } from 'vue'
 import MainLayout from '@/components/layout/MainLayout.vue'
 import { Card, CardHeader, CardContent, Button, Tooltip, Input } from '@/shared/components/base'
@@ -16,7 +17,7 @@ import AmplifierTypeDialog from '@/components/dialogs/AmplifierTypeDialog.vue'
 import BranchingUnitTypeDialog from '@/components/dialogs/BranchingUnitTypeDialog.vue'
 import EqualizerTypeDialog from '@/components/dialogs/EqualizerTypeDialog.vue'
 import JointBoxTypeDialog from '@/components/dialogs/JointBoxTypeDialog.vue'
-import { useSettingsStore, useAppStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import { 
   Database, Upload, Plus, Edit2, Trash2, 
   Zap, Radio, GitBranch, Download, Search, Save, RotateCcw, SlidersHorizontal, Box

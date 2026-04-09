@@ -3,8 +3,16 @@
  * 整合打开/保存/另存为/关闭项目的完整业务流程
  */
 
+import { useConnectorStore } from '@/stores/connector'
+import { useLayerStore } from '@/stores/layer'
+import { useMonitorStore } from '@/stores/monitor'
+import { useProjectDataStore } from '@/stores/projectData'
+import { useRouteStore } from '@/stores/route'
+import { useSettingsStore } from '@/stores/settings'
+import { useUserStore } from '@/stores/user'
 import { ref, computed } from 'vue'
-import { useAppStore, useUserStore, useProjectDataStore, useLayerStore, useRPLStore, useSettingsStore, useRouteStore, useConnectorStore, useMonitorStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useRPLStore } from '@/stores/rpl'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
 import { generateUUID } from '@/types/useFile'

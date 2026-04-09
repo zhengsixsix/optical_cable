@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useSettingsStore } from '@/stores/settings'
 import { ref, reactive, computed, watch } from 'vue'
-import { useAppStore, useSettingsStore, useCableSegmentStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { Button, Input, Select } from '@/shared/components/base'
 import { X, Settings, Lock, Unlock, RotateCcw, Check, Cable, SlidersHorizontal, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import type { CableSegment, RiskLevel } from '@/types/cableSegment'

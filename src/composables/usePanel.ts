@@ -1,6 +1,5 @@
 import { ref, type Ref } from 'vue'
-import { useAppStore } from '@/stores'
-
+import { useAppStore } from '@/stores/app'
 /**
  * 浮动面板拖拽和调整大小的组合式函数
  * 提供面板的位置、尺寸管理以及拖拽、调整大小的交互逻辑

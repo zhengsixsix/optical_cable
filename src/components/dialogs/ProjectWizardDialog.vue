@@ -1,7 +1,8 @@
 ﻿﻿<script setup lang="ts">
+import { useSettingsStore } from '@/stores/settings'
 import { ref, computed, watch } from 'vue'
 import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
-import { useAppStore, useSettingsStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { Button, Select } from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'

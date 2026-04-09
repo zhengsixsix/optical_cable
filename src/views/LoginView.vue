@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { useAppStore } from '@/stores/app'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useUserStore, useAppStore } from '@/stores'
+import { useUserStore } from '@/stores/user'
 import { User, Lock, Phone, ShieldCheck, Globe, ChevronRight } from 'lucide-vue-next'
 
 const router = useRouter()

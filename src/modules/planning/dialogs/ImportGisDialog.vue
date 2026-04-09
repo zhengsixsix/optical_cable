@@ -1,7 +1,8 @@
 ﻿<script setup lang="ts">
+import { useLayerStore } from '@/stores/layer'
 import { ref, computed, watch } from 'vue'
 import { Upload, X, FileText, Loader2, Check, AlertCircle, Trash2 } from 'lucide-vue-next'
-import { useAppStore, useLayerStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { fetchSharedGisFiles, type SharedGisFile } from '@/services'
 import { Button } from '@/shared/components/base'
 

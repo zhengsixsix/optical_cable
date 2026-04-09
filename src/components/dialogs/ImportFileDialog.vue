@@ -2,7 +2,8 @@
 import { ref, computed, watch } from 'vue'
 import { X, Upload, FolderOpen, FileText, Loader2, Check, AlertCircle } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
-import { useAppStore, useRPLStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useRPLStore } from '@/stores/rpl'
 import { useProjectManager } from '@/composables'
 import { projectFileService } from '@/services/ProjectFileService'
 

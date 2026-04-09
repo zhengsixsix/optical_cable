@@ -11,9 +11,16 @@
  * 6. BU参数配置
  */
 
+import { useBUConfigStore } from '@/stores/buConfig'
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useConnectorStore } from '@/stores/connector'
+import { useRouteStore } from '@/stores/route'
+import { useSettingsStore } from '@/stores/settings'
 import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
-import { useAppStore, useSettingsStore, useRouteStore, useRPLStore, useConnectorStore, useBUConfigStore, useSLDStore, useCableSegmentStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useRPLStore } from '@/stores/rpl'
+import { useSLDStore } from '@/stores/sld'
 import { 
   X, ChevronRight, ChevronLeft, Check, AlertCircle, 
   MapPin, Cpu, Cable, Radio, Waves, GitBranch, PlayCircle,

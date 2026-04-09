@@ -4,8 +4,7 @@ import { Loader2 } from 'lucide-vue-next'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { getTerrainData, useTerrainCache, type TerrainData } from '@/composables/useTerrainCache'
-import { useRouteStore } from '@/stores'
-
+import { useRouteStore } from '@/stores/route'
 interface Props {
   extent?: [number, number, number, number]
 }

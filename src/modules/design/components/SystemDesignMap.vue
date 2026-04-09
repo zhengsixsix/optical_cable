@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { useConnectorStore } from '@/stores/connector'
+import { useMonitorStore } from '@/stores/monitor'
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
-import { useRouteStore, useRPLStore, useMonitorStore, useConnectorStore } from '@/stores'
+import { useRouteStore } from '@/stores/route'
+import { useRPLStore } from '@/stores/rpl'
 import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
 import { calculateDistance } from '@/utils/geo'
 import Map from 'ol/Map'

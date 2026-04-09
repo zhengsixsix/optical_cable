@@ -3,8 +3,7 @@ import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
 import ParetoChart from '@/modules/planning/components/ParetoChart.vue'
-import { useRouteStore } from '@/stores'
-
+import { useRouteStore } from '@/stores/route'
 const props = defineProps<{
   visible: boolean
 }>()

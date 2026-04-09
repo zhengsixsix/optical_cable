@@ -9,9 +9,13 @@
  * 3. 配置预览 - 显示受影响链路和插损
  */
 
+import { useAppStore } from '@/stores/app'
+import { useBUConfigStore } from '@/stores/buConfig'
+import { useConnectorStore } from '@/stores/connector'
+import { useRouteStore } from '@/stores/route'
 import { ref, computed, watch, reactive } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
-import { useSettingsStore, useConnectorStore, useAppStore, useRouteStore, useBUConfigStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import { 
   X, ChevronDown, ChevronUp, Check, AlertCircle, 
   GitBranch, Save, Database

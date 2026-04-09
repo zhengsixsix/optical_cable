@@ -7,7 +7,15 @@
  */
 
 import JSZip from 'jszip'
-import { useRouteStore, useRPLStore, useSLDStore, useSettingsStore, useUserStore, useConnectorStore, useMonitorStore, useLayerStore, useCableSegmentStore } from '@/stores'
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useConnectorStore } from '@/stores/connector'
+import { useLayerStore } from '@/stores/layer'
+import { useMonitorStore } from '@/stores/monitor'
+import { useRouteStore } from '@/stores/route'
+import { useSettingsStore } from '@/stores/settings'
+import { useUserStore } from '@/stores/user'
+import { useRPLStore } from '@/stores/rpl'
+import { useSLDStore } from '@/stores/sld'
 import { validateForExport } from './PhaseValidationService'
 import type {
   USEProjectData,

@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
 import { computed, ref } from 'vue'
-import { useLayerStore, useAppStore } from '@/stores'
+import { useLayerStore } from '@/stores/layer'
 import { Card, CardHeader, CardContent, Select } from '@/shared/components/base'
 import { RefreshCw, Download, Maximize2, X, MapPin, AlertTriangle, Eye, Upload, RotateCcw } from 'lucide-vue-next'
 

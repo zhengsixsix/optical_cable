@@ -316,7 +316,7 @@ export const mockEditableRoutePoints = [
 ]
 
 // ============================================
-// 放大器配置 - 用于 RepeaterConfigDialog
+// 放大器配置
 // ============================================
 export const mockRepeaterConfigs = [
   { name: 'REP-01', kp: 160, longitude: 125.2, latitude: 28.0, depth: 850, model: 'EREP-C+L', gain: 15, powerConsumption: 45 },

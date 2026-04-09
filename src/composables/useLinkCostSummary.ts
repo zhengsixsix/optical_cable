@@ -3,8 +3,11 @@
  * 从 DesignView 提取的成本计算和成本摘要逻辑
  */
 
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useConnectorStore } from '@/stores/connector'
 import { ref, computed, type Ref } from 'vue'
-import { useSettingsStore, useRPLStore, useConnectorStore, useCableSegmentStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
+import { useRPLStore } from '@/stores/rpl'
 
 export interface LinkCalcSummaryData {
   linkName: string

@@ -2,11 +2,9 @@
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import {
-  MapPin, AlertTriangle, Navigation, Crosshair, ChevronRight, RefreshCw,
-  Zap, Anchor, ArrowRight, CheckCircle, XCircle, Clock, Target
+  MapPin, AlertTriangle, Navigation, Crosshair, ChevronRight, RefreshCw, Zap, Anchor, ArrowRight, CheckCircle, XCircle, Clock, Target
 } from 'lucide-vue-next'
-import { useMonitorStore } from '@/stores'
-
+import { useMonitorStore } from '@/stores/monitor'
 const monitorStore = useMonitorStore()
 
 // ---------- types ----------

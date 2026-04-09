@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { useConnectorStore } from '@/stores/connector'
+import { useRouteStore } from '@/stores/route'
+import { useSettingsStore } from '@/stores/settings'
 import { ref, computed, watch } from 'vue'
 import { Button } from '@/shared/components/base'
 import { BarChart2, X, RefreshCw, Filter, Cpu, ChevronDown, ChevronUp, Target, Info, FileText, AlertTriangle, Download } from 'lucide-vue-next'
-import { useAppStore, useSettingsStore, useConnectorStore, useRouteStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { buildSimulationCache } from '@/services/simulationDataBuilder'
 import type { SimulationCache } from '@/types/useFile'
 

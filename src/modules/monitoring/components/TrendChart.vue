@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { TrendingUp, RefreshCw, Download, Settings, ChevronDown } from 'lucide-vue-next'
-import { useMonitorStore } from '@/stores'
-
+import { useMonitorStore } from '@/stores/monitor'
 // ---------- types ----------
 interface TrendDataPoint {
   time: string      // 时间标签 (HH:mm 或 KP值)

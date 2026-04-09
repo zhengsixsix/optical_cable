@@ -1,7 +1,9 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
+import { useSettingsStore } from '@/stores/settings'
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
-import { useConnectorStore, useAppStore, useSettingsStore } from '@/stores'
+import { useConnectorStore } from '@/stores/connector'
 import { connectorTypeLabels, connectorStatusLabels, connectorFilterLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus } from '@/types'
 import { Plus, Trash2, Edit2, Link2 } from 'lucide-vue-next'

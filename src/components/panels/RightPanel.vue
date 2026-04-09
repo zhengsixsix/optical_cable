@@ -1,12 +1,12 @@
 ﻿<script setup lang="ts">
+import { useRouteStore } from '@/stores/route'
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { Printer, X, Maximize2 } from 'lucide-vue-next'
 import MonitorPanel from '@/modules/monitoring/panels/MonitorPanel.vue'
 import DepthProfile from '@/modules/planning/components/DepthProfile.vue'
 import Terrain3D from '@/modules/planning/components/Terrain3D.vue'
-import { useAppStore, useRouteStore } from '@/stores'
-
+import { useAppStore } from '@/stores/app'
 interface Props {
   selectedExtent?: [number, number, number, number]
 }

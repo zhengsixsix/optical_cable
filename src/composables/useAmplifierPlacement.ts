@@ -3,8 +3,13 @@
  * 从 DesignView 提取的放大器配置、拖拽、光纤段生成逻辑
  */
 
+import { useAppStore } from '@/stores/app'
+import { useConnectorStore } from '@/stores/connector'
+import { useMonitorStore } from '@/stores/monitor'
+import { useRouteStore } from '@/stores/route'
 import { ref, type Ref } from 'vue'
-import { useSettingsStore, useAppStore, useConnectorStore, useRPLStore, useMonitorStore, useRouteStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
+import { useRPLStore } from '@/stores/rpl'
 import { repeaterPlacementService } from '@/services'
 import { getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
 import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'

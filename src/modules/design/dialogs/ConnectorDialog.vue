@@ -1,7 +1,9 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
+import { useSettingsStore } from '@/stores/settings'
 import { ref, watch, computed } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
-import { useConnectorStore, useAppStore, useSettingsStore } from '@/stores'
+import { useConnectorStore } from '@/stores/connector'
 import { connectorTypeLabels, connectorStatusLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus, ConnectorElement } from '@/types'
 import { X, Save } from 'lucide-vue-next'

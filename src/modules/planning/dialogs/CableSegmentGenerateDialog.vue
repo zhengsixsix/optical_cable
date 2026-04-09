@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useSettingsStore } from '@/stores/settings'
 import { reactive, computed } from 'vue'
-import { useAppStore, useSettingsStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { Button, Input, Select, Card, CardContent } from '@/shared/components/base'
 import { X, Scissors, Settings, AlertCircle } from 'lucide-vue-next'
 import type { SegmentGenerateConfig, SegmentMethod } from '@/types/cableSegment'

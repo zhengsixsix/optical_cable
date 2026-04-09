@@ -1,8 +1,9 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, Upload, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-vue-next'
-import { useSettingsStore, useAppStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import { deviceImportService, applyImportResultToStore, type ImportResult } from '@/services/DeviceImportService'
 
 const props = defineProps<{

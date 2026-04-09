@@ -1,6 +1,7 @@
-import {createRouter, createWebHashHistory, type RouteRecordRaw} from 'vue-router'
-import {useUserStore, useAppStore, useRouteStore} from '@/stores'
-
+import { useAppStore } from '@/stores/app'
+import { useRouteStore } from '@/stores/route'
+import { createRouter, createWebHashHistory, type RouteRecordRaw} from 'vue-router'
+import { useUserStore } from '@/stores/user'
 const routes: RouteRecordRaw[] = [
     {
         path: '/',

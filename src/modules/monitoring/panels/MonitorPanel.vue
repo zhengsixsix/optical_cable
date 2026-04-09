@@ -2,8 +2,7 @@
 import { computed } from 'vue'
 import { Card, CardHeader, CardContent } from '@/shared/components/base'
 import { X } from 'lucide-vue-next'
-import { useMonitorStore } from '@/stores'
-
+import { useMonitorStore } from '@/stores/monitor'
 const emit = defineEmits<{
   (e: 'close'): void
 }>()

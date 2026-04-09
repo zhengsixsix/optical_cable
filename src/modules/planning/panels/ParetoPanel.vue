@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRouteStore } from '@/stores'
+import { useRouteStore } from '@/stores/route'
 import { cn } from '@/shared/utils'
 
 /**

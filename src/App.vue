@@ -1,6 +1,9 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
+import { useLayerStore } from '@/stores/layer'
+import { useUserStore } from '@/stores/user'
 import { ref, onMounted } from 'vue'
-import { useRouteStore, useLayerStore, useAppStore, useUserStore } from '@/stores'
+import { useRouteStore } from '@/stores/route'
 import { initAppearance, useProjectManager, type CreateProjectParams } from '@/composables'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'

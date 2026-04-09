@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { X, Palette } from 'lucide-vue-next'
-import { useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { loadAppearanceSettings, applyAppearanceSettings, type AppearanceSettings } from '@/composables'
 
 const props = defineProps<{

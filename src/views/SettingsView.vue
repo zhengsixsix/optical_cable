@@ -1,7 +1,8 @@
 ﻿<script setup lang="ts">
-import {ref, reactive, computed, watch, onMounted} from 'vue'
+import { useAppStore } from '@/stores/app'
+import { ref, reactive, computed, watch, onMounted} from 'vue'
 import {useRouter, useRoute} from 'vue-router'
-import {useSettingsStore, useAppStore} from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'

@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { Button, Select } from '@/shared/components/base'
 import ModelParamsForm from './ModelParamsForm.vue'
-import { useSettingsStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import type { ModelDefinition, ModelDomain, ComponentModelParamsConfig } from '@/types/useFile'
 import { X, Save, RotateCcw, Cpu, AlertTriangle, CheckCircle } from 'lucide-vue-next'
 

@@ -3,24 +3,14 @@
  * 将前端用户配置转换为计算模型可处理的标准化数据结构
  */
 
+import { useConnectorStore } from '@/stores/connector'
+import { useRouteStore } from '@/stores/route'
 import type { LinkConfig } from '@/modules/design/dialogs/LinkConfigDialog.vue'
 import type { ConnectorElement } from '@/types/connector'
 import type {
-  SimulationInput,
-  SimDevice,
-  SimAmplifierDevice,
-  SimBUDevice,
-  SimEqualizerDevice,
-  SimLandingDevice,
-  SimFiberSegment,
-  SimulationProgress,
-  ProgressCallback,
-  SpanScanResult,
-  SpanScanPoint,
-  SimulationModel
+  SimulationInput, SimDevice, SimAmplifierDevice, SimBUDevice, SimEqualizerDevice, SimLandingDevice, SimFiberSegment, SimulationProgress, ProgressCallback, SpanScanResult, SpanScanPoint, SimulationModel
 } from '@/types/simulation'
-import { useSettingsStore, useConnectorStore, useRouteStore } from '@/stores'
-
+import { useSettingsStore } from '@/stores/settings'
 /**
  * 构建标准化仿真输入结构
  * @param config 链路配置（来自 LinkConfigDialog）

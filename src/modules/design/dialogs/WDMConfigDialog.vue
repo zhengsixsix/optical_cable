@@ -1,8 +1,9 @@
 ﻿<script setup lang="ts">
+import { useAppStore } from '@/stores/app'
 import { ref, computed, watch } from 'vue'
 import { Button, Select, Tooltip } from '@/shared/components/base'
 import { Radio, Waves, Sliders, Calculator, RefreshCw, AlertTriangle, CheckCircle, X } from 'lucide-vue-next'
-import { useSettingsStore, useAppStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import { MODULATION_PARAMS, type ModulationFormat } from '@/types/simulation'
 
 const props = defineProps<{

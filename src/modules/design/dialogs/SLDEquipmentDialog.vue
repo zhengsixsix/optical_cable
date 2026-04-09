@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useSLDStore, useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useSLDStore } from '@/stores/sld'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { X, Save, Radio } from 'lucide-vue-next'
 import type { SLDEquipmentType } from '@/types'

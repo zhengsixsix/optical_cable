@@ -27,4 +27,5 @@ dist-ssr
 # Temp files
 *.timestamp-*.mjs
 .sanshu-memory/
+tmp/
 WARP.md

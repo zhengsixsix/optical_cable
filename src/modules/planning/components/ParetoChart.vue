@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRouteStore } from '@/stores'
+import { useRouteStore } from '@/stores/route'
 import type { Route } from '@/types'
 
 /**

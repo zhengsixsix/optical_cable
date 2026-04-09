@@ -5,7 +5,7 @@
  * 这是 UI 配置与计算引擎之间的桥梁
  */
 
-import { useSettingsStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import type { FiberParams, AmplifierParams, WDMSystemParams } from '@/types/simulation'
 import { DEFAULT_FIBER_PARAMS, DEFAULT_AMPLIFIER_PARAMS } from '@/types/simulation'
 

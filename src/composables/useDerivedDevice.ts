@@ -9,7 +9,7 @@
  */
 
 import { ref, computed } from 'vue'
-import { useSettingsStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import type { 
   ComponentSpec, 
   FiberSpec, 

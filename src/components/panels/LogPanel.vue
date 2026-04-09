@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { Download, Trash2 } from 'lucide-vue-next'
 
 const appStore = useAppStore()

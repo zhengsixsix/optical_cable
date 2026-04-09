@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useSettingsStore } from '@/stores/settings'
 import { ref, reactive, watch } from 'vue'
-import { useAppStore, useSettingsStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
 import { Input, Select } from '@/shared/components/base'
 import { X, Cable, Plus } from 'lucide-vue-next'
 

@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useRPLStore, useAppStore } from '@/stores'
+import { useAppStore } from '@/stores/app'
+import { useRPLStore } from '@/stores/rpl'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { X, Save, MapPin } from 'lucide-vue-next'
 import type { RPLRecord, RPLPointType, RPLCableCode } from '@/types'
