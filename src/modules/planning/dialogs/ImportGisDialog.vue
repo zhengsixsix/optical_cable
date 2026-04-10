@@ -4,6 +4,7 @@ import { ref, computed, watch } from 'vue'
 import { Upload, X, FileText, Loader2, Check, AlertCircle, Trash2 } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
 import { fetchSharedGisFiles, type SharedGisFile } from '@/services'
+import { useGeoService } from '@/services/GeoService'
 import { Button } from '@/shared/components/base'
 
 interface Props {
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const layerStore = useLayerStore()
+const geoService = useGeoService()
 
 const dataSource = ref<'local' | 'server'>('local')
 const isDragging = ref(false)
@@ -118,13 +120,82 @@ function checkDuplicateAndRemember(file: File): boolean {
   const signature = `${file.name}_${file.size}_${file.lastModified}`
   const cache = getUploadCache()
   if (cache.includes(signature)) {
-    appStore.showNotification({ type: 'warning', message: `检测到重复文件: ${file.name}，建议直接使用服务器共享数据` })
+    appStore.showNotification({ type: 'warning', message: `检测到重复文件: ${file.name}，已跳过本次重复添加` })
     return true
   }
   cache.push(signature)
   setUploadCache(cache)
   return false
 }
+
+function getFileExtension(fileName: string): string {
+  return fileName.split('.').pop()?.toLowerCase() || ''
+}
+
+async function buildLayerDataFromLocalFile(layer: GisLayerItem, file: File) {
+  const ext = getFileExtension(file.name)
+
+  if (ext === 'geojson' || ext === 'json') {
+    const result = await geoService.importFile(file)
+    if (!result.success || !result.data) {
+      throw new Error(result.errors?.[0] || result.message || 'GeoJSON 解析失败')
+    }
+    return {
+      id: layer.id,
+      features: result.data as any,
+      metadata: {
+        source: file.name,
+        projection: coordinateSystem.value || 'EPSG:4326',
+      },
+    }
+  }
+
+  if (ext === 'tif' || ext === 'tiff' || ext === 'shp') {
+    return {
+      id: layer.id,
+      rasterData: await file.arrayBuffer(),
+      metadata: {
+        source: file.name,
+        projection: coordinateSystem.value || 'EPSG:4326',
+      },
+    }
+  }
+
+  throw new Error(`暂不支持的图层格式: .${ext}`)
+}
+
+async function buildLayerDataFromSharedPath(layer: GisLayerItem, filePath: string) {
+  const ext = getFileExtension(filePath)
+  const response = await fetch(filePath)
+  if (!response.ok) {
+    throw new Error(`共享文件读取失败: ${response.status}`)
+  }
+
+  if (ext === 'geojson' || ext === 'json') {
+    return {
+      id: layer.id,
+      features: await response.json(),
+      metadata: {
+        source: filePath,
+        projection: coordinateSystem.value || 'EPSG:4326',
+      },
+    }
+  }
+
+  if (ext === 'tif' || ext === 'tiff' || ext === 'shp') {
+    return {
+      id: layer.id,
+      rasterData: await response.arrayBuffer(),
+      metadata: {
+        source: filePath,
+        projection: coordinateSystem.value || 'EPSG:4326',
+      },
+    }
+  }
+
+  throw new Error(`暂不支持的共享图层格式: .${ext}`)
+}
+
 function handleSelectAll(checked: boolean) {
   gisLayers.value.forEach(layer => {
     layer.checked = checked
@@ -230,27 +301,50 @@ async function handleImport() {
     appStore.showNotification({ type: 'warning', message: '请选择必须的图层文件' })
     return
   }
-  
+
   isProcessing.value = true
-  
   const selectedLayers = gisLayers.value.filter(l => l.checked && l.filePath)
-  
-  for (const layer of selectedLayers) {
-    layer.status = 'pending'
+  let successCount = 0
+  const failedLayers: string[] = []
+
+  try {
+    for (const layer of selectedLayers) {
+      layer.status = 'pending'
+      try {
+        if (dataSource.value === 'local') {
+          const file = droppedFiles.value.find(item => item.name === layer.filePath)
+          if (!file) throw new Error('未找到对应的本地文件')
+          const layerData = await buildLayerDataFromLocalFile(layer, file)
+          layerStore.setLayerData(layer.id, layerData as any)
+        } else {
+          const layerData = await buildLayerDataFromSharedPath(layer, layer.filePath)
+          layerStore.setLayerData(layer.id, layerData as any)
+        }
+
+        layerStore.setLayerVisible(layer.id, true)
+        layer.status = 'success'
+        successCount++
+      } catch (error) {
+        layer.status = 'error'
+        failedLayers.push(`${layer.name}: ${(error as Error).message}`)
+      }
+    }
+  } finally {
+    isProcessing.value = false
   }
-  
-  await new Promise(resolve => setTimeout(resolve, 500))
-  
-  for (const layer of selectedLayers) {
-    await new Promise(resolve => setTimeout(resolve, 300))
-    layer.status = 'success'
-    layerStore.setLayerLoaded(layer.id, true)
+
+  if (successCount > 0) {
+    const message = failedLayers.length > 0
+      ? `已导入 ${successCount} 个图层，${failedLayers.length} 个图层失败`
+      : `成功导入 ${successCount} 个图层`
+    appStore.showNotification({ type: failedLayers.length > 0 ? 'warning' : 'success', message })
+    appStore.addLog('INFO', `GIS 图层导入完成: ${selectedLayers.filter(layer => layer.status === 'success').map(layer => layer.name).join('、')}`)
+    emit('success')
+    emit('close')
+    return
   }
-  
-  isProcessing.value = false
-  appStore.showNotification({ type: 'success', message: `成功导入 ${selectedLayers.length} 个图层` })
-  emit('success')
-  emit('close')
+
+  appStore.showNotification({ type: 'error', message: failedLayers[0] || 'GIS 图层导入失败' })
 }
 
 function handleClose() {

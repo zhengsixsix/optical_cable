@@ -5,6 +5,8 @@ import {
   X, Activity, Monitor, AlertTriangle, Settings, Search, RefreshCw, Download, Filter, CheckCircle, XCircle, Clock, ChevronDown, List, BarChart3, Bell, Shield, Eye, ArrowLeft, Zap, Info, Link2, FileText, Database, Save, HardDrive, Mail, RotateCcw, Trash2, MessageSquare, Upload, Plus
 } from 'lucide-vue-next'
 import { useMonitorStore } from '@/stores/monitor'
+import { useAppStore } from '@/stores/app'
+import { generateMonitoringReportHtml } from '@/services/MonitoringReportService'
 const props = defineProps<{
   visible: boolean
 }>()
@@ -14,6 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const monitorStore = useMonitorStore()
+const appStore = useAppStore()
 
 // 弹窗打开时确保有模拟数据
 watch(() => props.visible, (v) => {
@@ -675,10 +678,38 @@ const notifyConfig = ref({
   onRecovery: true,
 })
 
+const interpolationConfig = ref({
+  enabled: true,
+  method: '样条插值',
+  maxGap: '12',
+  confidence: '95',
+})
+
+const predictionConfig = ref({
+  lstmEnabled: true,
+  dynamicBaselineEnabled: true,
+  lookbackWindow: '72',
+  retrainHours: '24',
+  forecastHours: '12',
+  sensitivity: '85',
+})
+
+const reportSections = ref({
+  overview: true,
+  topology: true,
+  devices: true,
+  alarms: true,
+  prediction: true,
+  logs: true,
+})
+
 const resetSysConfig = () => {
   sysConfig.value = { name: '海缆健康度管理系统', refreshInterval: '5', sessionTimeout: '30', timezone: 'utc8' }
   healthThreshold.value = { warningThreshold: '70', faultThreshold: '50', applyDevice: true, applyModule: true, applyLink: true }
   notifyConfig.value = { email: true, emailReceivers: 'admin@example.com; ops@example.com', sms: false, smsReceivers: '', inApp: true, onWarning: true, onFault: true, onRecovery: true }
+  interpolationConfig.value = { enabled: true, method: '样条插值', maxGap: '12', confidence: '95' }
+  predictionConfig.value = { lstmEnabled: true, dynamicBaselineEnabled: true, lookbackWindow: '72', retrainHours: '24', forecastHours: '12', sensitivity: '85' }
+  reportSections.value = { overview: true, topology: true, devices: true, alarms: true, prediction: true, logs: true }
 }
 
 // 阈值条可视化百分比
@@ -718,6 +749,120 @@ const backupRecords = ref<BackupRecord[]>([
   { time: '2026-01-18 02:00', type: '自动', size: '2.1 GB', status: 'success' },
   { time: '2026-01-17 02:00', type: '自动', size: '2.1 GB', status: 'success' },
 ])
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+const buildReportFilename = (ext: string) => {
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T-]/g, '')
+  const base = (sysConfig.value.name || '监控分析报告').replace(/[\\/:*?"<>|]/g, '_')
+  return `${base}_${timestamp}.${ext}`
+}
+
+const buildMonitoringReportData = () => ({
+  title: `${sysConfig.value.name || '监控分析报告'} - 监控分析报告`,
+  exportTime: new Date().toLocaleString('zh-CN'),
+  systemHealth: systemHealth.value,
+  onlineDevices: onlineDevices.value,
+  totalDevices: totalDevices.value,
+  activeAlarmCount: alarmCount.value,
+  devices: monitorStore.devices.map(device => ({
+    id: device.id,
+    name: device.name,
+    type: device.type,
+    kp: device.kp,
+    status: device.status,
+    inputPower: device.inputPower,
+    outputPower: device.outputPower,
+    temperature: device.temperature,
+    osnr: device.osnr,
+    ber: device.ber,
+  })),
+  alarms: monitorStore.alarmHistory.slice(0, 50).map(alarm => ({
+    id: alarm.id,
+    time: alarm.time,
+    device: alarm.device,
+    level: alarm.level,
+    status: alarm.status,
+    message: alarm.message,
+  })),
+  interpolation: {
+    enabled: interpolationConfig.value.enabled,
+    method: interpolationConfig.value.method,
+    maxGap: Number(interpolationConfig.value.maxGap),
+    confidence: Number(interpolationConfig.value.confidence),
+  },
+  prediction: {
+    lstmEnabled: predictionConfig.value.lstmEnabled,
+    dynamicBaselineEnabled: predictionConfig.value.dynamicBaselineEnabled,
+    lookbackWindow: Number(predictionConfig.value.lookbackWindow),
+    retrainHours: Number(predictionConfig.value.retrainHours),
+    forecastHours: Number(predictionConfig.value.forecastHours),
+    sensitivity: Number(predictionConfig.value.sensitivity),
+  },
+  logs: appStore.logs.slice(-50).map(log => ({
+    time: log.time,
+    level: log.level,
+    type: log.category || '系统日志',
+    object: log.deviceName || log.deviceId || '-',
+    content: log.message,
+  })),
+})
+
+const exportSystemLogs = (format: 'txt' | 'csv' = 'txt') => {
+  appStore.exportLogs(format)
+  appStore.showNotification({
+    type: 'success',
+    message: format === 'csv' ? '系统日志已导出为 CSV' : '系统日志已导出',
+  })
+}
+
+const exportMonitoringAnalysisReport = (format: 'pdf' | 'word' | 'html' = 'pdf') => {
+  const html = generateMonitoringReportHtml(buildMonitoringReportData(), reportSections.value)
+
+  if (format === 'pdf') {
+    const win = window.open('', '_blank')
+    if (!win) {
+      appStore.showNotification({ type: 'error', message: '无法打开打印窗口，请检查浏览器拦截设置' })
+      return
+    }
+    win.document.write(html)
+    win.document.close()
+    setTimeout(() => win.print(), 300)
+  } else if (format === 'word') {
+    const docHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"></head><body>${html}</body></html>`
+    downloadBlob(new Blob([docHtml], { type: 'application/msword;charset=utf-8' }), buildReportFilename('doc'))
+  } else {
+    downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), buildReportFilename('html'))
+  }
+
+  appStore.addLog('INFO', `监控分析报告已导出: ${format.toUpperCase()}`)
+  appStore.showNotification({ type: 'success', message: `监控分析报告已导出为 ${format.toUpperCase()}` })
+}
+
+const saveMonitoringConfig = () => {
+  appStore.addLog('INFO', '监控中心配置已保存')
+  appStore.showNotification({ type: 'success', message: '监控配置已保存，插值与预测设置已生效' })
+}
+
+const runBackupNow = () => {
+  backupRecords.value.unshift({
+    time: new Date().toLocaleString('zh-CN'),
+    type: '手动',
+    size: '2.4 GB',
+    status: 'success',
+  })
+  backupRecords.value = backupRecords.value.slice(0, 10)
+  appStore.addLog('INFO', '已创建监控数据手动备份')
+  appStore.showNotification({ type: 'success', message: '已创建手动备份记录' })
+}
 </script>
 
 <template>
@@ -1175,7 +1320,7 @@ const backupRecords = ref<BackupRecord[]>([
                     <Button variant="outline" size="sm" @click="logTimelineVisible = !logTimelineVisible">
                       <Clock class="w-3.5 h-3.5 mr-1" /> {{ logTimelineVisible ? '隐藏时间轴' : '查看日志时间轴' }}
                     </Button>
-                    <Button variant="outline" size="sm">
+                    <Button variant="outline" size="sm" @click="saveMonitoringConfig">
                       <Download class="w-3.5 h-3.5 mr-1" /> 导出日志
                     </Button>
                   </div>
@@ -1573,6 +1718,84 @@ const backupRecords = ref<BackupRecord[]>([
 
             <!-- ========= 系统配置 ========= -->
             <div v-if="systemSubTab === 'config'" class="space-y-4">
+              <Card>
+                <CardContent class="p-4 space-y-4">
+                  <div class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                    <Zap class="w-4 h-4" /> 插值补全与预测模型
+                  </div>
+                  <div class="grid grid-cols-2 gap-4 text-xs">
+                    <div class="border rounded-lg p-3 space-y-3">
+                      <div class="flex items-center justify-between">
+                        <span class="font-medium text-gray-700">插值补全</span>
+                        <button class="flex items-center gap-2" @click="interpolationConfig.enabled = !interpolationConfig.enabled">
+                          <span :class="['w-4 h-4 rounded border flex items-center justify-center', interpolationConfig.enabled ? 'bg-blue-500 border-blue-500' : 'border-gray-300']">
+                            <CheckCircle v-if="interpolationConfig.enabled" class="w-3 h-3 text-white" />
+                          </span>
+                          <span class="text-gray-500">{{ interpolationConfig.enabled ? '启用' : '关闭' }}</span>
+                        </button>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="w-24 text-right text-gray-500">补全方法</span>
+                        <div class="flex-1">
+                          <Select v-model="interpolationConfig.method" :options="[{ value: '样条插值', label: '样条插值' }, { value: '线性插值', label: '线性插值' }, { value: '卡尔曼滤波', label: '卡尔曼滤波' }]" />
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="w-24 text-right text-gray-500">最大缺口</span>
+                        <Input v-model="interpolationConfig.maxGap" class="w-16" />
+                        <span class="text-gray-400">采样点</span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="w-24 text-right text-gray-500">置信阈值</span>
+                        <Input v-model="interpolationConfig.confidence" class="w-16" />
+                        <span class="text-gray-400">%</span>
+                      </div>
+                    </div>
+                    <div class="border rounded-lg p-3 space-y-3">
+                      <div class="flex items-center justify-between">
+                        <span class="font-medium text-gray-700">LSTM 与动态基线</span>
+                        <div class="flex items-center gap-3">
+                          <label class="flex items-center gap-1.5 cursor-pointer" @click="predictionConfig.lstmEnabled = !predictionConfig.lstmEnabled">
+                            <span :class="['w-4 h-4 rounded border flex items-center justify-center', predictionConfig.lstmEnabled ? 'bg-blue-500 border-blue-500' : 'border-gray-300']">
+                              <CheckCircle v-if="predictionConfig.lstmEnabled" class="w-3 h-3 text-white" />
+                            </span>
+                            <span class="text-gray-500">LSTM</span>
+                          </label>
+                          <label class="flex items-center gap-1.5 cursor-pointer" @click="predictionConfig.dynamicBaselineEnabled = !predictionConfig.dynamicBaselineEnabled">
+                            <span :class="['w-4 h-4 rounded border flex items-center justify-center', predictionConfig.dynamicBaselineEnabled ? 'bg-blue-500 border-blue-500' : 'border-gray-300']">
+                              <CheckCircle v-if="predictionConfig.dynamicBaselineEnabled" class="w-3 h-3 text-white" />
+                            </span>
+                            <span class="text-gray-500">动态基线</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <div class="flex items-center gap-2">
+                          <span class="w-20 text-right text-gray-500">回看窗</span>
+                          <Input v-model="predictionConfig.lookbackWindow" class="w-16" />
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="w-20 text-right text-gray-500">重训周期</span>
+                          <Input v-model="predictionConfig.retrainHours" class="w-16" />
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="w-20 text-right text-gray-500">预测时长</span>
+                          <Input v-model="predictionConfig.forecastHours" class="w-16" />
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="w-20 text-right text-gray-500">灵敏度</span>
+                          <Input v-model="predictionConfig.sensitivity" class="w-16" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex justify-end">
+                    <Button size="sm" @click="saveMonitoringConfig">
+                      <Save class="w-3.5 h-3.5 mr-1" /> 保存插值与预测配置
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
               <!-- 基础配置 -->
               <Card>
                 <CardContent class="p-4 space-y-4">
@@ -1746,7 +1969,7 @@ const backupRecords = ref<BackupRecord[]>([
                 <Button variant="outline" @click="resetSysConfig">
                   <RotateCcw class="w-4 h-4 mr-1" /> 恢复默认
                 </Button>
-                <Button>
+                <Button @click="saveMonitoringConfig">
                   <Save class="w-4 h-4 mr-1" /> 保存配置
                 </Button>
               </div>
@@ -1754,6 +1977,59 @@ const backupRecords = ref<BackupRecord[]>([
 
             <!-- ========= 数据管理 ========= -->
             <div v-if="systemSubTab === 'data'" class="space-y-4">
+              <Card>
+                <CardContent class="p-4 space-y-4">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                      <FileText class="w-4 h-4" /> 分析报告导出
+                    </div>
+                    <div class="text-xs text-gray-400">支持 PDF / Word / HTML</div>
+                  </div>
+                  <div class="grid grid-cols-3 gap-3 text-xs">
+                    <label class="flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2">
+                      <input v-model="reportSections.overview" type="checkbox" class="w-4 h-4 accent-blue-500" />
+                      <span>运行总览</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2">
+                      <input v-model="reportSections.topology" type="checkbox" class="w-4 h-4 accent-blue-500" />
+                      <span>拓扑图</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2">
+                      <input v-model="reportSections.devices" type="checkbox" class="w-4 h-4 accent-blue-500" />
+                      <span>设备数据</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2">
+                      <input v-model="reportSections.alarms" type="checkbox" class="w-4 h-4 accent-blue-500" />
+                      <span>告警明细</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2">
+                      <input v-model="reportSections.prediction" type="checkbox" class="w-4 h-4 accent-blue-500" />
+                      <span>插值与预测</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2">
+                      <input v-model="reportSections.logs" type="checkbox" class="w-4 h-4 accent-blue-500" />
+                      <span>日志样本</span>
+                    </label>
+                  </div>
+                  <div class="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs text-gray-500 gap-3">
+                    <span>导出内容会包含当前拓扑图、设备状态、告警、插值补全和 LSTM/动态基线配置。</span>
+                    <Button variant="outline" size="sm" @click="exportSystemLogs('csv')">
+                      <Download class="w-3.5 h-3.5 mr-1" /> 导出日志
+                    </Button>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <Button variant="outline" size="sm" @click="exportMonitoringAnalysisReport('pdf')">
+                      <Download class="w-3.5 h-3.5 mr-1" /> PDF
+                    </Button>
+                    <Button variant="outline" size="sm" @click="exportMonitoringAnalysisReport('word')">
+                      <FileText class="w-3.5 h-3.5 mr-1" /> Word
+                    </Button>
+                    <Button variant="outline" size="sm" @click="exportMonitoringAnalysisReport('html')">
+                      <Eye class="w-3.5 h-3.5 mr-1" /> HTML
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
               <!-- 存储状态 -->
               <Card>
                 <CardContent class="p-4 space-y-4">
@@ -1857,7 +2133,7 @@ const backupRecords = ref<BackupRecord[]>([
                     <Button variant="outline" size="sm">
                       <Save class="w-3.5 h-3.5 mr-1" /> 保存设置
                     </Button>
-                    <Button size="sm">
+                    <Button size="sm" @click="runBackupNow">
                       <Plus class="w-3.5 h-3.5 mr-1" /> 立即备份
                     </Button>
                   </div>

@@ -56,6 +56,14 @@ import { fetchRoutePlanning, checkRoutePlanningService } from '@/services/RouteP
 import type { RoutePlanningRequest } from '@/services/RoutePlanningApiService'
 import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
 import { applyCableSegmentsToRplRecords } from '@/services/RPLSyncService'
+import {
+  buildRouteRiskCostSummary,
+  validateCableSegments,
+  validateRouteGeometry,
+  type PlanningIssue,
+  type PlanningValidationResult,
+  type RouteRiskCostSummary,
+} from '@/services/PlanningInsightService'
 
 const mapStore = useMapStore()
 const layerStore = useLayerStore()
@@ -92,6 +100,9 @@ const showCableSegmentConfigDialog = ref(false)
 const selectedCableSegment = ref<CableSegment | null>(null)
 const currentSegmentMethod = ref('')  // 当前分段方式
 const currentSegmentGenerateTime = ref('')  // 生成时间
+const routeGeometryIssues = ref<PlanningIssue[]>([])
+const cableSegmentIssues = ref<PlanningIssue[]>([])
+const riskCostSummary = ref<RouteRiskCostSummary | null>(null)
 
 interface RouteEditSnapshot {
   routeId: string
@@ -106,6 +117,93 @@ const currentEditingRouteId = ref<string | null>(null)
 const activeRouteId = computed(() => getActiveRouteId() || '')
 const canUndoRouteEdit = computed(() => routeEditHistory.value.length > 1)
 const canRedoRouteEdit = computed(() => routeEditFuture.value.length > 0)
+const activeRoute = computed(() =>
+  routeStore.paretoRoutes.find(route => route.id === activeRouteId.value) || routeStore.selectedRoute || null
+)
+const visibleRouteGeometryIssues = computed(() => routeGeometryIssues.value.slice(0, 3))
+const visibleCableSegmentIssues = computed(() => cableSegmentIssues.value.slice(0, 4))
+
+const createEmptyValidationResult = (): PlanningValidationResult => ({
+  valid: true,
+  errors: [],
+  warnings: [],
+  infos: [],
+  all: [],
+})
+
+const getIssueLevelLabel = (level: PlanningIssue['level']) => {
+  if (level === 'error') return '错误'
+  if (level === 'warning') return '预警'
+  return '通过'
+}
+
+const getIssueLevelClasses = (level: PlanningIssue['level']) => {
+  if (level === 'error') return 'bg-red-50 border-red-200 text-red-700'
+  if (level === 'warning') return 'bg-amber-50 border-amber-200 text-amber-700'
+  return 'bg-emerald-50 border-emerald-200 text-emerald-700'
+}
+
+const getIssueDotClasses = (level: PlanningIssue['level']) => {
+  if (level === 'error') return 'bg-red-500'
+  if (level === 'warning') return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+const formatRiskCostValue = (value: number) => {
+  if (value >= 10000) return `${(value / 10000).toFixed(1)} 万`
+  return value.toFixed(1)
+}
+
+const loadShpFeatures = async (url: string) => {
+  const shpLoader = useShpLoader()
+  const geojsonData = await shpLoader.load(url)
+  return shpLoader.parseFeatures(geojsonData)
+}
+
+const getUploadedVectorFeatures = (layerId: string) => {
+  const layerData = layerStore.getLayerData(layerId)
+  if (!layerData?.features) return []
+
+  try {
+    return useShpLoader().parseFeatures(layerData.features as any)
+  } catch (error) {
+    appStore.addLog('ERROR', `${layerId} 图层数据解析失败: ${(error as Error).message}`)
+    return []
+  }
+}
+
+const getUploadedVolcanoData = () => {
+  return getUploadedVectorFeatures('volcano')
+    .map(feature => {
+      const geometry = feature.getGeometry()
+      if (!(geometry instanceof Point)) return null
+      const [longitude, latitude] = geometry.getCoordinates()
+      return { longitude, latitude }
+    })
+    .filter((item): item is { longitude: number; latitude: number } => !!item)
+}
+
+const getUploadedEarthquakeData = () => {
+  return getUploadedVectorFeatures('earthquake')
+    .map(feature => {
+      const geometry = feature.getGeometry()
+      if (!(geometry instanceof Point)) return null
+      const [longitude, latitude] = geometry.getCoordinates()
+      const magnitude = Number(
+        feature.get('magnitude')
+        ?? feature.get('mag')
+        ?? feature.get('level')
+        ?? feature.get('weight')
+        ?? 5,
+      )
+      return {
+        longitude,
+        latitude,
+        magnitude: Number.isFinite(magnitude) ? magnitude : 5,
+      }
+    })
+    .filter((item): item is { longitude: number; latitude: number; magnitude: number } => !!item)
+}
 
 // 选中的光纤线
 const selectedCableId = ref<string | null>(null)
@@ -123,6 +221,7 @@ let volcanoIconLayer: VectorLayer<VectorSource> | null = null
 let volcanoHeatmapLayer: Heatmap | null = null
 let earthquakeIconLayer: WebGLPointsLayer<VectorSource> | null = null
 let earthquakeHeatmapLayer: Heatmap | null = null
+let riskCostHeatmapLayer: Heatmap | null = null
 let volcanoDataLoaded = false
 let earthquakeDataLoaded = false
 
@@ -477,7 +576,13 @@ const handleModifyEnd = (evt: any) => {
     geom.setCoordinates(newCoords)
 
     pushRouteEditSnapshot(routeId)
-    appStore.showNotification({ type: 'success', message: '路线已调整' })
+    const geometryResult = refreshRouteGeometryValidation(route)
+    updateRiskCostHeatmap(route)
+    const geometryMessage = geometryResult.errors[0]?.message || geometryResult.warnings[0]?.message
+    appStore.showNotification({
+      type: geometryResult.valid ? 'success' : 'warning',
+      message: geometryMessage ? `路线已调整，${geometryMessage}` : '路线已调整，几何校验通过',
+    })
     appStore.addLog('INFO', `路线已调整：${newPoints.length} 个点，总长 ${route.totalLength} km`)
   }
 }
@@ -505,6 +610,10 @@ const handleViewParetoChart = () => {
 // 选择路径事件
 const handleSelectRoute = (routeId: string) => {
   // 重绘路径以更新选中状态
+  routeStore.selectRoute(routeId)
+  const selected = routeStore.paretoRoutes.find(route => route.id === routeId) || null
+  refreshRouteGeometryValidation(selected)
+  updateRiskCostHeatmap(selected)
   drawParetoRoutes()
 }
 
@@ -529,6 +638,99 @@ const buildRiskDataFromRoute = (route: { segments: Array<{ length: number; riskL
     riskData.push({ kp: cumulativeKp, riskValue: lastRisk })
   }
   return riskData
+}
+
+const refreshRouteGeometryValidation = (route: Route | null = activeRoute.value) => {
+  if (!route) {
+    routeGeometryIssues.value = []
+    return createEmptyValidationResult()
+  }
+  const result = validateRouteGeometry(route)
+  routeGeometryIssues.value = result.all.filter(issue => issue.level !== 'info' || result.all.length === 1)
+  return result
+}
+
+const refreshCableSegmentValidation = (segments: CableSegment[] = cableSegmentStore.segments) => {
+  if (segments.length === 0) {
+    cableSegmentIssues.value = []
+    return createEmptyValidationResult()
+  }
+  const result = validateCableSegments(
+    segments,
+    cableSegmentStore.generateConfig,
+    settingsStore.routePlanningConfig.armorMappings || [],
+  )
+  cableSegmentIssues.value = result.all.filter(issue => issue.level !== 'info' || result.all.length === 1)
+  return result
+}
+
+const refreshRiskCostSummary = (route: Route | null = activeRoute.value) => {
+  riskCostSummary.value = buildRouteRiskCostSummary(route, settingsStore.routePlanningConfig.armorMappings || [])
+  return riskCostSummary.value
+}
+
+const updateRiskCostHeatmap = (route: Route | null = activeRoute.value) => {
+  if (!map) return
+
+  const summary = refreshRiskCostSummary(route)
+  if (!route || !summary || route.segments.length === 0) {
+    if (riskCostHeatmapLayer) riskCostHeatmapLayer.setVisible(false)
+    return
+  }
+
+  const pointMap: Record<string, [number, number]> = {}
+  route.points.forEach(point => {
+    pointMap[point.id] = point.coordinates
+  })
+
+  const unitPriceByRisk: Record<'high' | 'medium' | 'low', number> = {
+    high: summary.bands.find(item => item.riskLevel === 'high')?.unitPrice || 24,
+    medium: summary.bands.find(item => item.riskLevel === 'medium')?.unitPrice || 19.5,
+    low: summary.bands.find(item => item.riskLevel === 'low')?.unitPrice || 15,
+  }
+
+  const maxSegmentCost = Math.max(
+    ...route.segments.map(segment => (segment.length || 0) * unitPriceByRisk[segment.riskLevel || 'low']),
+    1,
+  )
+
+  const features = route.segments.flatMap(segment => {
+    const start = pointMap[segment.startPointId]
+    const end = pointMap[segment.endPointId]
+    if (!start || !end) return []
+
+    const segmentCost = (segment.length || 0) * unitPriceByRisk[segment.riskLevel || 'low']
+    const weight = Math.max(0.15, Math.min(1, segmentCost / maxSegmentCost))
+    const mid: [number, number] = [
+      (start[0] + end[0]) / 2,
+      (start[1] + end[1]) / 2,
+    ]
+
+    return [
+      new Feature({ geometry: new Point(start), weight }),
+      new Feature({ geometry: new Point(mid), weight }),
+      new Feature({ geometry: new Point(end), weight }),
+    ]
+  })
+
+  const source = new VectorSource({ features })
+  if (!riskCostHeatmapLayer) {
+    riskCostHeatmapLayer = new Heatmap({
+      source,
+      blur: 38,
+      radius: 18,
+      opacity: 0.45,
+      zIndex: 40,
+      gradient: ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444'],
+      weight: feature => feature.get('weight') || 0.2,
+      visible: true,
+    })
+    map.addLayer(riskCostHeatmapLayer)
+    return
+  }
+
+  riskCostHeatmapLayer.setSource(source)
+  riskCostHeatmapLayer.setVisible(true)
 }
 
 // 打开海缆段生成对话框
@@ -565,6 +767,8 @@ const handleCableSegmentGenerate = (config: SegmentGenerateConfig) => {
   // 设置预览数据
   generatedSegments.value = segments
   segmentSummary.value = cableSegmentStore.summary
+  syncCableSegmentsToRPL(segments)
+  refreshCableSegmentValidation(segments)
   
   // 打开预览对话框
   showCableSegmentPreviewDialog.value = true
@@ -582,10 +786,11 @@ const handleCableSegmentConfirm = (segments: CableSegment[]) => {
   
   // ★ 同步海缆段缆型到 RPL 记录
   syncCableSegmentsToRPL(segments)
+  const validationResult = refreshCableSegmentValidation(segments)
   
   appStore.showNotification({ 
-    type: 'success', 
-    message: `海缆段已确认入库，共 ${segments.length} 段，总长 ${segmentSummary.value?.totalLength.toFixed(2)} km` 
+    type: validationResult.valid ? 'success' : 'warning',
+    message: validationResult.errors[0]?.message || validationResult.warnings[0]?.message || `海缆段已确认入库，共 ${segments.length} 段，总长 ${segmentSummary.value?.totalLength.toFixed(2)} km`,
   })
   appStore.addLog('INFO', `海缆段入库完成：${segments.length} 段，已同步缆型到 RPL`)
 
@@ -690,7 +895,12 @@ const getCurrentRouteLength = (): number => {
 const handleCableSegmentConfigSave = (segment: CableSegment) => {
   cableSegmentStore.updateSegment(segment.id, segment)
   syncCableSegmentsToRPL(cableSegmentStore.segments)
-  appStore.showNotification({ type: 'success', message: `海缆段 ${segment.id.slice(-8)} 配置已保存` })
+  const validationResult = refreshCableSegmentValidation(cableSegmentStore.segments)
+  appStore.showNotification({
+    type: validationResult.valid ? 'success' : 'warning',
+    message: validationResult.errors[0]?.message || validationResult.warnings[0]?.message || `海缆段 ${segment.id.slice(-8)} 配置已保存`,
+  })
+  drawParetoRoutes()
 }
 
 // 关闭海缆段配置弹窗（取消高亮）
@@ -1072,7 +1282,10 @@ const initMap = () => {
 
     layerStore.setLayerLoading('volcano', true)
 
-    const volcanoData = await loadVolcanoData('/data/volcane_location.xlsx')
+    const uploadedVolcanoData = getUploadedVolcanoData()
+    const volcanoData = uploadedVolcanoData.length > 0
+      ? uploadedVolcanoData
+      : await loadVolcanoData('/data/volcane_location.xlsx')
     if (volcanoData.length === 0) {
       layerStore.setLayerLoading('volcano', false)
       return
@@ -1128,8 +1341,9 @@ const initMap = () => {
     volcanoDataLoaded = true
     layerStore.setLayerLoaded('volcano', true)
 
-    appStore.showNotification({type: 'success', message: `已加载 ${volcanoData.length} 个火山位置`})
-    appStore.addLog('INFO', `火山数据加载完成: ${volcanoData.length} 个点位`)
+    const sourceLabel = uploadedVolcanoData.length > 0 ? '本地上传' : '默认数据'
+    appStore.showNotification({type: 'success', message: `已加载 ${volcanoData.length} 个火山位置（${sourceLabel}）`})
+    appStore.addLog('INFO', `火山数据加载完成: ${volcanoData.length} 个点位（${sourceLabel}）`)
   }
 
   const setVolcanoPointsVisible = (visible: boolean) => {
@@ -1143,7 +1357,10 @@ const initMap = () => {
 
     layerStore.setLayerLoading('earthquake', true)
 
-    const earthquakeData = await loadEarthquakeData('/data/earthQuakeData.xlsx')
+    const uploadedEarthquakeData = getUploadedEarthquakeData()
+    const earthquakeData = uploadedEarthquakeData.length > 0
+      ? uploadedEarthquakeData
+      : await loadEarthquakeData('/data/earthQuakeData.xlsx')
     if (earthquakeData.length === 0) {
       layerStore.setLayerLoading('earthquake', false)
       return
@@ -1218,8 +1435,9 @@ const initMap = () => {
     earthquakeDataLoaded = true
     layerStore.setLayerLoaded('earthquake', true)
 
-    appStore.showNotification({type: 'success', message: `已加载 ${earthquakeData.length} 条地震数据`})
-    appStore.addLog('INFO', `地震数据加载完成: ${earthquakeData.length} 条记录`)
+    const sourceLabel = uploadedEarthquakeData.length > 0 ? '本地上传' : '默认数据'
+    appStore.showNotification({type: 'success', message: `已加载 ${earthquakeData.length} 条地震数据（${sourceLabel}）`})
+    appStore.addLog('INFO', `地震数据加载完成: ${earthquakeData.length} 条记录（${sourceLabel}）`)
   }
 
   const setEarthquakePointsVisible = (visible: boolean) => {
@@ -1260,13 +1478,12 @@ const initMap = () => {
     if (!map || coldCoralDataLoaded) return
 
     layerStore.setLayerLoading('coldCoral', true)
-    const shpLoader = useShpLoader()
 
     try {
-      const geojsonData = await shpLoader.load('/data/海草.zip')
-
-      // 解析为 Features
-      const features = shpLoader.parseFeatures(geojsonData)
+      const uploadedFeatures = getUploadedVectorFeatures('coldCoral')
+      const features = uploadedFeatures.length > 0
+        ? uploadedFeatures
+        : await loadShpFeatures('/data/海草.zip')
       if (features.length === 0) {
         layerStore.setLayerLoading('coldCoral', false)
         return
@@ -1289,8 +1506,9 @@ const initMap = () => {
       coldCoralDataLoaded = true
       layerStore.setLayerLoaded('coldCoral', true)
 
-      appStore.showNotification({type: 'success', message: `已加载冷水珊瑚数据，共 ${layers.length} 个图层`})
-      appStore.addLog('INFO', `冷水珊瑚数据加载完成`)
+      const sourceLabel = uploadedFeatures.length > 0 ? '本地上传' : '默认数据'
+      appStore.showNotification({type: 'success', message: `已加载冷水珊瑚数据，共 ${layers.length} 个图层（${sourceLabel}）`})
+      appStore.addLog('INFO', `冷水珊瑚数据加载完成（${sourceLabel}）`)
 
       // 计算所有要素的范围并缩放 (恢复全球视图)
       // 获取所有图层的源并计算总范围
@@ -1348,11 +1566,12 @@ const initMap = () => {
     if (!map || fishingDataLoaded) return
 
     layerStore.setLayerLoading('fishing', true)
-    const shpLoader = useShpLoader()
 
     try {
-      const geojsonData = await shpLoader.load('/data/渔业数据.zip')
-      const features = shpLoader.parseFeatures(geojsonData)
+      const uploadedFeatures = getUploadedVectorFeatures('fishing')
+      const features = uploadedFeatures.length > 0
+        ? uploadedFeatures
+        : await loadShpFeatures('/data/渔业数据.zip')
       if (features.length === 0) {
         layerStore.setLayerLoading('fishing', false)
         return
@@ -1368,8 +1587,9 @@ const initMap = () => {
       fishingDataLoaded = true
       layerStore.setLayerLoaded('fishing', true)
 
-      appStore.showNotification({type: 'success', message: `已加载渔业数据，共 ${features.length} 个要素`})
-      appStore.addLog('INFO', `渔业数据加载完成`)
+      const sourceLabel = uploadedFeatures.length > 0 ? '本地上传' : '默认数据'
+      appStore.showNotification({type: 'success', message: `已加载渔业数据，共 ${features.length} 个要素（${sourceLabel}）`})
+      appStore.addLog('INFO', `渔业数据加载完成（${sourceLabel}）`)
 
     } catch {
       layerStore.setLayerLoading('fishing', false)
@@ -1400,11 +1620,12 @@ const initMap = () => {
     if (!map || shippingDataLoaded) return
 
     layerStore.setLayerLoading('shipping', true)
-    const shpLoader = useShpLoader()
 
     try {
-      const geojsonData = await shpLoader.load('/data/航道数据.zip')
-      const features = shpLoader.parseFeatures(geojsonData)
+      const uploadedFeatures = getUploadedVectorFeatures('shipping')
+      const features = uploadedFeatures.length > 0
+        ? uploadedFeatures
+        : await loadShpFeatures('/data/航道数据.zip')
       if (features.length === 0) {
         layerStore.setLayerLoading('shipping', false)
         return
@@ -1420,8 +1641,9 @@ const initMap = () => {
       shippingDataLoaded = true
       layerStore.setLayerLoaded('shipping', true)
 
-      appStore.showNotification({type: 'success', message: `已加载航道数据，共 ${features.length} 个要素`})
-      appStore.addLog('INFO', `航道数据加载完成`)
+      const sourceLabel = uploadedFeatures.length > 0 ? '本地上传' : '默认数据'
+      appStore.showNotification({type: 'success', message: `已加载航道数据，共 ${features.length} 个要素（${sourceLabel}）`})
+      appStore.addLog('INFO', `航道数据加载完成（${sourceLabel}）`)
 
     } catch {
       layerStore.setLayerLoading('shipping', false)
@@ -2070,6 +2292,10 @@ const drawMonitorDevices = () => {
     const extent = routeSource.getExtent()
     map.getView().fit(extent, {padding: [50, 50, 50, 50], duration: 500})
   }
+
+  refreshRouteGeometryValidation(activeRoute.value)
+  refreshCableSegmentValidation(cableSegmentStore.segments)
+  updateRiskCostHeatmap(activeRoute.value)
 }
 
 // 监听选中路径变化，更新样式
@@ -2100,6 +2326,10 @@ watch(() => monitorStore.devices.length, (newLen) => {
     }
   }
 }, {immediate: true})
+
+watch(() => cableSegmentStore.segments, (segments) => {
+  refreshCableSegmentValidation(segments)
+}, { deep: true, immediate: true })
 
 // 监听 connectorStore 中 OLA 元素变化（系统规划应用配置时触发）
 watch(() => connectorStore.elements.filter(e => e.type === 'ola').length, (newLen, oldLen) => {
@@ -2905,6 +3135,108 @@ onUnmounted(() => {
         <button @click="appStore.cancelMapSelect" class="text-white/80 hover:text-white text-xs underline">取消</button>
       </div>
 
+      <div
+        v-if="riskCostSummary || visibleRouteGeometryIssues.length > 0 || visibleCableSegmentIssues.length > 0"
+        class="absolute top-3 right-3 z-20 w-[340px] space-y-3"
+      >
+        <div
+          v-if="riskCostSummary"
+          class="rounded-xl border border-sky-200 bg-white/95 p-4 shadow-lg backdrop-blur"
+        >
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <div class="text-sm font-semibold text-slate-800">海域风险成本图</div>
+              <div class="text-[11px] text-slate-500">热力层已叠加到当前选中路由</div>
+            </div>
+            <div class="text-right">
+              <div class="text-[11px] text-slate-500">总成本</div>
+              <div class="text-lg font-bold text-sky-700">{{ formatRiskCostValue(riskCostSummary.totalCost) }}</div>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <div class="rounded-lg bg-slate-50 px-3 py-2">
+              <div class="text-[11px] text-slate-500">路由长度</div>
+              <div class="text-sm font-semibold text-slate-800">{{ riskCostSummary.totalLength.toFixed(1) }} km</div>
+            </div>
+            <div class="rounded-lg bg-slate-50 px-3 py-2">
+              <div class="text-[11px] text-slate-500">高风险占比</div>
+              <div class="text-sm font-semibold text-red-600">
+                {{ ((riskCostSummary.bands.find(band => band.riskLevel === 'high')?.ratio || 0) * 100).toFixed(0) }}%
+              </div>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <div
+              v-for="band in riskCostSummary.bands"
+              :key="band.riskLevel"
+              class="rounded-lg border border-slate-200 px-3 py-2"
+            >
+              <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
+                <span>{{ band.label }}</span>
+                <span>{{ band.length.toFixed(1) }} km</span>
+              </div>
+              <div class="h-2 rounded-full bg-slate-100 overflow-hidden mb-1">
+                <div
+                  :class="band.riskLevel === 'high' ? 'bg-red-500' : band.riskLevel === 'medium' ? 'bg-amber-500' : 'bg-emerald-500'"
+                  class="h-full rounded-full"
+                  :style="{ width: `${Math.max(8, band.ratio * 100)}%` }"
+                />
+              </div>
+              <div class="flex items-center justify-between text-[11px] text-slate-500">
+                <span>单价 {{ band.unitPrice.toFixed(1) }}</span>
+                <span>成本 {{ formatRiskCostValue(band.cost) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="visibleRouteGeometryIssues.length > 0"
+          class="rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur"
+        >
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-sm font-semibold text-slate-800">路径几何校验</div>
+            <span class="text-[11px] text-slate-500">{{ routeGeometryIssues.length }} 项</span>
+          </div>
+          <div class="space-y-2">
+            <div
+              v-for="issue in visibleRouteGeometryIssues"
+              :key="issue.id"
+              :class="['rounded-lg border px-3 py-2 text-xs', getIssueLevelClasses(issue.level)]"
+            >
+              <div class="flex items-center gap-2 mb-1">
+                <span :class="['h-2 w-2 rounded-full', getIssueDotClasses(issue.level)]" />
+                <span class="font-semibold">{{ getIssueLevelLabel(issue.level) }}</span>
+              </div>
+              <div class="leading-5">{{ issue.message }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="visibleCableSegmentIssues.length > 0"
+          class="rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur"
+        >
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-sm font-semibold text-slate-800">敷设参数校验</div>
+            <span class="text-[11px] text-slate-500">{{ cableSegmentIssues.length }} 项</span>
+          </div>
+          <div class="space-y-2">
+            <div
+              v-for="issue in visibleCableSegmentIssues"
+              :key="issue.id"
+              :class="['rounded-lg border px-3 py-2 text-xs', getIssueLevelClasses(issue.level)]"
+            >
+              <div class="flex items-center gap-2 mb-1">
+                <span :class="['h-2 w-2 rounded-full', getIssueDotClasses(issue.level)]" />
+                <span class="font-semibold">{{ getIssueLevelLabel(issue.level) }}</span>
+              </div>
+              <div class="leading-5">{{ issue.message }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 坐标显示 -->
       <div class="absolute bottom-3 left-3 bg-white/90 px-3 py-1.5 rounded text-xs text-gray-600 shadow z-10">
         <span class="mr-4">经度: {{ (coordinates.lon ?? 0).toFixed(4) }}°</span>
@@ -2962,6 +3294,7 @@ onUnmounted(() => {
         :visible="showCableSegmentPreviewDialog"
         :segments="generatedSegments"
         :summary="segmentSummary"
+        :validation-issues="cableSegmentIssues"
         :segment-method="currentSegmentMethod"
         :route-id="activeRouteId"
         :generate-time="currentSegmentGenerateTime"
