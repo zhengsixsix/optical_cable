@@ -2,6 +2,8 @@
 import { useMapStore } from '@/stores/map'
 import { useRouteStore } from '@/stores/route'
 import { useUserStore } from '@/stores/user'
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useConnectorStore } from '@/stores/connector'
 import { ref, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
@@ -10,6 +12,7 @@ import { useSLDStore } from '@/stores/sld'
 import { useProjectManager } from '@/composables'
 import { useRPLExport } from '@/services/RPLExportService'
 import { exportSLDFile } from '@/services/SLDExportService'
+import { buildExportableRplTableSnapshot } from '@/services/RPLSyncService'
 import type { Projection } from '@/types'
 import {
   FileText, FolderOpen, Save, FilePlus, LogOut,
@@ -26,6 +29,8 @@ const mapStore = useMapStore()
 const rplStore = useRPLStore()
 const sldStore = useSLDStore()
 const routeStore = useRouteStore()
+const connectorStore = useConnectorStore()
+const cableSegmentStore = useCableSegmentStore()
 const projectManager = useProjectManager()
 const { exportRPLFile } = useRPLExport()
 
@@ -97,18 +102,39 @@ const handleSaveAsProject = () => {
   projectManager.openSaveAsDialog()
 }
 
+const getRouteById = (routeId?: string | null) =>
+  routeStore.paretoRoutes.find(route => route.id === routeId) ||
+  routeStore.routes.find(route => route.id === routeId) ||
+  routeStore.selectedRoute ||
+  null
+
+const buildCurrentRplSnapshot = () => {
+  const currentTable = rplStore.currentTable
+  if (!currentTable) return null
+
+  const routeId = currentTable.routeId || routeStore.currentRouteId || null
+  return buildExportableRplTableSnapshot({
+    baseTable: currentTable,
+    route: getRouteById(routeId),
+    connectorElements: connectorStore.getElementsForRoute(routeId),
+    cableSegments: cableSegmentStore.segments.filter(segment =>
+      !routeId || !segment.routeId || segment.routeId === routeId,
+    ),
+  })
+}
+
 // 导出 RPL 文件
 const handleExportRPL = async () => {
-  const currentTable = rplStore.currentTable
-  if (!currentTable) {
+  const snapshot = buildCurrentRplSnapshot()
+  if (!snapshot) {
     appStore.showNotification({ type: 'warning', message: '没有可导出的 RPL 数据' })
     return
   }
   
   try {
-    await exportRPLFile(currentTable, 'xlsx')
+    await exportRPLFile(snapshot, 'xlsx')
     appStore.showNotification({ type: 'success', message: 'RPL 文件导出成功' })
-    appStore.addLog('INFO', `导出 RPL 文件: ${currentTable.name}`)
+    appStore.addLog('INFO', `导出 RPL 文件: ${snapshot.name}，已应用当前系统规划与海缆段配置`)
   } catch (error) {
     appStore.showNotification({ type: 'error', message: 'RPL 文件导出失败' })
   }
@@ -262,12 +288,12 @@ const togglePanel = (panel: string) => {
                     <a href="#" @click.prevent="showModal('import-rpl')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileSpreadsheet class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导入 RPL 文件 (.rpl)</span>
+                      <span class="text-sm">导入 RPL 文件 (.rpl, .csv)</span>
                     </a>
                     <a href="#" @click.prevent="showModal('import-gis')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <Globe class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导入 GIS 数据 (.tif, .shp)</span>
+                      <span class="text-sm">导入 GIS 数据 (.tif, .tiff, .shp, .geojson, .json)</span>
                     </a>
                   </div>
                 </div>

@@ -1,8 +1,12 @@
 ﻿﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useConnectorStore } from '@/stores/connector'
 import { useRPLStore } from '@/stores/rpl'
+import { useRouteStore } from '@/stores/route'
 import { exportRPLFile } from '@/services'
+import { buildExportableRplTableSnapshot } from '@/services/RPLSyncService'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { 
   Table, 
@@ -32,6 +36,9 @@ const emit = defineEmits<{
 
 const rplStore = useRPLStore()
 const appStore = useAppStore()
+const routeStore = useRouteStore()
+const connectorStore = useConnectorStore()
+const cableSegmentStore = useCableSegmentStore()
 
 const showFilterPanel = ref(false)
 const filterPointType = ref<RPLPointType[]>([])
@@ -41,6 +48,12 @@ const currentTable = computed(() => rplStore.currentTable)
 const filteredRecords = computed(() => rplStore.filteredRecords)
 const selectedRecordIds = computed(() => rplStore.selectedRecordIds)
 const metadata = computed(() => currentTable.value?.metadata)
+
+const getRouteById = (routeId?: string | null) =>
+  routeStore.paretoRoutes.find(route => route.id === routeId) ||
+  routeStore.routes.find(route => route.id === routeId) ||
+  routeStore.selectedRoute ||
+  null
 
 const pointTypeOptions = [
   { value: 'landing', label: '登陆站' },
@@ -116,7 +129,16 @@ const handleValidate = () => {
 const handleExportRPL = async () => {
   if (!currentTable.value) return
   try {
-    await exportRPLFile(currentTable.value, 'xlsx')
+    const routeId = currentTable.value.routeId || routeStore.currentRouteId || null
+    const snapshot = buildExportableRplTableSnapshot({
+      baseTable: currentTable.value,
+      route: getRouteById(routeId),
+      connectorElements: connectorStore.getElementsForRoute(routeId),
+      cableSegments: cableSegmentStore.segments.filter(segment =>
+        !routeId || !segment.routeId || segment.routeId === routeId,
+      ),
+    })
+    await exportRPLFile(snapshot, 'xlsx')
     appStore.showNotification({ type: 'success', message: '导出 Excel 文件成功' })
   } catch (error) {
     appStore.showNotification({ type: 'error', message: '导出失败' })

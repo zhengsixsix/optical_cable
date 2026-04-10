@@ -3,9 +3,13 @@ import { ref, computed, watch } from 'vue'
 import { X, Upload, FolderOpen, FileText, Loader2, Check, AlertCircle } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
 import { useAppStore } from '@/stores/app'
+import { useConnectorStore } from '@/stores/connector'
 import { useRPLStore } from '@/stores/rpl'
+import { useRouteStore } from '@/stores/route'
+import { useSettingsStore } from '@/stores/settings'
 import { useProjectManager } from '@/composables'
 import { projectFileService } from '@/services/ProjectFileService'
+import { buildImportedRplSyncPayload } from '@/services/RPLSyncService'
 
 /**
  * ImportFileDialog 导入项目文件对话框
@@ -27,6 +31,9 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const rplStore = useRPLStore()
+const routeStore = useRouteStore()
+const connectorStore = useConnectorStore()
+const settingsStore = useSettingsStore()
 const projectManager = useProjectManager()
 
 // 状态
@@ -58,7 +65,7 @@ const acceptFormats = computed(() => {
   switch (props.importType) {
     case 'project': return '.use'
     case 'rpl': return '.rpl,.csv'
-    case 'gis': return '.tif,.tiff,.shp'
+    case 'gis': return '.tif,.tiff,.shp,.geojson,.json'
     default: return '*'
   }
 })
@@ -68,10 +75,41 @@ const formatHint = computed(() => {
   switch (props.importType) {
     case 'project': return '支持格式: .use'
     case 'rpl': return '支持格式: .rpl, .csv'
-    case 'gis': return '支持格式: .tif, .tiff, .shp'
+    case 'gis': return '支持格式: .tif, .tiff, .shp, .geojson, .json'
     default: return ''
   }
 })
+
+const syncImportedRplToViews = (tableName: string) => {
+  const currentTable = rplStore.currentTable
+  if (!currentTable) return
+
+  const syncPayload = buildImportedRplSyncPayload(currentTable, tableName)
+  const routeId = syncPayload.route?.id || currentTable.routeId || 'route-main'
+
+  if (syncPayload.routePlanningConfig) {
+    settingsStore.updateRoutePlanningConfig(syncPayload.routePlanningConfig)
+  }
+
+  if (syncPayload.route) {
+    routeStore.setParetoRoutes([syncPayload.route])
+  }
+
+  let connectorTable = connectorStore.getTableByRoute(routeId)
+  if (!connectorTable) {
+    connectorStore.createTable(tableName, routeId)
+    connectorTable = connectorStore.currentTable
+  } else {
+    connectorTable.routeId = routeId
+    connectorStore.selectTable(connectorTable.id)
+  }
+
+  if (connectorTable) {
+    connectorTable.name = tableName
+    connectorTable.elements = syncPayload.connectorElements
+    connectorTable.updatedAt = new Date().toISOString()
+  }
+}
 
 // 重置状态
 watch(() => props.visible, (visible) => {
@@ -179,10 +217,12 @@ const importRPL = async () => {
     const success = rplStore.importFromCSV(fileContent, tableName, 'route-main')
     
     if (success) {
+      syncImportedRplToViews(tableName)
+      projectManager.markDirty()
       resultType.value = 'success'
       resultMessage.value = `RPL 文件导入成功: ${rplStore.currentTable?.records.length || 0} 条记录`
       appStore.showNotification({ type: 'success', message: resultMessage.value })
-      appStore.addLog('INFO', `导入 RPL 文件: ${selectedFile.value.name}`)
+      appStore.addLog('INFO', `导入 RPL 文件: ${selectedFile.value.name}，已同步地图与系统视图`)
       
       setTimeout(() => {
         emit('success')

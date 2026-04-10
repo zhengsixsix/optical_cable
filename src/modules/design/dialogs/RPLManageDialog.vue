@@ -1,8 +1,10 @@
 ﻿<script setup lang="ts">
 import { useAppStore } from '@/stores/app'
 import { ref, computed } from 'vue'
+import { useConnectorStore } from '@/stores/connector'
 import { useRouteStore } from '@/stores/route'
 import { useRPLStore } from '@/stores/rpl'
+import { useSettingsStore } from '@/stores/settings'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { 
   X, 
@@ -16,6 +18,7 @@ import {
 } from 'lucide-vue-next'
 import RPLTablePanel from '@/modules/design/panels/RPLTablePanel.vue'
 import RPLRecordDialog from './RPLRecordDialog.vue'
+import { buildImportedRplSyncPayload } from '@/services/RPLSyncService'
 
 const props = defineProps<{
   visible: boolean
@@ -27,6 +30,8 @@ const emit = defineEmits<{
 
 const rplStore = useRPLStore()
 const routeStore = useRouteStore()
+const connectorStore = useConnectorStore()
+const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 
 const showRecordDialog = ref(false)
@@ -38,6 +43,37 @@ const importFile = ref<File | null>(null)
 const tables = computed(() => rplStore.tables)
 const currentTable = computed(() => rplStore.currentTable)
 const paretoRoutes = computed(() => routeStore.paretoRoutes)
+
+function syncImportedRpl(tableName: string) {
+  const currentTable = rplStore.currentTable
+  if (!currentTable) return
+
+  const syncPayload = buildImportedRplSyncPayload(currentTable, tableName)
+  const routeId = syncPayload.route?.id || currentTable.routeId || 'route-main'
+
+  if (syncPayload.routePlanningConfig) {
+    settingsStore.updateRoutePlanningConfig(syncPayload.routePlanningConfig)
+  }
+
+  if (syncPayload.route) {
+    routeStore.setParetoRoutes([syncPayload.route])
+  }
+
+  let connectorTable = connectorStore.getTableByRoute(routeId)
+  if (!connectorTable) {
+    connectorStore.createTable(tableName, routeId)
+    connectorTable = connectorStore.currentTable
+  } else {
+    connectorTable.routeId = routeId
+    connectorStore.selectTable(connectorTable.id)
+  }
+
+  if (connectorTable) {
+    connectorTable.name = tableName
+    connectorTable.elements = syncPayload.connectorElements
+    connectorTable.updatedAt = new Date().toISOString()
+  }
+}
 
 function handleEditRecord(recordId: string) {
   editingRecordId.value = recordId || undefined
@@ -86,9 +122,11 @@ function handleImportCSV(event: Event) {
   const reader = new FileReader()
   reader.onload = (e) => {
     const content = e.target?.result as string
-    const success = rplStore.importFromCSV(content, file.name.replace('.csv', ''), 'import')
+    const tableName = file.name.replace(/\.(rpl|csv)$/i, '')
+    const success = rplStore.importFromCSV(content, tableName, 'route-main')
     if (success) {
-      appStore.showNotification({ type: 'success', message: '导入成功' })
+      syncImportedRpl(tableName)
+      appStore.showNotification({ type: 'success', message: '导入成功，已同步地图与系统视图' })
     } else {
       appStore.showNotification({ type: 'error', message: '导入失败，请检查文件格式' })
     }
@@ -130,7 +168,7 @@ function handleValidateTable() {
             <label class="inline-flex">
               <input 
                 type="file" 
-                accept=".csv" 
+                accept=".rpl,.csv" 
                 class="hidden"
                 @change="handleImportCSV"
               />

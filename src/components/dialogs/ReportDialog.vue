@@ -1,5 +1,6 @@
 ﻿﻿<script setup lang="ts">
 import { useAppStore } from '@/stores/app'
+import { useCableSegmentStore } from '@/stores/cableSegment'
 import { useConnectorStore } from '@/stores/connector'
 import { useSettingsStore } from '@/stores/settings'
 import { ref, computed } from 'vue'
@@ -8,6 +9,7 @@ import { X, FileText, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide
 import { useRouteStore } from '@/stores/route'
 import { useRPLStore } from '@/stores/rpl'
 import { reportExportService } from '@/services'
+import { buildExportableRplTableSnapshot } from '@/services/RPLSyncService'
 
 const props = defineProps<{
   visible: boolean
@@ -23,6 +25,7 @@ const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 const rplStore = useRPLStore()
 const connectorStore = useConnectorStore()
+const cableSegmentStore = useCableSegmentStore()
 
 const isGenerating = ref(false)
 const exportFormat = ref<'txt' | 'json' | 'html' | 'csv'>('txt')
@@ -35,11 +38,40 @@ const formatOptions = [
 ]
 
 const title = computed(() => props.mode === 'cost' ? '成本分析报告' : '性能分析报告')
+const projectName = computed(() =>
+  appStore.currentProjectName ||
+  routeStore.selectedRoute?.name ||
+  rplStore.currentTable?.name ||
+  '海底光缆传输系统',
+)
+
+const activeRouteId = computed(() => routeStore.currentRouteId || rplStore.currentTable?.routeId || null)
+const activeRoute = computed(() =>
+  routeStore.paretoRoutes.find(route => route.id === activeRouteId.value) ||
+  routeStore.routes.find(route => route.id === activeRouteId.value) ||
+  routeStore.selectedRoute ||
+  null,
+)
+
+const linkCalcSummary = computed<Record<string, any> | null>(() => settingsStore.linkCalcSummaryCache || null)
+const exportableTable = computed(() => {
+  const currentTable = rplStore.currentTable
+  if (!currentTable) return null
+
+  return buildExportableRplTableSnapshot({
+    baseTable: currentTable,
+    route: activeRoute.value,
+    connectorElements: connectorStore.getElementsForRoute(activeRouteId.value),
+    cableSegments: cableSegmentStore.segments.filter(segment =>
+      !activeRouteId.value || !segment.routeId || segment.routeId === activeRouteId.value,
+    ),
+  })
+})
 
 // 规划状态检查
 const planningStatus = computed(() => {
-  const hasRoute = routeStore.routes.length > 0
-  const hasTransmission = settingsStore.transmissionConfig.channelCount > 0
+  const hasRoute = Boolean(exportableTable.value?.records.length || activeRoute.value?.points.length)
+  const hasTransmission = Boolean(linkCalcSummary.value)
   
   return {
     routePlanning: hasRoute,
@@ -49,23 +81,58 @@ const planningStatus = computed(() => {
 })
 
 // 从 rplStore 动态获取总长度
-const totalLength = computed(() => rplStore.currentTable?.metadata?.totalLength ?? 0)
+const totalLength = computed(() =>
+  exportableTable.value?.metadata?.totalLength ??
+  activeRoute.value?.totalLength ??
+  rplStore.currentTable?.metadata?.totalLength ??
+  0,
+)
 
 const routeConnectorElements = computed(() =>
-  connectorStore.getElementsForRoute(routeStore.currentRouteId || rplStore.currentTable?.routeId || undefined)
+  connectorStore.getElementsForRoute(activeRouteId.value)
 )
 
 const amplifierCount = computed(() => {
+  const plannedCount = linkCalcSummary.value?.systemConfig?.amplifierCount
+  if (typeof plannedCount === 'number') return plannedCount
+
   const connectorCount = routeConnectorElements.value.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w').length
   return connectorCount > 0 ? connectorCount : (totalLength.value > 0 ? Math.ceil(totalLength.value / 80) : 0)
 })
 
-const branchingUnitCount = computed(() => routeConnectorElements.value.filter(e => e.type === 'bu').length)
-const equalizerCount = computed(() => routeConnectorElements.value.filter(e => e.type === 'equalizer').length)
-const landingStationCount = computed(() => rplStore.currentTable?.metadata?.landingStations || 2)
+const branchingUnitCount = computed(() => {
+  const plannedCount = linkCalcSummary.value?.systemConfig?.buCount
+  return typeof plannedCount === 'number'
+    ? plannedCount
+    : routeConnectorElements.value.filter(e => e.type === 'bu').length
+})
+
+const equalizerCount = computed(() => {
+  const plannedCount = linkCalcSummary.value?.systemConfig?.equalizerCount
+  return typeof plannedCount === 'number'
+    ? plannedCount
+    : routeConnectorElements.value.filter(e => e.type === 'equalizer').length
+})
+
+const landingStationCount = computed(() => exportableTable.value?.metadata?.landingStations || 2)
+const summarizedCostData = computed<Record<string, any> | null>(() => linkCalcSummary.value?.costData || null)
 
 // 报告数据
 const costReportData = computed(() => {
+  if (summarizedCostData.value) {
+    return {
+      cableCost: summarizedCostData.value.cableCost || 0,
+      repeaterCost: summarizedCostData.value.amplifierCost || 0,
+      branchingUnitCost: summarizedCostData.value.buCost || 0,
+      equalizerCost: summarizedCostData.value.equalizerCost || 0,
+      terminalEquipmentCost: 0,
+      laborCost: 0,
+      surveyingCost: 0,
+      vesselCost: 0,
+      installationCost: 0,
+    }
+  }
+
   const length = totalLength.value
   const vesselDays = length > 0 ? Math.ceil(length / 50) : 0 // 估算：每天铺设50km
   const costFactors = settingsStore.costFactors
@@ -90,6 +157,15 @@ const costReportData = computed(() => {
 })
 
 const perfReportData = computed(() => {
+  if (linkCalcSummary.value) {
+    return {
+      gsnr: linkCalcSummary.value.metrics?.gsnr?.min ?? linkCalcSummary.value.metrics?.gsnr?.avg ?? null,
+      capacity: (linkCalcSummary.value.systemConfig?.channelCount || 0) * 100,
+      wavelengths: linkCalcSummary.value.systemConfig?.channelCount ?? null,
+      margin: linkCalcSummary.value.margin?.worstMargin ?? linkCalcSummary.value.margin?.avgMargin ?? null,
+    }
+  }
+
   if (!planningStatus.value.transmissionPlanning) {
     return {
       gsnr: null,
@@ -112,6 +188,10 @@ const perfReportData = computed(() => {
 })
 
 const totalCost = computed(() => {
+  if (summarizedCostData.value) {
+    return summarizedCostData.value.totalCost || 0
+  }
+
   const data = costReportData.value
   const subtotal = data.cableCost + data.repeaterCost + data.branchingUnitCost + data.equalizerCost + data.terminalEquipmentCost + data.laborCost + data.surveyingCost + data.vesselCost + data.installationCost
   const contingency = subtotal * (settingsStore.costFactors.contingencyPercent / 100)
@@ -134,12 +214,14 @@ const handleExport = async () => {
     const cable = settingsStore.cableTypes[0]
     const repeater = settingsStore.repeaterTypes[0]
     const repeaterCount = amplifierCount.value
+    const summaryMetrics = linkCalcSummary.value?.metrics
+    const summaryMargin = linkCalcSummary.value?.margin
     
     if (props.mode === 'cost') {
       // 成本报告
       await reportExportService.exportCostReport(
         {
-          projectName: '海底光缆传输系统',
+          projectName: projectName.value,
           totalLength: length,
           repeaterCount,
           branchingUnitCount: branchingUnitCount.value,
@@ -161,7 +243,9 @@ const handleExport = async () => {
             surveying: costReportData.value.surveyingCost,
             vessel: costReportData.value.vesselCost,
             installation: costReportData.value.installationCost,
-            contingency: totalCost.value - (costReportData.value.cableCost + costReportData.value.repeaterCost + costReportData.value.branchingUnitCost + costReportData.value.equalizerCost + costReportData.value.terminalEquipmentCost + costReportData.value.laborCost + costReportData.value.surveyingCost + costReportData.value.vesselCost + costReportData.value.installationCost),
+            contingency: summarizedCostData.value
+              ? 0
+              : totalCost.value - (costReportData.value.cableCost + costReportData.value.repeaterCost + costReportData.value.branchingUnitCost + costReportData.value.equalizerCost + costReportData.value.terminalEquipmentCost + costReportData.value.laborCost + costReportData.value.surveyingCost + costReportData.value.vesselCost + costReportData.value.installationCost),
             total: totalCost.value,
           },
         },
@@ -174,20 +258,20 @@ const handleExport = async () => {
       
       await reportExportService.exportPerformanceReport(
         {
-          projectName: '海底光缆传输系统',
+          projectName: projectName.value,
           totalLength: length,
           repeaterCount,
-          channelCount: settingsStore.transmissionConfig.channelCount,
+          channelCount: linkCalcSummary.value?.systemConfig?.channelCount || settingsStore.transmissionConfig.channelCount,
           centerWavelength: settingsStore.transmissionConfig.centerWavelength,
           performance: {
-            minGSNR: estimatedGsnr,
-            avgGSNR: estimatedGsnr + 2,
-            maxGSNR: estimatedGsnr + 5,
-            minMargin: estimatedMargin,
-            capacity: settingsStore.transmissionConfig.channelCount * 100,
-            wavelengths: settingsStore.transmissionConfig.channelCount,
+            minGSNR: summaryMetrics?.gsnr?.min ?? estimatedGsnr,
+            avgGSNR: summaryMetrics?.gsnr?.avg ?? (estimatedGsnr + 2),
+            maxGSNR: summaryMetrics?.gsnr?.max ?? (estimatedGsnr + 5),
+            minMargin: summaryMargin?.worstMargin ?? estimatedMargin,
+            capacity: perfReportData.value.capacity ?? settingsStore.transmissionConfig.channelCount * 100,
+            wavelengths: perfReportData.value.wavelengths ?? settingsStore.transmissionConfig.channelCount,
           },
-          bottlenecks: estimatedMargin < 3 ? [
+          bottlenecks: (summaryMargin?.worstMargin ?? estimatedMargin) < 3 ? [
             { kp: length * 0.6, issue: 'GSNR余量较低', severity: 'warning' }
           ] : [],
         },

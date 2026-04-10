@@ -55,6 +55,7 @@ import type { SegmentGenerateConfig, CableSegment, CableSegmentSummary } from '@
 import { fetchRoutePlanning, checkRoutePlanningService } from '@/services/RoutePlanningApiService'
 import type { RoutePlanningRequest } from '@/services/RoutePlanningApiService'
 import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
+import { applyCableSegmentsToRplRecords } from '@/services/RPLSyncService'
 
 const mapStore = useMapStore()
 const layerStore = useLayerStore()
@@ -597,23 +598,29 @@ const syncCableSegmentsToRPL = (cableSegments: CableSegment[]) => {
   const table = rplStore.currentTable
   if (!table || !table.records || cableSegments.length === 0) return
 
+  const nextRecords = applyCableSegmentsToRplRecords(table.records, cableSegments)
   let updatedCount = 0
-  for (const record of table.records) {
-    const kp = record.kp ?? record.cumulativeLength ?? 0
-    // 找到该 KP 所在的海缆段
-    const matchSeg = cableSegments.find(s => kp >= s.startKp && kp < s.endKp)
-      || cableSegments[cableSegments.length - 1] // 末尾点 fallback 到最后一段
-    if (matchSeg) {
-      // 从海缆段的 cableTypeName 提取短名（如 "DA (双铠装)" → "DA"）
-      const shortName = matchSeg.cableTypeName?.match(/^[A-Z]+/)?.[0] || matchSeg.cableTypeName || 'LW'
-      if (record.cableType !== shortName) {
-        rplStore.updateRecord(record.id, { cableType: shortName as any }, false)
-        updatedCount++
-      }
+  for (const nextRecord of nextRecords) {
+    const currentRecord = table.records.find(record => record.id === nextRecord.id)
+    if (!currentRecord) continue
+
+    const hasChanged =
+      currentRecord.cableType !== nextRecord.cableType ||
+      currentRecord.slack !== nextRecord.slack ||
+      currentRecord.burialDepth !== nextRecord.burialDepth
+
+    if (hasChanged) {
+      rplStore.updateRecord(currentRecord.id, {
+        cableType: nextRecord.cableType,
+        slack: nextRecord.slack,
+        burialDepth: nextRecord.burialDepth,
+      }, false)
+      updatedCount++
     }
   }
+
   if (updatedCount > 0) {
-    appStore.addLog('INFO', `RPL 缆型已同步：${updatedCount} 条记录已更新`)
+    appStore.addLog('INFO', `RPL 海缆段参数已同步：${updatedCount} 条记录已更新`)
   }
 }
 
@@ -682,6 +689,7 @@ const getCurrentRouteLength = (): number => {
 // 保存海缆段配置
 const handleCableSegmentConfigSave = (segment: CableSegment) => {
   cableSegmentStore.updateSegment(segment.id, segment)
+  syncCableSegmentsToRPL(cableSegmentStore.segments)
   appStore.showNotification({ type: 'success', message: `海缆段 ${segment.id.slice(-8)} 配置已保存` })
 }
 
