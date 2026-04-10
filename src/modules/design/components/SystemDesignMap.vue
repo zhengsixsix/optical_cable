@@ -6,11 +6,11 @@ import { useRouteStore } from '@/stores/route'
 import { useRPLStore } from '@/stores/rpl'
 import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
 import { calculateDistance } from '@/utils/geo'
+import { DEFAULT_GEO_TIFF_URL, getCachedGeoTiffSource } from '@/utils/geoTiffCache'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
 import WebGLTileLayer from 'ol/layer/WebGLTile'
-import GeoTIFF from 'ol/source/GeoTIFF'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import OSM from 'ol/source/OSM'
@@ -81,6 +81,9 @@ let routeSource: VectorSource | null = null
 let routeLayer: VectorLayer<VectorSource> | null = null
 let pointSource: VectorSource | null = null
 let pointLayer: VectorLayer<VectorSource> | null = null
+
+const geoTiffUrl = DEFAULT_GEO_TIFF_URL
+const simplifiedPointZoom = 5
 
 // ========== Step 6.2: 放大器沿路由拖拽 ==========
 let translateInteraction: Translate | null = null
@@ -845,6 +848,8 @@ const drawPoints = () => {
   pointSource.clear()
   
   const source = pointSource
+  const currentZoom = map?.getView().getZoom() ?? simplifiedPointZoom
+  const useCompactPoints = currentZoom < simplifiedPointZoom
   
   // 系统设备类型（需要显示的，接头盒不在地图显示）
   const systemDeviceTypes = ['landing', 'amplifier_e', 'amplifier_w', 'ola', 'bu', 'branching', 'equalizer', 'joint', 'underwater']
@@ -861,25 +866,35 @@ const drawPoints = () => {
       pointName: point.name,
       pointType: point.type
     })
-    
-    // 使用缓存的高程数据来判断岸上/水下站点
-    const elevation = elevationCache.value[point.id]
-    const iconUrl = getPointIcon(point.type, false, elevation)
-    
-    feature.setStyle(new Style({
-      image: new Icon({
-        src: iconUrl,
-        scale: getPointIconScale(point.type),
-        anchor: [0.5, 0.5]
-      }),
-      text: new Text({
-        text: point.name,
-        offsetY: 16,
-        font: '9px sans-serif',
-        fill: new Fill({ color: '#374151' }),
-        stroke: new Stroke({ color: '#fff', width: 3 })
-      })
-    }))
+
+    if (useCompactPoints) {
+      feature.setStyle(new Style({
+        image: new CircleStyle({
+          radius: 4,
+          fill: new Fill({ color: '#dc2626' }),
+          stroke: new Stroke({ color: '#fff', width: 1.5 }),
+        }),
+      }))
+    } else {
+      // 使用缓存的高程数据来判断岸上/水下站点
+      const elevation = elevationCache.value[point.id]
+      const iconUrl = getPointIcon(point.type, false, elevation)
+      
+      feature.setStyle(new Style({
+        image: new Icon({
+          src: iconUrl,
+          scale: getPointIconScale(point.type),
+          anchor: [0.5, 0.5]
+        }),
+        text: new Text({
+          text: point.name,
+          offsetY: 16,
+          font: '9px sans-serif',
+          fill: new Fill({ color: '#374151' }),
+          stroke: new Stroke({ color: '#fff', width: 3 })
+        })
+      }))
+    }
     
     source.addFeature(feature)
   })
@@ -1002,17 +1017,11 @@ const initMap = () => {
   if (!mapContainer.value) return
   
   // 加载 GeoTIFF 影像
-  const tifFiles = ['/output2.tif']
   const rgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], 1] }
-  
-  const geoTiffLayers = tifFiles.map((url) => {
-    const source = new GeoTIFF({
-      sources: [{ url }],
-      normalize: true,
-      wrapX: true,
-    })
-    return new WebGLTileLayer({ source, style: rgbStyle, visible: true, opacity: 1 })
-  })
+  const geoTiffEntry = getCachedGeoTiffSource(geoTiffUrl)
+  const geoTiffLayers = [
+    new WebGLTileLayer({ source: geoTiffEntry.source, style: rgbStyle, visible: true, opacity: 1 })
+  ]
   
   routeSource = new VectorSource()
   routeLayer = new VectorLayer({
@@ -1050,6 +1059,10 @@ const initMap = () => {
   map.on('pointermove', (evt) => {
     coordinates.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
     handlePointerMove(evt)
+  })
+
+  map.getView().on('change:resolution', () => {
+    drawPoints()
   })
 
   // Step 6.2: 初始化拖拽交互

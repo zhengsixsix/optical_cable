@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc && vite build",
+    "postbuild": "node scripts/deploy-bt.mjs --from-postbuild",
+    "deploy:bt": "node scripts/deploy-bt.mjs",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run"

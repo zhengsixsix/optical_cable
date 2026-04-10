@@ -15,7 +15,7 @@ import {
   FileText, FolderOpen, Save, FilePlus, LogOut,
   Download, Upload, ChevronRight, FileType,
   Image as ImageIcon, MoreHorizontal, Settings,
-  FileInput, Globe, FileSpreadsheet, User, Users
+  Globe, FileSpreadsheet, User, Users
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -178,7 +178,6 @@ const togglePanel = (panel: string) => {
     'routeStats': 'routeStats',
     'depthProfile': 'depthProfile',
     'terrain3D': 'terrain3D',
-    'realtime': 'realtime',
   }
 
   const panelKey = panelMap[panel]
@@ -260,11 +259,6 @@ const togglePanel = (panel: string) => {
                   class="absolute left-full top-0 pl-1 hidden group-hover/sub:block z-50 animate-in fade-in slide-in-from-left-2 duration-200">
                   <div
                     class="min-w-[220px] bg-white/95 backdrop-blur-md border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-lg py-2 -mt-2">
-                    <a href="#" @click.prevent="showModal('import-project')"
-                      class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
-                      <FileInput class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导入工程 (.use)</span>
-                    </a>
                     <a href="#" @click.prevent="showModal('import-rpl')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <FileSpreadsheet class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
@@ -389,11 +383,6 @@ const togglePanel = (panel: string) => {
               class="flex items-center justify-between px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">
               <span>地形3D</span>
               <span v-if="appStore.panelVisibility.terrain3D" class="text-green-500 text-xs">显示</span>
-            </a>
-            <a href="#" @click.prevent="togglePanel('realtime')"
-              class="flex items-center justify-between px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">
-              <span>实时面板</span>
-              <span v-if="appStore.panelVisibility.realtime" class="text-green-500 text-xs">显示</span>
             </a>
           </div>
         </div>

@@ -7,8 +7,10 @@ import MapArea from '@/modules/planning/components/MapArea.vue'
 import LogPanel from '@/components/panels/LogPanel.vue'
 import RightPanel from '@/components/panels/RightPanel.vue'
 import ImportGisDialog from '@/modules/planning/dialogs/ImportGisDialog.vue'
+import { useProjectManager } from '@/composables'
 import { useAppStore } from '@/stores/app'
 const appStore = useAppStore()
+const projectManager = useProjectManager()
 const selectedExtent = ref<[number, number, number, number] | undefined>()
 const showImportGisDialog = ref(false)
 
@@ -26,8 +28,8 @@ const handleNewProject = () => {
   appStore.openDialog('new-project')
 }
 
-const handleOpenProject = () => {
-  appStore.openDialog('open-project')
+const handleOpenProject = async () => {
+  await projectManager.openProject()
 }
 </script>
 

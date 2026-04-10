@@ -61,7 +61,7 @@ export const useAppStore = defineStore('app', () => {
     routeStats: true,
     depthProfile: true,
     terrain3D: true,
-    realtime: true,
+    realtime: false,
     logPanel: true,
     dataPanel: false,
     layerDetailPanel: false,

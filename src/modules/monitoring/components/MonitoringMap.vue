@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouteStore } from '@/stores/route'
+import { DEFAULT_GEO_TIFF_URL, getCachedGeoTiffSource } from '@/utils/geoTiffCache'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
 import WebGLTileLayer from 'ol/layer/WebGLTile'
-import GeoTIFF from 'ol/source/GeoTIFF'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import OSM from 'ol/source/OSM'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
-import { Style, Stroke, Icon, Text, Fill } from 'ol/style'
+import { Style, Stroke, Icon, Text, Fill, Circle as CircleStyle } from 'ol/style'
 import Overlay from 'ol/Overlay'
 import 'ol/ol.css'
 
@@ -74,6 +74,9 @@ let deviceLayer: VectorLayer<VectorSource> | null = null
 let cableSource: VectorSource | null = null
 let cableLayer: VectorLayer<VectorSource> | null = null
 
+const geoTiffUrl = DEFAULT_GEO_TIFF_URL
+const compactDeviceZoom = 5
+
 // 根据设备类型和状态获取图标路径
 const getDeviceIcon = (device: MonitorDevice) => {
   const hasAlarm = device.status === 'warning' || device.status === 'error'
@@ -109,6 +112,12 @@ const getDeviceIcon = (device: MonitorDevice) => {
 const getDeviceIconScale = (type: string, isSelected: boolean) => {
   const base = type === 'equalizer' || type === 'joint' ? 0.24 : 0.18
   return isSelected ? base + 0.04 : base
+}
+
+const getCompactDeviceColor = (status: string) => {
+  if (status === 'normal') return '#16a34a'
+  if (status === 'warning') return '#eab308'
+  return '#dc2626'
 }
 
 // 按 KP 排序的设备列表
@@ -197,6 +206,8 @@ const drawDevices = () => {
   deviceSource.clear()
   
   const source = deviceSource
+  const currentZoom = map?.getView().getZoom() ?? compactDeviceZoom
+  const useCompactDevices = currentZoom < compactDeviceZoom
   
   props.devices.forEach(device => {
     const feature = new Feature({
@@ -208,27 +219,38 @@ const drawDevices = () => {
     })
     
     const isSelected = device.id === props.selectedDeviceId
-    const iconUrl = getDeviceIcon(device)
     
-    feature.setStyle(new Style({
-      image: new Icon({
-        src: iconUrl,
-        scale: getDeviceIconScale(device.type, isSelected),
-        anchor: [0.5, 0.5]
-      }),
-      text: new Text({
-        text: device.name,
-        offsetY: 16,
-        font: isSelected ? 'bold 10px sans-serif' : '9px sans-serif',
-        fill: new Fill({ 
-          color: device.status === 'normal' ? '#374151' : 
-                 device.status === 'warning' ? '#d97706' : '#dc2626'
+    if (useCompactDevices) {
+      feature.setStyle(new Style({
+        image: new CircleStyle({
+          radius: isSelected ? 6 : 4,
+          fill: new Fill({ color: getCompactDeviceColor(device.status) }),
+          stroke: new Stroke({ color: '#fff', width: isSelected ? 2 : 1.5 }),
         }),
-        stroke: new Stroke({ color: '#fff', width: 3 }),
-        backgroundFill: isSelected ? new Fill({ color: 'rgba(59, 130, 246, 0.1)' }) : undefined,
-        padding: isSelected ? [2, 4, 2, 4] : undefined
-      })
-    }))
+      }))
+    } else {
+      const iconUrl = getDeviceIcon(device)
+      
+      feature.setStyle(new Style({
+        image: new Icon({
+          src: iconUrl,
+          scale: getDeviceIconScale(device.type, isSelected),
+          anchor: [0.5, 0.5]
+        }),
+        text: new Text({
+          text: device.name,
+          offsetY: 16,
+          font: isSelected ? 'bold 10px sans-serif' : '9px sans-serif',
+          fill: new Fill({ 
+            color: device.status === 'normal' ? '#374151' : 
+                   device.status === 'warning' ? '#d97706' : '#dc2626'
+          }),
+          stroke: new Stroke({ color: '#fff', width: 3 }),
+          backgroundFill: isSelected ? new Fill({ color: 'rgba(59, 130, 246, 0.1)' }) : undefined,
+          padding: isSelected ? [2, 4, 2, 4] : undefined
+        })
+      }))
+    }
     
     source.addFeature(feature)
   })
@@ -254,17 +276,11 @@ const initMap = () => {
   if (!mapContainer.value) return
   
   // 加载 GeoTIFF 影像
-  const tifFiles = ['/output2.tif']
   const rgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], 1] }
-  
-  const geoTiffLayers = tifFiles.map((url) => {
-    const source = new GeoTIFF({
-      sources: [{ url }],
-      normalize: true,
-      wrapX: true,
-    })
-    return new WebGLTileLayer({ source, style: rgbStyle, visible: true, opacity: 1 })
-  })
+  const geoTiffEntry = getCachedGeoTiffSource(geoTiffUrl)
+  const geoTiffLayers = [
+    new WebGLTileLayer({ source: geoTiffEntry.source, style: rgbStyle, visible: true, opacity: 1 })
+  ]
   
   // 创建光缆图层
   cableSource = new VectorSource()
@@ -314,6 +330,10 @@ const initMap = () => {
     } else {
       mapContainer.value!.style.cursor = 'default'
     }
+  })
+
+  map.getView().on('change:resolution', () => {
+    drawDevices()
   })
   
   // 创建气泡框Overlay

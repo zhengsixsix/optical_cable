@@ -103,7 +103,6 @@ const handleGoBack = () => {
 // 在地图中查看
 const handleViewOnMap = () => {
   emit('viewOnMap')
-  appStore.showNotification({ type: 'info', message: '已在地图中高亮显示海缆段' })
 }
 
 // 重置列配置为默认

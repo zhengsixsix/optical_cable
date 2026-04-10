@@ -1,9 +1,8 @@
 ﻿<script setup lang="ts">
 import { useRouteStore } from '@/stores/route'
 import { ref, computed } from 'vue'
-import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
+import { Card, CardHeader, CardContent } from '@/shared/components/base'
 import { Printer, X, Maximize2 } from 'lucide-vue-next'
-import MonitorPanel from '@/modules/monitoring/panels/MonitorPanel.vue'
 import DepthProfile from '@/modules/planning/components/DepthProfile.vue'
 import Terrain3D from '@/modules/planning/components/Terrain3D.vue'
 import { useAppStore } from '@/stores/app'
@@ -22,7 +21,7 @@ const selectedSegment = computed(() => routeStore.selectedSegmentInfo)
 
 const showFullscreen3D = ref(false)
 
-function togglePanel(panel: 'depthProfile' | 'terrain3D' | 'realtime') {
+function togglePanel(panel: 'depthProfile' | 'terrain3D') {
   appStore.togglePanel(panel)
 }
 </script>
@@ -68,10 +67,6 @@ function togglePanel(panel: 'depthProfile' | 'terrain3D' | 'realtime') {
         <Terrain3D :extent="selectedExtent" />
       </CardContent>
     </Card>
-
-    <!-- 实时性能概览 -->
-    <MonitorPanel v-if="panelVisibility.realtime" @close="togglePanel('realtime')" />
-
     <!-- 全屏 3D 对话框 -->
     <Teleport to="body">
       <div 

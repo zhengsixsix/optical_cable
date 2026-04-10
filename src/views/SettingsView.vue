@@ -2,9 +2,11 @@
 import { useAppStore } from '@/stores/app'
 import { ref, reactive, computed, watch, onMounted} from 'vue'
 import {useRouter, useRoute} from 'vue-router'
+import { useProjectManager } from '@/composables'
 import { useSettingsStore } from '@/stores/settings'
 import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
+import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
 import {
   Save,
@@ -45,16 +47,35 @@ import {
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
+const projectManager = useProjectManager()
 const router = useRouter()
 const route = useRoute()
 const activeTab = ref('equipment')
 
-// 支持通过路由 query 参数切换 tab（如从系统规划跳转过来）
-onMounted(() => {
+const validTabs = ['equipment', 'route', 'monitoring'] as const
+
+const syncActiveTabFromQuery = async () => {
   const tabQuery = route.query.tab as string
-  if (tabQuery && ['equipment', 'route', 'transmission', 'monitoring'].includes(tabQuery)) {
+  if (!tabQuery) return
+
+  if (tabQuery === 'transmission') {
+    activeTab.value = 'route'
+    await router.replace({ query: { ...route.query, tab: 'route' } })
+    return
+  }
+
+  if (validTabs.includes(tabQuery as typeof validTabs[number])) {
     activeTab.value = tabQuery
   }
+}
+
+// 支持通过路由 query 参数切换 tab（如从系统规划跳转过来）
+onMounted(() => {
+  void syncActiveTabFromQuery()
+})
+
+watch(() => route.query.tab, () => {
+  void syncActiveTabFromQuery()
 })
 
 // 折叠面板状态
@@ -78,16 +99,15 @@ const handleNewProject = () => {
   appStore.openDialog('new-project')
 }
 
-// 打开导入项目对话框
-const handleOpenProject = () => {
-  appStore.openDialog('open-project')
+// 打开项目
+const handleOpenProject = async () => {
+  await projectManager.openProject()
 }
 const deviceTypeTab = ref<'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'>('fiber')
 
 const tabs = [
   {id: 'equipment', label: '器件库配置'},
   {id: 'route', label: '路径规划配置'},
-  {id: 'transmission', label: '传输系统配置'},
   {id: 'monitoring', label: '监控系统配置'},
 ]
 
@@ -407,7 +427,9 @@ const handleRemoveWaypoint = (id: string) => {
 
 // 编辑登陆站（复用地图选点）
 const handleEditWaypoint = (id: string) => {
-  handleWaypointMapSelect(id)
+  const waypoint = waypoints.value.find(wp => wp.id === id)
+  if (!waypoint) return
+  openWaypointEditDialog(waypoint)
 }
 
 // 获取坐标经度
@@ -454,7 +476,9 @@ const setCoordLatBu = (bu: { coord: string }, lat: string | number) => {
 
 // 编辑 BU
 const handleEditBU = (id: string) => {
-  handleBuMapSelect(id)
+  const bu = buConfigs.value.find(item => item.id === id)
+  if (!bu) return
+  openBuEditDialog(bu)
 }
 
 // 多点地图选点
@@ -922,6 +946,46 @@ const parseCoordString = (coordStr: string): { lon: number; lat: number } => {
   return {lon: 0, lat: 0}
 }
 
+const createExistingMarker = (name: string, coord: string, color: string): MapMarker | null => {
+  const parts = coord.split(',').map(item => parseFloat(item.trim()))
+  if (parts.length < 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) {
+    return null
+  }
+
+  return {
+    lon: parts[0],
+    lat: parts[1],
+    name,
+    color,
+  }
+}
+
+const existingMapMarkers = computed<MapMarker[]>(() => {
+  const markers: MapMarker[] = []
+
+  for (const waypoint of waypoints.value) {
+    const marker = createExistingMarker(waypoint.name || '登陆站', waypoint.coord, '#2563eb')
+    if (marker) markers.push(marker)
+  }
+
+  for (const bu of buConfigs.value) {
+    const marker = createExistingMarker(bu.name || 'BU', bu.coord, '#7c3aed')
+    if (marker) markers.push(marker)
+  }
+
+  const startMarker = createExistingMarker(startPointConfig.name || '起点', `${startPointConfig.lon},${startPointConfig.lat}`, '#2563eb')
+  if (startMarker) markers.push(startMarker)
+
+  const endMarker = createExistingMarker(endPointConfig.name || '终点', `${endPointConfig.lon},${endPointConfig.lat}`, '#16a34a')
+  if (endMarker) markers.push(endMarker)
+
+  return markers
+})
+
+const closeSettingsWithoutSaving = () => {
+  router.push('/planning')
+}
+
 const handleSave = () => {
   // 点对点模式：从 startPointConfig 和 endPointConfig 获取
   const startPoint = {
@@ -1185,7 +1249,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
           </div>
           <div>
             <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">工程设置</h2>
-            <p class="text-gray-500 dark:text-gray-400">请先创建或导入项目后，再进行工程设置</p>
+            <p class="text-gray-500 dark:text-gray-400">请先创建或打开项目后，再进行工程设置</p>
           </div>
           <div class="flex justify-center gap-4">
             <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="handleNewProject">
@@ -1194,7 +1258,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
             </Button>
             <Button variant="outline" class="px-6" @click="handleOpenProject">
               <FolderOpen class="w-4 h-4 mr-2"/>
-              导入项目
+              打开项目
             </Button>
           </div>
         </div>
@@ -1205,9 +1269,18 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
     <Card v-else class="flex-1 flex overflow-hidden">
       <!-- 左侧菜单 -->
       <div class="w-56 bg-gray-50 border-r flex-shrink-0 flex flex-col">
-        <div class="p-4 border-b bg-white">
-          <h2 class="font-bold text-gray-800 text-lg">工程设置</h2>
-          <p class="text-xs text-gray-500 mt-1">配置系统参数和器件库</p>
+        <div class="p-4 border-b bg-white flex items-start justify-between gap-3">
+          <div>
+            <h2 class="font-bold text-gray-800 text-lg">工程设置</h2>
+            <p class="text-xs text-gray-500 mt-1">配置系统参数和器件库</p>
+          </div>
+          <button
+            class="h-8 w-8 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+            title="返回主页面"
+            @click="closeSettingsWithoutSaving"
+          >
+            <X class="w-4 h-4 mx-auto" />
+          </button>
         </div>
         <div class="p-3 space-y-1 flex-1">
           <button v-for="tab in tabs" :key="tab.id" :class="[
@@ -1433,7 +1506,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                               </button>
                               <button
                                 class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                                title="地图定位" 
+                                title="地图选点" 
                                 @click="handleWaypointMapSelect(wp.id)"
                               >
                                 <MapPin class="w-4 h-4"/>
@@ -1543,6 +1616,13 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                                 @click="handleEditBU(bu.id)"
                               >
                                 <Edit class="w-4 h-4"/>
+                              </button>
+                              <button
+                                class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                                title="地图选点" 
+                                @click="handleBuMapSelect(bu.id)"
+                              >
+                                <MapPin class="w-4 h-4"/>
                               </button>
                               <button
                                 class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
@@ -2850,6 +2930,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
     v-model:visible="showMapSelectDialog" 
     :title="mapSelectTitle" 
     :mode="mapSelectType === 'range' ? 'range' : 'point'"
+    :existing-markers="existingMapMarkers"
     @confirm="handleMapSelectConfirm"
   />
 

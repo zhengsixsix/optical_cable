@@ -5,12 +5,12 @@ import { useLayerStore } from '@/stores/layer'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouteStore } from '@/stores/route'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, onMounted, onUnmounted, watch, toRef} from 'vue'
+import { ref, onMounted, onUnmounted, watch, toRef, computed } from 'vue'
 import { useMapStore } from '@/stores/map'
 import { useRPLStore } from '@/stores/rpl'
 import {Button, Tooltip} from '@/shared/components/base'
 import {
-  Square, Edit3, Play, Pause, Loader2, FileSpreadsheet, Scissors
+  Square, Edit3, Play, Pause, Loader2, FileSpreadsheet, Scissors, Undo2, Redo2
 } from 'lucide-vue-next'
 
 // 新增组件导入
@@ -25,7 +25,6 @@ import Map from 'ol/Map'
 import View from 'ol/View'
 import WebGLTileLayer from 'ol/layer/WebGLTile'
 import WebGLPointsLayer from 'ol/layer/WebGLPoints'
-import GeoTIFF from 'ol/source/GeoTIFF'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
@@ -42,6 +41,7 @@ import {fromLonLat, toLonLat, transform, get as getProjection} from 'ol/proj'
 import 'ol/ol.css'
 
 import {loadVolcanoData, loadEarthquakeData} from '@/utils/dataLoader'
+import { DEFAULT_GEO_TIFF_URL, getCachedGeoTiffSource } from '@/utils/geoTiffCache'
 import {useShpLoader} from '@/services/ShpLoader'
 import {createColdCoralLayers, createFishingLayers, createShippingLayers} from '@/utils/layerFactory'
 
@@ -50,6 +50,7 @@ import volcanoIconUrl from '@/assets/volcano.svg'
 import earthquakeIconUrl from '@/assets/earthquake.svg'
 
 import { useCableSegmentStore } from '@/stores/cableSegment'
+import type { Route } from '@/types'
 import type { SegmentGenerateConfig, CableSegment, CableSegmentSummary } from '@/types/cableSegment'
 import { fetchRoutePlanning, checkRoutePlanningService } from '@/services/RoutePlanningApiService'
 import type { RoutePlanningRequest } from '@/services/RoutePlanningApiService'
@@ -91,6 +92,20 @@ const selectedCableSegment = ref<CableSegment | null>(null)
 const currentSegmentMethod = ref('')  // 当前分段方式
 const currentSegmentGenerateTime = ref('')  // 生成时间
 
+interface RouteEditSnapshot {
+  routeId: string
+  points: Route['points']
+  segments: Route['segments']
+  totalLength: number
+}
+
+const routeEditHistory = ref<RouteEditSnapshot[]>([])
+const routeEditFuture = ref<RouteEditSnapshot[]>([])
+const currentEditingRouteId = ref<string | null>(null)
+const activeRouteId = computed(() => getActiveRouteId() || '')
+const canUndoRouteEdit = computed(() => routeEditHistory.value.length > 1)
+const canRedoRouteEdit = computed(() => routeEditFuture.value.length > 0)
+
 // 选中的光纤线
 const selectedCableId = ref<string | null>(null)
 
@@ -121,6 +136,7 @@ let routeLayer: VectorLayer<VectorSource> | null = null
 let routeSource: VectorSource | null = null
 let modifyInteraction: Modify | null = null
 const editableFeatures: any = new Collection([])
+const geoTiffUrl = DEFAULT_GEO_TIFF_URL
 
 
 const enableBoxSelect = () => {
@@ -210,8 +226,109 @@ const handleAction = (actionName: string) => {
   appStore.addLog('INFO', actionName)
 }
 
+const cloneRouteSnapshot = (route: Route): RouteEditSnapshot => ({
+  routeId: route.id,
+  points: structuredClone(route.points),
+  segments: structuredClone(route.segments),
+  totalLength: route.totalLength,
+})
+
+const getEditableRoute = (routeId?: string | null) => {
+  const targetRouteId = routeId || currentEditingRouteId.value || activeRouteId.value
+  if (!targetRouteId) return null
+  return routeStore.paretoRoutes.find(route => route.id === targetRouteId) || null
+}
+
+const applyRouteSnapshot = (snapshot: RouteEditSnapshot) => {
+  const route = getEditableRoute(snapshot.routeId)
+  if (!route) return
+
+  route.points = structuredClone(snapshot.points)
+  route.segments = structuredClone(snapshot.segments)
+  route.totalLength = snapshot.totalLength
+  route.updatedAt = new Date()
+  routeStore.selectRoute(route.id)
+  drawParetoRoutes()
+}
+
+const seedRouteEditHistory = (routeId?: string | null) => {
+  const route = getEditableRoute(routeId)
+  if (!route) return false
+
+  currentEditingRouteId.value = route.id
+  routeEditHistory.value = [cloneRouteSnapshot(route)]
+  routeEditFuture.value = []
+  return true
+}
+
+const pushRouteEditSnapshot = (routeId?: string | null) => {
+  const route = getEditableRoute(routeId)
+  if (!route) return
+
+  const snapshot = cloneRouteSnapshot(route)
+  const previous = routeEditHistory.value[routeEditHistory.value.length - 1]
+  if (previous && JSON.stringify(previous.points) === JSON.stringify(snapshot.points)) {
+    return
+  }
+
+  routeEditHistory.value.push(snapshot)
+  routeEditFuture.value = []
+}
+
+const undoRouteEdit = () => {
+  if (!canUndoRouteEdit.value) return
+
+  const current = routeEditHistory.value.pop()
+  if (current) {
+    routeEditFuture.value.unshift(current)
+  }
+
+  const previous = routeEditHistory.value[routeEditHistory.value.length - 1]
+  if (previous) {
+    applyRouteSnapshot(previous)
+    appStore.showNotification({ type: 'info', message: '已撤销上一次路由调整' })
+  }
+}
+
+const redoRouteEdit = () => {
+  if (!canRedoRouteEdit.value) return
+
+  const next = routeEditFuture.value.shift()
+  if (!next) return
+
+  routeEditHistory.value.push(structuredClone(next))
+  applyRouteSnapshot(next)
+  appStore.showNotification({ type: 'info', message: '已恢复上一次撤销的调整' })
+}
+
+const handleRouteEditKeydown = (event: KeyboardEvent) => {
+  if (!isEditingRoute.value) return
+  if (!(event.ctrlKey || event.metaKey)) return
+  const target = event.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+    return
+  }
+
+  const key = event.key.toLowerCase()
+  const isUndo = key === 'z' && !event.shiftKey
+  const isRedo = (key === 'z' && event.shiftKey) || key === 'y'
+
+  if (isUndo) {
+    event.preventDefault()
+    undoRouteEdit()
+  } else if (isRedo) {
+    event.preventDefault()
+    redoRouteEdit()
+  }
+}
+
 // 切换路由调整模式（基于 OL Modify 交互，直接拖拽线条调整路线）
 const toggleRouteEditing = () => {
+  if (!isEditingRoute.value && !seedRouteEditHistory()) {
+    appStore.showNotification({ type: 'warning', message: '请先选择一条可编辑的路由' })
+    return
+  }
+
   isEditingRoute.value = !isEditingRoute.value
 
   if (isEditingRoute.value) {
@@ -353,10 +470,12 @@ const handleModifyEnd = (evt: any) => {
     route.points = newPoints
     route.segments = newSegments
     route.totalLength = Math.round(newSegments.reduce((sum, s) => sum + s.length, 0))
+    route.updatedAt = new Date()
 
     // 更新 LineString 几何（确保端点回正）
     geom.setCoordinates(newCoords)
 
+    pushRouteEditSnapshot(routeId)
     appStore.showNotification({ type: 'success', message: '路线已调整' })
     appStore.addLog('INFO', `路线已调整：${newPoints.length} 个点，总长 ${route.totalLength} km`)
   }
@@ -414,7 +533,7 @@ const buildRiskDataFromRoute = (route: { segments: Array<{ length: number; riskL
 // 打开海缆段生成对话框
 const handleOpenCableSegmentGenerate = () => {
   // 检查是否已有选中的路由
-  if (routeStore.selectedRouteIds.length === 0) {
+  if (!activeRouteId.value) {
     appStore.showNotification({ type: 'warning', message: '请先选择一条路由' })
     return
   }
@@ -427,7 +546,7 @@ const handleCableSegmentGenerate = (config: SegmentGenerateConfig) => {
   
   // 设置配置
   cableSegmentStore.setGenerateConfig(config)
-  const currentSelectedRouteId = routeStore.selectedRouteIds[0] || ''
+  const currentSelectedRouteId = activeRouteId.value
   cableSegmentStore.setCurrentRoute(currentSelectedRouteId)
   
   // 保存分段方式和生成时间
@@ -500,6 +619,7 @@ const syncCableSegmentsToRPL = (cableSegments: CableSegment[]) => {
 
 // 在地图中查看海缆段
 const handleViewSegmentsOnMap = () => {
+  showCableSegmentPreviewDialog.value = false
   // 重绘路由显示分段节点标记
   drawParetoRoutes()
   appStore.showNotification({ type: 'info', message: '已在地图中显示海缆分段节点标记' })
@@ -509,7 +629,7 @@ const handleViewSegmentsOnMap = () => {
 const autoGenerateCableSegments = (): number => {
   try {
     // 获取当前选中路由（规划刚完成时默认选中第一条）
-    const selectedRouteId = routeStore.selectedRouteIds[0] || routeStore.paretoRoutes[0]?.id
+    const selectedRouteId = activeRouteId.value || routeStore.paretoRoutes[0]?.id
     if (!selectedRouteId) {
       return 0
     }
@@ -554,7 +674,7 @@ const autoGenerateCableSegments = (): number => {
 
 // 获取当前路由总长度
 const getCurrentRouteLength = (): number => {
-  const currentSelectedRouteId = routeStore.selectedRouteIds[0]
+  const currentSelectedRouteId = activeRouteId.value
   const selectedRoute = routeStore.paretoRoutes.find(r => r.id === currentSelectedRouteId)
   return selectedRoute?.totalLength || 0
 }
@@ -708,36 +828,27 @@ const getSegmentInfo = (routeId: string, segmentIndex: number) => {
 const initMap = () => {
   if (!mapContainer.value) return
 
-  const tifFiles = ['/output2.tif']
   const rgbStyle = {color: ['array', ['band', 1], ['band', 2], ['band', 3], 1]}
+  const geoTiffEntry = getCachedGeoTiffSource(geoTiffUrl)
+  const geoTiffLayers = [
+    new WebGLTileLayer({
+      source: geoTiffEntry.source,
+      style: rgbStyle,
+      visible: true,
+      opacity: 1,
+    })
+  ]
 
-  let loadedCount = 0
-
-  const geoTiffLayers = tifFiles.map((url) => {
-    try {
-      const source = new GeoTIFF({
-        sources: [{url}],
-        normalize: true,
-        wrapX: true,
-      })
-
-      source.on('tileloadend', () => {
-        loadedCount++
-        if (loadedCount >= 1) loading.value = false
-      })
-
-      source.on('tileloaderror', () => {
-        // GeoTIFF 瓦片加载失败，静默处理
-        loading.value = false
-      })
-
-      return new WebGLTileLayer({source, style: rgbStyle, visible: true, opacity: 1})
-    } catch {
-      // GeoTIFF 初始化失败，返回空图层
+  if (geoTiffEntry.loaded || geoTiffEntry.failed) {
+    loading.value = false
+  } else {
+    geoTiffEntry.source.on('tileloadend', () => {
       loading.value = false
-      return null
-    }
-  }).filter(Boolean) as WebGLTileLayer[]
+    })
+    geoTiffEntry.source.on('tileloaderror', () => {
+      loading.value = false
+    })
+  }
 
   // 保存到模块变量，供图层控制使用
   elevationLayers = geoTiffLayers
@@ -1339,7 +1450,7 @@ const initMap = () => {
 
   setTimeout(() => {
     loading.value = false
-    if (loadedCount === 0) {
+    if (!geoTiffEntry.loaded && !geoTiffEntry.failed) {
       appStore.showNotification({type: 'warning', message: 'GeoTIFF 文件较大，加载中...'})
     }
   }, 8000)
@@ -1954,9 +2065,12 @@ const drawMonitorDevices = () => {
 }
 
 // 监听选中路径变化，更新样式
-watch(() => routeStore.selectedRoute, () => {
+watch(() => routeStore.selectedRoute?.id, (newRouteId) => {
   if (routeSource && routeStore.paretoRoutes.length > 0) {
     drawParetoRoutes()
+  }
+  if (isEditingRoute.value && newRouteId) {
+    seedRouteEditHistory(newRouteId)
   }
 })
 
@@ -2664,9 +2778,13 @@ const handleRunPlanning = async () => {
   }
 }
 
-onMounted(() => initMap())
+onMounted(() => {
+  initMap()
+  window.addEventListener('keydown', handleRouteEditKeydown)
+})
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleRouteEditKeydown)
   if (map) {
     map.setTarget(undefined)
     map = null
@@ -2693,6 +2811,30 @@ onUnmounted(() => {
           </Button>
         </Tooltip>
 
+        <Tooltip content="撤销最近一次路由调整 (Ctrl/Cmd+Z)">
+          <Button
+              variant="outline"
+              size="sm"
+              :disabled="!isEditingRoute || !canUndoRouteEdit"
+              @click="undoRouteEdit"
+          >
+            <Undo2 class="w-4 h-4 mr-1"/>
+            撤销
+          </Button>
+        </Tooltip>
+
+        <Tooltip content="恢复最近一次撤销 (Ctrl/Cmd+Shift+Z)">
+          <Button
+              variant="outline"
+              size="sm"
+              :disabled="!isEditingRoute || !canRedoRouteEdit"
+              @click="redoRouteEdit"
+          >
+            <Redo2 class="w-4 h-4 mr-1"/>
+            重做
+          </Button>
+        </Tooltip>
+
         <div class="w-px h-5" style="background-color: var(--app-border-color);"/>
 
         <!-- 区域选择 -->
@@ -2710,7 +2852,7 @@ onUnmounted(() => {
           <Button 
               variant="outline" 
               size="sm" 
-              :disabled="!isPlanning || routeStore.selectedRouteIds.length === 0"
+              :disabled="!isPlanning || !activeRouteId"
               @click="handleOpenCableSegmentGenerate"
           >
             <Scissors class="w-4 h-4 mr-1"/>
@@ -2801,7 +2943,7 @@ onUnmounted(() => {
     <!-- 海缆段生成配置弹窗 -->
     <CableSegmentGenerateDialog
         :visible="showCableSegmentGenerateDialog"
-        :route-id="routeStore.selectedRouteIds[0] || ''"
+        :route-id="activeRouteId"
         :route-length="getCurrentRouteLength()"
         @close="showCableSegmentGenerateDialog = false"
         @generate="handleCableSegmentGenerate"
@@ -2813,7 +2955,7 @@ onUnmounted(() => {
         :segments="generatedSegments"
         :summary="segmentSummary"
         :segment-method="currentSegmentMethod"
-        :route-id="routeStore.selectedRouteIds[0] || ''"
+        :route-id="activeRouteId"
         :generate-time="currentSegmentGenerateTime"
         @close="showCableSegmentPreviewDialog = false"
         @confirm="handleCableSegmentConfirm"

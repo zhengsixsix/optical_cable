@@ -107,6 +107,7 @@ export const useRouteStore = defineStore('route', () => {
 
   function selectRoute(routeId: string | null) {
     currentRouteId.value = routeId
+    selectedRouteIds.value = routeId ? [routeId] : []
     selectedSegmentId.value = null
   }
 
@@ -245,6 +246,7 @@ export const useRouteStore = defineStore('route', () => {
     routes.value = []
     paretoRoutes.value = []
     currentRouteId.value = null
+    selectedRouteIds.value = []
   }
 
   /**
@@ -255,6 +257,9 @@ export const useRouteStore = defineStore('route', () => {
     paretoRoutes.value = [...newRoutes]
     if (newRoutes.length > 0) {
       currentRouteId.value = newRoutes[0].id
+      selectedRouteIds.value = [newRoutes[0].id]
+    } else {
+      selectedRouteIds.value = []
     }
   }
 

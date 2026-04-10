@@ -2,9 +2,10 @@
 import { useAppStore } from '@/stores/app'
 import { useLayerStore } from '@/stores/layer'
 import { useUserStore } from '@/stores/user'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouteStore } from '@/stores/route'
 import { initAppearance, useProjectManager, type CreateProjectParams } from '@/composables'
+import { scheduleGeoTiffWarmup } from '@/utils/geoTiffCache'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
@@ -28,13 +29,29 @@ const layerStore = useLayerStore()
 const appStore = useAppStore()
 const userStore = useUserStore()
 const projectManager = useProjectManager()
+const hasScheduledGeoTiffWarmup = ref(false)
+
+const startGeoTiffWarmup = () => {
+  if (hasScheduledGeoTiffWarmup.value) return
+  hasScheduledGeoTiffWarmup.value = true
+  scheduleGeoTiffWarmup()
+}
 
 onMounted(async () => {
   // 初始化外观设置
   initAppearance()
   // 初始化数据
   await routeStore.loadRoutes()
+  if (userStore.isLoggedIn) {
+    startGeoTiffWarmup()
+  }
   appStore.addLog('INFO', '应用初始化完成')
+})
+
+watch(() => userStore.isLoggedIn, (isLoggedIn) => {
+  if (isLoggedIn) {
+    startGeoTiffWarmup()
+  }
 })
 
 // 处理新建项目成功

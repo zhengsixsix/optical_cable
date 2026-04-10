@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { ref, onUnmounted, watch, computed } from 'vue'
 import { Button } from '@/shared/components/base'
 import { X, MapPin, Square } from 'lucide-vue-next'
 
@@ -13,8 +13,6 @@ import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
 import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style'
-import { DragBox } from 'ol/interaction'
-import { platformModifierKeyOnly } from 'ol/events/condition'
 import { boundingExtent } from 'ol/extent'
 import 'ol/ol.css'
 
@@ -57,6 +55,15 @@ let markerSource: VectorSource | null = null
 let boxSource: VectorSource | null = null
 let existingMarkerSource: VectorSource | null = null
 
+const resetSelection = () => {
+  selectedCoord.value = null
+  selectedRange.value = null
+  isDrawing.value = false
+  drawStartCoord.value = null
+  markerSource?.clear()
+  boxSource?.clear()
+}
+
 const destroyMap = () => {
   if (map) {
     map.setTarget(undefined)
@@ -70,8 +77,11 @@ const destroyMap = () => {
 const initMap = () => {
   if (!mapContainer.value) return
 
-  // 先销毁旧地图
-  destroyMap()
+  if (map) {
+    map.setTarget(mapContainer.value)
+    renderExistingMarkers()
+    return
+  }
 
   markerSource = new VectorSource()
   boxSource = new VectorSource()
@@ -120,38 +130,7 @@ const initMap = () => {
     }),
   })
 
-  // 添加已有标记并自动缩放视图
-  if (props.existingMarkers.length > 0) {
-    const coords: [number, number][] = []
-    for (const m of props.existingMarkers) {
-      const feat = new Feature({ geometry: new Point([m.lon, m.lat]) })
-      const c = m.color || '#6366f1'
-      feat.setStyle(new Style({
-        image: new CircleStyle({
-          radius: 7,
-          fill: new Fill({ color: c }),
-          stroke: new Stroke({ color: '#fff', width: 2 }),
-        }),
-        text: new Text({
-          text: m.name,
-          offsetY: -16,
-          font: 'bold 12px sans-serif',
-          fill: new Fill({ color: c }),
-          stroke: new Stroke({ color: '#fff', width: 3 }),
-        }),
-      }))
-      existingMarkerSource!.addFeature(feat)
-      coords.push([m.lon, m.lat])
-    }
-    // 自动缩放到所有标记点
-    if (coords.length >= 2) {
-      const ext = boundingExtent(coords)
-      map.getView().fit(ext, { padding: [60, 60, 60, 60], maxZoom: 8 })
-    } else {
-      map.getView().setCenter(coords[0])
-      map.getView().setZoom(6)
-    }
-  }
+  renderExistingMarkers()
 
   map.on('pointermove', (evt) => {
     hoverCoord.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
@@ -199,6 +178,44 @@ const initMap = () => {
   })
 }
 
+const renderExistingMarkers = () => {
+  if (!map || !existingMarkerSource) return
+
+  existingMarkerSource.clear()
+  const coords: [number, number][] = []
+
+  if (props.existingMarkers.length > 0) {
+    for (const m of props.existingMarkers) {
+      const feat = new Feature({ geometry: new Point([m.lon, m.lat]) })
+      const c = m.color || '#6366f1'
+      feat.setStyle(new Style({
+        image: new CircleStyle({
+          radius: 7,
+          fill: new Fill({ color: c }),
+          stroke: new Stroke({ color: '#fff', width: 2 }),
+        }),
+        text: new Text({
+          text: m.name,
+          offsetY: -16,
+          font: 'bold 12px sans-serif',
+          fill: new Fill({ color: c }),
+          stroke: new Stroke({ color: '#fff', width: 3 }),
+        }),
+      }))
+      existingMarkerSource!.addFeature(feat)
+      coords.push([m.lon, m.lat])
+    }
+  }
+
+  if (coords.length >= 2) {
+    const ext = boundingExtent(coords)
+    map.getView().fit(ext, { padding: [60, 60, 60, 60], maxZoom: 8 })
+  } else if (coords.length === 1) {
+    map.getView().setCenter(coords[0])
+    map.getView().setZoom(6)
+  }
+}
+
 // 绘制矩形框
 const drawBox = (start: { lon: number; lat: number }, end: { lon: number; lat: number }) => {
   boxSource?.clear()
@@ -241,18 +258,19 @@ const handleCancel = () => {
 
 watch(() => props.visible, (val) => {
   if (val) {
-    selectedCoord.value = null
-    selectedRange.value = null
-    isDrawing.value = false
-    drawStartCoord.value = null
+    resetSelection()
     setTimeout(() => {
       initMap()
+      renderExistingMarkers()
       map?.updateSize()
     }, 100)
-  } else {
-    destroyMap()
   }
 })
+
+watch(() => props.existingMarkers, () => {
+  renderExistingMarkers()
+  map?.updateSize()
+}, { deep: true })
 
 onUnmounted(() => {
   destroyMap()
@@ -261,7 +279,7 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="fixed inset-0 z-50 flex items-center justify-center">
+    <div v-show="visible" class="fixed inset-0 z-50 flex items-center justify-center">
       <div class="absolute inset-0 bg-black/50" @click="handleCancel" />
       <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[700px] h-[500px] flex flex-col">
         <!-- 标题栏 -->

@@ -16,6 +16,7 @@ import { useRPLStore } from '@/stores/rpl'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
 import { generateUUID } from '@/types/useFile'
+import { useRouter } from 'vue-router'
 
 // 新建项目参数
 export interface CreateProjectParams {
@@ -115,6 +116,7 @@ export function useProjectManager() {
   const appStore = useAppStore()
   const userStore = useUserStore()
   const projectDataStore = useProjectDataStore()
+  const router = useRouter()
   
   // 状态
   const openState = ref<OpenProjectState>({
@@ -221,6 +223,8 @@ export function useProjectManager() {
       // 设置数据联动并标记已加载（文件数据已由 ProjectFileService.importProject 加载）
       projectDataStore.setupDataLinks()
       projectDataStore.markDataLoaded()
+      appStore.setProjectPhase('route-planning')
+      await router.push('/planning')
       
       appStore.showNotification({
         type: 'success',
@@ -728,6 +732,8 @@ export function useProjectManager() {
       // 初始化项目数据
       projectDataStore.setupDataLinks()
       projectDataStore.markDataLoaded()
+      appStore.setProjectPhase('route-planning')
+      await router.push('/planning')
 
       appStore.addLog('INFO', `新建项目: ${projectName} (${projectType})`)
       appStore.showNotification({
