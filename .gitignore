@@ -28,5 +28,6 @@ dist-ssr
 # Temp files
 *.timestamp-*.mjs
 .sanshu-memory/
+.superpowers/
 tmp/
 WARP.md
