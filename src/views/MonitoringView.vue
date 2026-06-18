@@ -135,11 +135,7 @@ const overallHealth = computed(() => {
   return total / devices.value.length
 })
 
-// 健康度趋势（模拟24小时前的数据）
-const healthTrend = computed(() => {
-  const previous = overallHealth.value + (Math.random() - 0.5) * 10
-  return overallHealth.value - previous
-})
+const healthTrend = computed(() => 0)
 
 // 是否有数据
 const hasData = computed(() => monitorStore.devices.length > 0)
@@ -148,40 +144,9 @@ const hasData = computed(() => monitorStore.devices.length > 0)
 const performanceHistory = ref<{ time: string; value: number }[]>([])
 const temperatureHistory = ref<{ time: string; value: number }[]>([])
 
-// 根据选中设备生成历史数据
 const generateHistoryData = () => {
-  if (!hasData.value) {
-    performanceHistory.value = []
-    temperatureHistory.value = []
-    return
-  }
-  
-  const device = selectedDevice.value 
-    ? devices.value.find(d => d.id === selectedDevice.value)
-    : devices.value[0]
-  
-  if (!device) {
-    performanceHistory.value = []
-    temperatureHistory.value = []
-    return
-  }
-  
-  const now = new Date()
-  const baseOutputPower = device.outputPower || -10
-  const baseTemperature = device.temperature || 4
-  
-  const data: { time: string; value: number }[] = []
-  const tempData: { time: string; value: number }[] = []
-
-  for (let i = 29; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 60000)
-    const timeStr = time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    data.push({ time: timeStr, value: baseOutputPower + (Math.random() - 0.5) * 2 })
-    tempData.push({ time: timeStr, value: baseTemperature + (Math.random() - 0.5) * 1 })
-  }
-
-  performanceHistory.value = data
-  temperatureHistory.value = tempData
+  performanceHistory.value = []
+  temperatureHistory.value = []
 }
 
 // 性能曲线图数据 - 无数据时返回空
@@ -219,11 +184,8 @@ const refreshPerformanceData = () => {
   
   const now = new Date()
   const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  const baseOutputPower = device.outputPower || -10
-  const baseTemperature = device.temperature || 4
-
-  performanceHistory.value.push({ time: timeStr, value: baseOutputPower + (Math.random() - 0.5) * 2 })
-  temperatureHistory.value.push({ time: timeStr, value: baseTemperature + (Math.random() - 0.5) * 1 })
+  performanceHistory.value.push({ time: timeStr, value: device.outputPower || 0 })
+  temperatureHistory.value.push({ time: timeStr, value: device.temperature || 0 })
 
   if (performanceHistory.value.length > 30) performanceHistory.value.shift()
   if (temperatureHistory.value.length > 30) temperatureHistory.value.shift()
@@ -398,30 +360,24 @@ const distanceRangeEnd = ref(275)
 const timeRangeStart = ref(0)
 const timeRangeEnd = ref(24)
 
-// 生成沿距离变化数据
 const generateDistanceData = (baseValue: number, distStart: number, distEnd: number) => {
   const data: { time: string; value: number }[] = []
   const totalKm = distEnd - distStart
   const steps = Math.min(20, totalKm)
   for (let i = 0; i <= steps; i++) {
     const km = distStart + (totalKm / steps) * i
-    // 模拟沿距离衰减
-    const decay = (km / 275) * baseValue * 0.4
-    data.push({ time: `${km.toFixed(0)}`, value: baseValue - decay + (Math.random() - 0.5) * 0.5 })
+    data.push({ time: `${km.toFixed(0)}`, value: baseValue })
   }
   return data
 }
 
-// 生成随时间变化数据
 const generateTimeData = (baseValue: number, hourStart: number, hourEnd: number) => {
   const data: { time: string; value: number }[] = []
   const totalHours = hourEnd - hourStart
   const steps = Math.min(24, totalHours)
   for (let i = 0; i <= steps; i++) {
     const hour = hourStart + (totalHours / steps) * i
-    // 模拟随时间的轻微波动
-    const drift = (hour / 24) * baseValue * 0.2
-    data.push({ time: `${hour.toFixed(0)}`, value: baseValue - drift + (Math.random() - 0.5) * 0.3 })
+    data.push({ time: `${hour.toFixed(0)}`, value: baseValue })
   }
   return data
 }
@@ -500,21 +456,14 @@ const toggleSubDevice = (key: string) => {
   }
 }
 
-// 模拟子设备/模块数据
-const getSubDevices = (device: any) => {
-  // 根据设备类型生成模拟子设备
-  const baseHealth = device.health || 90
-  if (device.type === 'landing' || device.type === 'LandingStation') {
-    return [
-      { id: `${device.id}-dev1`, name: '设备1', health: Math.min(99, baseHealth + 2), status: 'normal' as const },
-      { id: `${device.id}-dev2`, name: '设备2', health: Math.max(80, baseHealth - 1), status: 'normal' as const },
-    ]
-  }
-  if (device.type === 'Repeater' || device.type === 'amplifier_e') {
-    return [
-      { id: `${device.id}-edfa`, name: 'EDFA 模块', health: baseHealth, status: device.status },
-    ]
-  }
+type SubDevice = {
+  id: string
+  name: string
+  health: number
+  status: 'normal' | 'warning' | 'error'
+}
+
+const getSubDevices = (_device: any): SubDevice[] => {
   return []
 }
 </script>

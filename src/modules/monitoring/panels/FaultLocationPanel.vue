@@ -82,25 +82,6 @@ const faultEvents = computed<FaultEvent[]>(() => {
     })
   })
 
-  // 如果没有真实故障设备，生成一个演示事件
-  if (events.length === 0) {
-    events.push({
-      id: 'fault-demo-1',
-      time: new Date().toLocaleString('zh-CN'),
-      kp: 137.5,
-      longitude: 120.5,
-      latitude: 24.2,
-      depth: 3200,
-      type: 'high_loss',
-      severity: 'minor',
-      estimatedLossDb: 4.2,
-      confidencePct: 78,
-      affectedDeviceIds: [],
-      description: 'KP137.5 轻微衰减增大，建议持续监测',
-      status: 'investigating',
-    })
-  }
-
   return events.sort((a, b) => {
     const order = { critical: 0, major: 1, minor: 2 }
     return order[a.severity] - order[b.severity]

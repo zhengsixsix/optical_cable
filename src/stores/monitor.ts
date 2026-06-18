@@ -84,7 +84,15 @@ export const useMonitorStore = defineStore('monitor', () => {
     const elements = connectorStore.elements.filter(e => !nonDeviceTypes.includes(e.type))
     
     return elements.map(elem => {
-      const runtime = runtimeData.value[elem.id] || defaultRuntimeData
+      const runtime = runtimeData.value[elem.id] || {
+        status: 'normal',
+        inputPower: 0,
+        outputPower: 0,
+        pumpCurrent: 0,
+        pfeVoltage: 0,
+        pfeCurrent: 0,
+        temperature: 0,
+      }
       return {
         id: elem.id,
         name: elem.name,
@@ -220,21 +228,23 @@ export const useMonitorStore = defineStore('monitor', () => {
 
   // 初始化模拟运行时数据 (仅用于演示)
   function initMockData() {
+    if (mockAlarmHistory.length === 0) return
+
     // 设备列表现在从 connectorStore 派生，这里只初始化运行时数据和告警
     if (alarmHistory.value.length === 0) {
-      alarmHistory.value = mockAlarmHistory.map(a => ({ ...a } as AlarmRecord))
+      alarmHistory.value = (mockAlarmHistory as AlarmRecord[]).map(a => ({ ...a }))
     }
     // 为现有设备初始化模拟运行时数据
     devices.value.forEach(device => {
       if (!runtimeData.value[device.id]) {
         runtimeData.value[device.id] = {
           status: 'normal',
-          inputPower: -15 + Math.random() * 5,
-          outputPower: -10 + Math.random() * 5,
-          pumpCurrent: 200 + Math.random() * 50,
-          pfeVoltage: 48,
-          pfeCurrent: 1.2 + Math.random() * 0.3,
-          temperature: 4 + Math.random() * 2,
+          inputPower: 0,
+          outputPower: 0,
+          pumpCurrent: 0,
+          pfeVoltage: 0,
+          pfeCurrent: 0,
+          temperature: 0,
         }
       }
     })

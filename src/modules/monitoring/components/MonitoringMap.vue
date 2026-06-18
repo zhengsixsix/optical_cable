@@ -8,7 +8,7 @@ import TileLayer from 'ol/layer/Tile'
 import WebGLTileLayer from 'ol/layer/WebGLTile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
-import OSM from 'ol/source/OSM'
+import { createBaseTileSource } from '@/utils/mapTileSource'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
@@ -300,7 +300,7 @@ const initMap = () => {
     target: mapContainer.value,
     layers: [
       new TileLayer({ 
-        source: new OSM(),
+        source: createBaseTileSource(),
         opacity: 0.5
       }),
       ...geoTiffLayers,

@@ -74,6 +74,7 @@ export interface ProjectMetadata {
   path: string
   type: ProjectType
   uuid: string
+  platformProjectId?: number
   lastModified: string
   creatorId: string
   allowOtherUsers: boolean
@@ -1575,12 +1576,12 @@ class ProjectFileService {
             longitude: record.longitude,
             latitude: record.latitude,
             depth: record.depth,
-            inputPower: -15 + Math.random() * 5,
-            outputPower: -10 + Math.random() * 5,
-            pumpCurrent: 200 + Math.random() * 50,
+            inputPower: 0,
+            outputPower: 0,
+            pumpCurrent: 0,
             pfeVoltage: 48,
-            pfeCurrent: 1.2 + Math.random() * 0.3,
-            temperature: 4 + Math.random() * 2,
+            pfeCurrent: 0,
+            temperature: 0,
             componentRefId: record.componentRefId || '',
           })
         }

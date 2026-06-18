@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types'
 import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes, defaultEqualizerTypes, defaultJointBoxTypes } from '@/types/settings'
+import { platformDeviceEntityApi, platformDeviceLibraryApi } from '@/services/platform/api'
+import type { PlanDeviceEntity, PlanDeviceEntitySearch, PlanDeviceLibrary } from '@/services/platform/types'
 import type { 
   SystemPlanningParams, 
   SimulationModelConfig,
@@ -230,6 +232,14 @@ export const useSettingsStore = defineStore('settings', () => {
   const equalizerTypes = ref<EqualizerType[]>([])
   const jointBoxTypes = ref<JointBoxType[]>([])
   const currentLibraryFile = ref('')
+  const platformDeviceLibraries = ref<PlanDeviceLibrary[]>([])
+  const platformDeviceEntities = ref<PlanDeviceEntity[]>([])
+  const deviceLibraryLoading = ref(false)
+  const deviceLibrarySyncing = ref(false)
+  const deviceLibrarySyncError = ref<string | null>(null)
+  const deviceEntityLoading = ref(false)
+  const deviceEntitySyncing = ref(false)
+  const deviceEntitySyncError = ref<string | null>(null)
   
   // 新增配置状态
   const routePlanningConfig = ref<RoutePlanningConfig>({ ...defaultRoutePlanningConfig })
@@ -307,6 +317,119 @@ export const useSettingsStore = defineStore('settings', () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch {
       // localStorage 保存失败时静默处理
+    }
+  }
+
+  async function loadPlatformDeviceLibraries() {
+    deviceLibraryLoading.value = true
+    deviceLibrarySyncError.value = null
+    try {
+      const response = await platformDeviceLibraryApi.search({ pageNumber: 1, pageSize: 1000 })
+      platformDeviceLibraries.value = response.data ?? []
+      if (platformDeviceLibraries.value.length) currentLibraryFile.value = '平台器件库'
+      return response
+    } catch (error) {
+      deviceLibrarySyncError.value = error instanceof Error ? error.message : '器件库加载失败'
+      throw error
+    } finally {
+      deviceLibraryLoading.value = false
+    }
+  }
+
+  const loadDeviceLibraryFromPlatform = loadPlatformDeviceLibraries
+
+  async function savePlatformDeviceLibrary(library: PlanDeviceLibrary) {
+    deviceLibrarySyncing.value = true
+    deviceLibrarySyncError.value = null
+    try {
+      const payload: PlanDeviceLibrary = {
+        ...library,
+        iconSize: library.iconSize ?? { width: 48, height: 48 },
+        bindFuncList: library.bindFuncList ?? [],
+      }
+      const id = await platformDeviceLibraryApi.save(payload)
+      const saved = { ...payload, id }
+      const index = platformDeviceLibraries.value.findIndex(item => item.id === id || (payload.id != null && item.id === payload.id))
+      if (index >= 0) platformDeviceLibraries.value[index] = saved
+      else platformDeviceLibraries.value.push(saved)
+      currentLibraryFile.value = saved.name || '平台器件库'
+      return id
+    } catch (error) {
+      deviceLibrarySyncError.value = error instanceof Error ? error.message : '器件库同步失败'
+      throw error
+    } finally {
+      deviceLibrarySyncing.value = false
+    }
+  }
+
+  async function removePlatformDeviceLibrary(id: number | string) {
+    deviceLibrarySyncing.value = true
+    deviceLibrarySyncError.value = null
+    try {
+      await platformDeviceLibraryApi.remove(id)
+      platformDeviceLibraries.value = platformDeviceLibraries.value.filter(item => item.id !== id)
+    } catch (error) {
+      deviceLibrarySyncError.value = error instanceof Error ? error.message : '器件库删除失败'
+      throw error
+    } finally {
+      deviceLibrarySyncing.value = false
+    }
+  }
+
+  async function syncDeviceLibraryToPlatform() {
+    await loadPlatformDeviceLibraries()
+    return platformDeviceLibraries.value.map(item => item.id).filter((id): id is number | string => id != null)
+  }
+
+  async function loadPlatformDeviceEntities(search: PlanDeviceEntitySearch | number = {}) {
+    deviceEntityLoading.value = true
+    deviceEntitySyncError.value = null
+    try {
+      const filters = typeof search === 'number' ? { projectId: search } : search
+      const response = await platformDeviceEntityApi.search({
+        pageNumber: 1,
+        pageSize: 1000,
+        ...filters,
+      })
+      platformDeviceEntities.value = response.data ?? []
+      return response
+    } catch (error) {
+      deviceEntitySyncError.value = error instanceof Error ? error.message : '器件实例加载失败'
+      throw error
+    } finally {
+      deviceEntityLoading.value = false
+    }
+  }
+
+  async function savePlatformDeviceEntity(entity: PlanDeviceEntity) {
+    deviceEntitySyncing.value = true
+    deviceEntitySyncError.value = null
+    try {
+      const id = await platformDeviceEntityApi.save(entity)
+      const saved = { ...entity, id }
+      const index = platformDeviceEntities.value.findIndex(item => item.id === id || (entity.id != null && item.id === entity.id))
+      if (index >= 0) platformDeviceEntities.value[index] = saved
+      else platformDeviceEntities.value.push(saved)
+      return id
+    } catch (error) {
+      deviceEntitySyncError.value = error instanceof Error ? error.message : '器件实例同步失败'
+      throw error
+    } finally {
+      deviceEntitySyncing.value = false
+    }
+  }
+
+  async function removePlatformDeviceEntity(id: number | string) {
+    deviceEntitySyncing.value = true
+    deviceEntitySyncError.value = null
+    try {
+      await platformDeviceEntityApi.remove(id)
+      platformDeviceEntities.value = platformDeviceEntities.value.filter(item => item.id !== id)
+    } catch (error) {
+      deviceEntitySyncError.value = error instanceof Error ? error.message : '器件实例删除失败'
+      throw error
+    } finally {
+      deviceEntitySyncing.value = false
     }
   }
 
@@ -647,6 +770,22 @@ export const useSettingsStore = defineStore('settings', () => {
     equalizerTypes,
     jointBoxTypes,
     currentLibraryFile,
+    platformDeviceLibraries,
+    platformDeviceEntities,
+    deviceLibraryLoading,
+    deviceLibrarySyncing,
+    deviceLibrarySyncError,
+    deviceEntityLoading,
+    deviceEntitySyncing,
+    deviceEntitySyncError,
+    loadPlatformDeviceLibraries,
+    savePlatformDeviceLibrary,
+    removePlatformDeviceLibrary,
+    loadPlatformDeviceEntities,
+    savePlatformDeviceEntity,
+    removePlatformDeviceEntity,
+    loadDeviceLibraryFromPlatform,
+    syncDeviceLibraryToPlatform,
     loadFromLocalStorage,
     saveToLocalStorage,
     updateCableType,

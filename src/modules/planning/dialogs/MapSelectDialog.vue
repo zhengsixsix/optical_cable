@@ -8,7 +8,7 @@ import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
-import OSM from 'ol/source/OSM'
+import { createBaseTileSource } from '@/utils/mapTileSource'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
@@ -118,7 +118,7 @@ const initMap = () => {
   map = new Map({
     target: mapContainer.value,
     layers: [
-      new TileLayer({ source: new OSM() }),
+      new TileLayer({ source: createBaseTileSource() }),
       existingMarkerLayer,
       boxLayer,
       markerLayer,

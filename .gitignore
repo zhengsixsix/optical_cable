@@ -31,3 +31,10 @@ dist-ssr
 .superpowers/
 tmp/
 WARP.md
+
+# Local archives / large binary bundles
+*.rar
+*.zip
+*.7z
+*.tar
+*.tar.gz

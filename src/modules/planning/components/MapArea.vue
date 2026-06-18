@@ -28,7 +28,7 @@ import WebGLPointsLayer from 'ol/layer/WebGLPoints'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
-import OSM from 'ol/source/OSM'
+import { createBaseTileSource } from '@/utils/mapTileSource'
 import {DragBox, Modify} from 'ol/interaction'
 import Collection from 'ol/Collection'
 import Feature from 'ol/Feature'
@@ -122,6 +122,13 @@ const activeRoute = computed(() =>
 )
 const visibleRouteGeometryIssues = computed(() => routeGeometryIssues.value.slice(0, 3))
 const visibleCableSegmentIssues = computed(() => cableSegmentIssues.value.slice(0, 4))
+const planningInsightPanelRef = ref<HTMLElement | null>(null)
+const planningInsightPosition = ref({ x: 16, y: 72 })
+const planningInsightPanelStyle = computed(() => ({
+  left: `${planningInsightPosition.value.x}px`,
+  top: `${planningInsightPosition.value.y}px`,
+}))
+let planningInsightDragOffset = { x: 0, y: 0 }
 
 const createEmptyValidationResult = (): PlanningValidationResult => ({
   valid: true,
@@ -152,6 +159,43 @@ const getIssueDotClasses = (level: PlanningIssue['level']) => {
 const formatRiskCostValue = (value: number) => {
   if (value >= 10000) return `${(value / 10000).toFixed(1)} 万`
   return value.toFixed(1)
+}
+
+const stopPlanningInsightDrag = () => {
+  window.removeEventListener('mousemove', handlePlanningInsightDragMove)
+  window.removeEventListener('mouseup', stopPlanningInsightDrag)
+}
+
+const handlePlanningInsightDragMove = (event: MouseEvent) => {
+  if (!mapContainer.value) return
+
+  const rect = mapContainer.value.getBoundingClientRect()
+  const panelWidth = planningInsightPanelRef.value?.offsetWidth || 300
+  const panelHeight = planningInsightPanelRef.value?.offsetHeight || 240
+  const maxX = Math.max(8, rect.width - panelWidth - 8)
+  const maxY = Math.max(8, rect.height - panelHeight - 8)
+
+  const nextX = event.clientX - rect.left - planningInsightDragOffset.x
+  const nextY = event.clientY - rect.top - planningInsightDragOffset.y
+
+  planningInsightPosition.value = {
+    x: Math.min(Math.max(8, nextX), maxX),
+    y: Math.min(Math.max(8, nextY), maxY),
+  }
+}
+
+const startPlanningInsightDrag = (event: MouseEvent) => {
+  if (event.button !== 0 || !mapContainer.value) return
+
+  const rect = mapContainer.value.getBoundingClientRect()
+  planningInsightDragOffset = {
+    x: event.clientX - rect.left - planningInsightPosition.value.x,
+    y: event.clientY - rect.top - planningInsightPosition.value.y,
+  }
+
+  window.addEventListener('mousemove', handlePlanningInsightDragMove)
+  window.addEventListener('mouseup', stopPlanningInsightDrag)
+  event.preventDefault()
 }
 
 const loadShpFeatures = async (url: string) => {
@@ -237,6 +281,8 @@ let routeSource: VectorSource | null = null
 let modifyInteraction: Modify | null = null
 const editableFeatures: any = new Collection([])
 const geoTiffUrl = DEFAULT_GEO_TIFF_URL
+let elevationNativeMaxZoom = 18
+let elevationFallbackApplied = false
 
 
 const enableBoxSelect = () => {
@@ -326,10 +372,15 @@ const handleAction = (actionName: string) => {
   appStore.addLog('INFO', actionName)
 }
 
+// 使用 JSON 深克隆替代 structuredClone：
+// 路由点上可能挂载了 Vue 响应式代理或分支节点的附加字段，structuredClone
+// 在部分场景下会抛 DataCloneError；路由数据本身是纯 JSON，改用 JSON 克隆更稳定。
+const cloneRoutePart = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+
 const cloneRouteSnapshot = (route: Route): RouteEditSnapshot => ({
   routeId: route.id,
-  points: structuredClone(route.points),
-  segments: structuredClone(route.segments),
+  points: cloneRoutePart(route.points),
+  segments: cloneRoutePart(route.segments),
   totalLength: route.totalLength,
 })
 
@@ -343,8 +394,8 @@ const applyRouteSnapshot = (snapshot: RouteEditSnapshot) => {
   const route = getEditableRoute(snapshot.routeId)
   if (!route) return
 
-  route.points = structuredClone(snapshot.points)
-  route.segments = structuredClone(snapshot.segments)
+  route.points = cloneRoutePart(snapshot.points)
+  route.segments = cloneRoutePart(snapshot.segments)
   route.totalLength = snapshot.totalLength
   route.updatedAt = new Date()
   routeStore.selectRoute(route.id)
@@ -396,7 +447,7 @@ const redoRouteEdit = () => {
   const next = routeEditFuture.value.shift()
   if (!next) return
 
-  routeEditHistory.value.push(structuredClone(next))
+  routeEditHistory.value.push(cloneRoutePart(next))
   applyRouteSnapshot(next)
   appStore.showNotification({ type: 'info', message: '已恢复上一次撤销的调整' })
 }
@@ -615,6 +666,13 @@ const handleSelectRoute = (routeId: string) => {
   refreshRouteGeometryValidation(selected)
   updateRiskCostHeatmap(selected)
   drawParetoRoutes()
+}
+
+const ensureSelectedRoute = () => {
+  if (!routeStore.selectedRoute && routeStore.paretoRoutes.length > 0) {
+    routeStore.selectRoute(routeStore.paretoRoutes[0].id)
+  }
+  return routeStore.selectedRoute || routeStore.paretoRoutes[0] || null
 }
 
 // ========== 海缆段生成相关函数 ==========
@@ -1054,19 +1112,39 @@ const initMap = () => {
       style: rgbStyle,
       visible: true,
       opacity: 1,
+      preload: 2,
+      useInterimTilesOnError: true,
+      cacheSize: 1024,
     })
   ]
 
   if (geoTiffEntry.loaded || geoTiffEntry.failed) {
     loading.value = false
-  } else {
-    geoTiffEntry.source.on('tileloadend', () => {
-      loading.value = false
-    })
-    geoTiffEntry.source.on('tileloaderror', () => {
-      loading.value = false
-    })
   }
+
+  geoTiffEntry.source.on('tileloadend', () => {
+    loading.value = false
+  })
+  geoTiffEntry.source.on('tileloaderror', () => {
+    loading.value = false
+    if (!map) return
+
+    const currentZoom = map.getView().getZoom() ?? 0
+    if (currentZoom < elevationNativeMaxZoom - 0.25) return
+
+    const fallbackMaxZoom = Math.max(0, Math.min(elevationNativeMaxZoom, currentZoom - 0.01))
+    elevationLayers.forEach(layer => {
+      const currentMaxZoom = layer.getMaxZoom()
+      if (!Number.isFinite(currentMaxZoom) || fallbackMaxZoom < currentMaxZoom) {
+        layer.setMaxZoom(fallbackMaxZoom)
+      }
+    })
+
+    if (!elevationFallbackApplied) {
+      elevationFallbackApplied = true
+      appStore.addLog('INFO', `海洋高程图在高倍率缺少瓦片，已自动保持在 ${fallbackMaxZoom.toFixed(2)} 级以下显示`)
+    }
+  })
 
   // 保存到模块变量，供图层控制使用
   elevationLayers = geoTiffLayers
@@ -1074,7 +1152,7 @@ const initMap = () => {
   map = new Map({
     target: mapContainer.value,
     layers: [
-      new TileLayer({source: new OSM(), opacity: 0.5}),
+      new TileLayer({source: createBaseTileSource(), opacity: 0.5}),
       ...geoTiffLayers,
     ],
     view: new View({
@@ -1092,11 +1170,9 @@ const initMap = () => {
       if (options.extent) {
         map?.getView().fit(options.extent, {padding: [20, 20, 20, 20]})
       }
-      // 根据 TIF 原始分辨率限制最大缩放，+2 允许轻微过采样但不会黑屏
-      if (options.resolutions && map) {
-        const nativeMaxZoom = options.resolutions.length - 1
-        const safeMaxZoom = Math.min(nativeMaxZoom + 2, 18)
-        map.getView().setProperties({ maxZoom: safeMaxZoom })
+      if (options.resolutions) {
+        elevationNativeMaxZoom = Math.min(options.resolutions.length - 1, 18)
+        geoTiffLayers.forEach(layer => layer.setMaxZoom(elevationNativeMaxZoom))
       }
     }).catch(() => {
     })
@@ -2303,6 +2379,8 @@ watch(() => routeStore.selectedRoute?.id, (newRouteId) => {
   if (routeSource && routeStore.paretoRoutes.length > 0) {
     drawParetoRoutes()
   }
+  refreshRouteGeometryValidation(activeRoute.value)
+  updateRiskCostHeatmap(activeRoute.value)
   if (isEditingRoute.value && newRouteId) {
     seedRouteEditHistory(newRouteId)
   }
@@ -2341,14 +2419,19 @@ watch(() => connectorStore.elements.filter(e => e.type === 'ola').length, (newLe
 // 监听 paretoRoutes 变化（USE文件导入时触发）
 watch(() => routeStore.paretoRoutes.length, (newLen) => {
   if (newLen > 0) {
+    const initialRoute = ensureSelectedRoute()
     if (map) {
       drawParetoRoutes()
+      refreshRouteGeometryValidation(initialRoute)
+      updateRiskCostHeatmap(initialRoute)
       isPlanning.value = true
     } else {
       const checkMap = setInterval(() => {
         if (map) {
           clearInterval(checkMap)
           drawParetoRoutes()
+          refreshRouteGeometryValidation(initialRoute)
+          updateRiskCostHeatmap(initialRoute)
           isPlanning.value = true
         }
       }, 100)
@@ -2504,7 +2587,7 @@ const syncRouteToRPL = () => {
       pointName,
       longitude: point.coordinates[0],
       latitude: point.coordinates[1],
-      depth: 2000 + Math.random() * 2000, // 模拟水深
+      depth: point.depth ?? selectedRoute.segments[index - 1]?.depth ?? selectedRoute.segments[index]?.depth ?? 0,
       segmentLength,
       cumulativeLength,
       slack: 2,
@@ -2818,19 +2901,18 @@ const handleRunPlanning = async () => {
     }
   }
 
-  // 检查后端服务是否可用
+  // 路由规划接口当前未出现在线上 Swagger 中；后端补齐前保持空态。
   isPlanningLoading.value = true
-  appStore.showNotification({ type: 'info', message: '正在连接规划服务...' })
+  appStore.showNotification({ type: 'info', message: '正在检查线上规划接口...' })
 
   const serviceAvailable = await checkRoutePlanningService()
   if (!serviceAvailable) {
     isPlanningLoading.value = false
-    const { API_BASE_URL } = await import('@/config/api')
     appStore.showNotification({
       type: 'error',
-      message: `规划服务不可用，请确保后端服务已启动 (${API_BASE_URL})`
+      message: '线上 Swagger 暂未提供路由规划接口，后端补齐后再接入'
     })
-    appStore.addLog('ERROR', '路由规划服务不可用')
+    appStore.addLog('ERROR', '线上 Swagger 暂未提供路由规划接口')
     return
   }
 
@@ -2972,7 +3054,10 @@ const handleRunPlanning = async () => {
     }
 
     // 在地图上绘制路径
+    const initialRoute = ensureSelectedRoute()
     drawParetoRoutes()
+    refreshRouteGeometryValidation(initialRoute)
+    updateRiskCostHeatmap(initialRoute)
 
     // 同步到 rplStore 和 connectorStore（生成设备级海缆段）
     syncRouteToRPL()
@@ -3023,6 +3108,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleRouteEditKeydown)
+  stopPlanningInsightDrag()
   if (map) {
     map.setTarget(undefined)
     map = null
@@ -3137,101 +3223,106 @@ onUnmounted(() => {
 
       <div
         v-if="riskCostSummary || visibleRouteGeometryIssues.length > 0 || visibleCableSegmentIssues.length > 0"
-        class="absolute top-3 right-3 z-20 w-[340px] space-y-3"
+        ref="planningInsightPanelRef"
+        :style="planningInsightPanelStyle"
+        class="absolute z-20 w-[292px] overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xl"
+        @mousedown="startPlanningInsightDrag"
       >
-        <div
-          v-if="riskCostSummary"
-          class="rounded-xl border border-sky-200 bg-white/95 p-4 shadow-lg backdrop-blur"
-        >
-          <div class="flex items-center justify-between mb-3">
-            <div>
-              <div class="text-sm font-semibold text-slate-800">海域风险成本图</div>
-              <div class="text-[11px] text-slate-500">热力层已叠加到当前选中路由</div>
+        <div class="max-h-[calc(100vh-240px)] overflow-y-auto">
+          <div
+            v-if="riskCostSummary"
+            class="border-b border-slate-200 px-3 py-3"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold text-slate-800">海域风险成本图</div>
+                <div class="text-[11px] text-slate-500">已叠加到当前选中路由</div>
+              </div>
+              <div class="text-right">
+                <div class="text-[11px] text-slate-500">总成本</div>
+                <div class="text-lg font-bold text-sky-700">{{ formatRiskCostValue(riskCostSummary.totalCost) }}</div>
+              </div>
             </div>
-            <div class="text-right">
-              <div class="text-[11px] text-slate-500">总成本</div>
-              <div class="text-lg font-bold text-sky-700">{{ formatRiskCostValue(riskCostSummary.totalCost) }}</div>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <div class="rounded-md bg-slate-50 px-3 py-2">
+                <div class="text-[11px] text-slate-500">路由长度</div>
+                <div class="text-sm font-semibold text-slate-800">{{ riskCostSummary.totalLength.toFixed(1) }} km</div>
+              </div>
+              <div class="rounded-md bg-slate-50 px-3 py-2">
+                <div class="text-[11px] text-slate-500">高风险占比</div>
+                <div class="text-sm font-semibold text-red-600">
+                  {{ ((riskCostSummary.bands.find(band => band.riskLevel === 'high')?.ratio || 0) * 100).toFixed(0) }}%
+                </div>
+              </div>
             </div>
-          </div>
-          <div class="grid grid-cols-2 gap-2 mb-3">
-            <div class="rounded-lg bg-slate-50 px-3 py-2">
-              <div class="text-[11px] text-slate-500">路由长度</div>
-              <div class="text-sm font-semibold text-slate-800">{{ riskCostSummary.totalLength.toFixed(1) }} km</div>
-            </div>
-            <div class="rounded-lg bg-slate-50 px-3 py-2">
-              <div class="text-[11px] text-slate-500">高风险占比</div>
-              <div class="text-sm font-semibold text-red-600">
-                {{ ((riskCostSummary.bands.find(band => band.riskLevel === 'high')?.ratio || 0) * 100).toFixed(0) }}%
+            <div class="mt-3 space-y-2">
+              <div
+                v-for="band in riskCostSummary.bands"
+                :key="band.riskLevel"
+                class="rounded-md border border-slate-200 px-3 py-2"
+              >
+                <div class="mb-1 flex items-center justify-between text-xs text-slate-600">
+                  <span>{{ band.label }}</span>
+                  <span>{{ band.length.toFixed(1) }} km</span>
+                </div>
+                <div class="mb-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    :class="band.riskLevel === 'high' ? 'bg-red-500' : band.riskLevel === 'medium' ? 'bg-amber-500' : 'bg-emerald-500'"
+                    class="h-full rounded-full"
+                    :style="{ width: `${Math.max(8, band.ratio * 100)}%` }"
+                  />
+                </div>
+                <div class="flex items-center justify-between text-[11px] text-slate-500">
+                  <span>单价 {{ band.unitPrice.toFixed(1) }}</span>
+                  <span>成本 {{ formatRiskCostValue(band.cost) }}</span>
+                </div>
               </div>
             </div>
           </div>
-          <div class="space-y-2">
-            <div
-              v-for="band in riskCostSummary.bands"
-              :key="band.riskLevel"
-              class="rounded-lg border border-slate-200 px-3 py-2"
-            >
-              <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
-                <span>{{ band.label }}</span>
-                <span>{{ band.length.toFixed(1) }} km</span>
-              </div>
-              <div class="h-2 rounded-full bg-slate-100 overflow-hidden mb-1">
-                <div
-                  :class="band.riskLevel === 'high' ? 'bg-red-500' : band.riskLevel === 'medium' ? 'bg-amber-500' : 'bg-emerald-500'"
-                  class="h-full rounded-full"
-                  :style="{ width: `${Math.max(8, band.ratio * 100)}%` }"
-                />
-              </div>
-              <div class="flex items-center justify-between text-[11px] text-slate-500">
-                <span>单价 {{ band.unitPrice.toFixed(1) }}</span>
-                <span>成本 {{ formatRiskCostValue(band.cost) }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <div
-          v-if="visibleRouteGeometryIssues.length > 0"
-          class="rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur"
-        >
-          <div class="flex items-center justify-between mb-3">
-            <div class="text-sm font-semibold text-slate-800">路径几何校验</div>
-            <span class="text-[11px] text-slate-500">{{ routeGeometryIssues.length }} 项</span>
-          </div>
-          <div class="space-y-2">
-            <div
-              v-for="issue in visibleRouteGeometryIssues"
-              :key="issue.id"
-              :class="['rounded-lg border px-3 py-2 text-xs', getIssueLevelClasses(issue.level)]"
-            >
-              <div class="flex items-center gap-2 mb-1">
-                <span :class="['h-2 w-2 rounded-full', getIssueDotClasses(issue.level)]" />
-                <span class="font-semibold">{{ getIssueLevelLabel(issue.level) }}</span>
+          <div
+            v-if="visibleRouteGeometryIssues.length > 0"
+            class="border-b border-slate-200 px-3 py-3"
+          >
+            <div class="mb-2 flex items-center justify-between">
+              <div class="text-sm font-semibold text-slate-800">路径几何校验</div>
+              <span class="text-[11px] text-slate-500">{{ routeGeometryIssues.length }} 项</span>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="issue in visibleRouteGeometryIssues"
+                :key="issue.id"
+                :class="['rounded-md border px-3 py-2 text-xs', getIssueLevelClasses(issue.level)]"
+              >
+                <div class="mb-1 flex items-center gap-2">
+                  <span :class="['h-2 w-2 rounded-full', getIssueDotClasses(issue.level)]" />
+                  <span class="font-semibold">{{ getIssueLevelLabel(issue.level) }}</span>
+                </div>
+                <div class="leading-5">{{ issue.message }}</div>
               </div>
-              <div class="leading-5">{{ issue.message }}</div>
             </div>
           </div>
-        </div>
 
-        <div
-          v-if="visibleCableSegmentIssues.length > 0"
-          class="rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur"
-        >
-          <div class="flex items-center justify-between mb-3">
-            <div class="text-sm font-semibold text-slate-800">敷设参数校验</div>
-            <span class="text-[11px] text-slate-500">{{ cableSegmentIssues.length }} 项</span>
-          </div>
-          <div class="space-y-2">
-            <div
-              v-for="issue in visibleCableSegmentIssues"
-              :key="issue.id"
-              :class="['rounded-lg border px-3 py-2 text-xs', getIssueLevelClasses(issue.level)]"
-            >
-              <div class="flex items-center gap-2 mb-1">
-                <span :class="['h-2 w-2 rounded-full', getIssueDotClasses(issue.level)]" />
-                <span class="font-semibold">{{ getIssueLevelLabel(issue.level) }}</span>
+          <div
+            v-if="visibleCableSegmentIssues.length > 0"
+            class="px-3 py-3"
+          >
+            <div class="mb-2 flex items-center justify-between">
+              <div class="text-sm font-semibold text-slate-800">敷设参数校验</div>
+              <span class="text-[11px] text-slate-500">{{ cableSegmentIssues.length }} 项</span>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="issue in visibleCableSegmentIssues"
+                :key="issue.id"
+                :class="['rounded-md border px-3 py-2 text-xs', getIssueLevelClasses(issue.level)]"
+              >
+                <div class="mb-1 flex items-center gap-2">
+                  <span :class="['h-2 w-2 rounded-full', getIssueDotClasses(issue.level)]" />
+                  <span class="font-semibold">{{ getIssueLevelLabel(issue.level) }}</span>
+                </div>
+                <div class="leading-5">{{ issue.message }}</div>
               </div>
-              <div class="leading-5">{{ issue.message }}</div>
             </div>
           </div>
         </div>

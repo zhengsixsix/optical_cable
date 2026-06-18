@@ -18,7 +18,7 @@ import {
   FileText, FolderOpen, Save, FilePlus, LogOut,
   Download, Upload, ChevronRight, FileType,
   Image as ImageIcon, MoreHorizontal, Settings,
-  Globe, FileSpreadsheet, User, Users
+  Globe, FileSpreadsheet, KeyRound, User, UserCog
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -65,6 +65,13 @@ const displayUserName = computed(() => {
   return userStore.currentUser.username
 })
 
+const displayRoleName = computed(() => {
+  if (!userStore.currentUser) return null
+  const roleNames = Object.values(userStore.currentUser.roles ?? {}).filter(Boolean)
+  if (roleNames.length > 0) return roleNames.join('、')
+  return userStore.isAdmin ? '管理员' : '普通用户'
+})
+
 const handleLogout = () => {
   userStore.logout()
   appStore.showNotification({ type: 'info', message: '已退出登录' })
@@ -91,7 +98,7 @@ const showTransmissionMenu = computed(() => {
 
 // 项目操作处理
 const handleOpenProject = () => {
-  projectManager.openProject()
+  appStore.openDialog('open-project')
 }
 
 const handleSaveProject = () => {
@@ -168,6 +175,26 @@ const showModal = (key: string) => {
     handleExportSLD()
     return
   }
+  if (key === 'user-manage') {
+    router.push('/admin/users')
+    return
+  }
+  if (key === 'permission-manage') {
+    router.push('/admin/roles')
+    return
+  }
+  if (key === 'data-dictionary') {
+    router.push('/admin/dictionary')
+    return
+  }
+  if (key === 'operation-log') {
+    router.push('/admin/logs')
+    return
+  }
+  if (key === 'platform-layer-library') {
+    router.push('/admin/layers')
+    return
+  }
 
   const map: Record<string, string> = {
     '新建工程': 'new-project',
@@ -183,7 +210,7 @@ const showModal = (key: string) => {
     '关于软件': 'about',
     '用户手册': 'manual',
     '联系支持': 'support',
-    '监控中心': 'monitor-center'
+    'account-settings': 'account-settings',
   }
 
   const dialogKey = map[key] || key
@@ -434,17 +461,26 @@ const togglePanel = (panel: string) => {
         <!-- Monitoring Menu - 无项目或 USE 项目时显示 -->
         <div v-if="showTransmissionMenu" class="relative group h-full flex items-center px-4 cursor-pointer hover:bg-white/10 transition-colors">
           <span
-            :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/monitoring') || $route.path.includes('/performance') }">监控</span>
+            :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/monitoring') || $route.path.includes('/monitor-center') || $route.path.includes('/performance') }">监控</span>
           <div
             class="absolute top-full left-0 bg-white text-gray-800 shadow-lg rounded-b-md py-1 min-w-[150px] hidden group-hover:block border border-gray-200 z-50">
-            <a href="#" @click.prevent="showModal('监控中心')"
-              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">监控中心...</a>
+            <RouterLink to="/monitor-center"
+              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
+              active-class="bg-primary/10 text-primary font-medium">监控中心
+            </RouterLink>
             <RouterLink to="/monitoring"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
               active-class="bg-primary/10 text-primary font-medium">设备健康度管理
             </RouterLink>
           </div>
         </div>
+
+        <!-- System Management Entry -->
+        <RouterLink v-if="userStore.isAdmin" to="/admin"
+          class="flex h-full items-center px-4 text-sm no-underline transition-colors hover:bg-white/10"
+          :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/admin') }">
+          系统管理
+        </RouterLink>
 
         <!-- Settings Menu -->
         <div class="relative group h-full flex items-center px-4 cursor-pointer hover:bg-white/10 transition-colors">
@@ -456,15 +492,6 @@ const togglePanel = (panel: string) => {
               active-class="bg-primary/10 text-primary font-medium">工程设置</RouterLink>
             <a href="#" @click.prevent="showModal('显示风格设置')"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">显示风格设置...</a>
-            <!-- 管理员专属：账户管理 -->
-            <template v-if="userStore.isAdmin">
-              <div class="border-t border-gray-200 my-1"></div>
-              <a href="#" @click.prevent="showModal('user-manage')"
-                class="flex items-center gap-2 px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">
-                <Users class="w-4 h-4" />
-                账户管理
-              </a>
-            </template>
           </div>
         </div>
 
@@ -520,8 +547,19 @@ const togglePanel = (panel: string) => {
         <div class="absolute top-full right-0 pt-1 hidden group-hover:block z-50">
           <div class="bg-white text-gray-800 shadow-lg rounded-md py-1 min-w-[120px] border border-gray-200">
             <div class="px-3 py-2 text-xs text-gray-500 border-b">
-              {{ userStore.isAdmin ? '管理员' : '普通用户' }}
+              {{ displayRoleName }}
             </div>
+            <a href="#" @click.prevent="showModal('account-settings')"
+              class="flex items-center gap-2 px-3 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">
+              <UserCog class="w-4 h-4" />
+              个人信息
+            </a>
+            <a href="#" @click.prevent="showModal('account-settings')"
+              class="flex items-center gap-2 px-3 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">
+              <KeyRound class="w-4 h-4" />
+              修改密码
+            </a>
+            <div class="border-t border-gray-200 my-1"></div>
             <a href="#" @click.prevent="handleLogout"
               class="flex items-center gap-2 px-3 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">
               <LogOut class="w-4 h-4" />

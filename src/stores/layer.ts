@@ -53,6 +53,16 @@ export const useLayerStore = defineStore('layer', () => {
     return layers.value.find(l => l.id === id)
   }
 
+  function upsertLayer(config: LayerConfig) {
+    const index = layers.value.findIndex(layer => layer.id === config.id)
+    if (index >= 0) {
+      layers.value[index] = { ...layers.value[index], ...config }
+      return
+    }
+
+    layers.value.push(config)
+  }
+
   // 图层数据存储（用户上传的 GeoJSON / 栅格数据）
   const layerDataMap = ref<Map<string, LayerData>>(new Map())
 
@@ -137,6 +147,7 @@ export const useLayerStore = defineStore('layer', () => {
     setLayerLoaded,
     setLayerLoading,
     setLayerVisible,
+    upsertLayer,
     getLayerVisible,
     getLayerById,
     setLayerData,

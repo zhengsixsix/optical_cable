@@ -10,8 +10,7 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
 import ProjectWizardDialog from '@/components/dialogs/ProjectWizardDialog.vue'
-import UserManageDialog from '@/components/dialogs/UserManageDialog.vue'
-import MonitoringCenterDialog from '@/modules/monitoring/dialogs/MonitoringCenterDialog.vue'
+import AccountSettingsDialog from '@/components/dialogs/AccountSettingsDialog.vue'
 import HelpDialog from '@/components/dialogs/HelpDialog.vue'
 import RPLManageDialog from '@/modules/design/dialogs/RPLManageDialog.vue'
 import SLDManageDialog from '@/modules/design/dialogs/SLDManageDialog.vue'
@@ -19,10 +18,18 @@ import RouteEditDialog from '@/modules/planning/dialogs/RouteEditDialog.vue'
 import ReportDialog from '@/components/dialogs/ReportDialog.vue'
 import AppearanceDialog from '@/components/dialogs/AppearanceDialog.vue'
 import AlarmNotification from '@/components/notifications/AlarmNotification.vue'
+import Notification from '@/shared/components/feedback/Notification.vue'
 import SavePromptDialog from '@/components/dialogs/SavePromptDialog.vue'
 import SaveAsDialog from '@/components/dialogs/SaveAsDialog.vue'
 import ImportFileDialog from '@/components/dialogs/ImportFileDialog.vue'
 import ImportGisDialog from '@/modules/planning/dialogs/ImportGisDialog.vue'
+import type { PlanPoint, PlanProject } from '@/services/platform/types'
+
+interface PlatformProjectDraft {
+  project: PlanProject
+  points: PlanPoint[]
+  status: 'draft' | 'stationed' | 'ready'
+}
 
 const routeStore = useRouteStore()
 const layerStore = useLayerStore()
@@ -30,6 +37,7 @@ const appStore = useAppStore()
 const userStore = useUserStore()
 const projectManager = useProjectManager()
 const hasScheduledGeoTiffWarmup = ref(false)
+const resumePlatformProject = ref<PlatformProjectDraft | null>(null)
 
 const startGeoTiffWarmup = () => {
   if (hasScheduledGeoTiffWarmup.value) return
@@ -58,10 +66,31 @@ watch(() => userStore.isLoggedIn, (isLoggedIn) => {
 const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
   const dialogType = appStore.activeDialog
   appStore.closeDialog()
+  resumePlatformProject.value = null
   
   if (dialogType === 'new-project') {
     await projectManager.createProject(data)
   }
+}
+
+const handleOpenPlatformProject = async (projectId: number) => {
+  appStore.closeDialog()
+  await projectManager.openPlatformProject(projectId)
+}
+
+const handleOpenProjectFile = async (file: File) => {
+  appStore.closeDialog()
+  await projectManager.openProjectFromFile(file)
+}
+
+const handleContinuePlatformProject = (draft: PlatformProjectDraft) => {
+  resumePlatformProject.value = draft
+  appStore.openDialog('new-project')
+}
+
+const handleProjectWizardClose = () => {
+  resumePlatformProject.value = null
+  appStore.closeDialog()
 }
 </script>
 
@@ -72,30 +101,6 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
       <RouterView />
     </div>
   </div>
-  
-  <!-- 全局通知 -->
-  <Teleport to="body">
-    <div class="fixed top-4 right-4 z-[9999] space-y-2">
-      <TransitionGroup name="notification">
-        <div
-          v-for="notification in appStore.notifications"
-          :key="notification.id"
-          :class="[
-            'px-4 py-3 rounded-lg shadow-lg text-sm max-w-sm',
-            {
-              'bg-green-500 text-white': notification.type === 'success',
-              'bg-yellow-500 text-white': notification.type === 'warning',
-              'bg-red-500 text-white': notification.type === 'error',
-              'bg-blue-500 text-white': notification.type === 'info',
-            }
-          ]"
-        >
-          {{ notification.message }}
-        </div>
-      </TransitionGroup>
-    </div>
-  </Teleport>
-
 
   <!-- 全局对话框 -->
   <ImportExportDialog
@@ -108,7 +113,13 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
   <!-- 新建项目向导对话框 -->
   <ProjectWizardDialog
     :visible="appStore.activeDialog === 'new-project'"
-    @close="appStore.closeDialog()"
+    :resume-project="resumePlatformProject ? {
+      id: resumePlatformProject.project.id!,
+      name: resumePlatformProject.project.name,
+      isPublic: resumePlatformProject.project.isPublic,
+      points: resumePlatformProject.points,
+    } : null"
+    @close="handleProjectWizardClose"
     @success="handleProjectDialogSuccess"
   />
 
@@ -118,15 +129,13 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
     :mode="appStore.activeDialog?.replace('-project', '') as any"
     @close="appStore.closeDialog()"
     @success="handleProjectDialogSuccess"
+    @open-platform="handleOpenPlatformProject"
+    @continue-platform="handleContinuePlatformProject"
+    @open-file="handleOpenProjectFile"
   />
 
-  <UserManageDialog
-    :visible="appStore.activeDialog === 'user-manage'"
-    @close="appStore.closeDialog()"
-  />
-
-  <MonitoringCenterDialog
-    :visible="appStore.activeDialog === 'monitor-center'"
+  <AccountSettingsDialog
+    :visible="appStore.activeDialog === 'account-settings'"
     @close="appStore.closeDialog()"
   />
 
@@ -164,6 +173,12 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
 
   <!-- 告警实时推送通知 -->
   <AlarmNotification />
+
+  <!-- 全局消息通知（showNotification 渲染入口） -->
+  <Notification
+    :notifications="appStore.notifications"
+    @remove="appStore.removeNotification"
+  />
 
   <!-- 保存提示对话框 -->
   <SavePromptDialog

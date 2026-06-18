@@ -34,10 +34,7 @@ const handleLogin = async () => {
   loading.value = true
   errorMessage.value = ''
 
-  // 模拟网络延迟
-  await new Promise(resolve => setTimeout(resolve, 800))
-
-  const result = userStore.login(username.value, password.value)
+  const result = await userStore.login(username.value, password.value)
 
   loading.value = false
 
@@ -73,9 +70,7 @@ const handleRegister = async () => {
   loading.value = true
   errorMessage.value = ''
 
-  await new Promise(resolve => setTimeout(resolve, 800))
-
-  const result = userStore.register({
+  const result = await userStore.register({
     username: regUsername.value,
     password: regPassword.value,
     phone: regPhone.value,
@@ -212,9 +207,6 @@ const switchMode = () => {
               {{ loading ? '登录中...' : '立即登录' }}
             </button>
 
-            <div class="mt-4 p-3 bg-blue-50 rounded text-xs text-blue-800 border border-blue-100">
-              <span class="font-bold">默认管理员：</span> admin / 12345678
-            </div>
           </div>
 
           <!-- 注册表单 -->

@@ -46,23 +46,8 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
   hasData.value = false
 
   try {
-    const { API_ENDPOINTS } = await import('@/config/api')
-    const response = await fetch(API_ENDPOINTS.dem.profile, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mode: 'extent',
-        extent,
-        sampleCount: 100
-      })
-    })
-    
-    const result = await response.json()
-    if (result.success && result.data.points) {
-      profileData.value = result.data.points
-      hasData.value = result.data.points.length > 0
-      nextTick(() => drawProfile())
-    }
+    void extent
+    profileData.value = []
   } catch {
     // 加载失败时 hasData 保持 false
   } finally {
@@ -76,26 +61,8 @@ const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
   hasData.value = false
 
   try {
-    const { API_ENDPOINTS } = await import('@/config/api')
-    const response = await fetch(API_ENDPOINTS.dem.profile, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mode: 'segment',
-        segment: {
-          startPoint: segment.startPoint,
-          endPoint: segment.endPoint
-        },
-        sampleCount: 100
-      })
-    })
-    
-    const result = await response.json()
-    if (result.success && result.data.points) {
-      profileData.value = result.data.points
-      hasData.value = result.data.points.length > 0
-      nextTick(() => drawProfile())
-    }
+    void segment
+    profileData.value = []
   } catch {
     // 加载失败时 hasData 保持 false
   } finally {

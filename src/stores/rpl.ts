@@ -733,6 +733,8 @@ export const useRPLStore = defineStore('rpl', () => {
 
   // 初始化加载mock数据
   function initMockData() {
+    if (mockRPLRecords.length === 0) return null
+
     if (tables.value.length === 0) {
       const table = createTable(`${ROUTE_NAME}_RPL`, ROUTE_ID)
       // 初始化时不触发联动，避免循环

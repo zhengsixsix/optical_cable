@@ -3,40 +3,30 @@ import type {GeoTiffData, ElevationData, Extent, ImportResult, ExportFormat, Rou
 import {createRouteRepository} from '../index'
 
 /**
- * MockGeoRepository
- * 实现 GIS 文件的导入导出功能
+ * GIS repository placeholder.
+ * It parses user-provided GIS files, but does not synthesize fixture data.
  */
 export class MockGeoRepository implements IGeoRepository {
     async loadGeoTiff(url: string): Promise<GeoTiffData> {
         await new Promise(resolve => setTimeout(resolve, 500))
 
-        // 返回模拟数据
         return {
             rasters: [],
-            width: 1024,
-            height: 1024,
-            bbox: [-180, -90, 180, 90],
+            width: 0,
+            height: 0,
+            bbox: [0, 0, 0, 0],
         }
     }
 
     async getElevationData(extent: Extent): Promise<ElevationData> {
         await new Promise(resolve => setTimeout(resolve, 200))
 
-        const width = 128
-        const height = 128
-        const values = new Float32Array(width * height)
-
-        // 生成模拟高程数据
-        for (let i = 0; i < values.length; i++) {
-            values[i] = Math.random() * 8000 - 6000 // -6000 到 2000
-        }
-
         return {
-            values,
-            width,
-            height,
-            minValue: -6000,
-            maxValue: 2000,
+            values: new Float32Array(0),
+            width: 0,
+            height: 0,
+            minValue: 0,
+            maxValue: 0,
         }
     }
 

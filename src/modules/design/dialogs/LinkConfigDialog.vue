@@ -2162,41 +2162,7 @@ const applyAndClose = async () => {
     
     let backendAmps: any[] = []
     let backendFibers: any[] = []
-    
-    try {
-      const resp = await fetch('/api/route/amplifier-placement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          trunkCoordinates: trunkCoords,
-          branches: rawBranches,
-          namedPoints: rawNamedPoints,
-          spanLength: spanLengthVal,
-          amplifierKPs: simAmplifiers.map((a: any) => ({
-            position: a.position,
-            name: a.name,
-            gain: a.gain,
-            noiseFigure: a.noiseFigure,
-            precedingSpan: a.precedingSpan,
-          })),
-        }),
-      })
-      const data = await resp.json()
-      if (data.success) {
-        backendAmps = data.amplifiers || []
-        backendFibers = data.fibers || []
-        const branchAmps = backendAmps.filter((a: any) => a.isBranch)
-        console.log(`✅ 后端落位成功: ${backendAmps.length} 放大器 (主干 ${backendAmps.length - branchAmps.length}, 分支 ${branchAmps.length}), ${backendFibers.length} 光纤段`)
-        if (data.debug) {
-          console.log(`📊 后端诊断:`, JSON.stringify(data.debug))
-        }
-      } else {
-        console.warn('后端落位失败, 回退前端落位:', data.error)
-      }
-    } catch (err) {
-      console.warn('后端落位 API 调用失败, 回退前端落位:', err)
-    }
-    
+
     // 0) 确保接线元表格存在
     if (!connectorStore.currentTable) {
       const routeName = route.name || '链路'

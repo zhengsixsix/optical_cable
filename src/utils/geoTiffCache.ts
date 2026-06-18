@@ -6,7 +6,7 @@ export interface CachedGeoTiffEntry {
   failed: boolean
 }
 
-export const DEFAULT_GEO_TIFF_URL = '/output2_cog.tif'
+export const DEFAULT_GEO_TIFF_URL = '/output2.tif'
 
 const geoTiffCache = new Map<string, CachedGeoTiffEntry>()
 const geoTiffWarmups = new Map<string, Promise<void>>()

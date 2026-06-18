@@ -1,9 +1,7 @@
 /**
  * 路由规划 API 客户端服务
- * 调用后端 Node 服务进行路由规划计算
+ * 线上 Swagger 当前未提供路由规划接口；调用方应保持空态。
  */
-
-import { API_BASE_URL, API_ENDPOINTS, checkApiHealth } from '@/config/api'
 
 // 坐标点接口
 export interface Coordinate {
@@ -112,36 +110,20 @@ export interface RoutePlanningResult {
 /**
  * 调用后端路由规划接口
  */
-export async function fetchRoutePlanning(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
-  const url = API_ENDPOINTS.route.planning
-  
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(request)
-  })
-  
-  const result = await response.json()
-  
-  if (!result.success) {
-    throw new Error(result.error || '路由规划失败')
-  }
-  
-  return result
+export async function fetchRoutePlanning(_request: RoutePlanningRequest): Promise<RoutePlanningResult> {
+  throw new Error('线上 Swagger 暂未提供路由规划接口')
 }
 
 /**
  * 检查路由规划服务是否可用
  */
 export async function checkRoutePlanningService(): Promise<boolean> {
-  return checkApiHealth()
+  return false
 }
 
 /**
  * 获取 API 基础地址
  */
 export function getApiBase(): string {
-  return API_BASE_URL
+  return ''
 }

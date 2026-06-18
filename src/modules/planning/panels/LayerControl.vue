@@ -3,7 +3,7 @@ import { useAppStore } from '@/stores/app'
 import { computed, ref } from 'vue'
 import { useLayerStore } from '@/stores/layer'
 import { Card, CardHeader, CardContent, Select } from '@/shared/components/base'
-import { RefreshCw, Download, Maximize2, X, MapPin, AlertTriangle, Eye, Upload, RotateCcw } from 'lucide-vue-next'
+import { RefreshCw, Download, Maximize2, X, Upload, RotateCcw, Settings } from 'lucide-vue-next'
 
 const layerStore = useLayerStore()
 const appStore = useAppStore()
@@ -123,7 +123,7 @@ function handleReload(layerId: string) {
         </button>
         <button 
           class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 
-          title="导入GIS数据"
+          title="导入本地GIS数据"
           @click="handleImportGis"
         >
           <Download class="w-3.5 h-3.5" />

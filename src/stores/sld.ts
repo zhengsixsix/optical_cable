@@ -432,6 +432,14 @@ export const useSLDStore = defineStore('sld', () => {
 
   // 初始化加载mock数据
   function initMockData() {
+    if (
+      mockSLDEquipments.length === 0 &&
+      mockSLDFiberSegments.length === 0 &&
+      Object.keys(mockTransmissionParams).length === 0
+    ) {
+      return null
+    }
+
     if (tables.value.length === 0) {
       const table = createTable(`${ROUTE_NAME}_SLD`, ROUTE_ID)
       

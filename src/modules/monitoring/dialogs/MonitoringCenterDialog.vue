@@ -1,27 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button, Select, Input } from '@/shared/components/base'
 import {
-  X, Activity, Monitor, AlertTriangle, Settings, Search, RefreshCw, Download, Filter, CheckCircle, XCircle, Clock, ChevronDown, List, BarChart3, Bell, Shield, Eye, ArrowLeft, Zap, Info, Link2, FileText, Database, Save, HardDrive, Mail, RotateCcw, Trash2, MessageSquare, Upload, Plus
+  Activity, Monitor, AlertTriangle, Settings, Search, RefreshCw, Download, Filter, CheckCircle, XCircle, Clock, ChevronDown, List, BarChart3, Bell, Shield, Eye, ArrowLeft, Zap, Info, Link2, FileText, Database, Save, HardDrive, Mail, RotateCcw, Trash2, MessageSquare, Upload, Plus
 } from 'lucide-vue-next'
 import { useMonitorStore } from '@/stores/monitor'
 import { useAppStore } from '@/stores/app'
 import { generateMonitoringReportHtml } from '@/services/MonitoringReportService'
-const props = defineProps<{
-  visible: boolean
-}>()
-
-const emit = defineEmits<{
-  (e: 'close'): void
-}>()
 
 const monitorStore = useMonitorStore()
 const appStore = useAppStore()
-
-// 弹窗打开时确保有模拟数据
-watch(() => props.visible, (v) => {
-  if (v) monitorStore.initMockData()
-})
 
 // ========== Tabs ==========
 const activeTab = ref<'overview' | 'device' | 'alarm' | 'system'>('overview')
@@ -35,7 +23,7 @@ const tabs = [
 // ========== 监控总览 ==========
 const systemHealth = computed(() => {
   const total = monitorStore.devices.length
-  if (total === 0) return 87.5
+  if (total === 0) return 0
   const normal = monitorStore.devices.filter(d => d.status === 'normal').length
   return Math.round((normal / total) * 1000) / 10
 })
@@ -47,7 +35,7 @@ const healthStatus = computed(() => {
 })
 
 const onlineDevices = computed(() => monitorStore.devices.filter(d => d.status === 'normal').length)
-const totalDevices = computed(() => monitorStore.devices.length || 10)
+const totalDevices = computed(() => monitorStore.devices.length)
 const onlineRate = computed(() => {
   if (totalDevices.value === 0) return '0%'
   return `${Math.round((onlineDevices.value / totalDevices.value) * 100)}%`
@@ -55,14 +43,14 @@ const onlineRate = computed(() => {
 
 const alarmCount = computed(() => monitorStore.alarmHistory.filter(a => a.status === 'active').length)
 
-// 健康度分布 mock
+// 健康度分布
 const healthDistribution = computed(() => {
   const s = monitorStore.statusSummary
-  const total = (s.normal + s.warning + s.error) || 1
+  const total = s.normal + s.warning + s.error
   return [
-    { label: '健康', count: s.normal || 7, percent: Math.round(((s.normal || 7) / (total || 10)) * 100), color: 'bg-green-500' },
-    { label: '预警', count: s.warning || 2, percent: Math.round(((s.warning || 2) / (total || 10)) * 100), color: 'bg-yellow-500' },
-    { label: '故障', count: s.error || 1, percent: Math.round(((s.error || 1) / (total || 10)) * 100), color: 'bg-red-500' },
+    { label: '健康', count: s.normal, percent: total > 0 ? Math.round((s.normal / total) * 100) : 0, color: 'bg-green-500' },
+    { label: '预警', count: s.warning, percent: total > 0 ? Math.round((s.warning / total) * 100) : 0, color: 'bg-yellow-500' },
+    { label: '故障', count: s.error, percent: total > 0 ? Math.round((s.error / total) * 100) : 0, color: 'bg-red-500' },
   ]
 })
 
@@ -90,7 +78,7 @@ type ModuleEntry = {
   deviceName: string
 }
 
-const mockModules = computed<ModuleEntry[]>(() => {
+const modules = computed<ModuleEntry[]>(() => {
   return monitorStore.devices.map((d, i) => {
     const h = d.status === 'normal' ? 85 + Math.floor(seededRand(i + 500) * 15) :
               d.status === 'warning' ? 50 + Math.floor(seededRand(i + 600) * 20) :
@@ -109,7 +97,7 @@ const mockModules = computed<ModuleEntry[]>(() => {
 })
 
 const filteredModules = computed(() => {
-  return mockModules.value.filter(m => {
+  return modules.value.filter(m => {
     if (deviceFilter.value.statusFilter !== 'all' && m.status !== deviceFilter.value.statusFilter) return false
     if (deviceFilter.value.deviceId && !m.id.toLowerCase().includes(deviceFilter.value.deviceId.toLowerCase())) return false
     return true
@@ -866,26 +854,18 @@ const runBackupNow = () => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      v-if="visible"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]"
-      @click.self="emit('close')"
-    >
-      <Card class="w-[1050px] max-h-[88vh] flex flex-col bg-white dark:bg-gray-900 shadow-2xl">
-        <!-- Header -->
-        <CardHeader class="flex items-center justify-between border-b shrink-0">
-          <div>
-            <div class="flex items-center gap-3">
-              <Activity class="w-5 h-5 text-primary" />
-              <span class="font-semibold text-lg">监控中心</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-0.5 ml-8">设备监控 · 状态总览 · 历史告警</div>
+  <div class="h-full w-full flex flex-col bg-gray-50 dark:bg-gray-950 overflow-hidden">
+    <Card class="flex-1 flex flex-col bg-white dark:bg-gray-900 rounded-none border-0 shadow-none overflow-hidden">
+      <!-- Header -->
+      <CardHeader class="flex items-center justify-between border-b shrink-0">
+        <div>
+          <div class="flex items-center gap-3">
+            <Activity class="w-5 h-5 text-primary" />
+            <span class="font-semibold text-lg">监控中心</span>
           </div>
-          <Button variant="ghost" size="sm" @click="emit('close')">
-            <X class="w-4 h-4" />
-          </Button>
-        </CardHeader>
+          <div class="text-xs text-gray-400 mt-0.5 ml-8">设备监控 · 状态总览 · 历史告警</div>
+        </div>
+      </CardHeader>
 
         <!-- Tab bar -->
         <div class="flex border-b shrink-0">
@@ -2142,8 +2122,7 @@ const runBackupNow = () => {
             </div>
           </div>
 
-        </CardContent>
-      </Card>
-    </div>
-  </Teleport>
+      </CardContent>
+    </Card>
+  </div>
 </template>

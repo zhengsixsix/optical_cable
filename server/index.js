@@ -27,9 +27,9 @@ import { createSimulationRouter } from './routes/simulation.js'
 
 // ── 路径常量 ──
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DEM_DIR = path.join(__dirname, '..', 'public', 'dem')
+const DEM_DIR = path.join(__dirname, '..', 'dem')
 const DEM_FILES = ['1.tif', '2.tif', '3.tif', '4.tif', '5.tif', '6.tif']
-const SHARED_DATA_DIR = path.join(__dirname, '..', 'public', 'data')
+const SHARED_DATA_DIR = path.join(__dirname, '..', 'data')
 
 // ── Express 初始化 ──
 const app = express()

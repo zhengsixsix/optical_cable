@@ -15,6 +15,9 @@ import { useAppStore } from '@/stores/app'
 import { useRPLStore } from '@/stores/rpl'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
+import { platformPointApi, platformProjectApi } from '@/services/platform/api'
+import { connectorElementToDeviceEntity } from '@/services/platform/deviceLibraryMapping'
+import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
 import { generateUUID } from '@/types/useFile'
 import { useRouter } from 'vue-router'
 
@@ -23,6 +26,7 @@ export interface CreateProjectParams {
   projectType: ProjectType
   projectName: string
   allowOtherUsers: boolean
+  platformProjectId?: number | null
   rplFile?: string
   rplFileData?: File  // RPL 文件对象，用于导入
   planningMode?: 'point-to-point' | 'multi-point'
@@ -236,6 +240,101 @@ export function useProjectManager() {
       isProcessing.value = false
     }
   }
+
+  async function openProjectFromFile(file: File): Promise<OpenProjectResult> {
+    if (hasOpenProject.value && isDirty.value) {
+      openState.value.pendingFile = file
+      openState.value.showSavePrompt = true
+      return { success: false, error: '当前项目尚未保存', errorType: 'read' }
+    }
+
+    return doOpenFile(file)
+  }
+
+  async function openPlatformProject(projectId: number): Promise<boolean> {
+    isProcessing.value = true
+
+    try {
+      const [project, pointResponse] = await Promise.all([
+        platformProjectApi.detail(projectId),
+        platformPointApi.search({ pageNumber: 1, pageSize: 100, projectId }),
+      ])
+
+      const metadata: ProjectMetadata = {
+        name: project.name || `平台项目 ${projectId}`,
+        path: `platform://${projectId}`,
+        type: 'use',
+        uuid: `platform-${projectId}`,
+        platformProjectId: projectId,
+        lastModified: new Date().toISOString(),
+        creatorId: userStore.currentUser?.id || '',
+        allowOtherUsers: project.isPublic === 1,
+      }
+
+      const points = (pointResponse.data ?? [])
+        .filter(point => typeof point.longitude === 'number' && typeof point.latitude === 'number')
+        .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
+
+      const settingsStore = useSettingsStore()
+      settingsStore.updateRoutePlanningConfig({
+        mode: points.length > 2 ? 'multi-point' : 'point-to-point',
+        startPoint: points[0]
+          ? { name: points[0].name, lon: points[0].longitude!, lat: points[0].latitude! }
+          : { lon: 0, lat: 0 },
+        endPoint: points[points.length - 1]
+          ? { name: points[points.length - 1].name, lon: points[points.length - 1].longitude!, lat: points[points.length - 1].latitude! }
+          : { lon: 0, lat: 0 },
+        waypoints: points.map(point => ({
+          id: String(point.id ?? `${projectId}-${point.sortNum ?? point.name}`),
+          name: point.name || '站点',
+          lon: point.longitude!,
+          lat: point.latitude!,
+        })),
+        isConfigured: points.length > 0,
+      })
+
+      appStore.setCurrentProject(metadata)
+      projectFileService.setCurrentProject(metadata)
+      projectDataStore.setupDataLinks()
+      projectDataStore.markDataLoaded()
+      appStore.setProjectPhase('route-planning')
+      await router.push('/planning')
+
+      appStore.showNotification({
+        type: 'success',
+        message: `平台项目已打开：${metadata.name}`,
+      })
+      appStore.addLog('INFO', `打开平台项目: ${metadata.name} (#${projectId})`)
+      return true
+    } catch (error) {
+      appStore.showNotification({
+        type: 'error',
+        message: `打开平台项目失败：${(error as Error).message}`,
+        duration: 5000,
+      })
+      return false
+    } finally {
+      isProcessing.value = false
+    }
+  }
+
+  async function syncCurrentDeviceEntitiesToPlatform(projectId: number) {
+    const connectorStore = useConnectorStore()
+    const deviceEntities = connectorStore.elements
+      .filter(element => element.type !== 'fiber' && element.type !== 'cable_segment')
+      .map((element, index) => connectorElementToDeviceEntity(element, projectId, index + 1))
+      .filter((entity): entity is NonNullable<typeof entity> => entity !== null)
+
+    if (deviceEntities.length === 0) return 0
+
+    const result = await syncPlanningProjectToPlatform({
+      id: projectId,
+      name: currentProjectName.value || `平台项目 ${projectId}`,
+      isPublic: appStore.projectState.currentProject?.allowOtherUsers ? 1 : 0,
+      deviceEntities,
+    })
+    return result.deviceEntitiesSynced
+  }
   
   /**
    * 保存当前项目
@@ -256,6 +355,21 @@ export function useProjectManager() {
       
       if (result.success) {
         appStore.markProjectSaved()
+        const platformProjectId = appStore.projectState.currentProject?.platformProjectId
+        if (platformProjectId) {
+          try {
+            const syncedCount = await syncCurrentDeviceEntitiesToPlatform(platformProjectId)
+            if (syncedCount > 0) {
+              appStore.addLog('INFO', `平台器件实例已同步: ${syncedCount} 个`)
+            }
+          } catch (error) {
+            appStore.showNotification({
+              type: 'warning',
+              message: `项目已保存，器件实例平台同步失败：${(error as Error).message}`,
+              duration: 5000,
+            })
+          }
+        }
         
         // 显示校验警告（如果有）
         if (result.warnings && result.warnings.length > 0) {
@@ -358,7 +472,7 @@ export function useProjectManager() {
    * 新建项目
    */
   async function createProject(params: CreateProjectParams): Promise<boolean> {
-    const { projectType, projectName, allowOtherUsers, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig, buConfigs, armorMappings, redundancyConfig } = params
+    const { projectType, projectName, allowOtherUsers, platformProjectId, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig, buConfigs, armorMappings, redundancyConfig } = params
     
     // 检查当前是否有未保存的项目
     if (hasOpenProject.value && isDirty.value) {
@@ -387,6 +501,63 @@ export function useProjectManager() {
         lastModified: new Date().toISOString(),
         creatorId: userStore.currentUser?.id || '',
         allowOtherUsers: allowOtherUsers,
+        platformProjectId: platformProjectId ?? undefined,
+      }
+
+      if (platformProjectId) {
+        appStore.addLog('INFO', `平台项目已同步: ${projectName} (#${platformProjectId})`)
+      } else {
+        try {
+          const platformPoints = planningMode === 'multi-point'
+            ? (waypoints || []).map((point, index) => ({
+                name: point.name,
+                longitude: point.longitude,
+                latitude: point.latitude,
+                sortNum: index + 1,
+              }))
+            : [
+                startStation ? {
+                  name: startStation.name,
+                  longitude: startStation.longitude,
+                  latitude: startStation.latitude,
+                  sortNum: 1,
+                } : null,
+                endStation ? {
+                  name: endStation.name,
+                  longitude: endStation.longitude,
+                  latitude: endStation.latitude,
+                  sortNum: 2,
+                } : null,
+              ].filter((point): point is { name: string; longitude: number; latitude: number; sortNum: number } => Boolean(point))
+
+          const platformResult = await syncPlanningProjectToPlatform({
+            name: projectName,
+            remarks: `${projectType.toUpperCase()} project`,
+            isPublic: allowOtherUsers ? 1 : 0,
+            points: platformPoints.filter(point => point.longitude !== 0 || point.latitude !== 0),
+            planConfig: {
+              scope: gisConfig?.rangeMode === 'manual' && gisConfig.planningRange
+                ? {
+                    topLeftLng: gisConfig.planningRange.northwest.lon,
+                    topLeftLat: gisConfig.planningRange.northwest.lat,
+                    bottomRightLng: gisConfig.planningRange.southeast.lon,
+                    bottomRightLat: gisConfig.planningRange.southeast.lat,
+                  }
+                : null,
+              gridResolution: gisConfig?.gridResolution,
+              enableRedundancy: redundancyConfig?.enabled ?? false,
+            },
+          })
+          newMetadata.platformProjectId = platformResult.projectId
+          appStore.addLog('INFO', `平台项目已同步: ${projectName} (#${platformResult.projectId})`)
+        } catch (error) {
+          appStore.showNotification({
+            type: 'warning',
+            message: `平台项目同步失败，本地项目将继续创建：${(error as Error).message}`,
+            duration: 5000,
+          })
+          appStore.addLog('WARN', `平台项目同步失败: ${(error as Error).message}`)
+        }
       }
 
       // 设置当前项目
@@ -493,7 +664,7 @@ export function useProjectManager() {
               }
             }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            importSummary = applyImportResultToStore(fakeResult as any, settingsStore)
+            importSummary = await applyImportResultToStore(fakeResult as any, settingsStore)
           }
         }
         
@@ -666,12 +837,12 @@ export function useProjectManager() {
                   longitude: record.longitude,
                   latitude: record.latitude,
                   depth: record.depth,
-                  inputPower: -15 + Math.random() * 5,
-                  outputPower: -10 + Math.random() * 5,
-                  pumpCurrent: 200 + Math.random() * 50,
+                  inputPower: 0,
+                  outputPower: 0,
+                  pumpCurrent: 0,
                   pfeVoltage: 48,
-                  pfeCurrent: 1.2 + Math.random() * 0.3,
-                  temperature: 4 + Math.random() * 2,
+                  pfeCurrent: 0,
+                  temperature: 0,
                 })
                 deviceIdx++
               }
@@ -767,6 +938,8 @@ export function useProjectManager() {
     
     // 方法
     openProject,
+    openProjectFromFile,
+    openPlatformProject,
     handleSavePromptChoice,
     saveProject,
     openSaveAsDialog,

@@ -5,6 +5,8 @@ import {useRouter, useRoute} from 'vue-router'
 import { useProjectManager } from '@/composables'
 import { useSettingsStore } from '@/stores/settings'
 import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
+import BindFuncListEditor from '@/components/settings/BindFuncListEditor.vue'
+import IconUploadField from '@/components/settings/IconUploadField.vue'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
@@ -38,6 +40,9 @@ import type {FiberType, AmplifierType, BranchingUnitType} from '@/types'
 import type {EqualizerType, JointBoxType} from '@/types/settings'
 import type {BUConfig, ArmorMapping, RedundancyConfig} from '@/stores/settings'
 import { deviceImportService, applyImportResultToStore } from '@/services/DeviceImportService'
+import type { Id, PlanDeviceEntity, PlanDeviceLibrary } from '@/services/platform/types'
+import type { BindFuncDraft } from '@/services/platform/bindFuncForm'
+import { bindFuncDraftsToList, bindFuncListToDrafts } from '@/services/platform/bindFuncForm'
 import {
   fiberModelOptions,
   planningModeOptions,
@@ -72,6 +77,8 @@ const syncActiveTabFromQuery = async () => {
 // 支持通过路由 query 参数切换 tab（如从系统规划跳转过来）
 onMounted(() => {
   void syncActiveTabFromQuery()
+  void loadPlatformLibraries()
+  void loadPlatformEntities()
 })
 
 watch(() => route.query.tab, () => {
@@ -101,9 +108,9 @@ const handleNewProject = () => {
 
 // 打开项目
 const handleOpenProject = async () => {
-  await projectManager.openProject()
+  appStore.openDialog('open-project')
 }
-const deviceTypeTab = ref<'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'>('fiber')
+const platformLibraryTab = ref<Id | null>(null)
 
 const tabs = [
   {id: 'equipment', label: '器件库配置'},
@@ -117,6 +124,8 @@ const showAddAmplifierDialog = ref(false)
 const showAddBranchingDialog = ref(false)
 const showAddEqualizerDialog = ref(false)
 const showAddJointDialog = ref(false)
+const showPlatformLibraryDialog = ref(false)
+const showPlatformEntityDialog = ref(false)
 const showMapSelectDialog = ref(false)
 const showCableTypeCreateDialog = ref(false)
 const cableTypePresetArmor = ref('')  // 预设的铠装类型
@@ -142,6 +151,299 @@ const portCountOptions = [2, 3, 4, 5, 6, 7, 8].map(n => ({ value: String(n), lab
 const operatingModeLabel = (mode?: string) => {
   const map: Record<string, string> = { fixed_gain: '固定增益', fixed_output: '固定输出功率', apc: 'APC' }
   return mode ? map[mode] || mode : '-'
+}
+
+const platformDeviceTypeOptions = [
+  { value: 'FIB', label: '光纤' },
+  { value: 'AMP', label: '放大器' },
+  { value: 'BU', label: '分支器' },
+  { value: 'EQ', label: '均衡器' },
+  { value: 'JB', label: '接头盒' },
+  { value: 'LANDING', label: '登陆站' },
+  { value: 'UNDERWATER', label: '海底节点' },
+  { value: 'CABLE', label: '缆段' },
+]
+
+let bindFuncDraftSequence = 0
+const nextBindFuncDraftId = (prefix: 'func' | 'param') => `${prefix}-${Date.now()}-${++bindFuncDraftSequence}`
+
+const deviceTypeName = (typeCd?: string | null) => {
+  return platformDeviceTypeOptions.find(item => item.value === typeCd)?.label || typeCd || '-'
+}
+
+const selectedPlatformLibrary = computed(() => {
+  return settingsStore.platformDeviceLibraries.find(item => sameId(item.id, platformLibraryTab.value))
+    || settingsStore.platformDeviceLibraries[0]
+    || null
+})
+
+const filteredPlatformDeviceEntities = computed(() => {
+  if (!selectedPlatformLibrary.value?.id) return []
+  return settingsStore.platformDeviceEntities.filter(entity =>
+    sameId(entity.libraryId, selectedPlatformLibrary.value?.id),
+  )
+})
+
+watch(() => settingsStore.platformDeviceLibraries, libraries => {
+  if (libraries.length === 0) {
+    platformLibraryTab.value = null
+    return
+  }
+
+  if (!libraries.some(item => sameId(item.id, platformLibraryTab.value))) {
+    platformLibraryTab.value = libraries[0].id ?? null
+  }
+}, { deep: true })
+
+const defaultPlatformLibraryForm = () => ({
+  id: undefined as Id | undefined,
+  name: '',
+  typeCd: 'FIB',
+  iconId: '' as Id | '',
+  iconName: '',
+  iconWidth: 48,
+  iconHeight: 48,
+  dialogWindowId: '',
+  bindFuncList: [] as BindFuncDraft[],
+})
+
+const defaultPlatformEntityForm = () => ({
+  id: undefined as Id | undefined,
+  name: '',
+  libraryId: '' as Id | '',
+  typeCd: '',
+  iconId: '' as Id | '',
+  iconName: '',
+  iconWidth: 48,
+  iconHeight: 48,
+  dialogWindowId: '',
+  bindFuncList: [] as BindFuncDraft[],
+  longitude: '' as number | string,
+  latitude: '' as number | string,
+  projectId: '' as Id | '',
+  sortNum: 999,
+})
+
+const platformLibraryForm = reactive(defaultPlatformLibraryForm())
+const platformEntityForm = reactive(defaultPlatformEntityForm())
+
+const optionalNumber = (value: unknown): number | undefined => {
+  if (value === '' || value == null) return undefined
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : undefined
+}
+
+const optionalId = (value: unknown): Id | undefined => {
+  if (value === '' || value == null) return undefined
+  return typeof value === 'number' ? value : String(value)
+}
+
+const sameId = (left: unknown, right: unknown) => {
+  if (left == null || right == null) return false
+  return String(left) === String(right)
+}
+
+const resetPlatformLibraryForm = () => {
+  Object.assign(platformLibraryForm, defaultPlatformLibraryForm())
+}
+
+const resetPlatformEntityForm = () => {
+  Object.assign(platformEntityForm, defaultPlatformEntityForm())
+}
+
+const loadPlatformLibraries = async () => {
+  try {
+    await settingsStore.loadPlatformDeviceLibraries()
+    if (!platformLibraryTab.value && settingsStore.platformDeviceLibraries[0]?.id) {
+      platformLibraryTab.value = settingsStore.platformDeviceLibraries[0].id
+    }
+  } catch (error) {
+    appStore.showNotification({ type: 'warning', message: `器件库加载失败：${(error as Error).message}` })
+  }
+}
+
+const loadPlatformEntities = async () => {
+  try {
+    const libraryId = selectedPlatformLibrary.value?.id
+    await settingsStore.loadPlatformDeviceEntities(libraryId ? { libraryId } : {})
+  } catch (error) {
+    appStore.showNotification({ type: 'warning', message: `器件实例加载失败：${(error as Error).message}` })
+  }
+}
+
+const selectPlatformLibrary = (library: PlanDeviceLibrary) => {
+  platformLibraryTab.value = library.id ?? null
+  const libraryId = library.id
+  if (libraryId) {
+    void settingsStore.loadPlatformDeviceEntities({ libraryId })
+  }
+}
+
+const openCreatePlatformLibrary = () => {
+  resetPlatformLibraryForm()
+  showPlatformLibraryDialog.value = true
+}
+
+const openEditPlatformLibrary = (library: PlanDeviceLibrary) => {
+  Object.assign(platformLibraryForm, {
+    id: library.id,
+    name: library.name || '',
+    typeCd: library.typeCd || 'FIB',
+    iconId: library.iconId ?? '',
+    iconName: library.iconName || '',
+    iconWidth: library.iconSize?.width ?? 48,
+    iconHeight: library.iconSize?.height ?? 48,
+    dialogWindowId: library.dialogWindowId || '',
+    bindFuncList: bindFuncListToDrafts(library.bindFuncList, nextBindFuncDraftId),
+  })
+  showPlatformLibraryDialog.value = true
+}
+
+const savePlatformLibrary = async () => {
+  if (!platformLibraryForm.typeCd) {
+    appStore.showNotification({ type: 'warning', message: '请选择设备类型' })
+    return
+  }
+
+  try {
+    const payload: PlanDeviceLibrary = {
+      id: platformLibraryForm.id,
+      name: platformLibraryForm.name || null,
+      typeCd: platformLibraryForm.typeCd,
+      iconId: optionalId(platformLibraryForm.iconId) ?? null,
+      iconSize: {
+        width: optionalNumber(platformLibraryForm.iconWidth) ?? 48,
+        height: optionalNumber(platformLibraryForm.iconHeight) ?? 48,
+      },
+      dialogWindowId: platformLibraryForm.dialogWindowId || null,
+      bindFuncList: bindFuncDraftsToList(platformLibraryForm.bindFuncList),
+    }
+    await settingsStore.savePlatformDeviceLibrary(payload)
+    if (payload.id == null) {
+      const libraries = settingsStore.platformDeviceLibraries
+      platformLibraryTab.value = libraries[libraries.length - 1]?.id ?? platformLibraryTab.value
+    }
+    showPlatformLibraryDialog.value = false
+    appStore.showNotification({ type: 'success', message: '器件库已保存' })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `器件库保存失败：${(error as Error).message}` })
+  }
+}
+
+const deletePlatformLibrary = async (id?: Id) => {
+  if (!id) return
+  if (!window.confirm('确认删除这个器件库？')) return
+  try {
+    await settingsStore.removePlatformDeviceLibrary(id)
+    appStore.showNotification({ type: 'success', message: '器件库已删除' })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `器件库删除失败：${(error as Error).message}` })
+  }
+}
+
+const openCreatePlatformEntity = (library: PlanDeviceLibrary | null = selectedPlatformLibrary.value) => {
+  resetPlatformEntityForm()
+  const targetLibrary = library || settingsStore.platformDeviceLibraries[0]
+  if (targetLibrary?.id) {
+    platformEntityForm.libraryId = targetLibrary.id
+    platformEntityForm.typeCd = targetLibrary.typeCd || ''
+    platformEntityForm.dialogWindowId = targetLibrary.dialogWindowId || ''
+  }
+  platformEntityForm.projectId = appStore.projectState.currentProject?.platformProjectId || ''
+  showPlatformEntityDialog.value = true
+}
+
+const openEditPlatformEntity = (entity: PlanDeviceEntity) => {
+  Object.assign(platformEntityForm, {
+    id: entity.id,
+    name: entity.name || '',
+    libraryId: entity.libraryId ?? '',
+    typeCd: entity.typeCd || '',
+    iconId: entity.iconId ?? '',
+    iconName: entity.iconName || '',
+    iconWidth: entity.iconSize?.width ?? 48,
+    iconHeight: entity.iconSize?.height ?? 48,
+    dialogWindowId: entity.dialogWindowId || '',
+    bindFuncList: bindFuncListToDrafts(entity.bindFuncList, nextBindFuncDraftId),
+    longitude: entity.longitude ?? '',
+    latitude: entity.latitude ?? '',
+    projectId: entity.projectId ?? '',
+    sortNum: entity.sortNum ?? 999,
+  })
+  showPlatformEntityDialog.value = true
+}
+
+const syncEntityLibraryFields = () => {
+  const libraryId = optionalId(platformEntityForm.libraryId)
+  const library = settingsStore.platformDeviceLibraries.find(item => sameId(item.id, libraryId))
+  if (!library) return
+  platformEntityForm.typeCd = library.typeCd || ''
+  platformEntityForm.dialogWindowId = library.dialogWindowId || ''
+}
+
+const currentProjectDisplayName = computed(() => appStore.currentProjectName || '当前项目')
+
+const handlePlatformLibraryIconUploaded = (payload: { iconId: Id; iconName: string }) => {
+  platformLibraryForm.iconId = payload.iconId
+  platformLibraryForm.iconName = payload.iconName
+}
+
+const handlePlatformEntityIconUploaded = (payload: { iconId: Id; iconName: string }) => {
+  platformEntityForm.iconId = payload.iconId
+  platformEntityForm.iconName = payload.iconName
+}
+
+const isPickingPlatformEntityLocation = ref(false)
+
+const handlePlatformEntityMapSelect = () => {
+  isPickingPlatformEntityLocation.value = true
+  mapSelectType.value = 'start'
+  mapSelectTitle.value = '选择器件实例位置'
+  showMapSelectDialog.value = true
+}
+
+const savePlatformEntity = async () => {
+  const libraryId = optionalId(platformEntityForm.libraryId)
+  if (!libraryId) {
+    appStore.showNotification({ type: 'warning', message: '请选择器件库' })
+    return
+  }
+
+  try {
+    const payload: PlanDeviceEntity = {
+      id: platformEntityForm.id,
+      name: platformEntityForm.name || null,
+      typeCd: platformEntityForm.typeCd || null,
+      iconId: optionalId(platformEntityForm.iconId) ?? null,
+      iconSize: {
+        width: optionalNumber(platformEntityForm.iconWidth) ?? 48,
+        height: optionalNumber(platformEntityForm.iconHeight) ?? 48,
+      },
+      dialogWindowId: platformEntityForm.dialogWindowId || null,
+      bindFuncList: bindFuncDraftsToList(platformEntityForm.bindFuncList),
+      libraryId,
+      longitude: optionalNumber(platformEntityForm.longitude) ?? null,
+      latitude: optionalNumber(platformEntityForm.latitude) ?? null,
+      projectId: optionalId(platformEntityForm.projectId) ?? null,
+      sortNum: optionalNumber(platformEntityForm.sortNum) ?? 999,
+    }
+    await settingsStore.savePlatformDeviceEntity(payload)
+    showPlatformEntityDialog.value = false
+    appStore.showNotification({ type: 'success', message: '器件实例已保存' })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `器件实例保存失败：${(error as Error).message}` })
+  }
+}
+
+const deletePlatformEntity = async (id?: Id) => {
+  if (!id) return
+  if (!window.confirm('确认删除这个器件实例？')) return
+  try {
+    await settingsStore.removePlatformDeviceEntity(id)
+    appStore.showNotification({ type: 'success', message: '器件实例已删除' })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `器件实例删除失败：${(error as Error).message}` })
+  }
 }
 
 // 默认光纤表单值
@@ -205,24 +507,28 @@ const portCountStr = computed({
 })
 
 // 添加光纤类型
-const handleAddFiber = () => {
+const notifyDeviceSyncResult = (successMessage: string, fallbackMessage?: string) => {
+  appStore.showNotification({type: 'success', message: fallbackMessage || successMessage})
+}
+
+const handleAddFiber = async () => {
   if (!newFiber.name) {
     appStore.showNotification({type: 'warning', message: '请输入光纤类型名称'})
     return
   }
-  settingsStore.addFiberType({
+  await settingsStore.addFiberType({
     id: `fiber-${Date.now()}`,
     ...newFiber,
   })
   showAddFiberDialog.value = false
   Object.assign(newFiber, defaultFiberForm())
-  appStore.showNotification({type: 'success', message: '光纤类型已添加'})
+  notifyDeviceSyncResult('光纤类型已添加')
 }
 
 // 删除光纤类型
-const handleDeleteFiber = (id: string) => {
-  settingsStore.removeFiberType(id)
-  appStore.showNotification({type: 'info', message: '光纤类型已删除'})
+const handleDeleteFiber = async (id: string) => {
+  await settingsStore.removeFiberType(id)
+  notifyDeviceSyncResult('光纤类型已删除', '光纤类型已从本地删除')
 }
 
 // 修改光纤（克隆编辑）
@@ -236,24 +542,24 @@ const handleEditFiber = (fiber: FiberType) => {
 }
 
 // 添加放大器类型
-const handleAddAmplifier = () => {
+const handleAddAmplifier = async () => {
   if (!newAmplifier.name) {
     appStore.showNotification({type: 'warning', message: '请输入放大器类型名称'})
     return
   }
-  settingsStore.addAmplifierType({
+  await settingsStore.addAmplifierType({
     id: `amp-${Date.now()}`,
     ...newAmplifier,
   })
   showAddAmplifierDialog.value = false
   Object.assign(newAmplifier, defaultAmplifierForm())
-  appStore.showNotification({type: 'success', message: '放大器类型已添加'})
+  notifyDeviceSyncResult('放大器类型已添加')
 }
 
 // 删除放大器类型
-const handleDeleteAmplifier = (id: string) => {
-  settingsStore.removeAmplifierType(id)
-  appStore.showNotification({type: 'info', message: '放大器类型已删除'})
+const handleDeleteAmplifier = async (id: string) => {
+  await settingsStore.removeAmplifierType(id)
+  notifyDeviceSyncResult('放大器类型已删除', '放大器类型已从本地删除')
 }
 
 // 修改放大器（克隆编辑）
@@ -267,24 +573,24 @@ const handleEditAmplifier = (amp: AmplifierType) => {
 }
 
 // 添加分支器类型
-const handleAddBranching = () => {
+const handleAddBranching = async () => {
   if (!newBranching.name) {
     appStore.showNotification({type: 'warning', message: '请输入分支器类型名称'})
     return
   }
-  settingsStore.addBranchingUnitType({
+  await settingsStore.addBranchingUnitType({
     id: `bu-${Date.now()}`,
     ...newBranching,
   })
   showAddBranchingDialog.value = false
   Object.assign(newBranching, defaultBranchingForm())
-  appStore.showNotification({type: 'success', message: '分支器类型已添加'})
+  notifyDeviceSyncResult('分支器类型已添加')
 }
 
 // 删除分支器类型
-const handleDeleteBranching = (id: string) => {
-  settingsStore.removeBranchingUnitType(id)
-  appStore.showNotification({type: 'info', message: '分支器类型已删除'})
+const handleDeleteBranching = async (id: string) => {
+  await settingsStore.removeBranchingUnitType(id)
+  notifyDeviceSyncResult('分支器类型已删除', '分支器类型已从本地删除')
 }
 
 // 修改分支器（克隆编辑）
@@ -295,23 +601,23 @@ const handleEditBranching = (bu: BranchingUnitType) => {
 }
 
 // 添加均衡器类型
-const handleAddEqualizer = () => {
+const handleAddEqualizer = async () => {
   if (!newEqualizer.name) {
     appStore.showNotification({type: 'warning', message: '请输入均衡器型号名称'})
     return
   }
-  settingsStore.addEqualizerType({
+  await settingsStore.addEqualizerType({
     id: `eq-${Date.now()}`,
     ...newEqualizer,
   })
   showAddEqualizerDialog.value = false
   Object.assign(newEqualizer, defaultEqualizerForm())
-  appStore.showNotification({type: 'success', message: '均衡器型号已添加'})
+  notifyDeviceSyncResult('均衡器型号已添加')
 }
 
-const handleDeleteEqualizer = (id: string) => {
-  settingsStore.removeEqualizerType(id)
-  appStore.showNotification({type: 'info', message: '均衡器型号已删除'})
+const handleDeleteEqualizer = async (id: string) => {
+  await settingsStore.removeEqualizerType(id)
+  notifyDeviceSyncResult('均衡器型号已删除', '均衡器型号已从本地删除')
 }
 
 const handleEditEqualizer = (eq: EqualizerType) => {
@@ -321,23 +627,23 @@ const handleEditEqualizer = (eq: EqualizerType) => {
 }
 
 // 添加接头盒型号
-const handleAddJoint = () => {
+const handleAddJoint = async () => {
   if (!newJoint.name) {
     appStore.showNotification({type: 'warning', message: '请输入接头盒型号名称'})
     return
   }
-  settingsStore.addJointBoxType({
+  await settingsStore.addJointBoxType({
     id: `jb-${Date.now()}`,
     ...newJoint,
   })
   showAddJointDialog.value = false
   Object.assign(newJoint, defaultJointForm())
-  appStore.showNotification({type: 'success', message: '接头盒型号已添加'})
+  notifyDeviceSyncResult('接头盒型号已添加')
 }
 
-const handleDeleteJoint = (id: string) => {
-  settingsStore.removeJointBoxType(id)
-  appStore.showNotification({type: 'info', message: '接头盒型号已删除'})
+const handleDeleteJoint = async (id: string) => {
+  await settingsStore.removeJointBoxType(id)
+  notifyDeviceSyncResult('接头盒型号已删除', '接头盒型号已从本地删除')
 }
 
 const handleEditJoint = (jb: JointBoxType) => {
@@ -360,7 +666,7 @@ const handleImportLibrary = () => {
         appStore.showNotification({type: 'error', message: result.errors[0].message})
         return
       }
-      const msg = applyImportResultToStore(result, settingsStore)
+      const msg = await applyImportResultToStore(result, settingsStore)
       settingsStore.currentLibraryFile = file.name
       appStore.showNotification({type: 'success', message: msg})
     } catch (err) {
@@ -813,6 +1119,15 @@ const handleMapSelect = (type: string) => {
 
 // 地图选点确认
 const handleMapSelectConfirm = (coord: string) => {
+  if (isPickingPlatformEntityLocation.value) {
+    const parts = coord.split(',')
+    platformEntityForm.longitude = parts[0]?.trim() || ''
+    platformEntityForm.latitude = parts[1]?.trim() || ''
+    isPickingPlatformEntityLocation.value = false
+    appStore.showNotification({type: 'success', message: `器件实例位置已选择: ${coord}`})
+    return
+  }
+
   // 多点规划模式下，如果有当前选中的多点ID
   if (currentWaypointId.value) {
     const wp = waypoints.value.find(w => w.id === currentWaypointId.value)
@@ -986,7 +1301,7 @@ const closeSettingsWithoutSaving = () => {
   router.push('/planning')
 }
 
-const handleSave = () => {
+const handleSave = async () => {
   // 点对点模式：从 startPointConfig 和 endPointConfig 获取
   const startPoint = {
     name: startPointConfig.name || '',
@@ -1156,7 +1471,7 @@ const handleReset = () => {
 // 开始路由规划 - 保存配置并跳转到规划页面
 const handleStartRoutePlanning = () => {
   // 先保存配置
-  handleSave()
+  void handleSave()
   // 跳转到规划页面
   router.push('/planning')
   appStore.showNotification({type: 'info', message: '已跳转到路由规划页面'})
@@ -2193,302 +2508,110 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
           <!-- 器件库管理 -->
           <Card>
             <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 text-lg mb-4 pb-3 border-b">器件库管理</h3>
-              <div class="flex items-center justify-center gap-4 mb-4">
-                <span class="text-sm text-gray-600">当前器件库文件：</span>
-                <span class="text-sm text-gray-800 font-medium">{{
-                    settingsStore.currentLibraryFile || '未导入'
-                  }}</span>
-              </div>
-              <div class="flex justify-center gap-4">
-                <Button variant="outline" @click="handleImportLibrary">导入器件库</Button>
-                <Button variant="outline" @click="handleExportLibrary">导出器件库</Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <!-- 器件类型管理 -->
-          <Card>
-            <CardContent class="p-5">
-              <h3 class="text-center font-bold text-gray-800 dark:text-gray-100 text-lg mb-4 pb-3 border-b">
-                器件类型管理</h3>
-
-              <!-- 器件类型标签 -->
-              <div class="flex border-b mb-4">
-                <button :class="[
-                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                  deviceTypeTab === 'fiber'
-                    ? ''
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                ]"
-                        :style="deviceTypeTab === 'fiber' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
-                        @click="deviceTypeTab = 'fiber'">光纤类型管理
-                </button>
-                <button :class="[
-                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                  deviceTypeTab === 'amplifier'
-                    ? ''
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                ]"
-                        :style="deviceTypeTab === 'amplifier' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
-                        @click="deviceTypeTab = 'amplifier'">放大器类型管理
-                </button>
-                <button :class="[
-                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                  deviceTypeTab === 'branching'
-                    ? ''
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                ]"
-                        :style="deviceTypeTab === 'branching' ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
-                        @click="deviceTypeTab = 'branching'">分支器类型管理
-                </button>
-                <button :class="[
-                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                  deviceTypeTab === 'equalizer'
-                    ? ''
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                ]"
-                        :style="deviceTypeTab === 'equalizer' ? { borderColor: '#f59e0b', color: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.05)' } : {}"
-                        @click="deviceTypeTab = 'equalizer'">均衡器型号管理
-                </button>
-                <button :class="[
-                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                  deviceTypeTab === 'joint'
-                    ? ''
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                ]"
-                        :style="deviceTypeTab === 'joint' ? { borderColor: '#64748b', color: '#64748b', backgroundColor: 'rgba(100,116,139,0.05)' } : {}"
-                        @click="deviceTypeTab = 'joint'">接头盒型号管理
-                </button>
+              <div class="flex items-center justify-between mb-4 pb-3 border-b">
+                <h3 class="font-bold text-gray-800 dark:text-gray-100 text-lg">器件库管理</h3>
+                <div class="flex gap-2">
+                  <Button variant="outline" size="sm" @click="loadPlatformLibraries">刷新</Button>
+                  <Button variant="outline" size="sm" @click="handleImportLibrary">导入器件库</Button>
+                  <Button variant="outline" size="sm" @click="handleExportLibrary">导出器件库</Button>
+                </div>
               </div>
 
-              <!-- 光纤类型管理 -->
-              <div v-if="deviceTypeTab === 'fiber'">
-                <div class="mb-3">
+              <!-- 器件库标签 -->
+              <div class="flex items-center border-b mb-4 overflow-x-auto">
+                <template v-if="settingsStore.deviceLibraryLoading">
+                  <span class="px-4 py-2 text-sm text-gray-400">正在加载器件库...</span>
+                </template>
+                <template v-else>
+                  <button
+                    v-for="(library, index) in settingsStore.platformDeviceLibraries"
+                    :key="library.id ?? library.name ?? library.typeCd ?? `library-${index}`"
+                    :class="[
+                      'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+                      sameId(platformLibraryTab, library.id)
+                        ? ''
+                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    ]"
+                    :style="sameId(platformLibraryTab, library.id) ? { borderColor: 'var(--app-primary-color)', color: 'var(--app-primary-color)', backgroundColor: 'rgba(var(--app-primary-rgb), 0.05)' } : {}"
+                    @click="selectPlatformLibrary(library)"
+                  >
+                    {{ library.name || `器件库 ${library.id}` }}
+                  </button>
+                  <button
+                    title="新增器件库"
+                    class="w-9 h-9 inline-flex items-center justify-center border-b-2 border-transparent text-gray-500 hover:text-primary hover:bg-gray-50 dark:hover:bg-white/5 shrink-0"
+                    @click="openCreatePlatformLibrary"
+                  >
+                    <Plus class="w-4 h-4"/>
+                  </button>
+                </template>
+              </div>
+
+              <div v-if="!settingsStore.deviceLibraryLoading && settingsStore.platformDeviceLibraries.length === 0"
+                   class="border rounded-lg px-3 py-8 text-center text-gray-400">
+                暂无器件库，点击右侧“+”创建
+              </div>
+
+              <div v-if="selectedPlatformLibrary" class="mb-4 border rounded-lg overflow-hidden">
+                <div class="grid grid-cols-[120px_1fr_120px_1fr] text-sm">
+                  <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400">ID</div>
+                  <div class="px-3 py-2">{{ selectedPlatformLibrary.id ?? '-' }}</div>
+                  <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400">设备类型</div>
+                  <div class="px-3 py-2">{{ deviceTypeName(selectedPlatformLibrary.typeCd) }}</div>
+                  <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400 border-t">参数窗口标识</div>
+                  <div class="px-3 py-2 border-t">{{ selectedPlatformLibrary.dialogWindowId || '-' }}</div>
+                  <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400 border-t">绑定函数</div>
+                  <div class="px-3 py-2 border-t">{{ selectedPlatformLibrary.bindFuncList?.map(item => item.name).filter(Boolean).join('、') || '-' }}</div>
+                </div>
+                <div class="flex justify-end gap-3 px-3 py-2 border-t bg-gray-50 dark:bg-white/5">
+                  <button class="text-primary hover:text-primary hover:brightness-90" @click="openEditPlatformLibrary(selectedPlatformLibrary)">修改</button>
+                  <button class="text-red-500 hover:text-red-700" @click="deletePlatformLibrary(selectedPlatformLibrary.id)">删除</button>
+                </div>
+              </div>
+
+              <!-- 器件实例列表 -->
+              <div v-if="selectedPlatformLibrary">
+                <div class="mb-3 flex items-center justify-between">
                   <Button size="sm" class="bg-primary hover:bg-primary hover:brightness-90 text-white"
-                          @click="showAddFiberDialog = true">
+                          @click="openCreatePlatformEntity(selectedPlatformLibrary)">
                     <Plus class="w-4 h-4 mr-1"/>
-                    增加光纤类型
+                    新增器件实例
                   </Button>
+                  <Button variant="outline" size="sm" @click="loadPlatformEntities()">刷新实例</Button>
                 </div>
                 <div class="border rounded-lg overflow-x-auto">
                   <table class="w-full text-sm">
                     <thead class="bg-gray-100 dark:bg-white/5">
                     <tr>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">光纤类型名称</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">非线性系数</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">有效面积</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">色散</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">非线性折射率</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">衰减系数</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">ID</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">名称</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">所属器件库</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">设备类型</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">经度</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">纬度</th>
+                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">项目ID</th>
                       <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
                     </tr>
                     </thead>
                     <tbody>
-                    <tr v-if="settingsStore.fiberTypes.length === 0">
-                      <td colspan="7" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
+                    <tr v-if="settingsStore.deviceEntityLoading">
+                      <td colspan="8" class="px-3 py-8 text-center text-gray-400">正在加载器件实例...</td>
                     </tr>
-                    <tr v-for="fiber in settingsStore.fiberTypes" :key="fiber.id"
+                    <tr v-else-if="filteredPlatformDeviceEntities.length === 0">
+                      <td colspan="8" class="px-3 py-8 text-center text-gray-400">当前器件库暂无实例，点击“新增器件实例”创建</td>
+                    </tr>
+                    <tr v-for="(entity, index) in filteredPlatformDeviceEntities" :key="entity.id ?? `entity-${index}`"
                         class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                      <td class="px-3 py-2">{{ fiber.name }}</td>
-                      <td class="px-3 py-2">{{ fiber.nonlinearCoeff }}</td>
-                      <td class="px-3 py-2">{{ fiber.effectiveArea }}</td>
-                      <td class="px-3 py-2">{{ fiber.dispersion }}</td>
-                      <td class="px-3 py-2">{{ fiber.nonlinearRefractiveIndex }} × 10⁻²⁰</td>
-                      <td class="px-3 py-2">{{ fiber.attenuationCoeff }}</td>
+                      <td class="px-3 py-2">{{ entity.id ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ entity.name || '-' }}</td>
+                      <td class="px-3 py-2">{{ entity.libraryName || selectedPlatformLibrary.name || entity.libraryId || '-' }}</td>
+                      <td class="px-3 py-2">{{ deviceTypeName(entity.typeCd) }}</td>
+                      <td class="px-3 py-2">{{ entity.longitude ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ entity.latitude ?? '-' }}</td>
+                      <td class="px-3 py-2">{{ entity.projectId ?? '-' }}</td>
                       <td class="px-3 py-2 text-center">
-                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1"
-                                @click="handleEditFiber(fiber)">修改</button>
-                        <button class="text-red-500 hover:text-red-700 mx-1"
-                                @click="handleDeleteFiber(fiber.id)">删除
-                        </button>
-                      </td>
-                    </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <!-- 放大器类型管理 -->
-              <div v-if="deviceTypeTab === 'amplifier'">
-                <div class="mb-3">
-                  <Button size="sm" class="bg-primary hover:bg-primary hover:brightness-90 text-white"
-                          @click="showAddAmplifierDialog = true">
-                    <Plus class="w-4 h-4 mr-1"/>
-                    增加放大器类型
-                  </Button>
-                </div>
-                <div class="border rounded-lg overflow-x-auto">
-                  <table class="w-full text-sm">
-                    <thead class="bg-gray-100 dark:bg-white/5">
-                    <tr>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">放大器类型名称</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">额定增益</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">噪声系数</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">最大输出功率</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">饱和功率</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">平坦度</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">工作模式</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币</th>
-                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <tr v-if="settingsStore.amplifierTypes.length === 0">
-                      <td colspan="10" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
-                    </tr>
-                    <tr v-for="amp in settingsStore.amplifierTypes" :key="amp.id"
-                        class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                      <td class="px-3 py-2">{{ amp.name }}</td>
-                      <td class="px-3 py-2">{{ amp.gain }}</td>
-                      <td class="px-3 py-2">{{ amp.noiseFigure }}</td>
-                      <td class="px-3 py-2">{{ amp.outputPower }}</td>
-                      <td class="px-3 py-2">{{ amp.saturationPower ?? '-' }}</td>
-                      <td class="px-3 py-2">{{ amp.gainFlatness }}</td>
-                      <td class="px-3 py-2">{{ operatingModeLabel(amp.operatingMode) }}</td>
-                      <td class="px-3 py-2">{{ amp.unitPrice ?? '-' }}</td>
-                      <td class="px-3 py-2">{{ amp.currency ?? '-' }}</td>
-                      <td class="px-3 py-2 text-center">
-                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1"
-                                @click="handleEditAmplifier(amp)">修改</button>
-                        <button class="text-red-500 hover:text-red-700 mx-1"
-                                @click="handleDeleteAmplifier(amp.id)">删除
-                        </button>
-                      </td>
-                    </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <!-- 分支器类型管理 -->
-              <div v-if="deviceTypeTab === 'branching'">
-                <div class="mb-3">
-                  <Button size="sm" class="bg-primary hover:bg-primary hover:brightness-90 text-white"
-                          @click="showAddBranchingDialog = true">
-                    <Plus class="w-4 h-4 mr-1"/>
-                    增加分支器类型
-                  </Button>
-                </div>
-                <div class="border rounded-lg overflow-x-auto">
-                  <table class="w-full text-sm">
-                    <thead class="bg-gray-100 dark:bg-white/5">
-                    <tr>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">分支器类型名称</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">端口数</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">主干插损</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">分支插损</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币类型</th>
-                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <tr v-if="settingsStore.branchingUnitTypes.length === 0">
-                      <td colspan="7" class="px-3 py-8 text-center text-gray-400">暂无数据，请先导入器件库</td>
-                    </tr>
-                    <tr v-for="bu in settingsStore.branchingUnitTypes" :key="bu.id"
-                        class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                      <td class="px-3 py-2">{{ bu.name }}</td>
-                      <td class="px-3 py-2">{{ bu.portCount }}</td>
-                      <td class="px-3 py-2">{{ bu.trunkInsertionLoss }}</td>
-                      <td class="px-3 py-2">{{ bu.branchInsertionLoss }}</td>
-                      <td class="px-3 py-2">{{ bu.unitPrice ?? '-' }}</td>
-                      <td class="px-3 py-2">{{ bu.currency ?? '-' }}</td>
-                      <td class="px-3 py-2 text-center">
-                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1"
-                                @click="handleEditBranching(bu)">修改</button>
-                        <button class="text-red-500 hover:text-red-700 mx-1"
-                                @click="handleDeleteBranching(bu.id)">删除
-                        </button>
-                      </td>
-                    </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              <!-- 均衡器型号管理 -->
-              <div v-if="deviceTypeTab === 'equalizer'">
-                <div class="mb-3">
-                  <Button size="sm" class="bg-amber-500 hover:bg-amber-600 text-white"
-                          @click="showAddEqualizerDialog = true">
-                    <Plus class="w-4 h-4 mr-1"/>
-                    增加均衡器型号
-                  </Button>
-                </div>
-                <div class="border rounded-lg overflow-x-auto">
-                  <table class="w-full text-sm">
-                    <thead class="bg-gray-100 dark:bg-white/5">
-                    <tr>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">型号名称</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">光衰模式</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">默认光衰値 (dB)</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币</th>
-                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <tr v-if="settingsStore.equalizerTypes.length === 0">
-                      <td colspan="6" class="px-3 py-8 text-center text-gray-400">暂无数据，请先添加均衡器型号</td>
-                    </tr>
-                    <tr v-for="eq in settingsStore.equalizerTypes" :key="eq.id"
-                        class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                      <td class="px-3 py-2">{{ eq.name }}</td>
-                      <td class="px-3 py-2">{{ eq.attenuationMode === 'fixed' ? '固定光衰 (F-ATT)' : '可调光衰' }}</td>
-                      <td class="px-3 py-2">{{ eq.defaultAttenuationDb }}</td>
-                      <td class="px-3 py-2">{{ eq.unitPrice ?? '-' }}</td>
-                      <td class="px-3 py-2">{{ eq.currency ?? '-' }}</td>
-                      <td class="px-3 py-2 text-center">
-                        <button class="text-amber-600 hover:text-amber-800 mx-1"
-                                @click="handleEditEqualizer(eq)">修改</button>
-                        <button class="text-red-500 hover:text-red-700 mx-1"
-                                @click="handleDeleteEqualizer(eq.id)">删除</button>
-                      </td>
-                    </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <!-- 接头盒型号管理 -->
-              <div v-if="deviceTypeTab === 'joint'">
-                <div class="mb-3">
-                  <Button size="sm" class="bg-slate-600 hover:bg-slate-700 text-white"
-                          @click="showAddJointDialog = true">
-                    <Plus class="w-4 h-4 mr-1"/>
-                    增加接头盒型号
-                  </Button>
-                </div>
-                <div class="border rounded-lg overflow-x-auto">
-                  <table class="w-full text-sm">
-                    <thead class="bg-gray-100 dark:bg-white/5">
-                    <tr>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">型号名称</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">接头盒插损 (dB)</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">最大光纤对数</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">单价</th>
-                      <th class="text-left px-3 py-2 font-medium text-gray-700 dark:text-gray-300">货币</th>
-                      <th class="text-center px-3 py-2 font-medium text-gray-700 dark:text-gray-300">操作</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <tr v-if="settingsStore.jointBoxTypes.length === 0">
-                      <td colspan="6" class="px-3 py-8 text-center text-gray-400">暂无数据，请先添加接头盒型号</td>
-                    </tr>
-                    <tr v-for="jb in settingsStore.jointBoxTypes" :key="jb.id"
-                        class="border-t hover:bg-gray-50 dark:hover:bg-white/5">
-                      <td class="px-3 py-2">{{ jb.name }}</td>
-                      <td class="px-3 py-2">{{ jb.insertionLoss }}</td>
-                      <td class="px-3 py-2">{{ jb.maxFiberPairs ?? '-' }}</td>
-                      <td class="px-3 py-2">{{ jb.unitPrice ?? '-' }}</td>
-                      <td class="px-3 py-2">{{ jb.currency ?? '-' }}</td>
-                      <td class="px-3 py-2 text-center">
-                        <button class="text-slate-600 hover:text-slate-800 mx-1"
-                                @click="handleEditJoint(jb)">修改</button>
-                        <button class="text-red-500 hover:text-red-700 mx-1"
-                                @click="handleDeleteJoint(jb.id)">删除</button>
+                        <button class="text-primary hover:text-primary hover:brightness-90 mx-1" @click="openEditPlatformEntity(entity)">修改</button>
+                        <button class="text-red-500 hover:text-red-700 mx-1" @click="deletePlatformEntity(entity.id)">删除</button>
                       </td>
                     </tr>
                     </tbody>
@@ -2502,6 +2625,187 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
       </CardContent>
     </Card>
   </div>
+
+  <!-- 器件库弹窗 -->
+  <Teleport to="body">
+    <div v-if="showPlatformLibraryDialog" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showPlatformLibraryDialog = false"/>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[920px] max-w-[calc(100vw-48px)] max-h-[88vh] flex flex-col">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100">{{ platformLibraryForm.id ? '修改器件库' : '新增器件库' }}</h3>
+          <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showPlatformLibraryDialog = false">
+            <X class="w-5 h-5"/>
+          </button>
+        </div>
+        <div class="p-5 space-y-4 overflow-y-auto flex-1 bg-gray-50/60 dark:bg-gray-900/40">
+          <div class="grid grid-cols-[1fr_320px] gap-4">
+            <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+              <div class="mb-4 flex items-center justify-between">
+                <div>
+                  <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">基础信息</h4>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">定义器件库名称和平台设备类型。</p>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">名称</label>
+                  <Input v-model="platformLibraryForm.name" placeholder="如 EDFA"/>
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">设备类型</label>
+                  <Select v-model="platformLibraryForm.typeCd" :options="platformDeviceTypeOptions"/>
+                </div>
+                <div class="col-span-2">
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">参数窗口标识</label>
+                  <Input v-model="platformLibraryForm.dialogWindowId" placeholder="如 fiber / amplifier"/>
+                </div>
+              </div>
+            </section>
+
+            <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+              <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">图标配置</h4>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">上传图标后自动绑定平台附件。</p>
+              <div class="mt-4 space-y-4">
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">图标文件</label>
+                  <IconUploadField
+                    :icon-id="platformLibraryForm.iconId"
+                    :icon-name="platformLibraryForm.iconName"
+                    @uploaded="handlePlatformLibraryIconUploaded"
+                  />
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">图标尺寸</label>
+                  <div class="grid grid-cols-[1fr_16px_1fr] items-center gap-2">
+                    <Input v-model="platformLibraryForm.iconWidth" type="number"/>
+                    <span class="text-center text-xs text-gray-500">×</span>
+                    <Input v-model="platformLibraryForm.iconHeight" type="number"/>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+            <BindFuncListEditor v-model="platformLibraryForm.bindFuncList"/>
+          </section>
+        </div>
+        <div class="flex justify-center gap-4 p-4 border-t">
+          <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="savePlatformLibrary">保存</Button>
+          <Button variant="outline" class="px-6" @click="showPlatformLibraryDialog = false">取消</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 器件实例弹窗 -->
+  <Teleport to="body">
+    <div v-if="showPlatformEntityDialog" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showPlatformEntityDialog = false"/>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[980px] max-w-[calc(100vw-48px)] max-h-[88vh] flex flex-col">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100">{{ platformEntityForm.id ? '修改器件实例' : '新增器件实例' }}</h3>
+          <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showPlatformEntityDialog = false">
+            <X class="w-5 h-5"/>
+          </button>
+        </div>
+        <div class="p-5 space-y-4 overflow-y-auto flex-1 bg-gray-50/60 dark:bg-gray-900/40">
+          <div class="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
+            <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+              <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">实例信息</h4>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">选择所属器件库后，会自动带出设备类型和参数窗口标识。</p>
+              <div class="mt-4 grid grid-cols-2 gap-4">
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">名称</label>
+                  <Input v-model="platformEntityForm.name" placeholder="如 EDFA-001"/>
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">器件库</label>
+                  <select v-model="platformEntityForm.libraryId" @change="syncEntityLibraryFields"
+                          class="h-[38px] w-full rounded-md border px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                          style="border-color: var(--app-border-color)">
+                    <option value="">请选择器件库</option>
+                    <option v-for="library in settingsStore.platformDeviceLibraries" :key="library.id" :value="library.id">
+                      {{ library.name || library.id }} - {{ deviceTypeName(library.typeCd) }}
+                    </option>
+                  </select>
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">设备类型</label>
+                  <Input v-model="platformEntityForm.typeCd"/>
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">参数窗口标识</label>
+                  <Input v-model="platformEntityForm.dialogWindowId" placeholder="如 fiber / amplifier"/>
+                </div>
+              </div>
+            </section>
+
+            <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+              <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">展示配置</h4>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">展示当前项目名称和图标上传信息。</p>
+              <div class="mt-4 space-y-4">
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">项目名称</label>
+                  <div class="h-[38px] rounded-md border px-3 py-2 text-sm text-gray-700 dark:text-gray-200"
+                       style="border-color: var(--app-border-color); background-color: var(--app-card-bg)">
+                    {{ currentProjectDisplayName }}
+                  </div>
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">图标文件</label>
+                  <IconUploadField
+                    :icon-id="platformEntityForm.iconId"
+                    :icon-name="platformEntityForm.iconName"
+                    @uploaded="handlePlatformEntityIconUploaded"
+                  />
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">图标尺寸</label>
+                  <div class="grid grid-cols-[1fr_16px_1fr] items-center gap-2">
+                    <Input v-model="platformEntityForm.iconWidth" type="number"/>
+                    <span class="text-center text-xs text-gray-500">×</span>
+                    <Input v-model="platformEntityForm.iconHeight" type="number"/>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">位置</h4>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">点击地图选点后自动回填经纬度。</p>
+              </div>
+              <Button variant="outline" size="sm" @click="handlePlatformEntityMapSelect">
+                <MapPin class="mr-1 h-4 w-4" />
+                地图选点
+              </Button>
+            </div>
+            <div class="mt-4 grid grid-cols-2 gap-4">
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">经度</label>
+                <Input v-model="platformEntityForm.longitude" type="number" placeholder="地图选择后自动填入"/>
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">纬度</label>
+                <Input v-model="platformEntityForm.latitude" type="number" placeholder="地图选择后自动填入"/>
+              </div>
+            </div>
+          </section>
+
+          <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+            <BindFuncListEditor v-model="platformEntityForm.bindFuncList"/>
+          </section>
+        </div>
+        <div class="flex justify-center gap-4 p-4 border-t">
+          <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="savePlatformEntity">保存</Button>
+          <Button variant="outline" class="px-6" @click="showPlatformEntityDialog = false">取消</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- 新增光纤器件弹窗 -->
   <Teleport to="body">

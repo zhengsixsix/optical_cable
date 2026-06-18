@@ -1,16 +1,30 @@
 ﻿﻿<script setup lang="ts">
 import { useSettingsStore } from '@/stores/settings'
 import { ref, computed, watch } from 'vue'
-import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
+import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, CheckCircle, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
 import { Button, Select } from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
 import { deviceImportService } from '@/services/DeviceImportService'
+import {
+  createProjectWizardSyncState,
+  saveProjectWizardStep,
+  uploadProjectWizardLayer,
+} from '@/services/platform/projectWizardSync'
+import { platformPlanLayerApi } from '@/services/platform/api'
+import type { UppyUploadProgress } from '@/services/platform/uppyUpload'
+import type { PlanLayer, PlanLayerTypeDic } from '@/services/platform/types'
 
 interface Props {
   visible: boolean
+  resumeProject?: {
+    id: number
+    name?: string
+    isPublic?: 0 | 1
+    points?: Array<{ id?: number | string; name?: string; longitude?: number; latitude?: number; sortNum?: number }>
+  } | null
 }
 
 interface LayerItem {
@@ -18,6 +32,12 @@ interface LayerItem {
   label: string
   checked: boolean
   value: string
+  typeDic: PlanLayerTypeDic
+  file: File | null
+  fileSize: number
+  uploadProgress: number
+  uploadStatus: 'idle' | 'selected' | 'uploading' | 'uploaded' | 'error'
+  uploadError: string
 }
 
 interface DeviceItem {
@@ -71,20 +91,20 @@ const getDefaultArmorMappings = () => {
 
 // 步骤定义
 const steps = [
-  { id: 1, title: '新建项目', icon: FilePlus, description: '填写项目基本信息' },
-  { id: 2, title: '站点位置', icon: MapPin, description: 'GIS设置' },
-  { id: 3, title: '器件库管理', icon: Package, description: '可选' },
-  { id: 4, title: '完成', icon: CheckCircle, description: '确认创建' },
+  { id: 1, title: '项目草稿', icon: FilePlus, description: '名称与权限' },
+  { id: 2, title: '站点与范围', icon: MapPin, description: '路由输入' },
+  { id: 3, title: '资源配置', icon: Package, description: '图层与器件' },
+  { id: 4, title: '完成创建', icon: CheckCircle, description: '进入规划' },
 ]
 
 const currentStep = ref(1)
 const isProcessing = ref(false)
+const wizardSyncState = createProjectWizardSyncState()
 
 // 步骤1: 项目基本信息
 const projectType = ref<ProjectType>('use')
 const projectName = ref('')
 const allowOtherUsers = ref(false)
-const isGisExpanded = ref(false)
 
 // 步骤2: 站点位置与GIS设置
 const planningMode = ref<'point-to-point' | 'multi-point'>('point-to-point')
@@ -334,12 +354,12 @@ const setPlanningMode = (mode: 'point-to-point' | 'multi-point') => {
 }
 
 const layerList = ref<LayerItem[]>([
-  { key: 'elevation', label: '海洋高程图', checked: false, value: '' },
-  { key: 'volcano', label: '海洋火山分布', checked: false, value: '' },
-  { key: 'fishery', label: '海洋渔区分布', checked: false, value: '' },
-  { key: 'slope', label: '海洋坡度图', checked: false, value: '' },
-  { key: 'earthquake', label: '海洋地震分布', checked: false, value: '' },
-  { key: 'shipping', label: '海洋航道图', checked: false, value: '' },
+  { key: 'elevation', label: '海洋高程图', checked: false, value: '', typeDic: 'BATHY', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
+  { key: 'volcano', label: '海洋火山分布', checked: false, value: '', typeDic: 'VOLCANO', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
+  { key: 'fishery', label: '海洋渔区分布', checked: false, value: '', typeDic: 'FISHZONE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
+  { key: 'slope', label: '海洋坡度图', checked: false, value: '', typeDic: 'SLOPE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
+  { key: 'earthquake', label: '海洋地震分布', checked: false, value: '', typeDic: 'SEISMIC', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
+  { key: 'shipping', label: '海洋航道图', checked: false, value: '', typeDic: 'SHIPLANE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
 ])
 
 // 步骤3: 器件库
@@ -349,6 +369,8 @@ const deviceFileInputRef = ref<HTMLInputElement | null>(null)
 // 重置表单
 const resetForm = () => {
   currentStep.value = 1
+  wizardSyncState.projectId = null
+  wizardSyncState.layerUploads = {}
   projectType.value = 'use'
   projectName.value = ''
   allowOtherUsers.value = false
@@ -364,17 +386,111 @@ const resetForm = () => {
   armorMappings.value = getDefaultArmorMappings()
   redundancyConfig.value = { enabled: false, costLimitType: 'relative', relativeCostPercent: '30', absoluteCostLimit: '', criticalNodes: [] }
   gisConfig.value = { rangeMode: 'auto', nwLon: '', nwLat: '', seLon: '', seLat: '', gridResolution: '500' }
-  isGisExpanded.value = false
   layerList.value.forEach(item => {
     item.checked = false
     item.value = ''
+    item.file = null
+    item.fileSize = 0
+    item.uploadProgress = 0
+    item.uploadStatus = 'idle'
+    item.uploadError = ''
   })
   deviceList.value = []
+}
+
+function applyResumeProject() {
+  const resume = props.resumeProject
+  if (!resume) return
+
+  wizardSyncState.projectId = resume.id
+  projectName.value = resume.name || `平台项目 ${resume.id}`
+  allowOtherUsers.value = resume.isPublic === 1
+
+  const points = (resume.points ?? [])
+    .filter(point => typeof point.longitude === 'number' && typeof point.latitude === 'number')
+    .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
+
+  if (points.length >= 3) {
+    planningMode.value = 'multi-point'
+    waypoints.value = points.map((point, index) => ({
+      id: String(point.id ?? `wp-${index + 1}`),
+      name: point.name || `登陆站${index + 1}`,
+      longitude: point.longitude!,
+      latitude: point.latitude!,
+      isUnderwater: false,
+    }))
+    currentStep.value = 3
+    return
+  }
+
+  if (points.length >= 2) {
+    planningMode.value = 'point-to-point'
+    startStation.value = {
+      name: points[0].name || '起点',
+      longitude: points[0].longitude!,
+      latitude: points[0].latitude!,
+    }
+    endStation.value = {
+      name: points[points.length - 1].name || '终点',
+      longitude: points[points.length - 1].longitude!,
+      latitude: points[points.length - 1].latitude!,
+    }
+    currentStep.value = 3
+    return
+  }
+
+  currentStep.value = 2
+}
+
+function getRestoredLayerFileName(layer: PlanLayer, fallbackLabel: string): string {
+  const explicitName = layer.attachmentName || layer.filename
+  if (explicitName) return explicitName
+
+  const remarks = layer.remarks?.trim()
+  const remarkFileName = remarks?.includes(' - ') ? remarks.split(' - ').pop()?.trim() : ''
+  return remarkFileName || layer.name || fallbackLabel
+}
+
+async function restoreUploadedLayers() {
+  try {
+    for (const item of layerList.value) {
+      const response = await platformPlanLayerApi.search({ pageNumber: 1, pageSize: 20, typeDic: item.typeDic })
+      const layers = response.data ?? []
+      const matched = layers.find(layer => layer.attachmentId || layer.filename || layer.attachmentName)
+      if (!matched) continue
+
+      const fileName = getRestoredLayerFileName(matched, item.label)
+      item.checked = true
+      item.value = fileName
+      item.file = null
+      item.fileSize = matched.fileSize ?? 0
+      item.uploadProgress = 100
+      item.uploadStatus = 'uploaded'
+      item.uploadError = ''
+      if (matched.id) {
+        wizardSyncState.layerUploads[item.key] = {
+          layerId: matched.id,
+          fileName,
+          uploadUrl: '',
+        }
+      }
+    }
+  } catch (error) {
+    appStore.showNotification({
+      type: 'warning',
+      message: `已上传图层回显失败：${(error as Error).message}`,
+      duration: 5000,
+    })
+  }
 }
 
 watch(() => props.visible, (val) => {
   if (val) {
     resetForm()
+    applyResumeProject()
+    if (props.resumeProject) {
+      void restoreUploadedLayers()
+    }
   }
 })
 
@@ -394,8 +510,113 @@ const isLastStep = computed(() => {
   return currentStep.value === steps.length
 })
 
-const goNext = () => {
+const wizardTitle = computed(() => props.resumeProject ? '继续创建平台项目' : '新建项目向导')
+const wizardSubtitle = computed(() => props.resumeProject
+  ? `继续补全「${projectName.value || props.resumeProject.name || '未命名项目'}」的站点、范围和资源配置`
+  : '按步骤创建平台项目草稿、配置站点范围，并进入规划')
+
+const resumeValidPointCount = computed(() => (props.resumeProject?.points ?? [])
+  .filter(point => typeof point.longitude === 'number' && typeof point.latitude === 'number')
+  .length)
+
+function buildWizardSyncPayload() {
+  return {
+    projectType: projectType.value,
+    projectName: projectName.value,
+    allowOtherUsers: allowOtherUsers.value,
+    planningMode: planningMode.value,
+    startStation: startStation.value,
+    endStation: endStation.value,
+    waypoints: waypoints.value.map(wp => ({
+      name: wp.name,
+      longitude: wp.longitude,
+      latitude: wp.latitude,
+    })),
+    gisConfig: {
+      rangeMode: gisConfig.value.rangeMode,
+      planningRange: gisConfig.value.rangeMode === 'manual' ? {
+        northwest: {
+          lon: parseFloat(gisConfig.value.nwLon) || 0,
+          lat: parseFloat(gisConfig.value.nwLat) || 0,
+        },
+        southeast: {
+          lon: parseFloat(gisConfig.value.seLon) || 0,
+          lat: parseFloat(gisConfig.value.seLat) || 0,
+        },
+      } : null,
+      gridResolution: parseFloat(gisConfig.value.gridResolution) || 500,
+    },
+    redundancyConfig: {
+      enabled: redundancyConfig.value.enabled,
+    },
+    layers: layerList.value.map(layer => ({
+      key: layer.key,
+      label: layer.label,
+      checked: layer.checked,
+      value: layer.value,
+      file: layer.file,
+      typeDic: layer.typeDic,
+      isDefault: false,
+    })),
+  }
+}
+
+function handleLayerUploadProgress(layerKey: string, progress: UppyUploadProgress) {
+  const layer = layerList.value.find(item => item.key === layerKey)
+  if (!layer) return
+  layer.uploadStatus = 'uploading'
+  layer.uploadProgress = progress.percent
+  layer.uploadError = ''
+}
+
+function markCompletedLayerUploads() {
+  for (const layer of layerList.value) {
+    const uploaded = wizardSyncState.layerUploads[layer.key]
+    if (uploaded && uploaded.fileName === layer.file?.name) {
+      layer.uploadStatus = 'uploaded'
+      layer.uploadProgress = 100
+      layer.uploadError = ''
+    }
+  }
+}
+
+const goNext = async () => {
   if (currentStep.value < steps.length && canGoNext.value) {
+    if (currentStep.value === 1) {
+      const checkedWithoutFile = layerList.value.find(layer => layer.checked && !layer.file && layer.uploadStatus !== 'uploaded')
+      if (checkedWithoutFile) {
+        appStore.showNotification({ type: 'warning', message: `请先为 ${checkedWithoutFile.label} 选择图层文件` })
+        return
+      }
+
+      const unuploadedLayer = layerList.value.find(layer => layer.checked && layer.file && !isLayerUploadComplete(layer))
+      if (unuploadedLayer) {
+        appStore.showNotification({ type: 'warning', message: `请先点击 ${unuploadedLayer.label} 的“确定”完成上传` })
+        return
+      }
+    }
+
+    if (currentStep.value === 1 || currentStep.value === 2) {
+      isProcessing.value = true
+      try {
+        await saveProjectWizardStep(wizardSyncState, currentStep.value, buildWizardSyncPayload())
+        markCompletedLayerUploads()
+        appStore.showNotification({
+          type: 'success',
+          message: currentStep.value === 1 ? '规划项目已保存' : '项目配置已保存',
+        })
+      } catch (error) {
+        appStore.showNotification({
+          type: 'error',
+          message: `保存当前步骤失败：${(error as Error).message}`,
+          duration: 5000,
+        })
+        isProcessing.value = false
+        return
+      } finally {
+        isProcessing.value = false
+      }
+    }
     currentStep.value++
   }
 }
@@ -422,30 +643,102 @@ const handleBrowseLayer = (item: LayerItem) => {
   layerInputRef.value?.click()
 }
 
+function isLayerUploadComplete(layer: LayerItem): boolean {
+  if (layer.uploadStatus === 'uploaded' && !layer.file && layer.value) return true
+  const uploaded = wizardSyncState.layerUploads[layer.key]
+  return layer.uploadStatus === 'uploaded' && uploaded?.fileName === layer.file?.name
+}
+
+function getLayerActionLabel(layer: LayerItem): string {
+  if (layer.uploadStatus === 'uploading') return '上传中'
+  if (layer.uploadStatus === 'uploaded') return '更换'
+  if (layer.uploadStatus === 'error') return '重试'
+  return layer.file ? '确定' : '浏览'
+}
+
+async function uploadConfirmedLayer(layer: LayerItem) {
+  if (!layer.file || layer.uploadStatus === 'uploading') return
+
+  layer.checked = true
+  layer.uploadStatus = 'uploading'
+  layer.uploadProgress = 0
+  layer.uploadError = ''
+
+  try {
+    await uploadProjectWizardLayer(wizardSyncState, buildWizardSyncPayload(), {
+      key: layer.key,
+      label: layer.label,
+      checked: layer.checked,
+      value: layer.value,
+      file: layer.file,
+      typeDic: layer.typeDic,
+      isDefault: false,
+    }, {
+      onLayerProgress: handleLayerUploadProgress,
+    })
+    layer.uploadStatus = 'uploaded'
+    layer.uploadProgress = 100
+    layer.uploadError = ''
+    appStore.showNotification({ type: 'success', message: `图层已上传: ${layer.label}` })
+  } catch (error) {
+    layer.uploadStatus = 'error'
+    layer.uploadError = (error as Error).message
+    appStore.showNotification({
+      type: 'error',
+      message: `图层上传失败：${(error as Error).message}`,
+      duration: 5000,
+    })
+  }
+}
+
+const handleLayerAction = async (item: LayerItem) => {
+  if (item.uploadStatus === 'uploading') return
+  if (!item.file || item.uploadStatus === 'uploaded') {
+    handleBrowseLayer(item)
+    return
+  }
+
+  await uploadConfirmedLayer(item)
+}
+
+function isSupportedLayerFile(file: File): boolean {
+  const name = file.name.toLowerCase()
+  return ['.tif', '.tiff', '.geojson', '.json', '.zip'].some(ext => name.endsWith(ext))
+}
+
+function formatFileSize(size: number): string {
+  if (size >= 1024 * 1024 * 1024) return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${size} B`
+}
+
 const handleLayerSelected = async (e: Event) => {
   const target = e.target as HTMLInputElement
   if (target.files && target.files.length > 0 && currentBrowseItem.value) {
     const file = target.files[0]
-    currentBrowseItem.value.value = file.name
-    currentBrowseItem.value.checked = true
+    const layer = currentBrowseItem.value
 
-    // 实际读取文件内容
-    try {
-      if (file.name.endsWith('.geojson') || file.name.endsWith('.json')) {
-        // GeoJSON: 解析为对象
-        const text = await file.text()
-        const geoData = JSON.parse(text)
-        ;(currentBrowseItem.value as any).geoData = geoData
-        appStore.showNotification({ type: 'success', message: `图层数据已解析: ${file.name}` })
-      } else if (file.name.endsWith('.tif') || file.name.endsWith('.tiff')) {
-        // 栅格数据: 存储 ArrayBuffer
-        const buffer = await file.arrayBuffer()
-        ;(currentBrowseItem.value as any).rasterData = buffer
-        appStore.showNotification({ type: 'success', message: `栅格数据已读取: ${file.name} (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)` })
-      }
-    } catch (err) {
-      appStore.showNotification({ type: 'warning', message: `图层文件解析失败: ${(err as Error).message}` })
+    if (file.name.toLowerCase().endsWith('.shp')) {
+      appStore.showNotification({ type: 'warning', message: 'Shapefile 请先将 .shp/.dbf/.shx/.prj 打包为 .zip 后上传' })
+      target.value = ''
+      return
     }
+
+    if (!isSupportedLayerFile(file)) {
+      appStore.showNotification({ type: 'warning', message: '仅支持 .tif/.tiff/.geojson/.json/.zip 图层文件' })
+      target.value = ''
+      return
+    }
+
+    layer.value = file.name
+    layer.file = file
+    layer.fileSize = file.size
+    layer.checked = true
+    layer.uploadProgress = 0
+    layer.uploadStatus = 'selected'
+    layer.uploadError = ''
+    appStore.showNotification({ type: 'success', message: `已选择图层文件: ${file.name} (${formatFileSize(file.size)})` })
   }
   target.value = ''
 }
@@ -517,6 +810,7 @@ const handleSubmit = async () => {
     projectName: projectName.value,
     savePath: '',
     allowOtherUsers: allowOtherUsers.value,
+    platformProjectId: wizardSyncState.projectId,
     planningMode: planningMode.value,
     startStation: startStation.value,
     endStation: endStation.value,
@@ -570,8 +864,6 @@ const handleSubmit = async () => {
       label: l.label,
       checked: l.checked,
       value: l.value,
-      geoData: (l as any).geoData || undefined,
-      rasterData: (l as any).rasterData || undefined,
     })),
     devices: deviceList.value,
   })
@@ -586,7 +878,7 @@ const handleSubmit = async () => {
       ref="layerInputRef"
       type="file"
       class="hidden"
-      accept=".tif,.tiff,.geojson,.json"
+      accept=".tif,.tiff,.geojson,.json,.zip"
       @change="handleLayerSelected"
     >
     <input
@@ -604,14 +896,14 @@ const handleSubmit = async () => {
     >
       <div class="bg-white rounded-2xl shadow-2xl w-[900px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden transform transition-all scale-100">
         <!-- Header -->
-        <div class="px-8 py-5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-gray-50 to-white">
+        <div class="px-8 py-5 border-b border-gray-100 flex items-center justify-between bg-white">
           <div class="flex items-center gap-3 text-gray-800">
             <div class="p-2 bg-blue-50 rounded-lg text-blue-600">
               <FilePlus class="w-6 h-6" />
             </div>
             <div>
-              <h3 class="font-bold text-xl">新建项目向导</h3>
-              <p class="text-xs text-gray-400 mt-0.5">请按照步骤完成项目配置</p>
+              <h3 class="font-bold text-xl">{{ wizardTitle }}</h3>
+              <p class="text-xs text-gray-500 mt-0.5">{{ wizardSubtitle }}</p>
             </div>
           </div>
           <button
@@ -716,27 +1008,18 @@ const handleSubmit = async () => {
                 </label>
               </div>
 
-              <!-- GIS图层设置 (可折叠) -->
               <div class="border border-gray-200 rounded-xl overflow-hidden">
-                <button
-                  class="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
-                  @click="isGisExpanded = !isGisExpanded"
-                >
+                <div class="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-200">
                   <div class="flex items-center gap-2 text-gray-800">
                     <MapPin class="w-4 h-4 text-blue-600" />
-                    <span class="font-medium text-sm">GIS图层配置</span>
-                    <span class="text-xs text-gray-500 ml-2" v-if="!isGisExpanded">
-                      {{ layerList.filter(l => l.checked).length > 0 ? `已选 ${layerList.filter(l => l.checked).length} 个图层` : '(可选)' }}
+                    <span class="font-medium text-sm">平台图层与本地 GIS 文件</span>
+                    <span class="text-xs text-gray-500 ml-2">
+                      {{ layerList.filter(l => l.checked).length > 0 ? `已选 ${layerList.filter(l => l.checked).length} 个图层` : '可选' }}
                     </span>
                   </div>
-                  <component :is="isGisExpanded ? ChevronUp : ChevronDown" class="w-4 h-4 text-gray-500" />
-                </button>
+                </div>
 
-                <div v-show="isGisExpanded" class="p-4 bg-white border-t border-gray-200 space-y-4 animate-in slide-in-from-top-2 duration-200">
-                  <div class="text-sm text-blue-800 bg-blue-50/50 p-3 rounded-lg border border-blue-100 mb-4">
-                    <p class="text-blue-600/80 text-xs">选择并上传所需的地理信息图层，这些数据将用于路由规划的底图显示。</p>
-                  </div>
-
+                <div class="p-4 bg-white">
                   <div class="grid grid-cols-2 gap-3">
                     <div
                       v-for="item in layerList"
@@ -767,10 +1050,43 @@ const handleSubmit = async () => {
                         </div>
                         <button
                           class="px-2 py-1.5 bg-white border border-gray-200 hover:border-blue-500 hover:text-blue-600 text-gray-600 text-xs rounded transition-all font-medium shadow-sm whitespace-nowrap"
-                          @click="handleBrowseLayer(item)"
+                          :disabled="item.uploadStatus === 'uploading'"
+                          :class="{ 'opacity-60 cursor-not-allowed': item.uploadStatus === 'uploading' }"
+                          @click="handleLayerAction(item)"
                         >
-                          浏览
+                          {{ getLayerActionLabel(item) }}
                         </button>
+                      </div>
+
+                      <div v-if="item.value || item.uploadStatus === 'error'" class="pl-6 mt-2 space-y-1">
+                        <div class="flex items-center justify-between text-[11px]">
+                          <span class="text-gray-500">{{ item.fileSize ? formatFileSize(item.fileSize) : '' }}</span>
+                          <span
+                            :class="[
+                              item.uploadStatus === 'uploaded' ? 'text-green-600' :
+                              item.uploadStatus === 'error' ? 'text-red-600' :
+                              item.uploadStatus === 'uploading' ? 'text-blue-600' :
+                              'text-gray-500'
+                            ]"
+                          >
+                            {{
+                              item.uploadStatus === 'uploaded' ? '已上传' :
+                              item.uploadStatus === 'error' ? '上传失败' :
+                              item.uploadStatus === 'uploading' ? `${item.uploadProgress}%` :
+                              '待确认'
+                            }}
+                          </span>
+                        </div>
+                        <div class="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                          <div
+                            class="h-full rounded-full transition-all"
+                            :class="item.uploadStatus === 'error' ? 'bg-red-500' : item.uploadStatus === 'uploaded' ? 'bg-green-500' : 'bg-blue-500'"
+                            :style="{ width: `${item.uploadStatus === 'selected' ? 0 : item.uploadProgress}%` }"
+                          ></div>
+                        </div>
+                        <p v-if="item.uploadError" class="text-[11px] text-red-600 truncate" :title="item.uploadError">
+                          {{ item.uploadError }}
+                        </p>
                       </div>
                     </div>
                   </div>

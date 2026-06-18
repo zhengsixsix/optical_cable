@@ -2,6 +2,14 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
+const PLATFORM_PROXY_PATH = '/platform-api'
+const platformProxy = {
+  target: 'http://47.92.110.176:9108',
+  changeOrigin: true,
+  secure: false,
+  rewrite: (path: string) => path.replace(new RegExp(`^${PLATFORM_PROXY_PATH}`), ''),
+}
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -14,6 +22,14 @@ export default defineConfig({
     host: '0.0.0.0',
     open: true,
     allowedHosts: true,
+    proxy: {
+      [PLATFORM_PROXY_PATH]: platformProxy,
+    },
+  },
+  preview: {
+    proxy: {
+      [PLATFORM_PROXY_PATH]: platformProxy,
+    },
   },
   build: {
     rollupOptions: {

@@ -198,6 +198,8 @@ export const useConnectorStore = defineStore('connector', () => {
 
   // 初始化加载mock数据
   function initMockData() {
+    if (mockConnectorElements.length === 0) return
+
     if (tables.value.length === 0) {
       createTable(`${ROUTE_NAME}_接线元`, ROUTE_ID)
       // 初始化时不触发联动，使用索引确保唯一ID

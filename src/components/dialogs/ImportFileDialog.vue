@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import * as XLSX from 'xlsx'
 import { X, Upload, FolderOpen, FileText, Loader2, Check, AlertCircle } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
 import { useAppStore } from '@/stores/app'
@@ -13,7 +14,7 @@ import { buildImportedRplSyncPayload } from '@/services/RPLSyncService'
 
 /**
  * ImportFileDialog 导入项目文件对话框
- * 支持导入工程(.use)、RPL文件(.rpl/.csv)、GIS数据(.tif,.shp)
+ * 支持导入工程(.use)、RPL文件(.rpl/.csv/.xlsx/.xls)、GIS数据(.tif,.shp)
  */
 interface Props {
   visible: boolean
@@ -64,7 +65,7 @@ const dialogTitle = computed(() => {
 const acceptFormats = computed(() => {
   switch (props.importType) {
     case 'project': return '.use'
-    case 'rpl': return '.rpl,.csv'
+    case 'rpl': return '.rpl,.csv,.xlsx,.xls'
     case 'gis': return '.tif,.tiff,.shp,.geojson,.json'
     default: return '*'
   }
@@ -74,7 +75,7 @@ const acceptFormats = computed(() => {
 const formatHint = computed(() => {
   switch (props.importType) {
     case 'project': return '支持格式: .use'
-    case 'rpl': return '支持格式: .rpl, .csv'
+    case 'rpl': return '支持格式: .rpl, .csv, .xlsx, .xls'
     case 'gis': return '支持格式: .tif, .tiff, .shp, .geojson, .json'
     default: return ''
   }
@@ -210,8 +211,26 @@ const importRPL = async () => {
   if (!selectedFile.value) return
   
   try {
-    const fileContent = await selectedFile.value.text()
-    const tableName = selectedFile.value.name.replace(/\.(rpl|csv)$/i, '')
+    const fileName = selectedFile.value.name
+    const tableName = fileName.replace(/\.(rpl|csv|xlsx|xls)$/i, '')
+    const isExcelFile = /\.(xlsx|xls)$/i.test(fileName)
+
+    let fileContent = ''
+    if (isExcelFile) {
+      const arrayBuffer = await selectedFile.value.arrayBuffer()
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+      const firstSheetName = workbook.SheetNames[0]
+      if (!firstSheetName) {
+        throw new Error('Excel 文件中没有可读取的工作表')
+      }
+
+      fileContent = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName], {
+        blankrows: false,
+        strip: false,
+      })
+    } else {
+      fileContent = await selectedFile.value.text()
+    }
     
     // 导入到 RPL store
     const success = rplStore.importFromCSV(fileContent, tableName, 'route-main')

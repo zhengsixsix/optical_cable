@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { useAppStore } from '@/stores/app'
 import { ref, computed } from 'vue'
+import * as XLSX from 'xlsx'
 import { useConnectorStore } from '@/stores/connector'
 import { useRouteStore } from '@/stores/route'
 import { useRPLStore } from '@/stores/rpl'
@@ -119,10 +120,27 @@ function handleImportCSV(event: Event) {
   const file = input.files?.[0]
   if (!file) return
 
+  const isExcelFile = /\.(xlsx|xls)$/i.test(file.name)
   const reader = new FileReader()
-  reader.onload = (e) => {
-    const content = e.target?.result as string
-    const tableName = file.name.replace(/\.(rpl|csv)$/i, '')
+  reader.onload = () => {
+    let content = ''
+    if (isExcelFile) {
+      const workbook = XLSX.read(reader.result, { type: 'array' })
+      const firstSheetName = workbook.SheetNames[0]
+      if (!firstSheetName) {
+        appStore.showNotification({ type: 'error', message: 'Excel 文件中没有可读取的工作表' })
+        input.value = ''
+        return
+      }
+      content = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName], {
+        blankrows: false,
+        strip: false,
+      })
+    } else {
+      content = reader.result as string
+    }
+
+    const tableName = file.name.replace(/\.(rpl|csv|xlsx|xls)$/i, '')
     const success = rplStore.importFromCSV(content, tableName, 'route-main')
     if (success) {
       syncImportedRpl(tableName)
@@ -130,9 +148,13 @@ function handleImportCSV(event: Event) {
     } else {
       appStore.showNotification({ type: 'error', message: '导入失败，请检查文件格式' })
     }
+    input.value = ''
   }
-  reader.readAsText(file)
-  input.value = ''
+  if (isExcelFile) {
+    reader.readAsArrayBuffer(file)
+  } else {
+    reader.readAsText(file)
+  }
 }
 
 function handleValidateTable() {
@@ -168,13 +190,13 @@ function handleValidateTable() {
             <label class="inline-flex">
               <input 
                 type="file" 
-                accept=".rpl,.csv" 
+                accept=".rpl,.csv,.xlsx,.xls"
                 class="hidden"
                 @change="handleImportCSV"
               />
               <Button variant="outline" size="sm" as="span" class="cursor-pointer">
                 <Upload class="w-4 h-4 mr-1" />
-                导入CSV
+                导入 RPL
               </Button>
             </label>
             <Button variant="ghost" size="sm" @click="emit('close')">

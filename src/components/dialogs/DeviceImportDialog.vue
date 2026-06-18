@@ -108,18 +108,25 @@ const doImport = async () => {
 }
 
 // 确认导入到设置
-const confirmImport = () => {
+const confirmImport = async () => {
   if (!importResult.value) return
   
-  const msg = applyImportResultToStore(importResult.value, settingsStore)
-  
-  if (selectedFile.value) {
-    settingsStore.currentLibraryFile = selectedFile.value.name
+  try {
+    const msg = await applyImportResultToStore(importResult.value, settingsStore)
+
+    if (selectedFile.value) {
+      settingsStore.currentLibraryFile = selectedFile.value.name
+    }
+
+    appStore.showNotification({ type: 'success', message: msg })
+    emit('imported', importResult.value)
+    emit('close')
+  } catch (error) {
+    appStore.showNotification({
+      type: 'error',
+      message: `器件库导入失败：${(error as Error).message}`,
+    })
   }
-  
-  appStore.showNotification({ type: 'success', message: msg })
-  emit('imported', importResult.value)
-  emit('close')
 }
 // 下载模板
 const downloadTemplate = (format: 'json' | 'csv') => {

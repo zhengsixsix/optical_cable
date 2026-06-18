@@ -13,6 +13,8 @@
     "test:run": "vitest run"
   },
   "dependencies": {
+    "@uppy/core": "^5.2.0",
+    "@uppy/tus": "^5.1.1",
     "@vueuse/core": "^10.9.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
@@ -24,6 +26,7 @@
     "pinia": "^2.1.7",
     "radix-vue": "^1.9.0",
     "shpjs": "^6.2.0",
+    "sm-crypto": "^0.4.0",
     "tailwind-merge": "^2.2.1",
     "three": "^0.181.2",
     "vue": "^3.4.0",

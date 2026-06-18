@@ -1,9 +1,7 @@
 /**
  * DEM API 客户端服务
- * 调用后端Node服务获取高程数据，替代前端直接下载tif文件
+ * 线上 Swagger 当前未提供 DEM 相关接口；调用方应使用本地数据回退或保持空态。
  */
-
-import { API_BASE_URL, API_ENDPOINTS, checkApiHealth } from '@/config/api'
 
 export interface DemMeta {
   filename: string
@@ -33,12 +31,7 @@ export interface DemPointResult {
  * 获取所有DEM元数据
  */
 export async function fetchDemMeta(): Promise<DemMeta[]> {
-  const response = await fetch(API_ENDPOINTS.dem.meta)
-  const result = await response.json()
-  if (!result.success) {
-    throw new Error(result.error || '获取DEM元数据失败')
-  }
-  return result.data
+  return []
 }
 
 /**
@@ -48,20 +41,11 @@ export async function fetchDemMeta(): Promise<DemMeta[]> {
  * @param height 输出高度（默认128）
  */
 export async function fetchDemClip(
-  bbox: [number, number, number, number],
-  width = 128,
-  height = 128
+  _bbox: [number, number, number, number],
+  _width = 128,
+  _height = 128
 ): Promise<DemClipResult> {
-  const [minX, minY, maxX, maxY] = bbox
-  const url = `${API_ENDPOINTS.dem.clip}?minX=${minX}&minY=${minY}&maxX=${maxX}&maxY=${maxY}&width=${width}&height=${height}`
-  
-  const response = await fetch(url)
-  const result = await response.json()
-  
-  if (!result.success) {
-    throw new Error(result.error || '裁剪DEM数据失败')
-  }
-  return result.data
+  throw new Error('线上 Swagger 暂未提供 DEM 裁剪接口')
 }
 
 /**
@@ -70,27 +54,19 @@ export async function fetchDemClip(
  * @param lat 纬度
  */
 export async function fetchDemPoint(lon: number, lat: number): Promise<DemPointResult> {
-  const url = `${API_ENDPOINTS.dem.point}?lon=${lon}&lat=${lat}`
-  
-  const response = await fetch(url)
-  const result = await response.json()
-  
-  if (!result.success) {
-    throw new Error(result.error || '查询高程失败')
-  }
-  return result.data
+  return { lon, lat, elevation: 0 }
 }
 
 /**
  * 检查DEM服务是否可用
  */
 export async function checkDemService(): Promise<boolean> {
-  return checkApiHealth()
+  return false
 }
 
 /**
  * 获取DEM API基础地址
  */
 export function getDemApiBase(): string {
-  return API_BASE_URL
+  return ''
 }

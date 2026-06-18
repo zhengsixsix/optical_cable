@@ -5,6 +5,7 @@ import { Card, CardHeader, CardContent } from '@/shared/components/base'
 import { Printer, X, Maximize2 } from 'lucide-vue-next'
 import DepthProfile from '@/modules/planning/components/DepthProfile.vue'
 import Terrain3D from '@/modules/planning/components/Terrain3D.vue'
+import PlanningDecisionPanel from '@/modules/planning/panels/PlanningDecisionPanel.vue'
 import { useAppStore } from '@/stores/app'
 interface Props {
   selectedExtent?: [number, number, number, number]
@@ -67,6 +68,16 @@ function togglePanel(panel: 'depthProfile' | 'terrain3D') {
         <Terrain3D :extent="selectedExtent" />
       </CardContent>
     </Card>
+
+    <Card class="min-h-0 flex-1 flex flex-col overflow-hidden">
+      <CardHeader>
+        <span class="font-semibold text-sm text-gray-700">路由判读板</span>
+      </CardHeader>
+      <CardContent class="min-h-0 flex-1 p-0 overflow-hidden">
+        <PlanningDecisionPanel />
+      </CardContent>
+    </Card>
+
     <!-- 全屏 3D 对话框 -->
     <Teleport to="body">
       <div 

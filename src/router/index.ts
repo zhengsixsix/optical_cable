@@ -26,6 +26,12 @@ const routes: RouteRecordRaw[] = [
         meta: {title: '设备健康度管理', requiresAuth: true, requiresUSE: true},
     },
     {
+        path: '/monitor-center',
+        name: 'monitor-center',
+        component: () => import('@/modules/monitoring/dialogs/MonitoringCenterDialog.vue'),
+        meta: {title: '监控中心', requiresAuth: true},
+    },
+    {
         path: '/settings',
         name: 'settings',
         component: () => import('@/views/SettingsView.vue'),
@@ -36,6 +42,44 @@ const routes: RouteRecordRaw[] = [
         name: 'device-library',
         component: () => import('@/views/DeviceLibraryView.vue'),
         meta: {title: '器件库管理', requiresAuth: true},
+    },
+    {
+        path: '/admin',
+        component: () => import('@/modules/admin/layout/AdminLayout.vue'),
+        redirect: '/admin/users',
+        meta: {title: '系统管理', requiresAuth: true, requiresAdmin: true},
+        children: [
+            {
+                path: '/admin/users',
+                name: 'admin-users',
+                component: () => import('@/modules/admin/views/AdminUsersView.vue'),
+                meta: {title: '账户管理', requiresAuth: true, requiresAdmin: true},
+            },
+            {
+                path: '/admin/roles',
+                name: 'admin-roles',
+                component: () => import('@/modules/admin/views/AdminRolesView.vue'),
+                meta: {title: '权限管理', requiresAuth: true, requiresAdmin: true},
+            },
+            {
+                path: '/admin/dictionary',
+                name: 'admin-dictionary',
+                component: () => import('@/modules/admin/views/AdminDictionaryView.vue'),
+                meta: {title: '数据字典', requiresAuth: true, requiresAdmin: true},
+            },
+            {
+                path: '/admin/layers',
+                name: 'admin-layers',
+                component: () => import('@/modules/admin/views/AdminLayersView.vue'),
+                meta: {title: '平台图层库', requiresAuth: true, requiresAdmin: true},
+            },
+            {
+                path: '/admin/logs',
+                name: 'admin-logs',
+                component: () => import('@/modules/admin/views/AdminLogsView.vue'),
+                meta: {title: '操作日志', requiresAuth: true, requiresAdmin: true},
+            },
+        ],
     },
     {
         path: '/login',
@@ -57,7 +101,7 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
     const title = to.meta.title as string
     if (title) {
         document.title = `${title} - 海底光缆智能规划软件`
@@ -66,7 +110,12 @@ router.beforeEach((to, from, next) => {
     const userStore = useUserStore()
     const appStore = useAppStore()
 
-    if (to.meta.requiresAuth && !userStore.isLoggedIn) {
+    const shouldBootstrapSession = Boolean(to.meta.requiresAuth) || to.name === 'login'
+    const hasSession = shouldBootstrapSession
+        ? await userStore.bootstrapSession()
+        : userStore.isLoggedIn
+
+    if (to.meta.requiresAuth && !hasSession) {
         next({name: 'login'})
         return
     }
@@ -99,7 +148,7 @@ router.beforeEach((to, from, next) => {
         }
     }
 
-    if (to.name === 'login' && userStore.isLoggedIn) {
+    if (to.name === 'login' && hasSession) {
         next({name: 'planning'})
         return
     }

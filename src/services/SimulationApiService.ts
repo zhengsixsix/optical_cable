@@ -1,9 +1,7 @@
 /**
  * 仿真计算 API 客户端服务
- * 调用后端 Node 服务执行 Step3(构建仿真输入) + Step4(Span迭代计算)
+ * 线上 Swagger 当前未提供仿真计算接口；调用方应保持空态。
  */
-
-import { API_ENDPOINTS } from '@/config/api'
 import type { SpanScanResult, SpanScanPoint } from '@/types/simulation'
 
 // 导出类型供外部使用
@@ -110,18 +108,6 @@ export interface SimulationResponse {
 /**
  * 调用后端仿真计算接口
  */
-export async function runSimulation(request: SimulationRequest): Promise<SimulationResponse> {
-  const response = await fetch(API_ENDPOINTS.simulation.run, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-  })
-
-  const result = await response.json()
-
-  if (!result.success) {
-    throw new Error(result.error || '仿真计算失败')
-  }
-
-  return result
+export async function runSimulation(_request: SimulationRequest): Promise<SimulationResponse> {
+  throw new Error('线上 Swagger 暂未提供仿真计算接口')
 }

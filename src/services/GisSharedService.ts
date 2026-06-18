@@ -1,9 +1,7 @@
 /**
  * GIS 共享数据服务
- * 从服务器共享目录获取可用的GIS数据文件列表
+ * 线上 Swagger 当前未提供共享 GIS 文件接口；调用方应保持空列表。
  */
-
-import { API_ENDPOINTS } from '@/config/api'
 
 export interface SharedGisFile {
   name: string
@@ -14,11 +12,5 @@ export interface SharedGisFile {
 }
 
 export async function fetchSharedGisFiles(): Promise<SharedGisFile[]> {
-  const response = await fetch(API_ENDPOINTS.gis.shared)
-  const result = await response.json()
-  if (!result.success) {
-    throw new Error(result.error || '获取共享数据失败')
-  }
-  return result.data || []
+  return []
 }
-
