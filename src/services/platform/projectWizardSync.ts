@@ -1,14 +1,14 @@
 import { platformPlanConfigApi, platformPlanLayerApi, platformPointApi, platformProjectApi, platformUploadApi } from './api'
 import { uploadFileWithUppyTus } from './uppyUpload'
 import type { UppyTusUploadResult, UppyUploadProgress } from './uppyUpload'
-import type { PlanLayerTypeDic, PlanPoint, PlanProject } from './types'
+import type { Id, PlanLayerTypeDic, PlanPoint, PlanProject } from './types'
 
 type WizardPoint = Pick<PlanPoint, 'name' | 'longitude' | 'latitude' | 'sortNum'>
 
 export interface ProjectWizardSyncState {
-  projectId: number | null
+  projectId: Id | null
   layerUploads: Record<string, {
-    layerId: number
+    layerId: Id
     fileName: string
     uploadUrl: string
   }>
@@ -99,6 +99,20 @@ function buildPointList(payload: ProjectWizardStepPayload): WizardPoint[] {
   return points.filter((point): point is WizardPoint => point !== null)
 }
 
+async function ensureWizardProjectSaved(
+  state: ProjectWizardSyncState,
+  payload: ProjectWizardStepPayload,
+): Promise<Id | null> {
+  const projectPayload: PlanProject = {
+    id: state.projectId ?? undefined,
+    name: payload.projectName,
+    remarks: `${payload.projectType.toUpperCase()} project`,
+    isPublic: payload.allowOtherUsers ? 1 : 0,
+  }
+  state.projectId = await platformProjectApi.save(projectPayload)
+  return state.projectId
+}
+
 export async function saveProjectWizardStep(
   state: ProjectWizardSyncState,
   step: number,
@@ -106,19 +120,13 @@ export async function saveProjectWizardStep(
   _options: ProjectWizardSyncOptions = {},
 ): Promise<ProjectWizardSyncState> {
   if (step === 1) {
-    const projectPayload: PlanProject = {
-      id: state.projectId ?? undefined,
-      name: payload.projectName,
-      remarks: `${payload.projectType.toUpperCase()} project`,
-      isPublic: payload.allowOtherUsers ? 1 : 0,
-    }
-    state.projectId = await platformProjectApi.save(projectPayload)
+    await ensureWizardProjectSaved(state, payload)
     return state
   }
 
   if (step === 2) {
     if (!state.projectId) {
-      await saveProjectWizardStep(state, 1, payload)
+      await ensureWizardProjectSaved(state, payload)
     }
 
     const projectId = state.projectId
@@ -168,11 +176,15 @@ export async function uploadProjectWizardLayer(
   const completedUpload = state.layerUploads[layer.key]
   if (completedUpload?.fileName === file.name) return
 
+  const projectId = await ensureWizardProjectSaved(state, payload)
+  if (!projectId) return
+
   const layerId = await platformPlanLayerApi.save({
     name: layer.label,
     remarks: layer.remarks || `${layer.label} - ${file.name}`,
     isPublic: payload.allowOtherUsers ? 1 : 0,
     isDefault: layer.isDefault ? 1 : 0,
+    projectId,
     typeDic: layer.typeDic,
   })
 

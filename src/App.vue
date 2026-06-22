@@ -2,10 +2,9 @@
 import { useAppStore } from '@/stores/app'
 import { useLayerStore } from '@/stores/layer'
 import { useUserStore } from '@/stores/user'
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouteStore } from '@/stores/route'
 import { initAppearance, useProjectManager, type CreateProjectParams } from '@/composables'
-import { scheduleGeoTiffWarmup } from '@/utils/geoTiffCache'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
 import ProjectDialog from '@/components/dialogs/ProjectDialog.vue'
@@ -23,7 +22,7 @@ import SavePromptDialog from '@/components/dialogs/SavePromptDialog.vue'
 import SaveAsDialog from '@/components/dialogs/SaveAsDialog.vue'
 import ImportFileDialog from '@/components/dialogs/ImportFileDialog.vue'
 import ImportGisDialog from '@/modules/planning/dialogs/ImportGisDialog.vue'
-import type { PlanPoint, PlanProject } from '@/services/platform/types'
+import type { Id, PlanPoint, PlanProject } from '@/services/platform/types'
 
 interface PlatformProjectDraft {
   project: PlanProject
@@ -36,30 +35,14 @@ const layerStore = useLayerStore()
 const appStore = useAppStore()
 const userStore = useUserStore()
 const projectManager = useProjectManager()
-const hasScheduledGeoTiffWarmup = ref(false)
 const resumePlatformProject = ref<PlatformProjectDraft | null>(null)
-
-const startGeoTiffWarmup = () => {
-  if (hasScheduledGeoTiffWarmup.value) return
-  hasScheduledGeoTiffWarmup.value = true
-  scheduleGeoTiffWarmup()
-}
 
 onMounted(async () => {
   // 初始化外观设置
   initAppearance()
   // 初始化数据
   await routeStore.loadRoutes()
-  if (userStore.isLoggedIn) {
-    startGeoTiffWarmup()
-  }
   appStore.addLog('INFO', '应用初始化完成')
-})
-
-watch(() => userStore.isLoggedIn, (isLoggedIn) => {
-  if (isLoggedIn) {
-    startGeoTiffWarmup()
-  }
 })
 
 // 处理新建项目成功
@@ -73,7 +56,7 @@ const handleProjectDialogSuccess = async (data: CreateProjectParams) => {
   }
 }
 
-const handleOpenPlatformProject = async (projectId: number) => {
+const handleOpenPlatformProject = async (projectId: Id) => {
   appStore.closeDialog()
   await projectManager.openPlatformProject(projectId)
 }
@@ -180,6 +163,21 @@ const handleProjectWizardClose = () => {
     @remove="appStore.removeNotification"
   />
 
+  <Transition name="global-loading">
+    <div
+      v-if="appStore.globalLoading.visible"
+      class="global-loading-overlay fixed inset-0 z-[3000] flex items-center justify-center bg-slate-950/35 backdrop-blur-[2px]"
+    >
+      <div class="min-w-[220px] max-w-[360px] rounded bg-white px-5 py-4 text-center shadow-2xl border border-slate-200">
+        <div class="mx-auto mb-3 h-8 w-8 rounded-full border-2 border-blue-100 border-t-blue-600 animate-spin"></div>
+        <div class="text-sm font-medium text-slate-800">{{ appStore.globalLoading.message }}</div>
+        <div v-if="appStore.globalLoading.detail" class="mt-1 text-xs text-slate-500 truncate">
+          {{ appStore.globalLoading.detail }}
+        </div>
+      </div>
+    </div>
+  </Transition>
+
   <!-- 保存提示对话框 -->
   <SavePromptDialog
     :visible="projectManager.openState.value.showSavePrompt"
@@ -237,5 +235,15 @@ const handleProjectWizardClose = () => {
 .notification-leave-to {
   opacity: 0;
   transform: translateX(100%);
+}
+
+.global-loading-enter-active,
+.global-loading-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.global-loading-enter-from,
+.global-loading-leave-to {
+  opacity: 0;
 }
 </style>

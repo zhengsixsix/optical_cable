@@ -42,10 +42,22 @@ export interface PanelVisibility {
   repeaterConfigPanel: boolean
 }
 
+export interface GlobalLoadingState {
+  visible: boolean
+  message: string
+  detail: string
+}
+
 export const useAppStore = defineStore('app', () => {
   // 状态
   const currentView = ref<ViewType>('planning')
   const notifications = ref<Notification[]>([])
+  const globalLoading = ref<GlobalLoadingState>({
+    visible: false,
+    message: '',
+    detail: '',
+  })
+  const globalLoadingKeys = ref<Set<string>>(new Set())
   
   // 项目状态
   const projectState = ref<ProjectState>({
@@ -116,13 +128,29 @@ export const useAppStore = defineStore('app', () => {
     return names[view]
   }
 
+  function formatNotificationMessage(message: string): string {
+    const compactMessage = message.replace(/\s+/g, ' ').trim()
+    if (compactMessage.length <= 240) return compactMessage
+    return `${compactMessage.slice(0, 240)}...`
+  }
+
+  function getNotificationDuration(notification: Omit<Notification, 'id'>): number {
+    if (notification.duration !== undefined) return notification.duration
+    return notification.type === 'error' ? 5000 : 3000
+  }
+
   function showNotification(notification: Omit<Notification, 'id'>) {
     const id = `notif-${Date.now()}`
-    const newNotification: Notification = { ...notification, id }
+    const duration = getNotificationDuration(notification)
+    const newNotification: Notification = {
+      ...notification,
+      id,
+      message: formatNotificationMessage(notification.message),
+      duration,
+    }
     notifications.value.push(newNotification)
 
     // 自动移除
-    const duration = notification.duration ?? 3000
     if (duration > 0) {
       setTimeout(() => {
         removeNotification(id)
@@ -195,6 +223,40 @@ export const useAppStore = defineStore('app', () => {
 
   function setLoading(loading: boolean) {
     isLoading.value = loading
+  }
+
+  function showGlobalLoading(message = '正在加载...', detail = '', key = 'global') {
+    const nextKeys = new Set(globalLoadingKeys.value)
+    nextKeys.add(key)
+    globalLoadingKeys.value = nextKeys
+    globalLoading.value = {
+      visible: true,
+      message,
+      detail,
+    }
+  }
+
+  function hideGlobalLoading(key?: string) {
+    if (!key) {
+      globalLoadingKeys.value = new Set()
+      globalLoading.value = {
+        visible: false,
+        message: '',
+        detail: '',
+      }
+      return
+    }
+
+    const nextKeys = new Set(globalLoadingKeys.value)
+    nextKeys.delete(key)
+    globalLoadingKeys.value = nextKeys
+    if (nextKeys.size === 0) {
+      globalLoading.value = {
+        visible: false,
+        message: '',
+        detail: '',
+      }
+    }
   }
 
   function formatTime(): string {
@@ -314,6 +376,7 @@ export const useAppStore = defineStore('app', () => {
   return {
     currentView,
     notifications,
+    globalLoading,
     logs,
     isLoading,
     previousView,
@@ -333,6 +396,8 @@ export const useAppStore = defineStore('app', () => {
     clearLogs,
     exportLogs,
     setLoading,
+    showGlobalLoading,
+    hideGlobalLoading,
     openDialog,
     closeDialog,
     togglePanel,

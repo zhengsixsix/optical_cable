@@ -106,7 +106,7 @@ export function createPlatformClient(baseUrl = PLATFORM_API_BASE_URL) {
       })
     } catch (error) {
       const detail = error instanceof Error ? error.message : '网络异常'
-      throw new PlatformApiError(`平台接口请求失败，请检查 /platform-api 代理或线上 Swagger 服务：${detail}`, 'NETWORK_ERROR')
+      throw new PlatformApiError(`${detail}`, 'NETWORK_ERROR')
     }
 
     let payload: unknown = null

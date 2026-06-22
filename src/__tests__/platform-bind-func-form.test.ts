@@ -123,4 +123,36 @@ describe('platform device settings dialog source', () => {
     expect(editorSource).not.toContain('>name</label>')
     expect(editorSource).toContain('placeholder="绑定函数 name，如 FUNC_SENSOR_COLLECT_DATA"')
   })
+
+  it('loads device type options from the DEVICE_TYPE dictionary', () => {
+    const settingsSource = readFileSync(fileURLToPath(new URL('../views/SettingsView.vue', import.meta.url)), 'utf8')
+
+    expect(settingsSource).toContain('DEVICE_TYPE_DICTIONARY_TYPE')
+    expect(settingsSource).toContain('platformDictionaryApi.listItem(DEVICE_TYPE_DICTIONARY_TYPE)')
+    expect(settingsSource).not.toContain('const platformDeviceTypeOptions = [')
+  })
+
+  it('submits deviceTypeCd for device library and entity payloads', () => {
+    const settingsSource = readFileSync(fileURLToPath(new URL('../views/SettingsView.vue', import.meta.url)), 'utf8')
+
+    expect(settingsSource).toContain('deviceTypeCd: platformLibraryForm.deviceTypeCd')
+    expect(settingsSource).toContain('deviceTypeCd: platformEntityForm.deviceTypeCd || null')
+    expect(settingsSource).not.toContain('typeCd: platformLibraryForm')
+    expect(settingsSource).not.toContain('typeCd: platformEntityForm')
+  })
+
+  it('auto-saves device forms to resolve upload complete bizId for icon uploads', () => {
+    const iconUploadSource = readFileSync(fileURLToPath(new URL('../components/settings/IconUploadField.vue', import.meta.url)), 'utf8')
+    const settingsSource = readFileSync(fileURLToPath(new URL('../views/SettingsView.vue', import.meta.url)), 'utf8')
+
+    expect(iconUploadSource).toContain('bizId?: Id | null')
+    expect(iconUploadSource).toContain('resolveBizId?: () => Id | null | Promise<Id | null>')
+    expect(iconUploadSource).toContain('const bizId = await resolveBizId()')
+    expect(iconUploadSource).toContain('bizId,')
+    expect(iconUploadSource).not.toContain('请先保存当前器件，再上传图标')
+    expect(settingsSource).toContain(':biz-id="platformLibraryForm.id ?? null"')
+    expect(settingsSource).toContain(':biz-id="platformEntityForm.id ?? null"')
+    expect(settingsSource).toContain(':resolve-biz-id="ensurePlatformLibraryBizId"')
+    expect(settingsSource).toContain(':resolve-biz-id="ensurePlatformEntityBizId"')
+  })
 })

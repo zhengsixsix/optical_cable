@@ -122,6 +122,8 @@ const openNewProject = () => {
 }
 
 onMounted(() => {
+  routeStore.ensureTransmissionMockRoute()
+
   // 确保有 RPL 数据（从路由守卫迁移至此，显式处理）
   ensureRPLData()
   

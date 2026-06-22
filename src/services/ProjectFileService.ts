@@ -55,6 +55,7 @@ import {
   createDefaultBUSpec,
   createDefaultWDMConfig,
 } from '@/types/useFile'
+import type { Id } from '@/services/platform/types'
 
 // Store 类型别名
 type SettingsStore = ReturnType<typeof useSettingsStore>
@@ -74,7 +75,7 @@ export interface ProjectMetadata {
   path: string
   type: ProjectType
   uuid: string
-  platformProjectId?: number
+  platformProjectId?: Id
   lastModified: string
   creatorId: string
   allowOtherUsers: boolean

@@ -6,6 +6,8 @@ import { useAppStore } from '@/stores/app'
 import { fetchSharedGisFiles, type SharedGisFile } from '@/services'
 import { useGeoService } from '@/services/GeoService'
 import { Button } from '@/shared/components/base'
+import shp from 'shpjs'
+import { detectGisFormat } from '@/utils/gisFormat'
 
 interface Props {
   visible: boolean
@@ -128,14 +130,20 @@ function checkDuplicateAndRemember(file: File): boolean {
   return false
 }
 
-function getFileExtension(fileName: string): string {
-  return fileName.split('.').pop()?.toLowerCase() || ''
-}
-
 async function buildLayerDataFromLocalFile(layer: GisLayerItem, file: File) {
-  const ext = getFileExtension(file.name)
+  const formatInfo = detectGisFormat(file.name)
+  const metadata = {
+    source: file.name,
+    projection: coordinateSystem.value || 'EPSG:4326',
+    fileName: file.name,
+    extension: formatInfo.extension,
+    gisFormat: formatInfo.format,
+    gisKind: formatInfo.kind,
+    loadStrategy: formatInfo.loadStrategy,
+    supported: formatInfo.supported,
+  }
 
-  if (ext === 'geojson' || ext === 'json') {
+  if (formatInfo.loadStrategy === 'geojson-vector') {
     const result = await geoService.importFile(file)
     if (!result.success || !result.data) {
       throw new Error(result.errors?.[0] || result.message || 'GeoJSON 解析失败')
@@ -143,57 +151,72 @@ async function buildLayerDataFromLocalFile(layer: GisLayerItem, file: File) {
     return {
       id: layer.id,
       features: result.data as any,
-      metadata: {
-        source: file.name,
-        projection: coordinateSystem.value || 'EPSG:4326',
-      },
+      metadata,
     }
   }
 
-  if (ext === 'tif' || ext === 'tiff' || ext === 'shp') {
+  if (formatInfo.loadStrategy === 'shapefile-zip-vector') {
+    return {
+      id: layer.id,
+      features: await shp(await file.arrayBuffer()) as any,
+      metadata,
+    }
+  }
+
+  if (formatInfo.loadStrategy === 'geotiff-raster') {
     return {
       id: layer.id,
       rasterData: await file.arrayBuffer(),
-      metadata: {
-        source: file.name,
-        projection: coordinateSystem.value || 'EPSG:4326',
-      },
+      metadata,
     }
   }
 
-  throw new Error(`暂不支持的图层格式: .${ext}`)
+  throw new Error(`暂不支持加载 ${formatInfo.label} 格式，请上传 GeoJSON、Shapefile ZIP 或 GeoTIFF`)
 }
 
 async function buildLayerDataFromSharedPath(layer: GisLayerItem, filePath: string) {
-  const ext = getFileExtension(filePath)
+  const formatInfo = detectGisFormat(filePath)
+  const metadata = {
+    source: filePath,
+    projection: coordinateSystem.value || 'EPSG:4326',
+    fileName: filePath.split(/[\\/]/).pop() || filePath,
+    extension: formatInfo.extension,
+    gisFormat: formatInfo.format,
+    gisKind: formatInfo.kind,
+    loadStrategy: formatInfo.loadStrategy,
+    supported: formatInfo.supported,
+  }
+
   const response = await fetch(filePath)
   if (!response.ok) {
     throw new Error(`共享文件读取失败: ${response.status}`)
   }
 
-  if (ext === 'geojson' || ext === 'json') {
+  if (formatInfo.loadStrategy === 'geojson-vector') {
     return {
       id: layer.id,
       features: await response.json(),
-      metadata: {
-        source: filePath,
-        projection: coordinateSystem.value || 'EPSG:4326',
-      },
+      metadata,
     }
   }
 
-  if (ext === 'tif' || ext === 'tiff' || ext === 'shp') {
+  if (formatInfo.loadStrategy === 'shapefile-zip-vector') {
+    return {
+      id: layer.id,
+      features: await shp(await response.arrayBuffer()) as any,
+      metadata,
+    }
+  }
+
+  if (formatInfo.loadStrategy === 'geotiff-raster') {
     return {
       id: layer.id,
       rasterData: await response.arrayBuffer(),
-      metadata: {
-        source: filePath,
-        projection: coordinateSystem.value || 'EPSG:4326',
-      },
+      metadata,
     }
   }
 
-  throw new Error(`暂不支持的共享图层格式: .${ext}`)
+  throw new Error(`暂不支持加载 ${formatInfo.label} 格式，请选择 GeoJSON、Shapefile ZIP 或 GeoTIFF`)
 }
 
 function handleSelectAll(checked: boolean) {
@@ -267,7 +290,7 @@ function handleBrowse(layer: GisLayerItem) {
   if (dataSource.value !== 'local') return
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.tif,.tiff,.shp,.geojson,.json'
+  input.accept = '.tif,.tiff,.geotiff,.zip,.shp,.geojson,.json,.kml,.kmz,.gpx,.gpkg,.csv,.xlsx,.xls'
   input.onchange = (e) => {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (file) {

@@ -6,7 +6,7 @@ import type {
   JointBoxType,
 } from '@/types/settings'
 import type { ConnectorElement } from '@/types/connector'
-import type { PlatformBindFunc, PlanDeviceEntity, PlanDeviceLibrary } from './types'
+import type { Id, PlatformBindFunc, PlanDeviceEntity, PlanDeviceLibrary } from './types'
 
 export type LocalDeviceLibraryType = 'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'
 
@@ -74,13 +74,13 @@ function getLocalParams(bindFuncList?: PlatformBindFunc[] | null): Record<string
   return bindFunc?.defaultInputParams ?? {}
 }
 
-function normalizeType(typeCd?: string | null, params?: Record<string, unknown>): LocalDeviceLibraryType | null {
+function normalizeType(deviceTypeCd?: string | null, params?: Record<string, unknown>): LocalDeviceLibraryType | null {
   const paramType = params?.localType
   if (paramType === 'fiber' || paramType === 'amplifier' || paramType === 'branching' || paramType === 'equalizer' || paramType === 'joint') {
     return paramType
   }
 
-  const normalizedCode = String(typeCd || '').trim().toUpperCase()
+  const normalizedCode = String(deviceTypeCd || '').trim().toUpperCase()
   return platformCodeToLocalDeviceType[normalizedCode] ?? null
 }
 
@@ -112,7 +112,7 @@ export function deviceLibraryItemToPlatform(
   return {
     id: Number.isFinite(platformId) ? platformId : undefined,
     name: item.name,
-    typeCd: localDeviceTypeToPlatformCode[type],
+    deviceTypeCd: localDeviceTypeToPlatformCode[type],
     iconSize: defaultIconSize,
     dialogWindowId: type,
     bindFuncList: [{
@@ -127,7 +127,7 @@ export function platformDeviceLibraryToLocal(device: PlanDeviceLibrary): {
   item: LocalDeviceLibraryItem & PlatformBackedItem
 } | null {
   const params = getLocalParams(device.bindFuncList)
-  const type = normalizeType(device.typeCd, params)
+  const type = normalizeType(device.deviceTypeCd, params)
   if (!type) return null
 
   const id = platformLocalId(device.id)
@@ -221,17 +221,17 @@ export function platformDeviceLibraryToLocal(device: PlanDeviceLibrary): {
 
 export function connectorElementToDeviceEntity(
   element: ConnectorElement,
-  projectId: number,
+  projectId: Id,
   sortNum: number,
 ): PlanDeviceEntity | null {
   if (element.longitude == null || element.latitude == null) return null
 
-  const typeCd = connectorTypeToPlatformCode[element.type] || String(element.type).toUpperCase()
+  const deviceTypeCd = connectorTypeToPlatformCode[element.type] || String(element.type).toUpperCase()
   const libraryId = numeric(element.componentRefId || element.fiberRefId, NaN)
 
   return {
     name: element.name,
-    typeCd,
+    deviceTypeCd,
     iconSize: defaultIconSize,
     dialogWindowId: element.type,
     bindFuncList: [{

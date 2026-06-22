@@ -40,7 +40,8 @@ import type {FiberType, AmplifierType, BranchingUnitType} from '@/types'
 import type {EqualizerType, JointBoxType} from '@/types/settings'
 import type {BUConfig, ArmorMapping, RedundancyConfig} from '@/stores/settings'
 import { deviceImportService, applyImportResultToStore } from '@/services/DeviceImportService'
-import type { Id, PlanDeviceEntity, PlanDeviceLibrary } from '@/services/platform/types'
+import { platformDictionaryApi } from '@/services/platform/api'
+import type { Id, PlanDeviceEntity, PlanDeviceLibrary, PlatformDictionary } from '@/services/platform/types'
 import type { BindFuncDraft } from '@/services/platform/bindFuncForm'
 import { bindFuncDraftsToList, bindFuncListToDrafts } from '@/services/platform/bindFuncForm'
 import {
@@ -77,6 +78,7 @@ const syncActiveTabFromQuery = async () => {
 // 支持通过路由 query 参数切换 tab（如从系统规划跳转过来）
 onMounted(() => {
   void syncActiveTabFromQuery()
+  void loadPlatformDeviceTypes()
   void loadPlatformLibraries()
   void loadPlatformEntities()
 })
@@ -153,22 +155,33 @@ const operatingModeLabel = (mode?: string) => {
   return mode ? map[mode] || mode : '-'
 }
 
-const platformDeviceTypeOptions = [
-  { value: 'FIB', label: '光纤' },
-  { value: 'AMP', label: '放大器' },
-  { value: 'BU', label: '分支器' },
-  { value: 'EQ', label: '均衡器' },
-  { value: 'JB', label: '接头盒' },
-  { value: 'LANDING', label: '登陆站' },
-  { value: 'UNDERWATER', label: '海底节点' },
-  { value: 'CABLE', label: '缆段' },
-]
+const DEVICE_TYPE_DICTIONARY_TYPE = 'DEVICE_TYPE'
+const platformDeviceTypeDictionaries = ref<PlatformDictionary[]>([])
+const platformDeviceTypeLoading = ref(false)
+const platformDeviceTypeOptions = computed(() =>
+  platformDeviceTypeDictionaries.value
+    .filter(item => item.code)
+    .map(item => ({
+      value: String(item.code),
+      label: item.name || String(item.code),
+    })),
+)
+const defaultPlatformDeviceTypeCode = computed(() => platformDeviceTypeOptions.value[0]?.value ?? '')
 
 let bindFuncDraftSequence = 0
 const nextBindFuncDraftId = (prefix: 'func' | 'param') => `${prefix}-${Date.now()}-${++bindFuncDraftSequence}`
 
 const deviceTypeName = (typeCd?: string | null) => {
-  return platformDeviceTypeOptions.find(item => item.value === typeCd)?.label || typeCd || '-'
+  return platformDeviceTypeOptions.value.find(item => item.value === typeCd)?.label || typeCd || '-'
+}
+
+type LegacyDeviceTyped = {
+  deviceTypeCd?: string | null
+  typeCd?: string | null
+}
+
+const platformDeviceTypeCode = (item?: LegacyDeviceTyped | null) => {
+  return item?.deviceTypeCd || item?.typeCd || ''
 }
 
 const selectedPlatformLibrary = computed(() => {
@@ -198,7 +211,7 @@ watch(() => settingsStore.platformDeviceLibraries, libraries => {
 const defaultPlatformLibraryForm = () => ({
   id: undefined as Id | undefined,
   name: '',
-  typeCd: 'FIB',
+  deviceTypeCd: defaultPlatformDeviceTypeCode.value,
   iconId: '' as Id | '',
   iconName: '',
   iconWidth: 48,
@@ -211,7 +224,7 @@ const defaultPlatformEntityForm = () => ({
   id: undefined as Id | undefined,
   name: '',
   libraryId: '' as Id | '',
-  typeCd: '',
+  deviceTypeCd: '',
   iconId: '' as Id | '',
   iconName: '',
   iconWidth: 48,
@@ -251,6 +264,20 @@ const resetPlatformEntityForm = () => {
   Object.assign(platformEntityForm, defaultPlatformEntityForm())
 }
 
+const loadPlatformDeviceTypes = async () => {
+  platformDeviceTypeLoading.value = true
+  try {
+    platformDeviceTypeDictionaries.value = await platformDictionaryApi.listItem(DEVICE_TYPE_DICTIONARY_TYPE)
+    if (!platformLibraryForm.deviceTypeCd) {
+      platformLibraryForm.deviceTypeCd = defaultPlatformDeviceTypeCode.value
+    }
+  } catch (error) {
+    appStore.showNotification({ type: 'warning', message: `设备类型字典加载失败：${(error as Error).message}` })
+  } finally {
+    platformDeviceTypeLoading.value = false
+  }
+}
+
 const loadPlatformLibraries = async () => {
   try {
     await settingsStore.loadPlatformDeviceLibraries()
@@ -288,7 +315,7 @@ const openEditPlatformLibrary = (library: PlanDeviceLibrary) => {
   Object.assign(platformLibraryForm, {
     id: library.id,
     name: library.name || '',
-    typeCd: library.typeCd || 'FIB',
+    deviceTypeCd: platformDeviceTypeCode(library) || defaultPlatformDeviceTypeCode.value,
     iconId: library.iconId ?? '',
     iconName: library.iconName || '',
     iconWidth: library.iconSize?.width ?? 48,
@@ -300,34 +327,45 @@ const openEditPlatformLibrary = (library: PlanDeviceLibrary) => {
 }
 
 const savePlatformLibrary = async () => {
-  if (!platformLibraryForm.typeCd) {
+  if (!platformLibraryForm.deviceTypeCd) {
     appStore.showNotification({ type: 'warning', message: '请选择设备类型' })
     return
   }
 
   try {
-    const payload: PlanDeviceLibrary = {
-      id: platformLibraryForm.id,
-      name: platformLibraryForm.name || null,
-      typeCd: platformLibraryForm.typeCd,
-      iconId: optionalId(platformLibraryForm.iconId) ?? null,
-      iconSize: {
-        width: optionalNumber(platformLibraryForm.iconWidth) ?? 48,
-        height: optionalNumber(platformLibraryForm.iconHeight) ?? 48,
-      },
-      dialogWindowId: platformLibraryForm.dialogWindowId || null,
-      bindFuncList: bindFuncDraftsToList(platformLibraryForm.bindFuncList),
-    }
-    await settingsStore.savePlatformDeviceLibrary(payload)
-    if (payload.id == null) {
-      const libraries = settingsStore.platformDeviceLibraries
-      platformLibraryTab.value = libraries[libraries.length - 1]?.id ?? platformLibraryTab.value
-    }
+    const wasNew = platformLibraryForm.id == null
+    const id = await settingsStore.savePlatformDeviceLibrary(buildPlatformLibraryPayload())
+    platformLibraryForm.id = id
+    if (wasNew) platformLibraryTab.value = id
     showPlatformLibraryDialog.value = false
     appStore.showNotification({ type: 'success', message: '器件库已保存' })
   } catch (error) {
     appStore.showNotification({ type: 'error', message: `器件库保存失败：${(error as Error).message}` })
   }
+}
+
+const buildPlatformLibraryPayload = (): PlanDeviceLibrary => ({
+  id: platformLibraryForm.id,
+  name: platformLibraryForm.name || null,
+  deviceTypeCd: platformLibraryForm.deviceTypeCd,
+  iconId: optionalId(platformLibraryForm.iconId) ?? null,
+  iconSize: {
+    width: optionalNumber(platformLibraryForm.iconWidth) ?? 48,
+    height: optionalNumber(platformLibraryForm.iconHeight) ?? 48,
+  },
+  dialogWindowId: platformLibraryForm.dialogWindowId || null,
+  bindFuncList: bindFuncDraftsToList(platformLibraryForm.bindFuncList),
+})
+
+const ensurePlatformLibraryBizId = async (): Promise<Id | null> => {
+  if (!platformLibraryForm.deviceTypeCd) {
+    throw new Error('请选择设备类型')
+  }
+
+  const id = await settingsStore.savePlatformDeviceLibrary(buildPlatformLibraryPayload())
+  platformLibraryForm.id = id
+  platformLibraryTab.value = id
+  return id
 }
 
 const deletePlatformLibrary = async (id?: Id) => {
@@ -346,7 +384,7 @@ const openCreatePlatformEntity = (library: PlanDeviceLibrary | null = selectedPl
   const targetLibrary = library || settingsStore.platformDeviceLibraries[0]
   if (targetLibrary?.id) {
     platformEntityForm.libraryId = targetLibrary.id
-    platformEntityForm.typeCd = targetLibrary.typeCd || ''
+    platformEntityForm.deviceTypeCd = platformDeviceTypeCode(targetLibrary)
     platformEntityForm.dialogWindowId = targetLibrary.dialogWindowId || ''
   }
   platformEntityForm.projectId = appStore.projectState.currentProject?.platformProjectId || ''
@@ -358,7 +396,7 @@ const openEditPlatformEntity = (entity: PlanDeviceEntity) => {
     id: entity.id,
     name: entity.name || '',
     libraryId: entity.libraryId ?? '',
-    typeCd: entity.typeCd || '',
+    deviceTypeCd: platformDeviceTypeCode(entity),
     iconId: entity.iconId ?? '',
     iconName: entity.iconName || '',
     iconWidth: entity.iconSize?.width ?? 48,
@@ -377,7 +415,7 @@ const syncEntityLibraryFields = () => {
   const libraryId = optionalId(platformEntityForm.libraryId)
   const library = settingsStore.platformDeviceLibraries.find(item => sameId(item.id, libraryId))
   if (!library) return
-  platformEntityForm.typeCd = library.typeCd || ''
+  platformEntityForm.deviceTypeCd = platformDeviceTypeCode(library)
   platformEntityForm.dialogWindowId = library.dialogWindowId || ''
 }
 
@@ -402,6 +440,37 @@ const handlePlatformEntityMapSelect = () => {
   showMapSelectDialog.value = true
 }
 
+const buildPlatformEntityPayload = (): PlanDeviceEntity => {
+  const libraryId = optionalId(platformEntityForm.libraryId)
+  if (!libraryId) {
+    throw new Error('请选择器件库')
+  }
+
+  return {
+    id: platformEntityForm.id,
+    name: platformEntityForm.name || null,
+    deviceTypeCd: platformEntityForm.deviceTypeCd || null,
+    iconId: optionalId(platformEntityForm.iconId) ?? null,
+    iconSize: {
+      width: optionalNumber(platformEntityForm.iconWidth) ?? 48,
+      height: optionalNumber(platformEntityForm.iconHeight) ?? 48,
+    },
+    dialogWindowId: platformEntityForm.dialogWindowId || null,
+    bindFuncList: bindFuncDraftsToList(platformEntityForm.bindFuncList),
+    libraryId,
+    longitude: optionalNumber(platformEntityForm.longitude) ?? null,
+    latitude: optionalNumber(platformEntityForm.latitude) ?? null,
+    projectId: optionalId(platformEntityForm.projectId) ?? null,
+    sortNum: optionalNumber(platformEntityForm.sortNum) ?? 999,
+  }
+}
+
+const ensurePlatformEntityBizId = async (): Promise<Id | null> => {
+  const id = await settingsStore.savePlatformDeviceEntity(buildPlatformEntityPayload())
+  platformEntityForm.id = id
+  return id
+}
+
 const savePlatformEntity = async () => {
   const libraryId = optionalId(platformEntityForm.libraryId)
   if (!libraryId) {
@@ -410,24 +479,8 @@ const savePlatformEntity = async () => {
   }
 
   try {
-    const payload: PlanDeviceEntity = {
-      id: platformEntityForm.id,
-      name: platformEntityForm.name || null,
-      typeCd: platformEntityForm.typeCd || null,
-      iconId: optionalId(platformEntityForm.iconId) ?? null,
-      iconSize: {
-        width: optionalNumber(platformEntityForm.iconWidth) ?? 48,
-        height: optionalNumber(platformEntityForm.iconHeight) ?? 48,
-      },
-      dialogWindowId: platformEntityForm.dialogWindowId || null,
-      bindFuncList: bindFuncDraftsToList(platformEntityForm.bindFuncList),
-      libraryId,
-      longitude: optionalNumber(platformEntityForm.longitude) ?? null,
-      latitude: optionalNumber(platformEntityForm.latitude) ?? null,
-      projectId: optionalId(platformEntityForm.projectId) ?? null,
-      sortNum: optionalNumber(platformEntityForm.sortNum) ?? 999,
-    }
-    await settingsStore.savePlatformDeviceEntity(payload)
+    const id = await settingsStore.savePlatformDeviceEntity(buildPlatformEntityPayload())
+    platformEntityForm.id = id
     showPlatformEntityDialog.value = false
     appStore.showNotification({ type: 'success', message: '器件实例已保存' })
   } catch (error) {
@@ -2525,7 +2578,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                 <template v-else>
                   <button
                     v-for="(library, index) in settingsStore.platformDeviceLibraries"
-                    :key="library.id ?? library.name ?? library.typeCd ?? `library-${index}`"
+                    :key="library.id ?? library.name ?? platformDeviceTypeCode(library) ?? `library-${index}`"
                     :class="[
                       'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
                       sameId(platformLibraryTab, library.id)
@@ -2557,7 +2610,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                   <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400">ID</div>
                   <div class="px-3 py-2">{{ selectedPlatformLibrary.id ?? '-' }}</div>
                   <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400">设备类型</div>
-                  <div class="px-3 py-2">{{ deviceTypeName(selectedPlatformLibrary.typeCd) }}</div>
+                  <div class="px-3 py-2">{{ deviceTypeName(platformDeviceTypeCode(selectedPlatformLibrary)) }}</div>
                   <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400 border-t">参数窗口标识</div>
                   <div class="px-3 py-2 border-t">{{ selectedPlatformLibrary.dialogWindowId || '-' }}</div>
                   <div class="bg-gray-100 dark:bg-white/5 px-3 py-2 text-gray-600 dark:text-gray-400 border-t">绑定函数</div>
@@ -2605,7 +2658,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                       <td class="px-3 py-2">{{ entity.id ?? '-' }}</td>
                       <td class="px-3 py-2">{{ entity.name || '-' }}</td>
                       <td class="px-3 py-2">{{ entity.libraryName || selectedPlatformLibrary.name || entity.libraryId || '-' }}</td>
-                      <td class="px-3 py-2">{{ deviceTypeName(entity.typeCd) }}</td>
+                      <td class="px-3 py-2">{{ deviceTypeName(platformDeviceTypeCode(entity)) }}</td>
                       <td class="px-3 py-2">{{ entity.longitude ?? '-' }}</td>
                       <td class="px-3 py-2">{{ entity.latitude ?? '-' }}</td>
                       <td class="px-3 py-2">{{ entity.projectId ?? '-' }}</td>
@@ -2653,7 +2706,12 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                 </div>
                 <div>
                   <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">设备类型</label>
-                  <Select v-model="platformLibraryForm.typeCd" :options="platformDeviceTypeOptions"/>
+                  <Select
+                    v-model="platformLibraryForm.deviceTypeCd"
+                    :options="platformDeviceTypeOptions"
+                    :disabled="platformDeviceTypeLoading || platformDeviceTypeOptions.length === 0"
+                    placeholder="请选择设备类型"
+                  />
                 </div>
                 <div class="col-span-2">
                   <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">参数窗口标识</label>
@@ -2669,6 +2727,8 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                 <div>
                   <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">图标文件</label>
                   <IconUploadField
+                    :biz-id="platformLibraryForm.id ?? null"
+                    :resolve-biz-id="ensurePlatformLibraryBizId"
                     :icon-id="platformLibraryForm.iconId"
                     :icon-name="platformLibraryForm.iconName"
                     @uploaded="handlePlatformLibraryIconUploaded"
@@ -2726,13 +2786,18 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                           style="border-color: var(--app-border-color)">
                     <option value="">请选择器件库</option>
                     <option v-for="library in settingsStore.platformDeviceLibraries" :key="library.id" :value="library.id">
-                      {{ library.name || library.id }} - {{ deviceTypeName(library.typeCd) }}
+                      {{ library.name || library.id }} - {{ deviceTypeName(platformDeviceTypeCode(library)) }}
                     </option>
                   </select>
                 </div>
                 <div>
                   <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">设备类型</label>
-                  <Input v-model="platformEntityForm.typeCd"/>
+                  <Select
+                    v-model="platformEntityForm.deviceTypeCd"
+                    :options="platformDeviceTypeOptions"
+                    :disabled="platformDeviceTypeLoading || platformDeviceTypeOptions.length === 0"
+                    placeholder="请选择设备类型"
+                  />
                 </div>
                 <div>
                   <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">参数窗口标识</label>
@@ -2755,6 +2820,8 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                 <div>
                   <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">图标文件</label>
                   <IconUploadField
+                    :biz-id="platformEntityForm.id ?? null"
+                    :resolve-biz-id="ensurePlatformEntityBizId"
                     :icon-id="platformEntityForm.iconId"
                     :icon-name="platformEntityForm.iconName"
                     @uploaded="handlePlatformEntityIconUploaded"

@@ -15,15 +15,15 @@ import {
 } from '@/services/platform/projectWizardSync'
 import { platformPlanLayerApi } from '@/services/platform/api'
 import type { UppyUploadProgress } from '@/services/platform/uppyUpload'
-import type { PlanLayer, PlanLayerTypeDic } from '@/services/platform/types'
+import type { Id, PlanLayer, PlanLayerTypeDic } from '@/services/platform/types'
 
 interface Props {
   visible: boolean
   resumeProject?: {
-    id: number
+    id: Id
     name?: string
     isPublic?: 0 | 1
-    points?: Array<{ id?: number | string; name?: string; longitude?: number; latitude?: number; sortNum?: number }>
+    points?: Array<{ id?: Id; name?: string; longitude?: number; latitude?: number; sortNum?: number }>
   } | null
 }
 
@@ -37,7 +37,6 @@ interface LayerItem {
   fileSize: number
   uploadProgress: number
   uploadStatus: 'idle' | 'selected' | 'uploading' | 'uploaded' | 'error'
-  uploadError: string
 }
 
 interface DeviceItem {
@@ -354,12 +353,12 @@ const setPlanningMode = (mode: 'point-to-point' | 'multi-point') => {
 }
 
 const layerList = ref<LayerItem[]>([
-  { key: 'elevation', label: '海洋高程图', checked: false, value: '', typeDic: 'BATHY', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
-  { key: 'volcano', label: '海洋火山分布', checked: false, value: '', typeDic: 'VOLCANO', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
-  { key: 'fishery', label: '海洋渔区分布', checked: false, value: '', typeDic: 'FISHZONE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
-  { key: 'slope', label: '海洋坡度图', checked: false, value: '', typeDic: 'SLOPE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
-  { key: 'earthquake', label: '海洋地震分布', checked: false, value: '', typeDic: 'SEISMIC', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
-  { key: 'shipping', label: '海洋航道图', checked: false, value: '', typeDic: 'SHIPLANE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle', uploadError: '' },
+  { key: 'elevation', label: '海洋高程图', checked: false, value: '', typeDic: 'BATHY', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
+  { key: 'volcano', label: '海洋火山分布', checked: false, value: '', typeDic: 'VOLCANO', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
+  { key: 'fishery', label: '海洋渔区分布', checked: false, value: '', typeDic: 'FISHZONE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
+  { key: 'slope', label: '海洋坡度图', checked: false, value: '', typeDic: 'SLOPE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
+  { key: 'earthquake', label: '海洋地震分布', checked: false, value: '', typeDic: 'SEISMIC', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
+  { key: 'shipping', label: '海洋航道图', checked: false, value: '', typeDic: 'SHIPLANE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
 ])
 
 // 步骤3: 器件库
@@ -393,7 +392,6 @@ const resetForm = () => {
     item.fileSize = 0
     item.uploadProgress = 0
     item.uploadStatus = 'idle'
-    item.uploadError = ''
   })
   deviceList.value = []
 }
@@ -466,7 +464,6 @@ async function restoreUploadedLayers() {
       item.fileSize = matched.fileSize ?? 0
       item.uploadProgress = 100
       item.uploadStatus = 'uploaded'
-      item.uploadError = ''
       if (matched.id) {
         wizardSyncState.layerUploads[item.key] = {
           layerId: matched.id,
@@ -566,7 +563,6 @@ function handleLayerUploadProgress(layerKey: string, progress: UppyUploadProgres
   if (!layer) return
   layer.uploadStatus = 'uploading'
   layer.uploadProgress = progress.percent
-  layer.uploadError = ''
 }
 
 function markCompletedLayerUploads() {
@@ -575,7 +571,6 @@ function markCompletedLayerUploads() {
     if (uploaded && uploaded.fileName === layer.file?.name) {
       layer.uploadStatus = 'uploaded'
       layer.uploadProgress = 100
-      layer.uploadError = ''
     }
   }
 }
@@ -662,7 +657,6 @@ async function uploadConfirmedLayer(layer: LayerItem) {
   layer.checked = true
   layer.uploadStatus = 'uploading'
   layer.uploadProgress = 0
-  layer.uploadError = ''
 
   try {
     await uploadProjectWizardLayer(wizardSyncState, buildWizardSyncPayload(), {
@@ -678,11 +672,9 @@ async function uploadConfirmedLayer(layer: LayerItem) {
     })
     layer.uploadStatus = 'uploaded'
     layer.uploadProgress = 100
-    layer.uploadError = ''
     appStore.showNotification({ type: 'success', message: `图层已上传: ${layer.label}` })
   } catch (error) {
     layer.uploadStatus = 'error'
-    layer.uploadError = (error as Error).message
     appStore.showNotification({
       type: 'error',
       message: `图层上传失败：${(error as Error).message}`,
@@ -737,7 +729,6 @@ const handleLayerSelected = async (e: Event) => {
     layer.checked = true
     layer.uploadProgress = 0
     layer.uploadStatus = 'selected'
-    layer.uploadError = ''
     appStore.showNotification({ type: 'success', message: `已选择图层文件: ${file.name} (${formatFileSize(file.size)})` })
   }
   target.value = ''
@@ -1084,9 +1075,6 @@ const handleSubmit = async () => {
                             :style="{ width: `${item.uploadStatus === 'selected' ? 0 : item.uploadProgress}%` }"
                           ></div>
                         </div>
-                        <p v-if="item.uploadError" class="text-[11px] text-red-600 truncate" :title="item.uploadError">
-                          {{ item.uploadError }}
-                        </p>
                       </div>
                     </div>
                   </div>

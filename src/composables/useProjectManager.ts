@@ -18,6 +18,7 @@ import { applyImportResultToStore } from '@/services/DeviceImportService'
 import { platformPointApi, platformProjectApi } from '@/services/platform/api'
 import { connectorElementToDeviceEntity } from '@/services/platform/deviceLibraryMapping'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
+import type { Id } from '@/services/platform/types'
 import { generateUUID } from '@/types/useFile'
 import { useRouter } from 'vue-router'
 
@@ -26,7 +27,7 @@ export interface CreateProjectParams {
   projectType: ProjectType
   projectName: string
   allowOtherUsers: boolean
-  platformProjectId?: number | null
+  platformProjectId?: Id | null
   rplFile?: string
   rplFileData?: File  // RPL 文件对象，用于导入
   planningMode?: 'point-to-point' | 'multi-point'
@@ -251,7 +252,7 @@ export function useProjectManager() {
     return doOpenFile(file)
   }
 
-  async function openPlatformProject(projectId: number): Promise<boolean> {
+  async function openPlatformProject(projectId: Id): Promise<boolean> {
     isProcessing.value = true
 
     try {
@@ -318,7 +319,7 @@ export function useProjectManager() {
     }
   }
 
-  async function syncCurrentDeviceEntitiesToPlatform(projectId: number) {
+  async function syncCurrentDeviceEntitiesToPlatform(projectId: Id) {
     const connectorStore = useConnectorStore()
     const deviceEntities = connectorStore.elements
       .filter(element => element.type !== 'fiber' && element.type !== 'cable_segment')

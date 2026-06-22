@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { useAppStore } from '@/stores/app'
 import { ref, computed } from 'vue'
-import { Upload, Download, X, FileText, Check, AlertCircle, Loader2 } from 'lucide-vue-next'
+import { Upload, Download, X, FileText, Loader2 } from 'lucide-vue-next'
 import { useGeoService } from '@/services'
 import { useRouteStore } from '@/stores/route'
 import { Button } from '@/shared/components/base'
@@ -31,8 +31,6 @@ const isDragging = ref(false)
 const isProcessing = ref(false)
 const selectedFile = ref<File | null>(null)
 const exportFormat = ref<'geojson' | 'kml' | 'csv'>('geojson')
-const resultMessage = ref('')
-const resultType = ref<'success' | 'error' | ''>('')
 
 const dialogTitle = computed(() => 
   props.mode === 'import' ? '导入 GIS 数据' : '导出路由数据'
@@ -55,8 +53,6 @@ const handleDrop = (e: DragEvent) => {
   const files = e.dataTransfer?.files
   if (files && files.length > 0) {
     selectedFile.value = files[0]
-    resultMessage.value = ''
-    resultType.value = ''
   }
 }
 
@@ -65,8 +61,6 @@ const handleFileSelect = (e: Event) => {
   const target = e.target as HTMLInputElement
   if (target.files && target.files.length > 0) {
     selectedFile.value = target.files[0]
-    resultMessage.value = ''
-    resultType.value = ''
   }
 }
 
@@ -75,23 +69,24 @@ const handleImport = async () => {
   if (!selectedFile.value) return
   
   isProcessing.value = true
-  resultMessage.value = ''
   
   try {
     const result = await geoService.importFile(selectedFile.value)
     
     if (result.success) {
-      resultType.value = 'success'
-      resultMessage.value = result.message
       appStore.showNotification({ type: 'success', message: result.message })
       emit('success')
     } else {
-      resultType.value = 'error'
-      resultMessage.value = result.errors?.join(', ') || result.message
+      appStore.showNotification({
+        type: 'error',
+        message: result.errors?.join(', ') || result.message,
+      })
     }
   } catch (error) {
-    resultType.value = 'error'
-    resultMessage.value = (error as Error).message
+    appStore.showNotification({
+      type: 'error',
+      message: `导入失败：${(error as Error).message}`,
+    })
   } finally {
     isProcessing.value = false
   }
@@ -101,8 +96,7 @@ const handleImport = async () => {
 const handleExport = async () => {
   const currentRoute = routeStore.currentRoute
   if (!currentRoute) {
-    resultType.value = 'error'
-    resultMessage.value = '请先选择要导出的路由'
+    appStore.showNotification({ type: 'error', message: '请先选择要导出的路由' })
     return
   }
   
@@ -113,13 +107,13 @@ const handleExport = async () => {
     const filename = `${currentRoute.name}_${Date.now()}.${exportFormat.value}`
     geoService.downloadFile(blob, filename)
     
-    resultType.value = 'success'
-    resultMessage.value = `已导出: ${filename}`
     appStore.showNotification({ type: 'success', message: `路由已导出为 ${filename}` })
     emit('success')
   } catch (error) {
-    resultType.value = 'error'
-    resultMessage.value = (error as Error).message
+    appStore.showNotification({
+      type: 'error',
+      message: `导出失败：${(error as Error).message}`,
+    })
   } finally {
     isProcessing.value = false
   }
@@ -127,8 +121,6 @@ const handleExport = async () => {
 
 const handleClose = () => {
   selectedFile.value = null
-  resultMessage.value = ''
-  resultType.value = ''
   emit('close')
 }
 </script>
@@ -232,18 +224,6 @@ const handleClose = () => {
               </div>
             </div>
           </template>
-
-          <!-- 结果消息 -->
-          <div
-            v-if="resultMessage"
-            :class="[
-              'mt-4 p-3 rounded-lg flex items-center gap-2 text-sm',
-              resultType === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-            ]"
-          >
-            <component :is="resultType === 'success' ? Check : AlertCircle" class="w-4 h-4" />
-            {{ resultMessage }}
-          </div>
         </div>
 
         <!-- 底部操作 -->

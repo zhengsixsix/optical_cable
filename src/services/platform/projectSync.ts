@@ -1,8 +1,8 @@
 import { platformDeviceEntityApi, platformPlanConfigApi, platformPointApi, platformProjectApi } from './api'
-import type { PlanDeviceEntity, PlanPoint, PlanProject } from './types'
+import type { Id, PlanDeviceEntity, PlanPoint, PlanProject } from './types'
 
 export interface SyncPlanningProjectInput {
-  id?: number
+  id?: Id
   name: string
   remarks?: string
   isPublic?: 0 | 1
@@ -21,7 +21,7 @@ export interface SyncPlanningProjectInput {
 }
 
 export interface SyncPlanningProjectResult {
-  projectId: number
+  projectId: Id
   pointsSynced: number
   deviceEntitiesSynced: number
 }

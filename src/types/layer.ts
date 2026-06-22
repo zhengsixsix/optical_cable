@@ -1,4 +1,5 @@
 import type { GeoJSON } from './map'
+import type { GisLayerFormat, GisLayerKind, GisLoadStrategy } from '@/utils/gisFormat'
 
 // 图层类型
 export type LayerType = 'point' | 'heatmap' | 'raster' | 'vector' | 'both'
@@ -23,6 +24,17 @@ export interface LayerMetadata {
   extent?: [number, number, number, number]
   resolution?: number
   bands?: number
+  fileName?: string
+  extension?: string
+  gisFormat?: GisLayerFormat
+  gisKind?: GisLayerKind
+  loadStrategy?: GisLoadStrategy
+  supported?: boolean
+  attachmentId?: number | string | null
+  attachmentName?: string | null
+  platformLayerId?: number | string | null
+  typeDic?: string | null
+  downloadUrl?: string | null
 }
 
 // 图层数据

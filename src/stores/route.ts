@@ -263,6 +263,74 @@ export const useRouteStore = defineStore('route', () => {
     }
   }
 
+  function createTransmissionMockRoute(): Route {
+    const now = new Date()
+    const points: RoutePoint[] = [
+      { id: 'transmission-debug-p0', coordinates: [121.49, 31.23], type: 'landing', name: '调试登陆站 A', depth: 0 },
+      { id: 'transmission-debug-p1', coordinates: [123.2, 29.8], type: 'waypoint', name: '调试路径点 1', depth: 1200 },
+      { id: 'transmission-debug-p2', coordinates: [125.1, 28.4], type: 'waypoint', name: '调试路径点 2', depth: 2400 },
+      { id: 'transmission-debug-p3', coordinates: [127.15, 27.05], type: 'landing', name: '调试登陆站 B', depth: 0 },
+    ]
+    const segmentDepths = [1200, 2400, 1800]
+    const segments: RouteSegment[] = points.slice(0, -1).map((point, index) => {
+      const nextPoint = points[index + 1]
+      const length = Math.round(calculateDistance(point.coordinates, nextPoint.coordinates))
+      return {
+        id: `transmission-debug-s${index}`,
+        startPointId: point.id,
+        endPointId: nextPoint.id,
+        length,
+        depth: segmentDepths[index],
+        cableType: 'LW',
+        riskLevel: 'low',
+        cost: calculateSegmentCost(length, 'low'),
+      }
+    })
+    const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0)
+    const totalCost = segments.reduce((sum, segment) => sum + segment.cost, 0)
+
+    return {
+      id: 'transmission-debug-route',
+      name: '传输系统规划调试路线',
+      points,
+      segments,
+      totalLength,
+      totalCost,
+      riskScore: 0.2,
+      cost: {
+        cable: Math.round(totalCost * 0.7),
+        installation: Math.round(totalCost * 0.2),
+        equipment: Math.round(totalCost * 0.1),
+        total: totalCost,
+      },
+      risk: {
+        seismic: 0.2,
+        volcanic: 0.1,
+        depth: 0.15,
+        overall: 0.2,
+      },
+      distance: totalLength,
+      createdAt: now,
+      updatedAt: now,
+      rawTrunkCoordinates: points.map(point => point.coordinates),
+    }
+  }
+
+  function ensureTransmissionMockRoute(): Route {
+    const existingRoute = selectedRoute.value || paretoRoutes.value[0] || routes.value[0]
+    if (existingRoute) {
+      if (!currentRouteId.value) {
+        currentRouteId.value = existingRoute.id
+        selectedRouteIds.value = [existingRoute.id]
+      }
+      return existingRoute
+    }
+
+    const mockRoute = createTransmissionMockRoute()
+    setParetoRoutes([mockRoute])
+    return mockRoute
+  }
+
   /**
    * 从后端 API 设置 Pareto 路径数据
    * @param apiRoutes 后端返回的路由数据（支持分支网络格式：含 points/branches）
@@ -735,6 +803,7 @@ export const useRouteStore = defineStore('route', () => {
     isRouteSelected,
     clearParetoRoutes,
     setParetoRoutes,
+    ensureTransmissionMockRoute,
     setParetoRoutesFromApi,
     updateRoutePoint,
     addRoutePoint,

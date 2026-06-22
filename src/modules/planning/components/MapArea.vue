@@ -28,6 +28,8 @@ import WebGLPointsLayer from 'ol/layer/WebGLPoints'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
+import GeoTIFFSource from 'ol/source/GeoTIFF'
+import GeoJSONFormat from 'ol/format/GeoJSON'
 import { createBaseTileSource } from '@/utils/mapTileSource'
 import {DragBox, Modify} from 'ol/interaction'
 import Collection from 'ol/Collection'
@@ -40,10 +42,10 @@ import Heatmap from 'ol/layer/Heatmap'
 import {fromLonLat, toLonLat, transform, get as getProjection} from 'ol/proj'
 import 'ol/ol.css'
 
-import {loadVolcanoData, loadEarthquakeData} from '@/utils/dataLoader'
-import { DEFAULT_GEO_TIFF_URL, getCachedGeoTiffSource } from '@/utils/geoTiffCache'
 import {useShpLoader} from '@/services/ShpLoader'
 import {createColdCoralLayers, createFishingLayers, createShippingLayers} from '@/utils/layerFactory'
+import { fetchPlatformAttachmentBlob, isPlatformAttachmentUrl } from '@/services/platform/attachment'
+import shp from 'shpjs'
 
 // 图标资源
 import volcanoIconUrl from '@/assets/volcano.svg'
@@ -82,7 +84,7 @@ const emit = defineEmits<{
 }>()
 
 const mapContainer = ref<HTMLElement | null>(null)
-const loading = ref(true)
+const loading = ref(false)
 const coordinates = ref({lon: 0, lat: 0})
 const isPlanning = ref(false)
 const isEditingRoute = ref(false)
@@ -120,6 +122,8 @@ const canRedoRouteEdit = computed(() => routeEditFuture.value.length > 0)
 const activeRoute = computed(() =>
   routeStore.paretoRoutes.find(route => route.id === activeRouteId.value) || routeStore.selectedRoute || null
 )
+const geoJSONFormat = new GeoJSONFormat()
+const geoTiffRgbStyle = {color: ['array', ['band', 1], ['band', 2], ['band', 3], 1]}
 const visibleRouteGeometryIssues = computed(() => routeGeometryIssues.value.slice(0, 3))
 const visibleCableSegmentIssues = computed(() => cableSegmentIssues.value.slice(0, 4))
 const planningInsightPanelRef = ref<HTMLElement | null>(null)
@@ -204,6 +208,76 @@ const loadShpFeatures = async (url: string) => {
   return shpLoader.parseFeatures(geojsonData)
 }
 
+const loadShpFeaturesFromBlob = async (blob: Blob) => {
+  return useShpLoader().parseFeatures(await shp(await blob.arrayBuffer()))
+}
+
+const loadPlatformAttachmentShpFeatures = async (downloadUrl: string) => {
+  return loadShpFeaturesFromBlob(await fetchPlatformAttachmentBlob(downloadUrl))
+}
+
+const parseGeoJsonFeatures = (geojsonData: unknown) => {
+  return geoJSONFormat.readFeatures(geojsonData as any, {
+    dataProjection: 'EPSG:4326',
+    featureProjection: 'EPSG:4326',
+  })
+}
+
+const loadPlatformAttachmentGeoJsonFeatures = async (downloadUrl: string) => {
+  const blob = await fetchPlatformAttachmentBlob(downloadUrl)
+  return parseGeoJsonFeatures(JSON.parse(await blob.text()))
+}
+
+const getLayerData = (layerId: string) => layerStore.getLayerData(layerId)
+
+const isPlatformLayerData = (layerId: string) => {
+  return getLayerData(layerId)?.metadata.source.startsWith('platform:') ?? false
+}
+
+const isUnavailablePlatformLayer = (layerId: string) => {
+  const layerData = getLayerData(layerId)
+  if (!layerData?.metadata.source.startsWith('platform:')) return false
+  return !layerData.features && !layerData.rasterData && !layerData.metadata.downloadUrl
+}
+
+const getUploadedLayerLabel = (layerId: string) => isPlatformLayerData(layerId) ? '平台上传' : '本地上传'
+
+const getLayerGlobalLoadingKey = (layerId: string) => `layer:${layerId}`
+
+const showLayerGlobalLoading = (layerId: string) => {
+  const layer = layerStore.getLayerById(layerId)
+  appStore.showGlobalLoading('正在加载图层...', layer?.name ?? layerId, getLayerGlobalLoadingKey(layerId))
+}
+
+const hideLayerGlobalLoading = (layerId: string) => {
+  appStore.hideGlobalLoading(getLayerGlobalLoadingKey(layerId))
+}
+
+const failPlatformLayerRender = (layerId: string, message: string, error?: unknown) => {
+  const layer = layerStore.getLayerById(layerId)
+  const suffix = error instanceof Error ? `：${error.message}` : ''
+  appStore.showNotification({
+    type: 'error',
+    message: `${layer?.name ?? layerId}${message}${suffix}`,
+    duration: 5000,
+  })
+  appStore.addLog('ERROR', `${layerId} 图层加载失败: ${message}${suffix}`)
+  layerStore.setLayerLoading(layerId, false)
+  layerStore.setLayerVisible(layerId, false)
+  hideLayerGlobalLoading(layerId)
+}
+
+const notifyPlatformLayerMissingSource = (layerId: string) => {
+  const metadata = getLayerData(layerId)?.metadata
+  const fileName = metadata?.fileName ? `（${metadata.fileName}）` : ''
+  failPlatformLayerRender(layerId, ` 平台图层已上传${fileName}，但接口未返回可下载地址，暂不能加载`)
+}
+
+const notifyUnsupportedUploadedLayer = (layerId: string) => {
+  const metadata = getLayerData(layerId)?.metadata
+  failPlatformLayerRender(layerId, ` 已上传 ${metadata?.gisFormat ?? '未知'} 格式，当前地图暂不支持直接加载`)
+}
+
 const getUploadedVectorFeatures = (layerId: string) => {
   const layerData = layerStore.getLayerData(layerId)
   if (!layerData?.features) return []
@@ -216,8 +290,112 @@ const getUploadedVectorFeatures = (layerId: string) => {
   }
 }
 
-const getUploadedVolcanoData = () => {
-  return getUploadedVectorFeatures('volcano')
+const loadUploadedVectorFeatures = async (layerId: string) => {
+  const layerData = getLayerData(layerId)
+  const localFeatures = getUploadedVectorFeatures(layerId)
+  if (localFeatures.length > 0) return localFeatures
+
+  if (!layerData?.metadata.source.startsWith('platform:')) return []
+  if (isUnavailablePlatformLayer(layerId)) {
+    notifyPlatformLayerMissingSource(layerId)
+    return []
+  }
+
+  const downloadUrl = layerData.metadata.downloadUrl
+  if (!downloadUrl) {
+    notifyPlatformLayerMissingSource(layerId)
+    return []
+  }
+
+  if (layerData.metadata.loadStrategy === 'shapefile-zip-vector') {
+    if (isPlatformAttachmentUrl(downloadUrl)) {
+      return loadPlatformAttachmentShpFeatures(downloadUrl)
+    }
+    return loadShpFeatures(downloadUrl)
+  }
+
+  if (layerData.metadata.loadStrategy === 'geojson-vector') {
+    if (isPlatformAttachmentUrl(downloadUrl)) {
+      return loadPlatformAttachmentGeoJsonFeatures(downloadUrl)
+    }
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`平台图层读取失败: ${response.status}`)
+    return parseGeoJsonFeatures(await response.json())
+  }
+
+  notifyUnsupportedUploadedLayer(layerId)
+  return []
+}
+
+const loadRequiredVectorFeatures = async (layerId: string) => {
+  const uploadedFeatures = await loadUploadedVectorFeatures(layerId)
+  if (uploadedFeatures.length > 0) {
+    return { features: uploadedFeatures, sourceLabel: getUploadedLayerLabel(layerId) }
+  }
+
+  return { features: [], sourceLabel: getUploadedLayerLabel(layerId) }
+}
+
+const createGeoTiffLayer = (source: GeoTIFFSource, visible: boolean) => new WebGLTileLayer({
+  source,
+  style: geoTiffRgbStyle as any,
+  visible,
+  opacity: 1,
+  preload: 2,
+  useInterimTilesOnError: true,
+  cacheSize: 1024,
+})
+
+const createPlatformAttachmentGeoTiffSource = async (downloadUrl: string) => new GeoTIFFSource({
+  sources: [{ blob: await fetchPlatformAttachmentBlob(downloadUrl) }],
+  normalize: true,
+  wrapX: true,
+})
+
+const createUploadedGeoTiffSource = async (layerId: string) => {
+  const layerData = getLayerData(layerId)
+  if (!layerData) return null
+
+  if (layerData.metadata.loadStrategy !== 'geotiff-raster') {
+    notifyUnsupportedUploadedLayer(layerId)
+    return null
+  }
+
+  if (layerData.rasterData) {
+    return {
+      key: `raster:${layerData.metadata.source}:${layerData.rasterData.byteLength}`,
+      source: new GeoTIFFSource({
+        sources: [{ blob: new Blob([layerData.rasterData], { type: 'image/tiff' }) }],
+        normalize: true,
+        wrapX: true,
+      }),
+    }
+  }
+
+  if (!layerData.metadata.downloadUrl) {
+    notifyPlatformLayerMissingSource(layerId)
+    return null
+  }
+
+  if (isPlatformAttachmentUrl(layerData.metadata.downloadUrl)) {
+    return {
+      key: `attachment:${layerData.metadata.downloadUrl}`,
+      source: await createPlatformAttachmentGeoTiffSource(layerData.metadata.downloadUrl),
+    }
+  }
+
+  return {
+    key: `url:${layerData.metadata.downloadUrl}`,
+    source: new GeoTIFFSource({
+      sources: [{ url: layerData.metadata.downloadUrl }],
+      normalize: true,
+      wrapX: true,
+    }),
+  }
+}
+
+const getVolcanoDataFromFeatures = (features: Feature[]) => {
+  return features
     .map(feature => {
       const geometry = feature.getGeometry()
       if (!(geometry instanceof Point)) return null
@@ -227,8 +405,8 @@ const getUploadedVolcanoData = () => {
     .filter((item): item is { longitude: number; latitude: number } => !!item)
 }
 
-const getUploadedEarthquakeData = () => {
-  return getUploadedVectorFeatures('earthquake')
+const getEarthquakeDataFromFeatures = (features: Feature[]) => {
+  return features
     .map(feature => {
       const geometry = feature.getGeometry()
       if (!(geometry instanceof Point)) return null
@@ -248,6 +426,10 @@ const getUploadedEarthquakeData = () => {
     })
     .filter((item): item is { longitude: number; latitude: number; magnitude: number } => !!item)
 }
+
+const loadUploadedVolcanoData = async () => getVolcanoDataFromFeatures(await loadUploadedVectorFeatures('volcano'))
+
+const loadUploadedEarthquakeData = async () => getEarthquakeDataFromFeatures(await loadUploadedVectorFeatures('earthquake'))
 
 // 选中的光纤线
 const selectedCableId = ref<string | null>(null)
@@ -276,11 +458,11 @@ let fishingDataLoaded = false
 let shippingLayers: (VectorLayer<VectorSource> | WebGLPointsLayer<VectorSource>)[] = []
 let shippingDataLoaded = false
 let elevationLayers: WebGLTileLayer[] = []  // 海洋高程 GeoTIFF 图层
+let activeElevationSourceKey = ''
 let routeLayer: VectorLayer<VectorSource> | null = null
 let routeSource: VectorSource | null = null
 let modifyInteraction: Modify | null = null
 const editableFeatures: any = new Collection([])
-const geoTiffUrl = DEFAULT_GEO_TIFF_URL
 let elevationNativeMaxZoom = 18
 let elevationFallbackApplied = false
 
@@ -1104,47 +1286,48 @@ const getSegmentInfo = (routeId: string, segmentIndex: number) => {
 const initMap = () => {
   if (!mapContainer.value) return
 
-  const rgbStyle = {color: ['array', ['band', 1], ['band', 2], ['band', 3], 1]}
-  const geoTiffEntry = getCachedGeoTiffSource(geoTiffUrl)
-  const geoTiffLayers = [
-    new WebGLTileLayer({
-      source: geoTiffEntry.source,
-      style: rgbStyle,
-      visible: true,
-      opacity: 1,
-      preload: 2,
-      useInterimTilesOnError: true,
-      cacheSize: 1024,
+  const bindGeoTiffSource = (source: GeoTIFFSource, layersForSource: WebGLTileLayer[]) => {
+    source.on('tileloadend', () => {
+      loading.value = false
+      layerStore.setLayerLoading('elevation', false)
+      hideLayerGlobalLoading('elevation')
     })
-  ]
+    source.on('tileloaderror', () => {
+      loading.value = false
+      layerStore.setLayerLoading('elevation', false)
+      hideLayerGlobalLoading('elevation')
+      if (!map) return
 
-  if (geoTiffEntry.loaded || geoTiffEntry.failed) {
-    loading.value = false
-  }
+      const currentZoom = map.getView().getZoom() ?? 0
+      if (currentZoom < elevationNativeMaxZoom - 0.25) return
 
-  geoTiffEntry.source.on('tileloadend', () => {
-    loading.value = false
-  })
-  geoTiffEntry.source.on('tileloaderror', () => {
-    loading.value = false
-    if (!map) return
+      const fallbackMaxZoom = Math.max(0, Math.min(elevationNativeMaxZoom, currentZoom - 0.01))
+      layersForSource.forEach(layer => {
+        const currentMaxZoom = layer.getMaxZoom()
+        if (!Number.isFinite(currentMaxZoom) || fallbackMaxZoom < currentMaxZoom) {
+          layer.setMaxZoom(fallbackMaxZoom)
+        }
+      })
 
-    const currentZoom = map.getView().getZoom() ?? 0
-    if (currentZoom < elevationNativeMaxZoom - 0.25) return
-
-    const fallbackMaxZoom = Math.max(0, Math.min(elevationNativeMaxZoom, currentZoom - 0.01))
-    elevationLayers.forEach(layer => {
-      const currentMaxZoom = layer.getMaxZoom()
-      if (!Number.isFinite(currentMaxZoom) || fallbackMaxZoom < currentMaxZoom) {
-        layer.setMaxZoom(fallbackMaxZoom)
+      if (!elevationFallbackApplied) {
+        elevationFallbackApplied = true
+        appStore.addLog('INFO', `海洋高程图在高倍率缺少瓦片，已自动保持在 ${fallbackMaxZoom.toFixed(2)} 级以下显示`)
       }
     })
 
-    if (!elevationFallbackApplied) {
-      elevationFallbackApplied = true
-      appStore.addLog('INFO', `海洋高程图在高倍率缺少瓦片，已自动保持在 ${fallbackMaxZoom.toFixed(2)} 级以下显示`)
-    }
-  })
+    source.getView().then((options: any) => {
+      if (options.extent) {
+        map?.getView().fit(options.extent, {padding: [20, 20, 20, 20]})
+      }
+      if (options.resolutions) {
+        elevationNativeMaxZoom = Math.min(options.resolutions.length - 1, 18)
+        layersForSource.forEach(layer => layer.setMaxZoom(elevationNativeMaxZoom))
+      }
+    }).catch(() => {
+    })
+  }
+
+  const geoTiffLayers: WebGLTileLayer[] = []
 
   // 保存到模块变量，供图层控制使用
   elevationLayers = geoTiffLayers
@@ -1164,18 +1347,58 @@ const initMap = () => {
     }),
   })
 
-  if (geoTiffLayers.length > 0) {
-    const source = geoTiffLayers[0].getSource()
-    source?.getView().then((options: any) => {
-      if (options.extent) {
-        map?.getView().fit(options.extent, {padding: [20, 20, 20, 20]})
+  const setElevationSource = (key: string, source: GeoTIFFSource, visible: boolean) => {
+    if (!map) return
+    if (activeElevationSourceKey === key) {
+      elevationLayers.forEach(layer => layer.setVisible(visible))
+      return
+    }
+
+    elevationLayers.forEach(layer => map!.removeLayer(layer))
+    const nextLayers = [createGeoTiffLayer(source, visible)]
+    elevationLayers = nextLayers
+    activeElevationSourceKey = key
+    bindGeoTiffSource(source, nextLayers)
+    nextLayers.forEach(layer => map!.addLayer(layer))
+  }
+
+  const setElevationVisible = async (visible: boolean) => {
+    if (!visible) {
+      elevationLayers.forEach(layer => layer.setVisible(false))
+      layerStore.setLayerLoading('elevation', false)
+      hideLayerGlobalLoading('elevation')
+      return
+    }
+
+    showLayerGlobalLoading('elevation')
+    layerStore.setLayerLoading('elevation', true)
+
+    try {
+      const uploadedSource = await createUploadedGeoTiffSource('elevation')
+      if (uploadedSource) {
+        loading.value = true
+        setElevationSource(uploadedSource.key, uploadedSource.source, true)
+        setTimeout(() => {
+          if (layerStore.getLayerById('elevation')?.loading) {
+            layerStore.setLayerLoading('elevation', false)
+            hideLayerGlobalLoading('elevation')
+          }
+        }, 3000)
+        return
       }
-      if (options.resolutions) {
-        elevationNativeMaxZoom = Math.min(options.resolutions.length - 1, 18)
-        geoTiffLayers.forEach(layer => layer.setMaxZoom(elevationNativeMaxZoom))
+
+      if (layerStore.getLayerVisible('elevation')) {
+        failPlatformLayerRender('elevation', ' 没有可加载的 GeoTIFF 数据')
       }
-    }).catch(() => {
-    })
+    } catch (error) {
+      failPlatformLayerRender('elevation', ' GeoTIFF 加载失败', error)
+    } finally {
+      if (!layerStore.getLayerVisible('elevation')) {
+        loading.value = false
+        layerStore.setLayerLoading('elevation', false)
+        hideLayerGlobalLoading('elevation')
+      }
+    }
   }
 
   map.on('pointermove', (evt) => {
@@ -1356,70 +1579,77 @@ const initMap = () => {
   const loadAndRenderVolcano = async () => {
     if (!map || volcanoDataLoaded) return
 
+    showLayerGlobalLoading('volcano')
     layerStore.setLayerLoading('volcano', true)
 
-    const uploadedVolcanoData = getUploadedVolcanoData()
-    const volcanoData = uploadedVolcanoData.length > 0
-      ? uploadedVolcanoData
-      : await loadVolcanoData('/data/volcane_location.xlsx')
-    if (volcanoData.length === 0) {
+    try {
+      const volcanoData = await loadUploadedVolcanoData()
+      if (volcanoData.length === 0) {
+        if (layerStore.getLayerVisible('volcano')) {
+          failPlatformLayerRender('volcano', ' 没有可加载的图层数据')
+        }
+        return
+      }
+      const volcanoFeatures = volcanoData.map((volcano) => {
+        return new Feature({
+          geometry: new Point([volcano.longitude, volcano.latitude]),
+          name: '火山',
+          type: 'volcano'
+        })
+      })
+
+      const volcanoStyle = new Style({
+        image: new Icon({
+          src: volcanoIconUrl,
+          scale: 0.6,
+          anchor: [0.5, 1],
+        })
+      })
+
+      const volcanoIconSource = new VectorSource({features: volcanoFeatures})
+
+      volcanoIconLayer = new VectorLayer({
+        source: volcanoIconSource,
+        style: volcanoStyle,
+        zIndex: 100,
+        visible: true
+      })
+
+      const volcanoHeatmapFeatures = volcanoData.map((volcano) => {
+        return new Feature({
+          geometry: new Point([volcano.longitude, volcano.latitude]),
+          weight: 1
+        })
+      })
+
+      const volcanoHeatmapSource = new VectorSource({features: volcanoHeatmapFeatures})
+
+      volcanoHeatmapLayer = new Heatmap({
+        source: volcanoHeatmapSource,
+        blur: 25,
+        radius: 15,
+        weight: (feature) => feature.get('weight') || 1,
+        gradient: ['#00f', '#0ff', '#0f0', '#ff0', '#f00'],
+        opacity: 0.6,
+        zIndex: 50,
+        visible: false
+      })
+
+      map.addLayer(volcanoHeatmapLayer)
+      map.addLayer(volcanoIconLayer)
+
+      volcanoDataLoaded = true
+      layerStore.setLayerLoaded('volcano', true)
+
+      const sourceLabel = getUploadedLayerLabel('volcano')
+      appStore.showNotification({type: 'success', message: `已加载 ${volcanoData.length} 个火山位置（${sourceLabel}）`})
+      appStore.addLog('INFO', `火山数据加载完成: ${volcanoData.length} 个点位（${sourceLabel}）`)
+    } catch (error) {
+      failPlatformLayerRender('volcano', ' 加载失败', error)
+    } finally {
       layerStore.setLayerLoading('volcano', false)
-      return
+      hideLayerGlobalLoading('volcano')
     }
-    const volcanoFeatures = volcanoData.map((volcano) => {
-      return new Feature({
-        geometry: new Point([volcano.longitude, volcano.latitude]),
-        name: '火山',
-        type: 'volcano'
-      })
-    })
-
-    const volcanoStyle = new Style({
-      image: new Icon({
-        src: volcanoIconUrl,
-        scale: 0.6,
-        anchor: [0.5, 1],
-      })
-    })
-
-    const volcanoIconSource = new VectorSource({features: volcanoFeatures})
-
-    volcanoIconLayer = new VectorLayer({
-      source: volcanoIconSource,
-      style: volcanoStyle,
-      zIndex: 100,
-      visible: true
-    })
-
-    const volcanoHeatmapFeatures = volcanoData.map((volcano) => {
-      return new Feature({
-        geometry: new Point([volcano.longitude, volcano.latitude]),
-        weight: 1
-      })
-    })
-
-    const volcanoHeatmapSource = new VectorSource({features: volcanoHeatmapFeatures})
-
-    volcanoHeatmapLayer = new Heatmap({
-      source: volcanoHeatmapSource,
-      blur: 25,
-      radius: 15,
-      weight: (feature) => feature.get('weight') || 1,
-      gradient: ['#00f', '#0ff', '#0f0', '#ff0', '#f00'],
-      opacity: 0.6,
-      zIndex: 50,
-      visible: false
-    })
-
-    map.addLayer(volcanoHeatmapLayer)
-    map.addLayer(volcanoIconLayer)
-
-    volcanoDataLoaded = true
-    layerStore.setLayerLoaded('volcano', true)
-
-    const sourceLabel = uploadedVolcanoData.length > 0 ? '本地上传' : '默认数据'
-    appStore.showNotification({type: 'success', message: `已加载 ${volcanoData.length} 个火山位置（${sourceLabel}）`})
-    appStore.addLog('INFO', `火山数据加载完成: ${volcanoData.length} 个点位（${sourceLabel}）`)
   }
 
   const setVolcanoPointsVisible = (visible: boolean) => {
@@ -1431,89 +1661,96 @@ const initMap = () => {
   const loadAndRenderEarthquake = async () => {
     if (!map || earthquakeDataLoaded) return
 
+    showLayerGlobalLoading('earthquake')
     layerStore.setLayerLoading('earthquake', true)
 
-    const uploadedEarthquakeData = getUploadedEarthquakeData()
-    const earthquakeData = uploadedEarthquakeData.length > 0
-      ? uploadedEarthquakeData
-      : await loadEarthquakeData('/data/earthQuakeData.xlsx')
-    if (earthquakeData.length === 0) {
-      layerStore.setLayerLoading('earthquake', false)
-      return
-    }
-    const locationMap: Record<string, number> = {}
-    earthquakeData.forEach((eq) => {
-      const key = `${eq.longitude.toFixed(4)},${eq.latitude.toFixed(4)}`
-      const existing = locationMap[key] || 0
-      if (eq.magnitude > existing) locationMap[key] = eq.magnitude
-    })
-
-    const uniqueLocations = Object.keys(locationMap)
-    const earthquakeFeatures = earthquakeData.map((eq) => {
-      return new Feature({
-        geometry: new Point([eq.longitude, eq.latitude]),
-        magnitude: eq.magnitude
+    try {
+      const earthquakeData = await loadUploadedEarthquakeData()
+      if (earthquakeData.length === 0) {
+        if (layerStore.getLayerVisible('earthquake')) {
+          failPlatformLayerRender('earthquake', ' 没有可加载的图层数据')
+        }
+        return
+      }
+      const locationMap: Record<string, number> = {}
+      earthquakeData.forEach((eq) => {
+        const key = `${eq.longitude.toFixed(4)},${eq.latitude.toFixed(4)}`
+        const existing = locationMap[key] || 0
+        if (eq.magnitude > existing) locationMap[key] = eq.magnitude
       })
-    })
 
-    const earthquakeIconSource = new VectorSource({features: earthquakeFeatures})
+      const uniqueLocations = Object.keys(locationMap)
+      const earthquakeFeatures = earthquakeData.map((eq) => {
+        return new Feature({
+          geometry: new Point([eq.longitude, eq.latitude]),
+          magnitude: eq.magnitude
+        })
+      })
 
-    const webglStyle = {
-      'circle-radius': [
-        'interpolate', ['linear'], ['get', 'magnitude'],
-        0, 2, 4, 4, 6, 8, 8, 12, 10, 16
-      ],
-      'circle-fill-color': [
-        'interpolate', ['linear'], ['get', 'magnitude'],
-        0, 'rgba(0, 255, 0, 0.6)',
-        3, 'rgba(255, 255, 0, 0.7)',
-        5, 'rgba(255, 165, 0, 0.8)',
-        7, 'rgba(255, 0, 0, 0.9)',
-        9, 'rgba(139, 0, 0, 1)'
-      ],
-      'circle-stroke-color': 'rgba(255, 255, 255, 0.8)',
-      'circle-stroke-width': 1,
+      const earthquakeIconSource = new VectorSource({features: earthquakeFeatures})
+
+      const webglStyle = {
+        'circle-radius': [
+          'interpolate', ['linear'], ['get', 'magnitude'],
+          0, 2, 4, 4, 6, 8, 8, 12, 10, 16
+        ],
+        'circle-fill-color': [
+          'interpolate', ['linear'], ['get', 'magnitude'],
+          0, 'rgba(0, 255, 0, 0.6)',
+          3, 'rgba(255, 255, 0, 0.7)',
+          5, 'rgba(255, 165, 0, 0.8)',
+          7, 'rgba(255, 0, 0, 0.9)',
+          9, 'rgba(139, 0, 0, 1)'
+        ],
+        'circle-stroke-color': 'rgba(255, 255, 255, 0.8)',
+        'circle-stroke-width': 1,
+      }
+
+      earthquakeIconLayer = new WebGLPointsLayer({
+        source: earthquakeIconSource,
+        style: webglStyle,
+        zIndex: 100,
+        visible: true
+      }) as any
+
+      const earthquakeHeatmapFeatures: Feature[] = []
+      uniqueLocations.forEach((key: string) => {
+        const magnitude = locationMap[key]
+        const [lon, lat] = key.split(',').map(Number)
+        earthquakeHeatmapFeatures.push(new Feature({
+          geometry: new Point([lon, lat]),
+          weight: magnitude / 10
+        }))
+      })
+
+      const earthquakeHeatmapSource = new VectorSource({features: earthquakeHeatmapFeatures})
+
+      earthquakeHeatmapLayer = new Heatmap({
+        source: earthquakeHeatmapSource,
+        blur: 20,
+        radius: 12,
+        weight: (feature) => feature.get('weight') || 0.5,
+        gradient: ['#0000FF', '#00FFFF', '#00FF00', '#FFFF00', '#FFA500', '#FF0000'],
+        opacity: 0.7,
+        zIndex: 50,
+        visible: false
+      })
+
+      map.addLayer(earthquakeHeatmapLayer)
+      if (earthquakeIconLayer) map.addLayer(earthquakeIconLayer as any)
+
+      earthquakeDataLoaded = true
+      layerStore.setLayerLoaded('earthquake', true)
+
+      const sourceLabel = getUploadedLayerLabel('earthquake')
+      appStore.showNotification({type: 'success', message: `已加载 ${earthquakeData.length} 条地震数据（${sourceLabel}）`})
+      appStore.addLog('INFO', `地震数据加载完成: ${earthquakeData.length} 条记录（${sourceLabel}）`)
+    } catch (error) {
+      failPlatformLayerRender('earthquake', ' 加载失败', error)
+    } finally {
+      layerStore.setLayerLoading('earthquake', false)
+      hideLayerGlobalLoading('earthquake')
     }
-
-    earthquakeIconLayer = new WebGLPointsLayer({
-      source: earthquakeIconSource,
-      style: webglStyle,
-      zIndex: 100,
-      visible: true
-    }) as any
-
-    const earthquakeHeatmapFeatures: Feature[] = []
-    uniqueLocations.forEach((key: string) => {
-      const magnitude = locationMap[key]
-      const [lon, lat] = key.split(',').map(Number)
-      earthquakeHeatmapFeatures.push(new Feature({
-        geometry: new Point([lon, lat]),
-        weight: magnitude / 10
-      }))
-    })
-
-    const earthquakeHeatmapSource = new VectorSource({features: earthquakeHeatmapFeatures})
-
-    earthquakeHeatmapLayer = new Heatmap({
-      source: earthquakeHeatmapSource,
-      blur: 20,
-      radius: 12,
-      weight: (feature) => feature.get('weight') || 0.5,
-      gradient: ['#0000FF', '#00FFFF', '#00FF00', '#FFFF00', '#FFA500', '#FF0000'],
-      opacity: 0.7,
-      zIndex: 50,
-      visible: false
-    })
-
-    map.addLayer(earthquakeHeatmapLayer)
-    if (earthquakeIconLayer) map.addLayer(earthquakeIconLayer as any)
-
-    earthquakeDataLoaded = true
-    layerStore.setLayerLoaded('earthquake', true)
-
-    const sourceLabel = uploadedEarthquakeData.length > 0 ? '本地上传' : '默认数据'
-    appStore.showNotification({type: 'success', message: `已加载 ${earthquakeData.length} 条地震数据（${sourceLabel}）`})
-    appStore.addLog('INFO', `地震数据加载完成: ${earthquakeData.length} 条记录（${sourceLabel}）`)
   }
 
   const setEarthquakePointsVisible = (visible: boolean) => {
@@ -1553,15 +1790,15 @@ const initMap = () => {
   const loadAndRenderColdCoral = async () => {
     if (!map || coldCoralDataLoaded) return
 
+    showLayerGlobalLoading('coldCoral')
     layerStore.setLayerLoading('coldCoral', true)
 
     try {
-      const uploadedFeatures = getUploadedVectorFeatures('coldCoral')
-      const features = uploadedFeatures.length > 0
-        ? uploadedFeatures
-        : await loadShpFeatures('/data/海草.zip')
+      const { features, sourceLabel } = await loadRequiredVectorFeatures('coldCoral')
       if (features.length === 0) {
-        layerStore.setLayerLoading('coldCoral', false)
+        if (layerStore.getLayerVisible('coldCoral')) {
+          failPlatformLayerRender('coldCoral', ' 没有可加载的图层数据')
+        }
         return
       }
 
@@ -1575,14 +1812,13 @@ const initMap = () => {
       })
 
       if (layers.length === 0) {
-        layerStore.setLayerLoading('coldCoral', false)
+        failPlatformLayerRender('coldCoral', ' 没有生成可渲染图层')
         return
       }
 
       coldCoralDataLoaded = true
       layerStore.setLayerLoaded('coldCoral', true)
 
-      const sourceLabel = uploadedFeatures.length > 0 ? '本地上传' : '默认数据'
       appStore.showNotification({type: 'success', message: `已加载冷水珊瑚数据，共 ${layers.length} 个图层（${sourceLabel}）`})
       appStore.addLog('INFO', `冷水珊瑚数据加载完成（${sourceLabel}）`)
 
@@ -1613,9 +1849,11 @@ const initMap = () => {
         })
       }
 
-    } catch {
+    } catch (error) {
+      failPlatformLayerRender('coldCoral', ' 加载失败', error)
+    } finally {
       layerStore.setLayerLoading('coldCoral', false)
-      appStore.showNotification({type: 'error', message: '加载冷水珊瑩数据失败'})
+      hideLayerGlobalLoading('coldCoral')
     }
   }
 
@@ -1641,15 +1879,15 @@ const initMap = () => {
   const loadAndRenderFishing = async () => {
     if (!map || fishingDataLoaded) return
 
+    showLayerGlobalLoading('fishing')
     layerStore.setLayerLoading('fishing', true)
 
     try {
-      const uploadedFeatures = getUploadedVectorFeatures('fishing')
-      const features = uploadedFeatures.length > 0
-        ? uploadedFeatures
-        : await loadShpFeatures('/data/渔业数据.zip')
+      const { features, sourceLabel } = await loadRequiredVectorFeatures('fishing')
       if (features.length === 0) {
-        layerStore.setLayerLoading('fishing', false)
+        if (layerStore.getLayerVisible('fishing')) {
+          failPlatformLayerRender('fishing', ' 没有可加载的图层数据')
+        }
         return
       }
 
@@ -1660,16 +1898,22 @@ const initMap = () => {
         fishingLayers.push(layer)
       })
 
+      if (layers.length === 0) {
+        failPlatformLayerRender('fishing', ' 没有生成可渲染图层')
+        return
+      }
+
       fishingDataLoaded = true
       layerStore.setLayerLoaded('fishing', true)
 
-      const sourceLabel = uploadedFeatures.length > 0 ? '本地上传' : '默认数据'
       appStore.showNotification({type: 'success', message: `已加载渔业数据，共 ${features.length} 个要素（${sourceLabel}）`})
       appStore.addLog('INFO', `渔业数据加载完成（${sourceLabel}）`)
 
-    } catch {
+    } catch (error) {
+      failPlatformLayerRender('fishing', ' 加载失败', error)
+    } finally {
       layerStore.setLayerLoading('fishing', false)
-      appStore.showNotification({type: 'error', message: '加载渔业数据失败'})
+      hideLayerGlobalLoading('fishing')
     }
   }
 
@@ -1695,15 +1939,15 @@ const initMap = () => {
   const loadAndRenderShipping = async () => {
     if (!map || shippingDataLoaded) return
 
+    showLayerGlobalLoading('shipping')
     layerStore.setLayerLoading('shipping', true)
 
     try {
-      const uploadedFeatures = getUploadedVectorFeatures('shipping')
-      const features = uploadedFeatures.length > 0
-        ? uploadedFeatures
-        : await loadShpFeatures('/data/航道数据.zip')
+      const { features, sourceLabel } = await loadRequiredVectorFeatures('shipping')
       if (features.length === 0) {
-        layerStore.setLayerLoading('shipping', false)
+        if (layerStore.getLayerVisible('shipping')) {
+          failPlatformLayerRender('shipping', ' 没有可加载的图层数据')
+        }
         return
       }
 
@@ -1714,16 +1958,22 @@ const initMap = () => {
         shippingLayers.push(layer)
       })
 
+      if (layers.length === 0) {
+        failPlatformLayerRender('shipping', ' 没有生成可渲染图层')
+        return
+      }
+
       shippingDataLoaded = true
       layerStore.setLayerLoaded('shipping', true)
 
-      const sourceLabel = uploadedFeatures.length > 0 ? '本地上传' : '默认数据'
       appStore.showNotification({type: 'success', message: `已加载航道数据，共 ${features.length} 个要素（${sourceLabel}）`})
       appStore.addLog('INFO', `航道数据加载完成（${sourceLabel}）`)
 
-    } catch {
+    } catch (error) {
+      failPlatformLayerRender('shipping', ' 加载失败', error)
+    } finally {
       layerStore.setLayerLoading('shipping', false)
-      appStore.showNotification({type: 'error', message: '加载航道数据失败'})
+      hideLayerGlobalLoading('shipping')
     }
   }
 
@@ -1747,18 +1997,24 @@ const initMap = () => {
 
   // 监听海洋高程图层可见性（控制 GeoTIFF 底图）
   watch(
-      () => layerStore.layers.find(l => l.id === 'elevation')?.visible,
-      (visible) => {
-        elevationLayers.forEach(layer => layer.setVisible(visible ?? true))
+      () => {
+        const elevationLayer = layerStore.layers.find(l => l.id === 'elevation')
+        const elevationData = layerStore.getLayerData('elevation')
+        return {
+          visible: Boolean(elevationLayer?.visible),
+          source: elevationData?.metadata.source ?? '',
+          downloadUrl: elevationData?.metadata.downloadUrl ?? '',
+          rasterSize: elevationData?.rasterData?.byteLength ?? 0,
+        }
+      },
+      async ({ visible }) => {
+        await setElevationVisible(visible)
       },
       {immediate: false}
   )
 
   setTimeout(() => {
     loading.value = false
-    if (!geoTiffEntry.loaded && !geoTiffEntry.failed) {
-      appStore.showNotification({type: 'warning', message: 'GeoTIFF 文件较大，加载中...'})
-    }
   }, 8000)
 
   appStore.addLog('INFO', '地图初始化完成')
@@ -3109,6 +3365,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleRouteEditKeydown)
   stopPlanningInsightDrag()
+  appStore.hideGlobalLoading()
   if (map) {
     map.setTarget(undefined)
     map = null
@@ -3205,7 +3462,7 @@ onUnmounted(() => {
       <div ref="mapContainer" class="w-full h-full"/>
 
       <!-- 加载状态 -->
-      <div v-if="loading" class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center gap-3 z-50">
+      <div v-if="loading && appStore.hasOpenProject" class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center gap-3 z-50">
         <Loader2 class="w-8 h-8 text-primary animate-spin"/>
         <span class="text-sm text-gray-600">正在加载 GeoTIFF 数据...</span>
       </div>

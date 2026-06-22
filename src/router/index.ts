@@ -17,7 +17,7 @@ const routes: RouteRecordRaw[] = [
         path: '/design',
         name: 'design',
         component: () => import('@/views/DesignView.vue'),
-        meta: {title: '系统设计', requiresAuth: true, requiresUSE: true},
+        meta: {title: '系统设计', requiresAuth: true},
     },
     {
         path: '/monitoring',
@@ -125,18 +125,15 @@ router.beforeEach(async (to, from, next) => {
         return
     }
 
-// 系统设计页面需要路由数据
-    if (to.meta.requiresUSE) {
+    if (to.name === 'design') {
+        appStore.setProjectPhase('transmission-planning')
+    }
+
+// 监控页面需要路由数据
+    if (to.name === 'monitoring') {
         const routeStore = useRouteStore()
-        
-        // 自动切换项目阶段
-        if (to.name === 'design') {
-            appStore.setProjectPhase('transmission-planning')
-        } else if (to.name === 'monitoring') {
-            appStore.setProjectPhase('monitoring')
-        }
-        
-        // 仅检查是否有路由数据，RPL 生成由 DesignView 显式处理
+        appStore.setProjectPhase('monitoring')
+
         const selectedRoute = routeStore.selectedRoute || routeStore.paretoRoutes[0]
         if (!selectedRoute || !selectedRoute.points || selectedRoute.points.length < 2) {
             appStore.showNotification({

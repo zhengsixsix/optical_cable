@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import * as XLSX from 'xlsx'
-import { X, Upload, FolderOpen, FileText, Loader2, Check, AlertCircle } from 'lucide-vue-next'
+import { X, FileText, Loader2 } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
 import { useAppStore } from '@/stores/app'
 import { useConnectorStore } from '@/stores/connector'
@@ -41,8 +41,6 @@ const projectManager = useProjectManager()
 const selectedFile = ref<File | null>(null)
 const filePath = ref('')
 const isProcessing = ref(false)
-const resultMessage = ref('')
-const resultType = ref<'success' | 'error' | ''>('')
 
 // 导入选项
 const options = ref({
@@ -117,10 +115,12 @@ watch(() => props.visible, (visible) => {
   if (visible) {
     selectedFile.value = null
     filePath.value = ''
-    resultMessage.value = ''
-    resultType.value = ''
   }
 })
+
+function notifyImportError(message: string) {
+  appStore.showNotification({ type: 'error', message })
+}
 
 // 浏览文件
 const handleBrowse = () => {
@@ -133,8 +133,6 @@ const handleBrowse = () => {
     if (file) {
       selectedFile.value = file
       filePath.value = file.name
-      resultMessage.value = ''
-      resultType.value = ''
     }
   }
   
@@ -144,13 +142,11 @@ const handleBrowse = () => {
 // 执行导入
 const handleImport = async () => {
   if (!selectedFile.value) {
-    resultType.value = 'error'
-    resultMessage.value = '请先选择要导入的文件'
+    notifyImportError('请先选择要导入的文件')
     return
   }
   
   isProcessing.value = true
-  resultMessage.value = ''
   
   try {
     switch (props.importType) {
@@ -165,8 +161,7 @@ const handleImport = async () => {
         break
     }
   } catch (error) {
-    resultType.value = 'error'
-    resultMessage.value = (error as Error).message || '导入失败'
+    notifyImportError((error as Error).message || '导入失败')
   } finally {
     isProcessing.value = false
   }
@@ -178,8 +173,7 @@ const importProject = async () => {
   
   // 检查当前是否有未保存的项目
   if (projectManager.hasOpenProject.value && projectManager.isDirty.value && !options.value.overwriteExisting) {
-    resultType.value = 'error'
-    resultMessage.value = '当前项目有未保存的更改，请先保存或勾选"覆盖现有数据"'
+    notifyImportError('当前项目有未保存的更改，请先保存或勾选"覆盖现有数据"')
     return
   }
   
@@ -192,17 +186,15 @@ const importProject = async () => {
       appStore.setCurrentProject(currentProject)
     }
     
-    resultType.value = 'success'
-    resultMessage.value = `项目导入成功: ${selectedFile.value.name}`
-    appStore.showNotification({ type: 'success', message: resultMessage.value })
+    const successMessage = `项目导入成功: ${selectedFile.value.name}`
+    appStore.showNotification({ type: 'success', message: successMessage })
     
     setTimeout(() => {
       emit('success')
       emit('close')
     }, 1000)
   } else {
-    resultType.value = 'error'
-    resultMessage.value = result.error || '项目导入失败'
+    notifyImportError(result.error || '项目导入失败')
   }
 }
 
@@ -238,9 +230,8 @@ const importRPL = async () => {
     if (success) {
       syncImportedRplToViews(tableName)
       projectManager.markDirty()
-      resultType.value = 'success'
-      resultMessage.value = `RPL 文件导入成功: ${rplStore.currentTable?.records.length || 0} 条记录`
-      appStore.showNotification({ type: 'success', message: resultMessage.value })
+      const successMessage = `RPL 文件导入成功: ${rplStore.currentTable?.records.length || 0} 条记录`
+      appStore.showNotification({ type: 'success', message: successMessage })
       appStore.addLog('INFO', `导入 RPL 文件: ${selectedFile.value.name}，已同步地图与系统视图`)
       
       setTimeout(() => {
@@ -248,8 +239,7 @@ const importRPL = async () => {
         emit('close')
       }, 1000)
     } else {
-      resultType.value = 'error'
-      resultMessage.value = 'RPL 文件格式无效'
+      notifyImportError('RPL 文件格式无效')
     }
   } catch (error) {
     throw new Error(`读取 RPL 文件失败: ${(error as Error).message}`)
@@ -343,18 +333,6 @@ const handleClose = () => {
               />
               <span class="text-sm text-gray-700">导入前预览</span>
             </label>
-          </div>
-
-          <!-- 结果消息 -->
-          <div
-            v-if="resultMessage"
-            :class="[
-              'mt-4 p-3 rounded-lg flex items-center gap-2 text-sm',
-              resultType === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-            ]"
-          >
-            <component :is="resultType === 'success' ? Check : AlertCircle" class="w-4 h-4 shrink-0" />
-            {{ resultMessage }}
           </div>
         </div>
 

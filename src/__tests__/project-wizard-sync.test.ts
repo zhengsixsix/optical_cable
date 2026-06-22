@@ -113,6 +113,13 @@ describe('project wizard step sync', () => {
 
   it('saves one confirmed GIS layer, uploads the file, and binds the completed upload', async () => {
     const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/plan/project/save')) {
+        return {
+          ok: true,
+          json: async () => ({ flag: 1, code: '200', msg: 'success', data: 88 }),
+        }
+      }
+
       if (url.includes('/plan/planLayer/save')) {
         return {
           ok: true,
@@ -148,9 +155,20 @@ describe('project wizard step sync', () => {
       typeDic: 'BATHY',
     }, { uploadFile, onLayerProgress })
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
+      expect.stringContaining('/plan/project/save'),
+      expect.objectContaining({
+        body: JSON.stringify({
+          name: '海缆项目A',
+          remarks: 'USE project',
+          isPublic: 1,
+        }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
       expect.stringContaining('/plan/planLayer/save'),
       expect.objectContaining({
         body: JSON.stringify({
@@ -158,6 +176,7 @@ describe('project wizard step sync', () => {
           remarks: '海洋高程图 - bathy.tif',
           isPublic: 1,
           isDefault: 0,
+          projectId: 88,
           typeDic: 'BATHY',
         }),
       }),
@@ -166,7 +185,7 @@ describe('project wizard step sync', () => {
       onProgress: expect.any(Function),
     }))
     expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
+      3,
       expect.stringContaining('/sys/upload/complete'),
       expect.objectContaining({
         body: JSON.stringify({
@@ -186,6 +205,79 @@ describe('project wizard step sync', () => {
       fileName: 'bathy.tif',
       uploadUrl: 'http://47.92.110.176:9108/sys/upload/files/bathy',
     })
+  })
+
+  it('creates the platform project before uploading a layer and sends the returned project id', async () => {
+    const returnedProjectId = '2586209606847954945'
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/plan/project/save')) {
+        return {
+          ok: true,
+          json: async () => ({ flag: 1, code: '200', msg: 'success', data: returnedProjectId }),
+        }
+      }
+
+      if (url.includes('/plan/planLayer/save')) {
+        return {
+          ok: true,
+          json: async () => ({ flag: 1, code: '200', msg: 'success', data: 99 }),
+        }
+      }
+
+      return {
+        ok: true,
+        json: async () => ({ flag: 1, code: '200', msg: 'success', data: true }),
+      }
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const state = createProjectWizardSyncState()
+    const file = new File(['abc'], 'bathy.tif', { type: 'image/tiff' })
+    const uploadFile = vi.fn(async () => ({
+      uploadUrl: 'http://localhost:4395/platform-api/sys/upload/files/bathy',
+      fileName: 'bathy.tif',
+      fileSize: file.size,
+    }))
+
+    await uploadProjectWizardLayer(state, {
+      projectType: 'use',
+      projectName: 'Project A',
+      allowOtherUsers: true,
+    }, {
+      key: 'elevation',
+      label: 'Bathymetry layer',
+      checked: true,
+      value: 'bathy.tif',
+      file,
+      typeDic: 'BATHY',
+    }, { uploadFile })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('/plan/project/save'),
+      expect.objectContaining({
+        body: JSON.stringify({
+          name: 'Project A',
+          remarks: 'USE project',
+          isPublic: 1,
+        }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/plan/planLayer/save'),
+      expect.objectContaining({
+        body: JSON.stringify({
+          name: 'Bathymetry layer',
+          remarks: 'Bathymetry layer - bathy.tif',
+          isPublic: 1,
+          isDefault: 0,
+          projectId: returnedProjectId,
+          typeDic: 'BATHY',
+        }),
+      }),
+    )
+    expect(state.projectId).toBe(returnedProjectId)
   })
 
   it('saves stations and route config when leaving step 2', async () => {

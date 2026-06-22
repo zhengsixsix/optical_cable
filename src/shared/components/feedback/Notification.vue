@@ -53,12 +53,12 @@ const getStyles = (type: string) => {
           v-for="notification in notifications"
           :key="notification.id"
           :class="[
-            'px-4 py-3 rounded-lg shadow-lg text-sm max-w-sm flex items-center gap-2 pointer-events-auto',
+            'px-4 py-3 rounded-lg shadow-lg text-sm w-[min(24rem,calc(100vw-2rem))] max-h-40 overflow-auto flex items-start gap-2 pointer-events-auto break-words',
             getStyles(notification.type),
           ]"
         >
-          <component :is="getIcon(notification.type)" class="w-4 h-4 shrink-0" />
-          <span class="flex-1">{{ notification.message }}</span>
+          <component :is="getIcon(notification.type)" class="w-4 h-4 shrink-0 mt-0.5" />
+          <span class="flex-1 min-w-0 leading-5">{{ notification.message }}</span>
           <button
             class="p-0.5 hover:bg-white/20 rounded transition-colors"
             @click="emit('remove', notification.id)"

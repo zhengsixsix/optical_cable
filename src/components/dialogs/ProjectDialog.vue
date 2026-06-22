@@ -3,8 +3,8 @@ import { ref, computed, watch } from 'vue'
 import { FilePlus, FolderOpen, Save, X, Loader2, RefreshCw, Trash2, HardDrive, ArrowRight, CheckCircle2, Clock3, PencilLine } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
 import { Button, Select, Input } from '@/shared/components/base'
-import { platformPointApi, platformProjectApi } from '@/services/platform/api'
-import type { PlanPoint, PlanProject } from '@/services/platform/types'
+import { platformProjectApi } from '@/services/platform/api'
+import type { Id, PlanPoint, PlanProject } from '@/services/platform/types'
 
 interface Props {
   mode: 'new' | 'open' | 'save' | 'save-as'
@@ -34,7 +34,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'success', data: { projectType: ProjectType; projectName: string; savePath: string; allowOtherUsers: boolean; layers: LayerItem[] }): void
-  (e: 'open-platform', projectId: number): void
+  (e: 'open-platform', projectId: Id): void
   (e: 'continue-platform', draft: PlatformProjectDraft): void
   (e: 'open-file', file: File): void
 }>()
@@ -47,7 +47,7 @@ const allowOtherUsers = ref(false)
 const fileName = ref('')
 const isProcessing = ref(false)
 const platformProjects = ref<PlatformProjectDraft[]>([])
-const selectedPlatformProjectId = ref<number | null>(null)
+const selectedPlatformProjectId = ref<Id | null>(null)
 const platformSearchKeyword = ref('')
 const platformProjectLoading = ref(false)
 
@@ -211,16 +211,10 @@ async function loadPlatformProjects() {
       name: platformSearchKeyword.value.trim() || undefined,
     })
     const projects = response.data ?? []
-    platformProjects.value = await Promise.all(projects.map(async project => {
-      if (!project.id) return { project, points: [], status: 'draft' as const }
-      try {
-        const pointResponse = await platformPointApi.search({ pageNumber: 1, pageSize: 100, projectId: project.id })
-        const points = pointResponse.data ?? []
-        return { project, points, status: getProjectDraftStatus(points) }
-      } catch {
-        return { project, points: [], status: 'draft' as const }
-      }
-    }))
+    platformProjects.value = projects.map(project => {
+      const points = project.pointList ?? []
+      return { project, points, status: getProjectDraftStatus(points) }
+    })
     selectedPlatformProjectId.value = platformProjects.value[0]?.project.id ?? null
   } catch (error) {
     appStore.showNotification({ type: 'error', message: `平台项目加载失败：${(error as Error).message}` })

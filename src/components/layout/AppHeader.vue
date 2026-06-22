@@ -450,8 +450,7 @@ const togglePanel = (panel: string) => {
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
               active-class="bg-primary/10 text-primary font-medium">海缆路由规划
             </RouterLink>
-            <!-- 传输系统规划：无项目或 USE 项目时显示 -->
-            <RouterLink v-if="showTransmissionMenu" to="/design"
+            <RouterLink to="/design"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
               active-class="bg-primary/10 text-primary font-medium">传输系统规划
             </RouterLink>

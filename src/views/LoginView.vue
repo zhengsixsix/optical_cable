@@ -3,7 +3,7 @@ import { useAppStore } from '@/stores/app'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { User, Lock, Phone, ShieldCheck, Globe, ChevronRight } from 'lucide-vue-next'
+import { User, Lock, ShieldCheck, Globe, ChevronRight } from 'lucide-vue-next'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -23,16 +23,18 @@ const regConfirmPassword = ref('')
 const regPhone = ref('')
 
 const loading = ref(false)
-const errorMessage = ref('')
+
+function showFormError(message: string) {
+  appStore.showNotification({ type: 'error', message })
+}
 
 const handleLogin = async () => {
   if (!username.value || !password.value) {
-    errorMessage.value = '请输入用户名和密码'
+    showFormError('请输入用户名和密码')
     return
   }
 
   loading.value = true
-  errorMessage.value = ''
 
   const result = await userStore.login(username.value, password.value)
 
@@ -42,33 +44,32 @@ const handleLogin = async () => {
     appStore.showNotification({ type: 'success', message: '登录成功，欢迎进入系统' })
     router.push('/')
   } else {
-    errorMessage.value = result.message
+    showFormError(result.message)
   }
 }
 
 const handleRegister = async () => {
   if (!regUsername.value || !regPassword.value || !regPhone.value) {
-    errorMessage.value = '请填写所有必填项'
+    showFormError('请填写所有必填项')
     return
   }
 
   if (regPassword.value !== regConfirmPassword.value) {
-    errorMessage.value = '两次输入的密码不一致'
+    showFormError('两次输入的密码不一致')
     return
   }
 
   if (regPassword.value.length < 6) {
-    errorMessage.value = '密码长度不能少于6位'
+    showFormError('密码长度不能少于6位')
     return
   }
 
   if (!/^1[3-9]\d{9}$/.test(regPhone.value)) {
-    errorMessage.value = '请输入正确的手机号'
+    showFormError('请输入正确的手机号')
     return
   }
 
   loading.value = true
-  errorMessage.value = ''
 
   const result = await userStore.register({
     username: regUsername.value,
@@ -87,13 +88,12 @@ const handleRegister = async () => {
     regConfirmPassword.value = ''
     regPhone.value = ''
   } else {
-    errorMessage.value = result.message
+    showFormError(result.message)
   }
 }
 
 const switchMode = () => {
   mode.value = mode.value === 'login' ? 'register' : 'login'
-  errorMessage.value = ''
 }
 </script>
 
@@ -159,13 +159,6 @@ const switchMode = () => {
               {{ mode === 'login' ? '用户登录' : '账户注册' }}
             </h3>
             <div class="h-1 w-12 bg-blue-600 rounded"></div>
-          </div>
-
-          <!-- 错误提示 -->
-          <div v-if="errorMessage"
-            class="mb-6 bg-red-50 border-l-4 border-red-500 p-3 text-sm text-red-700 flex items-center animate-pulse">
-            <ShieldCheck class="w-4 h-4 mr-2" />
-            {{ errorMessage }}
           </div>
 
           <!-- 登录表单 -->

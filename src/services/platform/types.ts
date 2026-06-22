@@ -81,16 +81,17 @@ export interface PlatformDictionary {
 }
 
 export interface PlanProject {
-  id?: number
+  id?: Id
   name?: string
   desc?: string
   remarks?: string
   isPublic?: 0 | 1
+  pointList?: PlanPoint[]
 }
 
 export interface PlanPoint {
-  id?: number
-  projectId?: number
+  id?: Id
+  projectId?: Id
   projectName?: string
   name?: string
   longitude?: number
@@ -103,12 +104,12 @@ export interface PlanPoint {
 }
 
 export interface PlanPointSaveListPayload {
-  projectId?: number | null
+  projectId?: Id | null
   pointList?: PlanPoint[] | null
 }
 
 export interface PlanConfigScope {
-  projectId?: number | null
+  projectId?: Id | null
   topLeftLng?: number | null
   topLeftLat?: number | null
   bottomRightLng?: number | null
@@ -116,12 +117,12 @@ export interface PlanConfigScope {
 }
 
 export interface PlanConfigGridResolution {
-  projectId?: number | null
+  projectId?: Id | null
   gridResolution?: number | null
 }
 
 export interface PlanConfigRedundancy {
-  projectId?: number | null
+  projectId?: Id | null
   enableRedundancy?: boolean | null
 }
 
@@ -136,7 +137,7 @@ export type PlanLayerTypeDic =
   | 'SHIPLANE'
 
 export interface PlanLayer {
-  id?: number
+  id?: Id
   name?: string | null
   filename?: string | null
   fileSize?: number | null
@@ -144,13 +145,14 @@ export interface PlanLayer {
   remarks?: string | null
   isPublic?: 0 | 1 | null
   isDefault?: 0 | 1 | null
-  attachmentId?: number | null
+  attachmentId?: Id | null
+  projectId?: Id | null
   typeDic?: PlanLayerTypeDic | null
 }
 
 export interface PlanLayerUploadCompletePayload {
   uploadUrl: string
-  bizId?: number | null
+  bizId?: Id | null
   typeDic: string
 }
 
@@ -167,7 +169,7 @@ export interface PlatformBindFunc {
 export interface PlanDeviceLibrary {
   id?: Id
   name?: string | null
-  typeCd?: string | null
+  deviceTypeCd?: string | null
   typeName?: string | null
   iconId?: Id | null
   iconName?: string | null
@@ -180,14 +182,14 @@ export interface PlanDeviceLibrary {
 export interface PlanDeviceLibrarySearch extends PagedSearch {
   id?: Id | null
   name?: string | null
-  typeCd?: string | null
+  deviceTypeCd?: string | null
   dialogWindowId?: string | null
 }
 
 export interface PlanDeviceEntity {
   id?: Id
   name?: string | null
-  typeCd?: string | null
+  deviceTypeCd?: string | null
   typeName?: string | null
   iconId?: Id | null
   iconName?: string | null
@@ -206,7 +208,7 @@ export interface PlanDeviceEntity {
 export interface PlanDeviceEntitySearch extends PagedSearch {
   id?: Id | null
   name?: string | null
-  typeCd?: string | null
+  deviceTypeCd?: string | null
   libraryId?: Id | null
   longitude?: number | null
   latitude?: number | null

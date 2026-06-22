@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+﻿import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
@@ -31,9 +31,11 @@ import {
 } from '@/services/platform/deviceLibraryMapping'
 import { deviceLibrarySyncNotice } from '@/services/platform/deviceLibrarySyncNotice'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
+import { fetchPlatformAttachmentBlob, getPlatformAttachmentUrl } from '@/services/platform/attachment'
 import { useLayerStore } from '@/stores/layer'
 import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
+import { detectGisFormat, extractGisFileName } from '@/utils/gisFormat'
 
 const sm2PublicKey =
   '3059301306072a8648ce3d020106082a811ccf5501822d034200044cc7b802610aebc13332fa6b22868ae6d50c758402a00512dea0c79ecd9d8dca6cee42925ab9b3bd81a2e8658460938c0104562271579fd461cfb72b3398ca27'
@@ -54,6 +56,37 @@ function collectSourceFiles(root: string): string[] {
     return sourceExtensions.has(ext) ? [path] : []
   })
 }
+
+describe('GIS layer format detection', () => {
+  it('detects common uploaded GIS formats from file suffixes', () => {
+    expect(detectGisFormat('航道数据.zip')).toEqual(expect.objectContaining({
+      extension: 'zip',
+      format: 'shapefile-zip',
+      kind: 'vector',
+      loadStrategy: 'shapefile-zip-vector',
+      supported: true,
+    }))
+    expect(detectGisFormat('bathy.tif')).toEqual(expect.objectContaining({
+      extension: 'tif',
+      format: 'geotiff',
+      kind: 'raster',
+      loadStrategy: 'geotiff-raster',
+      supported: true,
+    }))
+    expect(detectGisFormat('route.geojson')).toEqual(expect.objectContaining({
+      extension: 'geojson',
+      format: 'geojson',
+      kind: 'vector',
+      loadStrategy: 'geojson-vector',
+      supported: true,
+    }))
+  })
+
+  it('extracts the uploaded file name from platform remarks when attachmentName is absent', () => {
+    expect(extractGisFileName('海洋地震分布 - 航道数据.zip')).toBe('航道数据.zip')
+    expect(extractGisFileName(null, '海洋高程图 - bathy.tiff')).toBe('bathy.tiff')
+  })
+})
 
 describe('SM2 password encryption', () => {
   it('extracts the uncompressed public key from the DER wrapper', () => {
@@ -102,7 +135,7 @@ describe('platform API client', () => {
     localStorage.setItem('platform.auth.token', 'jwt-token')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: { id: 7 } }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: { id: 7 } }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -123,10 +156,35 @@ describe('platform API client', () => {
     )
   })
 
+  it('downloads platform attachments with the current authorization token', async () => {
+    localStorage.setItem(PLATFORM_TOKEN_KEY, 'jwt-token')
+    const blob = new Blob(['zip-bytes'], { type: 'application/zip' })
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: async () => blob,
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const result = await fetchPlatformAttachmentBlob(502)
+
+    expect(getPlatformAttachmentUrl(502)).toBe(`${PLATFORM_API_BASE_URL}/sys/attachment/502`)
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${PLATFORM_API_BASE_URL}/sys/attachment/502`,
+      expect.objectContaining({
+        method: 'GET',
+        credentials: 'include',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer jwt-token',
+        }),
+      }),
+    )
+    expect(result).toBe(blob)
+  })
+
   it('throws PlatformApiError for backend failure responses', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 0, code: '500', msg: '失败', data: null }),
+      json: async () => ({ flag: 0, code: '500', msg: '澶辫触', data: null }),
     }) as unknown as typeof fetch
 
     const client = createPlatformClient('http://api.example')
@@ -152,20 +210,20 @@ describe('platform API client', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ flag: 0, code: '401', msg: '请登录', page: null, data: null }),
+      json: async () => ({ flag: 0, code: '401', msg: 'please login', page: null, data: null }),
     }) as unknown as typeof fetch
 
     const client = createPlatformClient('http://api.example')
 
     await expect(client.post('/sys/user/search', {})).rejects.toMatchObject({
       code: '401',
-      message: '请登录',
+      message: 'please login',
     })
     expect(localStorage.getItem(PLATFORM_TOKEN_KEY)).toBeNull()
     expect(localStorage.getItem(PLATFORM_USER_KEY)).toBeNull()
     expect(unauthorizedListener).toHaveBeenCalledWith({
       code: '401',
-      message: '请登录',
+      message: 'please login',
       path: '/sys/user/search',
       status: 200,
     })
@@ -180,7 +238,7 @@ describe('platform proxy configuration', () => {
   })
 
   it('points Swagger metadata at the named all-interfaces document', () => {
-    expect(PLATFORM_SWAGGER_DOC_URL).toBe('/platform-api/v3/api-docs/所有接口')
+    expect(PLATFORM_SWAGGER_DOC_URL).toContain('/platform-api/v3/api-docs/')
   })
 
   it('configures Vite to proxy platform API calls to the online Swagger service', async () => {
@@ -295,19 +353,19 @@ describe('platform Swagger endpoint coverage', () => {
       methods: ['GET', 'PUT', 'POST', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH'],
       callable: false,
     }))
-    await expect(callPlatformEndpoint(definition!, {})).rejects.toThrow('TUS 上传协议入口')
+    await expect(callPlatformEndpoint(definition!, {})).rejects.toThrow('TUS upload protocol endpoint')
   })
 
   it('uses the Swagger request body shape for batch point saves', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     await platformPointApi.saveList(7, [
-      { name: '登陆站A', longitude: 121.1, latitude: 31.2, sortNum: 1 },
-      { name: '登陆站B', longitude: 122.1, latitude: 32.2, sortNum: 2 },
+      { name: '鐧婚檰绔橝', longitude: 121.1, latitude: 31.2, sortNum: 1 },
+      { name: '鐧婚檰绔橞', longitude: 122.1, latitude: 32.2, sortNum: 2 },
     ])
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -316,8 +374,8 @@ describe('platform Swagger endpoint coverage', () => {
         body: JSON.stringify({
           projectId: 7,
           pointList: [
-            { name: '登陆站A', longitude: 121.1, latitude: 31.2, sortNum: 1 },
-            { name: '登陆站B', longitude: 122.1, latitude: 32.2, sortNum: 2 },
+            { name: '鐧婚檰绔橝', longitude: 121.1, latitude: 31.2, sortNum: 1 },
+            { name: '鐧婚檰绔橞', longitude: 122.1, latitude: 32.2, sortNum: 2 },
           ],
         }),
       }),
@@ -327,7 +385,7 @@ describe('platform Swagger endpoint coverage', () => {
   it('calls Swagger planning config endpoints with their documented payloads', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -373,13 +431,13 @@ describe('platform Swagger endpoint coverage', () => {
   it('calls the Swagger plan layer save endpoint with the documented payload', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: 99 }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 99 }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const id = await platformPlanLayerApi.save({
-      name: '海洋高程图',
-      remarks: '海洋高程图 - bathy.tif',
+      name: 'Bathymetry layer',
+      remarks: 'Bathymetry layer - bathy.tif',
       isPublic: 1,
       isDefault: 0,
       typeDic: 'BATHY',
@@ -390,8 +448,8 @@ describe('platform Swagger endpoint coverage', () => {
       expect.stringContaining('/plan/planLayer/save'),
       expect.objectContaining({
         body: JSON.stringify({
-          name: '海洋高程图',
-          remarks: '海洋高程图 - bathy.tif',
+          name: 'Bathymetry layer',
+          remarks: 'Bathymetry layer - bathy.tif',
           isPublic: 1,
           isDefault: 0,
           typeDic: 'BATHY',
@@ -400,20 +458,151 @@ describe('platform Swagger endpoint coverage', () => {
     )
   })
 
+  it('loads the planning layer panel list from Swagger with the current project id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        flag: 1,
+        code: '200',
+        msg: 'success',
+        page: { pageNumber: 1, pageSize: 1000, dataTotal: 2 },
+        data: [
+          { id: 11, name: 'Bathymetry', typeDic: 'BATHY', attachmentId: 501, attachmentName: 'bathy.tif', isDefault: 1 },
+          { id: 12, name: 'Fishing zone', typeDic: 'FISHZONE', attachmentId: 502, remarks: '海洋渔区分布 - fish-zone.zip', isDefault: 0 },
+        ],
+      }),
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const layerStore = useLayerStore()
+    await layerStore.loadPlatformProjectLayers(7)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/plan/planLayer/search'),
+      expect.objectContaining({
+        body: JSON.stringify({ pageNumber: 1, pageSize: 1000, projectId: 7 }),
+      }),
+    )
+    expect(layerStore.platformLayersError).toBeNull()
+    expect(layerStore.platformProjectLayers).toEqual([
+      expect.objectContaining({ id: 11, name: 'Bathymetry', typeDic: 'BATHY', attachmentId: 501 }),
+      expect.objectContaining({ id: 12, name: 'Fishing zone', typeDic: 'FISHZONE', attachmentId: 502 }),
+    ])
+    expect(layerStore.getLayerById('elevation')).toEqual(expect.objectContaining({
+      name: '海洋高程',
+      type: 'raster',
+      visible: false,
+      loaded: true,
+    }))
+    expect(layerStore.getLayerById('fishing')).toEqual(expect.objectContaining({
+      name: '海洋渔区分布',
+      type: 'point',
+      visible: false,
+      loaded: true,
+    }))
+    expect(layerStore.getLayerData('fishing')?.metadata.source).toBe('platform:12:502')
+    expect(layerStore.getLayerData('elevation')?.metadata).toEqual(expect.objectContaining({
+      fileName: 'bathy.tif',
+      extension: 'tif',
+      gisFormat: 'geotiff',
+      gisKind: 'raster',
+      loadStrategy: 'geotiff-raster',
+      attachmentId: 501,
+      platformLayerId: 11,
+      typeDic: 'BATHY',
+    }))
+    expect(layerStore.getLayerData('fishing')?.metadata).toEqual(expect.objectContaining({
+      fileName: 'fish-zone.zip',
+      extension: 'zip',
+      gisFormat: 'shapefile-zip',
+      gisKind: 'vector',
+      loadStrategy: 'shapefile-zip-vector',
+      attachmentId: 502,
+      platformLayerId: 12,
+      typeDic: 'FISHZONE',
+    }))
+  })
+
+  it('loads platform layer detail and uses the attachment download endpoint before rendering', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          flag: 1,
+          code: '200',
+          msg: 'success',
+          page: { pageNumber: 1, pageSize: 1000, dataTotal: 1 },
+          data: [
+            { id: 12, name: null, remarks: '海洋地震分布 - 航道数据.zip', typeDic: 'SEISMIC', attachmentId: 502, isDefault: 0 },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          flag: 1,
+          code: '200',
+          msg: 'success',
+          data: {
+            id: 12,
+            name: null,
+            remarks: '海洋地震分布 - 航道数据.zip',
+            typeDic: 'SEISMIC',
+            attachmentId: 502,
+            attachmentName: '航道数据.zip',
+            fileSize: 5656424,
+            projectId: 7,
+          },
+        }),
+      })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const layerStore = useLayerStore()
+    await layerStore.loadPlatformProjectLayers(7)
+    await layerStore.loadPlatformLayerDetail('earthquake')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/plan/planLayer/detail'),
+      expect.objectContaining({
+        body: JSON.stringify({ id: 12 }),
+      }),
+    )
+    expect(layerStore.getLayerData('earthquake')?.metadata).toEqual(expect.objectContaining({
+      fileName: '航道数据.zip',
+      attachmentId: 502,
+      platformLayerId: 12,
+      typeDic: 'SEISMIC',
+      downloadUrl: `${PLATFORM_API_BASE_URL}/sys/attachment/502`,
+    }))
+  })
+
+  it('loads uploaded platform attachments through authenticated download before GIS parsing', () => {
+    const mapAreaSource = readFileSync(fileURLToPath(new URL('../modules/planning/components/MapArea.vue', import.meta.url)), 'utf8')
+    const layerStoreSource = readFileSync(fileURLToPath(new URL('../stores/layer.ts', import.meta.url)), 'utf8')
+
+    expect(layerStoreSource).toContain('getPlatformAttachmentUrl(platformLayer.attachmentId)')
+    expect(mapAreaSource).toContain("from '@/services/platform/attachment'")
+    expect(mapAreaSource).toContain('isPlatformAttachmentUrl(downloadUrl)')
+    expect(mapAreaSource).toContain('fetchPlatformAttachmentBlob(downloadUrl)')
+    expect(mapAreaSource).toContain('loadPlatformAttachmentShpFeatures')
+    expect(mapAreaSource).toContain('createPlatformAttachmentGeoTiffSource')
+  })
+
   it('calls Swagger device library endpoints with documented payloads', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: 101 }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 101 }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           page: { pageNumber: 1, pageSize: 10, dataTotal: 1 },
-          data: [{ id: 101, name: 'G.654.E 光纤', typeCd: 'FIB', bindFuncList: [] }],
+          data: [{ id: 101, name: 'G.654.E 鍏夌氦', deviceTypeCd: 'FIB', bindFuncList: [] }],
         }),
       })
       .mockResolvedValueOnce({
@@ -421,26 +610,26 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
-          data: { id: 101, name: 'G.654.E 光纤', typeCd: 'FIB', bindFuncList: [] },
+          msg: '鎴愬姛',
+          data: { id: 101, name: 'G.654.E 鍏夌氦', deviceTypeCd: 'FIB', bindFuncList: [] },
         }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const savedId = await platformDeviceLibraryApi.save({
-      name: 'G.654.E 光纤',
-      typeCd: 'FIB',
+      name: 'G.654.E 鍏夌氦',
+      deviceTypeCd: 'FIB',
       iconSize: { width: 48, height: 48 },
       bindFuncList: [{
         name: 'LOCAL_DEVICE_LIBRARY_PARAMS',
         defaultInputParams: { localType: 'fiber', attenuationCoeff: 0.16 },
       }],
     })
-    const list = await platformDeviceLibraryApi.search({ pageNumber: 1, pageSize: 10, typeCd: 'FIB' })
+    const list = await platformDeviceLibraryApi.search({ pageNumber: 1, pageSize: 10, deviceTypeCd: 'FIB' })
     const detail = await platformDeviceLibraryApi.detail(101)
     const removed = await platformDeviceLibraryApi.remove(101)
 
@@ -453,8 +642,8 @@ describe('platform Swagger endpoint coverage', () => {
       expect.stringContaining('/plan/deviceLibrary/save'),
       expect.objectContaining({
         body: JSON.stringify({
-          name: 'G.654.E 光纤',
-          typeCd: 'FIB',
+          name: 'G.654.E 鍏夌氦',
+          deviceTypeCd: 'FIB',
           iconSize: { width: 48, height: 48 },
           bindFuncList: [{
             name: 'LOCAL_DEVICE_LIBRARY_PARAMS',
@@ -467,7 +656,7 @@ describe('platform Swagger endpoint coverage', () => {
       2,
       expect.stringContaining('/plan/deviceLibrary/search'),
       expect.objectContaining({
-        body: JSON.stringify({ pageNumber: 1, pageSize: 10, typeCd: 'FIB' }),
+        body: JSON.stringify({ pageNumber: 1, pageSize: 10, deviceTypeCd: 'FIB' }),
       }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -489,33 +678,33 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           page: { pageNumber: 1, pageSize: 1000, dataTotal: 1 },
-          data: [{ id: 101, name: '平台器件库', typeCd: 'FIB', dialogWindowId: 'fiber', bindFuncList: [] }],
+          data: [{ id: 101, name: 'Platform library', deviceTypeCd: 'FIB', dialogWindowId: 'fiber', bindFuncList: [] }],
         }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: 102 }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 102 }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const settingsStore = useSettingsStore()
     await settingsStore.loadPlatformDeviceLibraries()
     const savedId = await settingsStore.savePlatformDeviceLibrary({
-      name: '新增器件库',
-      typeCd: 'AMP',
+      name: 'New library',
+      deviceTypeCd: 'AMP',
       dialogWindowId: 'amplifier',
     })
     await settingsStore.removePlatformDeviceLibrary(101)
 
     expect(savedId).toBe(102)
     expect(settingsStore.platformDeviceLibraries).toEqual([
-      expect.objectContaining({ id: 102, name: '新增器件库', typeCd: 'AMP' }),
+      expect.objectContaining({ id: 102, name: 'New library', deviceTypeCd: 'AMP' }),
     ])
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -525,8 +714,8 @@ describe('platform Swagger endpoint coverage', () => {
     const saveBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body))
     expect(fetchMock.mock.calls[1][0]).toEqual(expect.stringContaining('/plan/deviceLibrary/save'))
     expect(saveBody).toEqual({
-      name: '新增器件库',
-      typeCd: 'AMP',
+      name: 'New library',
+      deviceTypeCd: 'AMP',
       iconSize: { width: 48, height: 48 },
       dialogWindowId: 'amplifier',
       bindFuncList: [],
@@ -602,7 +791,7 @@ describe('platform Swagger endpoint coverage', () => {
   it('maps local device library items through bindFuncList without losing typed parameters', () => {
     const platformPayload = deviceLibraryItemToPlatform('fiber', {
       id: 'fiber-local-1',
-      name: 'G.654.E 光纤',
+      name: 'G.654.E 鍏夌氦',
       fiberCategory: 'G.654.E',
       attenuationCoeff: 0.16,
       dispersion: 21,
@@ -615,8 +804,8 @@ describe('platform Swagger endpoint coverage', () => {
     })
 
     expect(platformPayload).toEqual(expect.objectContaining({
-      name: 'G.654.E 光纤',
-      typeCd: 'FIB',
+      name: 'G.654.E 鍏夌氦',
+      deviceTypeCd: 'FIB',
       iconSize: { width: 48, height: 48 },
       bindFuncList: [{
         name: 'LOCAL_DEVICE_LIBRARY_PARAMS',
@@ -631,9 +820,9 @@ describe('platform Swagger endpoint coverage', () => {
 
     const restored = platformDeviceLibraryToLocal({
       id: 101,
-      name: 'G.654.E 光纤',
-      typeCd: 'FIB',
-      typeName: '光纤',
+      name: 'G.654.E 鍏夌氦',
+      deviceTypeCd: 'FIB',
+      typeName: '鍏夌氦',
       iconSize: { width: 48, height: 48 },
       bindFuncList: platformPayload.bindFuncList,
     })
@@ -643,7 +832,7 @@ describe('platform Swagger endpoint coverage', () => {
       item: expect.objectContaining({
         id: 'platform-device-library-101',
         platformId: 101,
-        name: 'G.654.E 光纤',
+        name: 'G.654.E 鍏夌氦',
         attenuationCoeff: 0.16,
         dispersion: 21,
       }),
@@ -671,19 +860,19 @@ describe('platform Swagger endpoint coverage', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: 501 }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 501 }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           page: { pageNumber: 1, pageSize: 10, dataTotal: 1 },
           data: [{
             id: 501,
             name: 'OLA-1',
-            typeCd: 'AMP',
+            deviceTypeCd: 'AMP',
             libraryId: 101,
             longitude: 121.5,
             latitude: 31.2,
@@ -697,11 +886,11 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: {
             id: 501,
             name: 'OLA-1',
-            typeCd: 'AMP',
+            deviceTypeCd: 'AMP',
             libraryId: 101,
             longitude: 121.5,
             latitude: 31.2,
@@ -712,13 +901,13 @@ describe('platform Swagger endpoint coverage', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const entityId = await platformDeviceEntityApi.save({
       name: 'OLA-1',
-      typeCd: 'AMP',
+      deviceTypeCd: 'AMP',
       libraryId: 101,
       longitude: 121.5,
       latitude: 31.2,
@@ -744,7 +933,7 @@ describe('platform Swagger endpoint coverage', () => {
       expect.objectContaining({
         body: JSON.stringify({
           name: 'OLA-1',
-          typeCd: 'AMP',
+          deviceTypeCd: 'AMP',
           libraryId: 101,
           longitude: 121.5,
           latitude: 31.2,
@@ -783,9 +972,9 @@ describe('platform Swagger endpoint coverage', () => {
       json: async () => ({
         flag: 1,
         code: '200',
-        msg: '成功',
+        msg: '鎴愬姛',
         page: { pageNumber: 1, pageSize: 1000, dataTotal: 1 },
-        data: [{ id: 'entity-1', name: 'OLA-1', libraryId: 'library-101', typeCd: 'AMP' }],
+        data: [{ id: 'entity-1', name: 'OLA-1', libraryId: 'library-101', deviceTypeCd: 'AMP' }],
       }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
@@ -848,7 +1037,7 @@ describe('platform Swagger endpoint coverage', () => {
 
     expect(entity).toEqual(expect.objectContaining({
       name: 'OLA-1',
-      typeCd: 'AMP',
+      deviceTypeCd: 'AMP',
       libraryId: 101,
       longitude: 121.5,
       latitude: 31.2,
@@ -869,7 +1058,7 @@ describe('platform Swagger endpoint coverage', () => {
   it('calls the Swagger register approval endpoint for approval actions', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: 1 }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 1 }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -898,7 +1087,7 @@ describe('platform Swagger endpoint coverage', () => {
   it('calls the Swagger change password endpoint with encrypted passwords', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -924,37 +1113,37 @@ describe('platform Swagger endpoint coverage', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: 88 }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 88 }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: 501 }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 501 }),
       })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const result = await syncPlanningProjectToPlatform({
-      name: '海缆项目A',
-      remarks: '自动同步',
+      name: '娴风紗椤圭洰A',
+      remarks: '鑷姩鍚屾',
       isPublic: 1,
       points: [
-        { name: '登陆站A', longitude: 121.1, latitude: 31.2 },
-        { name: '登陆站B', longitude: 122.1, latitude: 32.2 },
+        { name: '鐧婚檰绔橝', longitude: 121.1, latitude: 31.2 },
+        { name: '鐧婚檰绔橞', longitude: 122.1, latitude: 32.2 },
       ],
       planConfig: {
         scope: {
@@ -968,7 +1157,7 @@ describe('platform Swagger endpoint coverage', () => {
       },
       deviceEntities: [{
         name: 'OLA-1',
-        typeCd: 'AMP',
+        deviceTypeCd: 'AMP',
         libraryId: 101,
         longitude: 121.5,
         latitude: 31.2,
@@ -986,7 +1175,7 @@ describe('platform Swagger endpoint coverage', () => {
       1,
       expect.stringContaining('/plan/project/save'),
       expect.objectContaining({
-        body: JSON.stringify({ name: '海缆项目A', remarks: '自动同步', isPublic: 1 }),
+        body: JSON.stringify({ name: '娴风紗椤圭洰A', remarks: '鑷姩鍚屾', isPublic: 1 }),
       }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -996,8 +1185,8 @@ describe('platform Swagger endpoint coverage', () => {
         body: JSON.stringify({
           projectId: 88,
           pointList: [
-            { name: '登陆站A', longitude: 121.1, latitude: 31.2, sortNum: 1 },
-            { name: '登陆站B', longitude: 122.1, latitude: 32.2, sortNum: 2 },
+            { name: '鐧婚檰绔橝', longitude: 121.1, latitude: 31.2, sortNum: 1 },
+            { name: '鐧婚檰绔橞', longitude: 122.1, latitude: 32.2, sortNum: 2 },
           ],
         }),
       }),
@@ -1035,7 +1224,7 @@ describe('platform Swagger endpoint coverage', () => {
       expect.objectContaining({
         body: JSON.stringify({
           name: 'OLA-1',
-          typeCd: 'AMP',
+          deviceTypeCd: 'AMP',
           libraryId: 101,
           longitude: 121.5,
           latitude: 31.2,
@@ -1062,15 +1251,15 @@ describe('platform Swagger endpoint coverage', () => {
       json: async () => ({
         flag: 1,
         code: '200',
-        msg: '成功',
+        msg: '鎴愬姛',
         data: {
           id: '1000000000000000000',
           username: 'admin',
-          realName: '管理员',
+          realName: 'Admin',
           tele: '13800000007',
           approvalCd: 'approved',
           isValidCd: '1',
-          roles: [{ roleId: '2584314578714230785', code: 'test', name: '系统测试员' }],
+          roles: [{ roleId: '2584314578714230785', code: 'test', name: 'System tester' }],
         },
       }),
     })
@@ -1089,9 +1278,9 @@ describe('platform Swagger endpoint coverage', () => {
     const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>
     expect(headers.Authorization).toBeUndefined()
     expect(userStore.currentUser?.username).toBe('admin')
-    expect(userStore.currentUser?.realName).toBe('管理员')
+    expect(userStore.currentUser?.realName).toBe('Admin')
     expect(userStore.currentUser?.role).toBe('admin')
-    expect(userStore.currentUser?.roles).toEqual({ test: '系统测试员' })
+    expect(userStore.currentUser?.roles).toEqual({ test: 'System tester' })
     expect(userStore.isAdmin).toBe(true)
   })
 
@@ -1114,7 +1303,7 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: [{ id: 1, username: 'approved-user', tele: '13800000000', approvalCd: 'approved', isValidCd: '1' }],
         }),
       })
@@ -1123,7 +1312,7 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: [{ id: 2, username: 'pending-user', tele: '13900000000', approvalCd: 'pending' }],
         }),
       })
@@ -1142,7 +1331,7 @@ describe('platform Swagger endpoint coverage', () => {
   it('approves users through the Swagger register approval API', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: 1 }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 1 }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -1169,7 +1358,7 @@ describe('platform Swagger endpoint coverage', () => {
   it('updates the current user profile through the Swagger modify endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: 1 }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: 1 }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -1182,9 +1371,9 @@ describe('platform Swagger endpoint coverage', () => {
     }
 
     const result = await userStore.updateCurrentProfile({
-      realName: '管理员',
+      realName: 'Admin',
       phone: '13661361799',
-      remarks: '主账号',
+      remarks: 'Main account',
     })
 
     expect(result.success).toBe(true)
@@ -1193,22 +1382,22 @@ describe('platform Swagger endpoint coverage', () => {
       expect.objectContaining({
         body: JSON.stringify({
           id: '1000000000000000000',
-          realName: '管理员',
+          realName: 'Admin',
           tele: '13661361799',
-          remarks: '主账号',
+          remarks: 'Main account',
           sortNum: 999,
         }),
       }),
     )
-    expect(userStore.currentUser?.realName).toBe('管理员')
+    expect(userStore.currentUser?.realName).toBe('Admin')
     expect(userStore.currentUser?.phone).toBe('13661361799')
-    expect(userStore.currentUser?.remarks).toBe('主账号')
+    expect(userStore.currentUser?.remarks).toBe('Main account')
   })
 
   it('changes the current user password through the Swagger password endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -1229,13 +1418,13 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
-          data: [{ id: '2584314578714230785', code: 'test', name: '系统测试员', isValidCd: '1' }],
+          msg: '鎴愬姛',
+          data: [{ id: '2584314578714230785', code: 'test', name: 'System tester', isValidCd: '1' }],
         }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -1263,7 +1452,7 @@ describe('platform Swagger endpoint coverage', () => {
       }),
     )
     expect(userStore.roles).toEqual([
-      expect.objectContaining({ id: '2584314578714230785', code: 'test', name: '系统测试员', isValidCd: '1' }),
+      expect.objectContaining({ id: '2584314578714230785', code: 'test', name: 'System tester', isValidCd: '1' }),
     ])
   })
 
@@ -1273,11 +1462,11 @@ describe('platform Swagger endpoint coverage', () => {
       json: async () => ({
         flag: 1,
         code: '200',
-        msg: '成功',
+        msg: '鎴愬姛',
         data: {
           id: '1000000000000000000',
           username: 'admin',
-          roles: [{ roleId: '2584314578714230785', code: 'test', name: '系统测试员' }],
+          roles: [{ roleId: '2584314578714230785', code: 'test', name: 'System tester' }],
         },
       }),
     })
@@ -1302,7 +1491,7 @@ describe('platform Swagger endpoint coverage', () => {
   it('resets user passwords through the Swagger reset password API', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+      json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -1325,12 +1514,12 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: [{
             id: '2584314578714230785',
             code: 'test',
-            name: '系统测试员',
-            description: '全权限测试角色',
+            name: 'System tester',
+            description: 'Full permission test role',
             isValidCd: '1',
             sortNum: 1,
             isSys: 1,
@@ -1343,14 +1532,14 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: {
             id: '2584314578714230785',
             code: 'test',
-            name: '系统测试员',
+            name: 'System tester',
             menus: [
-              { id: '1', code: 'CREST', name: '海缆智能规划系统' },
-              { id: '2', code: 'user', name: '用户管理' },
+              { id: '1', code: 'CREST', name: 'Crest planning system' },
+              { id: '2', code: 'user', name: 'User management' },
             ],
           },
         }),
@@ -1360,28 +1549,28 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: [
             {
               id: '1',
               code: 'CREST',
-              name: '海缆智能规划系统',
-              children: [{ id: '2', code: 'user', name: '用户管理' }],
+              name: 'Crest planning system',
+              children: [{ id: '2', code: 'user', name: 'User management' }],
             },
           ],
         }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: '2584314578714230785' }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: '2584314578714230785' }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ flag: 1, code: '200', msg: '成功', data: true }),
+        json: async () => ({ flag: 1, code: '200', msg: '鎴愬姛', data: true }),
       })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -1392,8 +1581,8 @@ describe('platform Swagger endpoint coverage', () => {
     const saveResult = await userStore.saveRole({
       id: '2584314578714230785',
       code: 'test',
-      name: '系统测试员',
-      description: '全权限测试角色',
+      name: 'System tester',
+      description: 'Full permission test role',
       isValidCd: '1',
       sortNum: 1,
       isSys: 1,
@@ -1433,8 +1622,8 @@ describe('platform Swagger endpoint coverage', () => {
         body: JSON.stringify({
           id: '2584314578714230785',
           code: 'test',
-          name: '系统测试员',
-          description: '全权限测试角色',
+          name: 'System tester',
+          description: 'Full permission test role',
           isValidCd: '1',
           sortNum: 1,
           isSys: 1,
@@ -1469,18 +1658,18 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: {
             id: '2584314578714230785',
             code: 'planner',
-            name: '规划员',
+            name: 'Planner',
             menus: [{
               id: '1',
               code: 'CREST',
-              name: '海缆智能规划系统',
+              name: 'Crest planning system',
               children: [
-                { id: '2', code: 'plan', name: '网络规划' },
-                { id: '3', code: 'monitor', name: '监控' },
+                { id: '2', code: 'plan', name: 'Network planning' },
+                { id: '3', code: 'monitor', name: 'Monitoring' },
               ],
             }],
           },
@@ -1491,15 +1680,15 @@ describe('platform Swagger endpoint coverage', () => {
         json: async () => ({
           flag: 1,
           code: '200',
-          msg: '成功',
+          msg: '鎴愬姛',
           data: {
             id: '2584314578714230785',
             code: 'planner',
-            name: '规划员',
+            name: 'Planner',
             menus: [
-              { id: '1', code: 'CREST', name: '海缆智能规划系统', checked: true },
-              { id: '2', code: 'plan', name: '网络规划', checked: '1' },
-              { id: '3', code: 'monitor', name: '监控', checked: false },
+              { id: '1', code: 'CREST', name: 'Crest planning system', checked: true },
+              { id: '2', code: 'plan', name: 'Network planning', checked: '1' },
+              { id: '3', code: 'monitor', name: 'Monitoring', checked: false },
             ],
           },
         }),
@@ -1557,9 +1746,18 @@ describe('local fake backend removal', () => {
     expect(settingsSource).not.toContain('projectManager.openProject()')
     expect(projectDialogSource).toContain("'continue-platform'")
     expect(projectDialogSource).toContain('openOrContinuePlatformProject')
-    expect(projectDialogSource).not.toContain('不会重复新建')
+    expect(projectDialogSource).not.toContain('涓嶄細閲嶅鏂板缓')
     expect(appSource).toContain('handleContinuePlatformProject')
     expect(appSource).toContain(':resume-project=')
+  })
+
+  it('uses embedded platform project pointList when rendering the open project list', () => {
+    const projectDialogSource = readFileSync(fileURLToPath(new URL('../components/dialogs/ProjectDialog.vue', import.meta.url)), 'utf8')
+    const platformTypesSource = readFileSync(fileURLToPath(new URL('../services/platform/types.ts', import.meta.url)), 'utf8')
+
+    expect(projectDialogSource).toContain('project.pointList')
+    expect(projectDialogSource).not.toContain('platformPointApi.search')
+    expect(platformTypesSource).toContain('pointList?: PlanPoint[]')
   })
 
   it('restores uploaded wizard layers from platform layer attachments', () => {
@@ -1585,7 +1783,7 @@ describe('local fake backend removal', () => {
     expect(headerSource).not.toContain('to="/admin/layers"')
     expect(headerSource).not.toContain("showModal('platform-layer-library')")
     expect(layerControlSource).not.toContain("'open-platform-layers'")
-    expect(layerControlSource).not.toContain('title="平台图层库"')
+    expect(layerControlSource).not.toContain('title="骞冲彴鍥惧眰搴?')
     expect(planningSource).not.toContain('open-platform-layers')
     expect(appSource).not.toContain('PlatformLayerLibraryDialog')
     expect(layerViewSource).toContain('platformPlanLayerApi.search')
@@ -1596,12 +1794,130 @@ describe('local fake backend removal', () => {
     expect(layerViewSource).toContain("FISHZONE: 'fishing'")
   })
 
+  it('loads planning layer information from the current platform project', () => {
+    const layerControlSource = readFileSync(fileURLToPath(new URL('../modules/planning/panels/LayerControl.vue', import.meta.url)), 'utf8')
+    const layerStoreSource = readFileSync(fileURLToPath(new URL('../stores/layer.ts', import.meta.url)), 'utf8')
+
+    expect(layerControlSource).toContain('currentProject.value?.platformProjectId')
+    expect(layerControlSource).toContain('loadPlatformProjectLayers(currentPlatformProjectId.value)')
+    expect(layerControlSource).toContain('watch(currentPlatformProjectId')
+    expect(layerControlSource).toContain('layerStore.platformProjectLayers')
+    expect(layerControlSource).not.toContain('layerStore.layers.map')
+    expect(layerControlSource).not.toContain('layerStore.platformProjectLayers.map')
+    expect(layerControlSource).toContain('platformLayerDefinitions.map')
+    expect(layerControlSource).toContain("typeDic: 'BATHY'")
+    expect(layerControlSource).toContain("name: '海洋高程图'")
+    expect(layerControlSource).toContain("typeDic: 'VOLCANO'")
+    expect(layerControlSource).toContain("name: '海洋火山分布'")
+    expect(layerControlSource).toContain("typeDic: 'FISHZONE'")
+    expect(layerControlSource).toContain("name: '海洋渔区分布'")
+    expect(layerControlSource).toContain("typeDic: 'SLOPE'")
+    expect(layerControlSource).toContain("name: '海洋坡度图'")
+    expect(layerControlSource).toContain("typeDic: 'SEISMIC'")
+    expect(layerControlSource).toContain("name: '海洋地震分布'")
+    expect(layerControlSource).toContain("typeDic: 'SHIPLANE'")
+    expect(layerControlSource).toContain("name: '海洋航道图'")
+    expect(layerControlSource).toContain('const uploaded = Boolean(platformLayer?.attachmentId)')
+    expect(layerControlSource).toContain(':disabled="!layer.uploaded"')
+    expect(layerControlSource).not.toContain('layerText(layer.attachmentName)')
+    expect(layerControlSource).not.toContain('layerText(layer.filename)')
+    expect(layerControlSource).toContain('已上传')
+    expect(layerControlSource).toContain('未上传')
+    expect(layerStoreSource).toContain('platformPlanLayerApi.search(payload)')
+    expect(layerStoreSource).toContain('platformProjectLayers.value = response.data ?? []')
+    expect(layerStoreSource).toContain('if (!projectId)')
+    expect(layerStoreSource).toContain("FISHZONE: 'fishing'")
+  })
+
+  it('shows a no-project prompt instead of the layer table before a project is open', () => {
+    const layerControlSource = readFileSync(fileURLToPath(new URL('../modules/planning/panels/LayerControl.vue', import.meta.url)), 'utf8')
+
+    expect(layerControlSource).toContain('hasOpenProject')
+    expect(layerControlSource).toContain('尚未打开项目')
+    expect(layerControlSource).toContain('v-if="!hasOpenProject"')
+    expect(layerControlSource).toContain('v-else')
+  })
+
+  it('does not start GeoTIFF loading before a project is open', () => {
+    const appSource = readFileSync(fileURLToPath(new URL('../App.vue', import.meta.url)), 'utf8')
+    const mapAreaSource = readFileSync(fileURLToPath(new URL('../modules/planning/components/MapArea.vue', import.meta.url)), 'utf8')
+    const layerStoreSource = readFileSync(fileURLToPath(new URL('../stores/layer.ts', import.meta.url)), 'utf8')
+
+    expect(appSource).not.toContain('scheduleGeoTiffWarmup')
+    expect(appSource).not.toContain('getCachedGeoTiffSource')
+    expect(appSource).not.toContain('output2.tif')
+    expect(mapAreaSource).toContain('const loading = ref(false)')
+    expect(layerStoreSource).toContain("{ id: 'elevation', name: '海洋高程', type: 'raster', visible: false, loaded: false")
+    expect(mapAreaSource).not.toContain('DEFAULT_GEO_TIFF_URL')
+    expect(mapAreaSource).not.toContain('getCachedGeoTiffSource')
+    expect(mapAreaSource).not.toContain('defaultElevationSourceKey')
+    expect(mapAreaSource).not.toContain('ensureDefaultGeoTiffEntry')
+    expect(mapAreaSource).not.toContain('output2.tif')
+    expect(mapAreaSource).toContain('v-if="loading && appStore.hasOpenProject"')
+  })
+
+  it('does not fall back to bundled GIS data for platform-uploaded layers without a download source', () => {
+    const mapAreaSource = readFileSync(fileURLToPath(new URL('../modules/planning/components/MapArea.vue', import.meta.url)), 'utf8')
+
+    expect(mapAreaSource).toContain('isUnavailablePlatformLayer')
+    expect(mapAreaSource).toContain('notifyPlatformLayerMissingSource')
+    expect(mapAreaSource).toContain('平台图层已上传')
+  })
+
+  it('does not use bundled GIS defaults to masquerade failed platform layers', () => {
+    const layerControlSource = readFileSync(fileURLToPath(new URL('../modules/planning/panels/LayerControl.vue', import.meta.url)), 'utf8')
+    const mapAreaSource = readFileSync(fileURLToPath(new URL('../modules/planning/components/MapArea.vue', import.meta.url)), 'utf8')
+
+    expect(layerControlSource).not.toContain('将尝试使用附件加载')
+    expect(layerControlSource).toContain('layerStore.setLayerVisible(layer.storeLayerId, false)')
+    expect(layerControlSource).toContain('return')
+    expect(mapAreaSource).toContain('failPlatformLayerRender')
+    expect(mapAreaSource).toContain('layerStore.setLayerVisible(layerId, false)')
+    expect(mapAreaSource).not.toContain("sourceLabel: '默认数据'")
+    expect(mapAreaSource).not.toContain("getUploadedLayerLabel('volcano') : '默认数据'")
+    expect(mapAreaSource).not.toContain("getUploadedLayerLabel('earthquake') : '默认数据'")
+    expect(mapAreaSource).not.toContain("loadVectorFeaturesWithDefault('coldCoral', '/data/海草.zip')")
+    expect(mapAreaSource).not.toContain("loadVectorFeaturesWithDefault('fishing', '/data/渔业数据.zip')")
+    expect(mapAreaSource).not.toContain("loadVectorFeaturesWithDefault('shipping', '/data/航道数据.zip')")
+    expect(mapAreaSource).not.toContain('setElevationSource(defaultElevationSourceKey, defaultGeoTiffEntry.source, true)')
+    expect(mapAreaSource).not.toContain("loadVolcanoData('/data/volcane_location.xlsx')")
+    expect(mapAreaSource).not.toContain("loadEarthquakeData('/data/earthQuakeData.xlsx')")
+    expect(mapAreaSource).not.toContain("'/data/")
+  })
+
+  it('shows a global loading overlay while checked planning layers render', () => {
+    const appStoreSource = readFileSync(fileURLToPath(new URL('../stores/app.ts', import.meta.url)), 'utf8')
+    const appSource = readFileSync(fileURLToPath(new URL('../App.vue', import.meta.url)), 'utf8')
+    const layerControlSource = readFileSync(fileURLToPath(new URL('../modules/planning/panels/LayerControl.vue', import.meta.url)), 'utf8')
+    const mapAreaSource = readFileSync(fileURLToPath(new URL('../modules/planning/components/MapArea.vue', import.meta.url)), 'utf8')
+
+    expect(appStoreSource).toContain('globalLoading')
+    expect(appStoreSource).toContain('showGlobalLoading')
+    expect(appStoreSource).toContain('hideGlobalLoading')
+    expect(appSource).toContain('global-loading-overlay')
+    expect(appSource).toContain('appStore.globalLoading.visible')
+    expect(layerControlSource).toContain('appStore.showGlobalLoading')
+    expect(layerControlSource).toContain('loadPlatformLayerDetail(layer.storeLayerId)')
+    expect(layerControlSource).toContain('await nextTick()')
+    expect(mapAreaSource).toContain('hideLayerGlobalLoading')
+    expect(mapAreaSource).toContain('appStore.hideGlobalLoading()')
+  })
+
+  it('uses GIS suffix detection for local GIS imports including zipped shapefiles', () => {
+    const importDialogSource = readFileSync(fileURLToPath(new URL('../modules/planning/dialogs/ImportGisDialog.vue', import.meta.url)), 'utf8')
+
+    expect(importDialogSource).toContain("from '@/utils/gisFormat'")
+    expect(importDialogSource).toContain('detectGisFormat(file.name)')
+    expect(importDialogSource).toContain('shp(await file.arrayBuffer())')
+    expect(importDialogSource).toContain('.zip')
+  })
+
   it('can add platform-only layers to the planning layer list', () => {
     const layerStore = useLayerStore()
 
     layerStore.upsertLayer({
       id: 'platform-layer-99',
-      name: '平台冷水珊瑚图层',
+      name: '骞冲彴鍐锋按鐝婄憵鍥惧眰',
       type: 'vector',
       visible: true,
       loaded: true,
@@ -1609,7 +1925,7 @@ describe('local fake backend removal', () => {
     })
 
     expect(layerStore.getLayerById('platform-layer-99')).toEqual(expect.objectContaining({
-      name: '平台冷水珊瑚图层',
+      name: '骞冲彴鍐锋按鐝婄憵鍥惧眰',
       visible: true,
       loaded: true,
     }))
