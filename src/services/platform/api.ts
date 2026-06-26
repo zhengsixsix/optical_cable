@@ -10,10 +10,16 @@ import type {
   PlanConfigGridResolution,
   PlanConfigRedundancy,
   PlanConfigScope,
+  PlanDeviceConfig,
+  PlanDeviceConfigSave,
+  PlanDeviceConfigSearch,
   PlanDeviceEntity,
   PlanDeviceEntitySearch,
   PlanDeviceLibrary,
   PlanDeviceLibrarySearch,
+  PlanDeviceValue,
+  PlanDeviceValueSave,
+  PlanDeviceValueSearch,
   PlanLayer,
   PlanLayerUploadCompletePayload,
   PlanPoint,
@@ -169,6 +175,22 @@ export const platformDeviceEntityApi = {
   remove: (id: number | string) => platformClient.post<boolean>('/plan/deviceEntity/remove', { id }),
 }
 
+export const platformDeviceConfigApi = {
+  search: (payload: PlanDeviceConfigSearch) =>
+    platformClient.postWithPage<PlanDeviceConfig[]>('/plan/deviceConfig/search', payload),
+  save: (payload: PlanDeviceConfigSave) => platformClient.post<number | string>('/plan/deviceConfig/save', payload),
+  detail: (id: Id) => platformClient.post<PlanDeviceConfig>('/plan/deviceConfig/detail', { id }),
+  remove: (id: Id) => platformClient.post<boolean>('/plan/deviceConfig/remove', { id }),
+}
+
+export const platformDeviceValueApi = {
+  search: (payload: PlanDeviceValueSearch = { pageNumber: 1, pageSize: 10 }) =>
+    platformClient.postWithPage<PlanDeviceValue[]>('/plan/deviceValue/search', payload),
+  save: (payload: PlanDeviceValueSave) => platformClient.post<number | string>('/plan/deviceValue/save', payload),
+  detail: (id: Id) => platformClient.post<PlanDeviceValue>('/plan/deviceValue/detail', { id }),
+  remove: (id: Id) => platformClient.post<boolean>('/plan/deviceValue/remove', { id }),
+}
+
 export const platformUploadApi = {
   complete: (payload: PlanLayerUploadCompletePayload) =>
     platformClient.postJson<unknown>('/sys/upload/complete', payload),
@@ -231,14 +253,22 @@ platformEndpointDefinitions.push(
   { key: 'planLayerRemove', group: '2.4 Layer Management', name: 'Delete plan layer', path: '/plan/planLayer/remove', defaultPayload: { id: null } },
   { key: 'planLayerDetail', group: '2.4 Layer Management', name: 'Plan layer detail', path: '/plan/planLayer/detail', defaultPayload: { id: null } },
   { key: 'planLayerSearch', group: '2.4 Layer Management', name: 'Search plan layers', path: '/plan/planLayer/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', remarks: null, isPublic: null, isDefault: null, attachmentId: null, typeDic: null } },
-  { key: 'deviceLibrarySave', group: '2.5 Device Library Management', name: 'Save device library', path: '/plan/deviceLibrary/save', defaultPayload: { id: null, name: '', deviceTypeCd: 'FIB', iconId: null, iconSize: { width: 48, height: 48 }, dialogWindowId: null, bindFuncList: [] } },
+  { key: 'deviceLibrarySave', group: '2.5 Device Library Management', name: 'Save device library', path: '/plan/deviceLibrary/save', defaultPayload: { id: null, projectId: null, name: '', deviceTypeCd: '', iconId: null, iconSize: { width: 48, height: 48 }, dialogWindowId: null, bindFuncList: [], deviceValueList: [{ configCode: '', value: '' }] } },
   { key: 'deviceLibraryRemove', group: '2.5 Device Library Management', name: 'Delete device library', path: '/plan/deviceLibrary/remove', defaultPayload: { id: null } },
   { key: 'deviceLibraryDetail', group: '2.5 Device Library Management', name: 'Device library detail', path: '/plan/deviceLibrary/detail', defaultPayload: { id: null } },
-  { key: 'deviceLibrarySearch', group: '2.5 Device Library Management', name: 'Search device libraries', path: '/plan/deviceLibrary/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', deviceTypeCd: null, dialogWindowId: null } },
-  { key: 'deviceEntitySave', group: '2.6 Device Entity Management', name: 'Save device entity', path: '/plan/deviceEntity/save', defaultPayload: { id: null, name: '', deviceTypeCd: 'AMP', iconId: null, iconSize: { width: 48, height: 48 }, dialogWindowId: null, bindFuncList: [], libraryId: null, longitude: null, latitude: null, projectId: null, sortNum: 999 } },
+  { key: 'deviceLibrarySearch', group: '2.5 Device Library Management', name: 'Search device libraries', path: '/plan/deviceLibrary/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, projectId: null, name: '', deviceTypeCd: null, dialogWindowId: null } },
+  { key: 'deviceEntitySave', group: '2.6 Device Entity Management', name: 'Save device entity', path: '/plan/deviceEntity/save', defaultPayload: { id: null, name: '', deviceTypeCd: '', iconId: null, iconSize: { width: 48, height: 48 }, dialogWindowId: null, bindFuncList: [], libraryId: null, longitude: null, latitude: null, projectId: null, sortNum: 999, deviceValueList: [{ configCode: '', value: '' }] } },
   { key: 'deviceEntityRemove', group: '2.6 Device Entity Management', name: 'Delete device entity', path: '/plan/deviceEntity/remove', defaultPayload: { id: null } },
   { key: 'deviceEntityDetail', group: '2.6 Device Entity Management', name: 'Device entity detail', path: '/plan/deviceEntity/detail', defaultPayload: { id: null } },
   { key: 'deviceEntitySearch', group: '2.6 Device Entity Management', name: 'Search device entities', path: '/plan/deviceEntity/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', deviceTypeCd: null, libraryId: null, longitude: null, latitude: null, projectId: null } },
+  { key: 'deviceConfigSave', group: '2.7 Device Config Management', name: 'Save device config', path: '/plan/deviceConfig/save', defaultPayload: { id: null, deviceTypeCd: '', name: '', code: '', dataTypeCd: 'STRING', dataFormat: null, dicCode: null, defaultValue: null, description: null, jsonField: null, unit: null, groupCode: null, groupName: null } },
+  { key: 'deviceConfigRemove', group: '2.7 Device Config Management', name: 'Delete device config', path: '/plan/deviceConfig/remove', defaultPayload: { id: null } },
+  { key: 'deviceConfigDetail', group: '2.7 Device Config Management', name: 'Device config detail', path: '/plan/deviceConfig/detail', defaultPayload: { id: null } },
+  { key: 'deviceConfigSearch', group: '2.7 Device Config Management', name: 'Search device configs', path: '/plan/deviceConfig/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, deviceTypeCd: '', name: null, code: null, dataTypeCd: null, dicCode: null, defaultValue: null, description: null, jsonField: null, unit: null, groupCode: null, groupName: null } },
+  { key: 'deviceValueSave', group: '2.8 Device Value Management', name: 'Save device value', path: '/plan/deviceValue/save', defaultPayload: { id: null, configCode: '', value: '' } },
+  { key: 'deviceValueRemove', group: '2.8 Device Value Management', name: 'Delete device value', path: '/plan/deviceValue/remove', defaultPayload: { id: null } },
+  { key: 'deviceValueDetail', group: '2.8 Device Value Management', name: 'Device value detail', path: '/plan/deviceValue/detail', defaultPayload: { id: null } },
+  { key: 'deviceValueSearch', group: '2.8 Device Value Management', name: 'Search device values', path: '/plan/deviceValue/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, deviceTypeCd: null, configCode: null, deviceLibraryId: null, deviceEntityId: null, entityIsNull: null, value: null } },
 )
 export async function callPlatformEndpoint(definition: EndpointDefinition, rawPayload: unknown) {
   if (definition.callable === false) {

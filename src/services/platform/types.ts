@@ -166,8 +166,104 @@ export interface PlatformBindFunc {
   defaultInputParams?: Record<string, unknown>
 }
 
+export type PlanDeviceDataType = 'DATA_TYPE' | 'NUMBER' | 'STRING' | 'BOOLEAN' | 'DATETIME'
+
+export interface PlanDeviceConfig {
+  id?: Id
+  deviceTypeCd?: string | null
+  deviceTypeName?: string | null
+  name?: string | null
+  code?: string | null
+  dataTypeCd?: PlanDeviceDataType | string | null
+  dataTypeName?: string | null
+  dataFormat?: number | null
+  dicCode?: string | null
+  defaultValue?: string | null
+  description?: string | null
+  jsonField?: string | null
+  unit?: string | null
+  groupCode?: string | null
+  groupName?: string | null
+}
+
+export interface PlanDeviceConfigSearch extends PagedSearch {
+  id?: Id | null
+  deviceTypeCd: string
+  name?: string | null
+  code?: string | null
+  dataTypeCd?: PlanDeviceDataType | string | null
+  dicCode?: string | null
+  defaultValue?: string | null
+  description?: string | null
+  jsonField?: string | null
+  unit?: string | null
+  groupCode?: string | null
+  groupName?: string | null
+}
+
+export interface PlanDeviceConfigSave {
+  id?: Id | null
+  deviceTypeCd: string
+  name?: string | null
+  code: string
+  dataTypeCd?: PlanDeviceDataType | string | null
+  dataFormat?: number | null
+  dicCode?: string | null
+  defaultValue?: string | null
+  description?: string | null
+  jsonField?: string | null
+  unit?: string | null
+  groupCode?: string | null
+  groupName?: string | null
+}
+
+export interface PlanDeviceValueSave {
+  id?: Id | null
+  configCode?: string | null
+  value?: string | null
+}
+
+export interface PlanDeviceValueSimple {
+  deviceTypeCd?: string | null
+  deviceTypeName?: string | null
+  configName?: string | null
+  configCode?: string | null
+  dataTypeCd?: PlanDeviceDataType | string | null
+  dataFormat?: number | null
+  dicCode?: string | null
+  defaultValue?: string | null
+  jsonField?: string | null
+  unit?: string | null
+  groupCode?: string | null
+  groupName?: string | null
+  value?: string | null
+}
+
+export interface PlanDeviceValue {
+  id?: Id
+  deviceTypeCd?: string | null
+  deviceTypeName?: string | null
+  configCode?: string | null
+  deviceLibraryId?: Id | null
+  deviceLibraryName?: string | null
+  deviceEntityId?: Id | null
+  deviceEntityName?: string | null
+  value?: string | null
+}
+
+export interface PlanDeviceValueSearch extends PagedSearch {
+  id?: Id | null
+  deviceTypeCd?: string | null
+  configCode?: string | null
+  deviceLibraryId?: Id | null
+  deviceEntityId?: Id | null
+  entityIsNull?: boolean | null
+  value?: string | null
+}
+
 export interface PlanDeviceLibrary {
   id?: Id
+  projectId?: Id | null
   name?: string | null
   deviceTypeCd?: string | null
   typeName?: string | null
@@ -177,10 +273,12 @@ export interface PlanDeviceLibrary {
   dialogWindowId?: string | null
   dialogWindowName?: string | null
   bindFuncList?: PlatformBindFunc[] | null
+  deviceValueList?: Array<PlanDeviceValueSave | PlanDeviceValueSimple> | null
 }
 
 export interface PlanDeviceLibrarySearch extends PagedSearch {
   id?: Id | null
+  projectId?: Id | null
   name?: string | null
   deviceTypeCd?: string | null
   dialogWindowId?: string | null
@@ -203,6 +301,7 @@ export interface PlanDeviceEntity {
   latitude?: number | null
   projectId?: Id | null
   sortNum?: number | null
+  deviceValueList?: Array<PlanDeviceValueSave | PlanDeviceValueSimple> | null
 }
 
 export interface PlanDeviceEntitySearch extends PagedSearch {
