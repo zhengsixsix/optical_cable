@@ -9,6 +9,7 @@ import type {
   PlanDeviceEntity,
   PlanDeviceEntitySearch,
   PlanDeviceLibrary,
+  PlanDeviceLibrarySearch,
 } from '@/services/platform/types'
 import type { 
   SystemPlanningParams, 
@@ -329,11 +330,15 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  async function loadPlatformDeviceLibraries() {
+  async function loadPlatformDeviceLibraries(search: PlanDeviceLibrarySearch = {}) {
     deviceLibraryLoading.value = true
     deviceLibrarySyncError.value = null
     try {
-      const response = await platformDeviceLibraryApi.search({ pageNumber: 1, pageSize: 1000 })
+      const response = await platformDeviceLibraryApi.search({
+        pageNumber: 1,
+        pageSize: 1000,
+        ...search,
+      })
       platformDeviceLibraries.value = response.data ?? []
       if (platformDeviceLibraries.value.length) currentLibraryFile.value = '平台器件库'
       return response
