@@ -12,6 +12,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useRPLStore } from '@/stores/rpl'
 import { repeaterPlacementService } from '@/services'
 import { getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
+import { firstDeviceLibraryByCategory, toRuntimeFiberLibrary } from '@/services/platform/deviceRuntime'
 import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
 import { enrichOrderedRoutePointsWithDepth, getRoutePositionAtKP } from '@/utils/routePosition'
 
@@ -63,8 +64,9 @@ export function useAmplifierPlacement(deps: {
     const existingFibers = connectorStore.elements.filter(e => e.type === 'fiber')
     existingFibers.forEach(f => connectorStore.deleteElement(f.id))
 
-    const fiberTypes = settingsStore.fiberTypes || []
-    const defaultFiber = fiberTypes[0]
+    const defaultFiber = toRuntimeFiberLibrary(
+      firstDeviceLibraryByCategory(settingsStore.platformDeviceLibraries, 'fiber'),
+    )
     const fiberName = defaultFiber?.name || '光纤'
     const fiberCategory = defaultFiber?.fiberCategory || 'G.654.E'
 

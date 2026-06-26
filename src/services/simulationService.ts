@@ -11,6 +11,12 @@ import type {
   SimulationInput, SimDevice, SimAmplifierDevice, SimBUDevice, SimEqualizerDevice, SimLandingDevice, SimFiberSegment, SimulationProgress, ProgressCallback, SpanScanResult, SpanScanPoint, SimulationModel
 } from '@/types/simulation'
 import { useSettingsStore } from '@/stores/settings'
+import {
+  findDeviceLibraryById,
+  toRuntimeAmplifierLibrary,
+  toRuntimeBranchingLibrary,
+  toRuntimeFiberLibrary,
+} from '@/services/platform/deviceRuntime'
 /**
  * 构建标准化仿真输入结构
  * @param config 链路配置（来自 LinkConfigDialog）
@@ -57,9 +63,9 @@ export async function buildSimulationInput(
       } as SimLandingDevice)
     } else if (el.type === 'amplifier_e' || el.type === 'amplifier_w' || el.type === 'ola') {
       // 从器件库获取放大器参数
-      const ampType = el.componentRefId 
-        ? settingsStore.amplifierTypes.find(a => a.id === el.componentRefId)
-        : null
+      const ampType = toRuntimeAmplifierLibrary(
+        findDeviceLibraryById(settingsStore.platformDeviceLibraries, el.componentRefId, 'amplifier'),
+      )
       
       deviceSequence.push({
         id: el.id,
@@ -73,12 +79,12 @@ export async function buildSimulationInput(
         noiseFigure: ampType?.noiseFigure || config.amplifierParams.noiseFigure || 5,
         maxOutputPower: ampType?.outputPower || config.amplifierParams.maxOutputPower || 17,
         saturationPower: ampType?.saturationPower || 20,
-        operatingMode: (ampType?.operatingMode as 'AGC' | 'APC') || 'AGC'
+        operatingMode: ampType?.operatingMode === 'APC' || ampType?.operatingMode === 'apc' || ampType?.operatingMode === 'fixed_output' ? 'APC' : 'AGC'
       } as SimAmplifierDevice)
     } else if (el.type === 'bu') {
-      const buType = el.componentRefId
-        ? settingsStore.branchingUnitTypes.find(b => b.id === el.componentRefId)
-        : null
+      const buType = toRuntimeBranchingLibrary(
+        findDeviceLibraryById(settingsStore.platformDeviceLibraries, el.componentRefId, 'branching'),
+      )
       
       deviceSequence.push({
         id: el.id,
@@ -120,7 +126,9 @@ export async function buildSimulationInput(
   
   // 2. 构建光纤段序列
   const fiberSegments: SimFiberSegment[] = []
-  const fiberType = settingsStore.fiberTypes.find(f => f.id === config.fiberTypeId)
+  const fiberType = toRuntimeFiberLibrary(
+    findDeviceLibraryById(settingsStore.platformDeviceLibraries, config.fiberTypeId, 'fiber'),
+  )
   
   for (let i = 0; i < deviceSequence.length - 1; i++) {
     const fromDevice = deviceSequence[i]
@@ -136,7 +144,7 @@ export async function buildSimulationInput(
       attenuation: config.fiberParams.attenuation ?? fiberType?.attenuationCoeff ?? 0.16,
       dispersion: config.fiberParams.dispersion ?? fiberType?.dispersion ?? 20.5,
       effectiveArea: config.fiberParams.effectiveArea ?? fiberType?.effectiveArea ?? 110,
-      nonlinearIndex: config.fiberParams.nonlinearIndex ?? fiberType?.nonlinearRefractiveIndex ?? 2.2e-20
+      nonlinearIndex: config.fiberParams.nonlinearIndex ?? ((fiberType?.nonlinearRefractiveIndex ?? 2.2) * 1e-20)
     })
   }
   

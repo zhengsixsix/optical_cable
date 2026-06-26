@@ -23,6 +23,7 @@ import {
   Radio
 } from 'lucide-vue-next'
 import type { SLDEquipmentType, SLDExportTemplateVersion } from '@/types'
+import { getDeviceLibraryNameById } from '@/services/platform/deviceRuntime'
 
 const props = defineProps<{
   visible?: boolean
@@ -83,14 +84,14 @@ const getEquipmentSpecification = (equipment: { type: SLDEquipmentType; componen
 
   switch (equipment.type) {
     case 'REP':
-      return settingsStore.amplifierTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+      return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, equipment.componentRefId, 'amplifier') || ''
     case 'BU':
     case 'OADM':
-      return settingsStore.branchingUnitTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+      return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, equipment.componentRefId, 'branching') || ''
     case 'EQ':
-      return settingsStore.equalizerTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+      return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, equipment.componentRefId, 'equalizer') || ''
     case 'JOINT':
-      return settingsStore.jointBoxTypes.find(item => item.id === equipment.componentRefId)?.name || ''
+      return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, equipment.componentRefId, 'joint') || ''
     default:
       return ''
   }

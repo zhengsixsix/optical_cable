@@ -66,6 +66,7 @@ import {
   type PlanningValidationResult,
   type RouteRiskCostSummary,
 } from '@/services/PlanningInsightService'
+import { firstDeviceLibraryByCategory } from '@/services/platform/deviceRuntime'
 
 const mapStore = useMapStore()
 const layerStore = useLayerStore()
@@ -2764,10 +2765,9 @@ const syncRouteToRPL = () => {
   if (!selectedRoute) return
 
   // 从器件库获取默认设备（使用放大器类型）
-  const defaultAmplifier = settingsStore.amplifierTypes[0]
-  const defaultBU = settingsStore.branchingUnitTypes[0]
-  const defaultJointBox = settingsStore.jointBoxTypes[0]
-  const defaultFiber = settingsStore.fiberTypes[0]
+  const defaultAmplifier = firstDeviceLibraryByCategory(settingsStore.platformDeviceLibraries, 'amplifier')
+  const defaultBU = firstDeviceLibraryByCategory(settingsStore.platformDeviceLibraries, 'branching')
+  const defaultJointBox = firstDeviceLibraryByCategory(settingsStore.platformDeviceLibraries, 'joint')
 
   // 将路由点转换为 RPL 记录
   const records: any[] = []
@@ -3166,7 +3166,7 @@ const handleRunPlanning = async () => {
     isPlanningLoading.value = false
     appStore.showNotification({
       type: 'error',
-      message: '线上 Swagger 暂未提供路由规划接口，后端补齐后再接入'
+      message: '暂无接口'
     })
     appStore.addLog('ERROR', '线上 Swagger 暂未提供路由规划接口')
     return
@@ -3357,7 +3357,11 @@ const handleRunPlanning = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  if (settingsStore.platformDeviceLibraries.length === 0) {
+    await settingsStore.loadPlatformDeviceLibraries()
+  }
+
   initMap()
   window.addEventListener('keydown', handleRouteEditKeydown)
 })

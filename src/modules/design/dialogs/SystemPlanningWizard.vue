@@ -23,6 +23,13 @@ import {
 } from 'lucide-vue-next'
 import type { FiberParams, AmplifierParams, ModulationFormat, FECType } from '@/types/simulation'
 import { getFiberParamsFromLibrary, getAmplifierParamsFromLibrary } from '@/services/DeviceParamsService'
+import {
+  getDeviceLibrariesByCategory,
+  type RuntimeAmplifierLibrary,
+  type RuntimeFiberLibrary,
+  toRuntimeAmplifierLibrary,
+  toRuntimeFiberLibrary,
+} from '@/services/platform/deviceRuntime'
 
 const props = defineProps<{
   visible: boolean
@@ -59,6 +66,18 @@ export interface WizardConfig {
 const settingsStore = useSettingsStore()
 const routeStore = useRouteStore()
 const rplStore = useRPLStore()
+
+const platformFiberLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'fiber')
+    .map(toRuntimeFiberLibrary)
+    .filter((item): item is RuntimeFiberLibrary => Boolean(item)),
+)
+
+const platformAmplifierLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'amplifier')
+    .map(toRuntimeAmplifierLibrary)
+    .filter((item): item is RuntimeAmplifierLibrary => Boolean(item)),
+)
 
 // 当前步骤
 const currentStep = ref(1)
@@ -111,8 +130,12 @@ const spanScanConfig = ref({
 })
 
 // 初始化配置
-watch(() => props.visible, (visible) => {
+watch(() => props.visible, async (visible) => {
   if (visible) {
+    if (settingsStore.platformDeviceLibraries.length === 0) {
+      await settingsStore.loadPlatformDeviceLibraries()
+    }
+
     // 从 store 加载当前配置
     selectedRouteId.value = routeStore.currentRouteId || ''
     selectedRplId.value = rplStore.currentTableId || ''
@@ -139,12 +162,12 @@ watch(() => props.visible, (visible) => {
     }
     
     // 加载器件库默认值
-    if (settingsStore.fiberTypes.length > 0) {
-      selectedFiberTypeId.value = settingsStore.fiberTypes[0].id
+    if (platformFiberLibraries.value.length > 0) {
+      selectedFiberTypeId.value = selectedFiberTypeId.value || platformFiberLibraries.value[0].id
       updateFiberParams()
     }
-    if (settingsStore.amplifierTypes.length > 0) {
-      selectedAmplifierTypeId.value = settingsStore.amplifierTypes[0].id
+    if (platformAmplifierLibraries.value.length > 0) {
+      selectedAmplifierTypeId.value = selectedAmplifierTypeId.value || platformAmplifierLibraries.value[0].id
       updateAmplifierParams()
     }
     
@@ -185,21 +208,21 @@ const rplOptions = computed(() =>
 
 // 光纤类型选项
 const fiberTypeOptions = computed(() => 
-  settingsStore.fiberTypes
+  platformFiberLibraries.value
     .filter(f => f.id)
-    .map(f => ({ 
-      value: f.id, 
-      label: `${f.name} (${f.fiberCategory || 'G.654.E'})` 
+    .map(f => ({
+      value: f.id,
+      label: `${f.name} (${f.fiberCategory || 'G.654.E'})`
     }))
 )
 
 // 放大器类型选项
 const amplifierTypeOptions = computed(() => 
-  settingsStore.amplifierTypes
+  platformAmplifierLibraries.value
     .filter(a => a.id)
-    .map(a => ({ 
-      value: a.id, 
-      label: `${a.name} (NF=${a.noiseFigure}dB)` 
+    .map(a => ({
+      value: a.id,
+      label: `${a.name} (NF=${a.noiseFigure}dB)`
     }))
 )
 
@@ -249,24 +272,24 @@ const validationResults = computed(() => {
   })
   
   // 3. 光纤器件
-  const hasFiber = settingsStore.fiberTypes.length > 0
+  const hasFiber = platformFiberLibraries.value.length > 0
   results.push({
     key: 'fiber',
     label: '光纤器件',
     valid: hasFiber,
     message: hasFiber 
-      ? `${settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)?.name || '默认'} (α=${fiberParams.value.attenuation}dB/km)`
+      ? `${platformFiberLibraries.value.find(f => f.id === selectedFiberTypeId.value)?.name || '默认'} (α=${fiberParams.value.attenuation}dB/km)`
       : '器件库中无光纤类型，将使用默认参数'
   })
   
   // 4. 放大器器件
-  const hasAmplifier = settingsStore.amplifierTypes.length > 0
+  const hasAmplifier = platformAmplifierLibraries.value.length > 0
   results.push({
     key: 'amplifier',
     label: '放大器器件',
     valid: hasAmplifier,
     message: hasAmplifier
-      ? `${settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)?.name || '默认'} (NF=${amplifierParams.value.noiseFigure}dB)`
+      ? `${platformAmplifierLibraries.value.find(a => a.id === selectedAmplifierTypeId.value)?.name || '默认'} (NF=${amplifierParams.value.noiseFigure}dB)`
       : '器件库中无放大器类型，将使用默认参数'
   })
   

@@ -9,7 +9,17 @@ lerna-debug.log*
 
 node_modules
 dist
-public
+public/data/
+public/dem/
+public/*.rar
+public/*.zip
+public/*.7z
+public/*.tar
+public/*.tar.gz
+public/*.tif
+public/*.tiff
+public/*.xls
+public/*.xlsx
 dist-ssr
 *.local
 .env.deploy.local

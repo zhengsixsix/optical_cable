@@ -18,6 +18,12 @@ import { useSettingsStore } from '@/stores/settings'
 import { useRPLStore } from '@/stores/rpl'
 import { useRouteStore } from '@/stores/route'
 import {
+  findDeviceLibraryById,
+  toRuntimeBranchingLibrary,
+  toRuntimeEqualizerLibrary,
+  toRuntimeJointBoxLibrary,
+} from '@/services/platform/deviceRuntime'
+import {
   buildSldEquipmentConfigParams,
   createSldMetadataVersionFields,
   DEFAULT_SLD_EXPORT_TEMPLATE_VERSION,
@@ -577,16 +583,16 @@ export const useSLDStore = defineStore('sld', () => {
       // 分支器：如果对应器件库里的 subType 是 ROADM 或 OADM，则映射到 SLD OADM 类型
       let sldType = connectorTypeToSld[elem.type]
       const amplifierLib = (elem.type === 'amplifier_e' || elem.type === 'amplifier_w' || elem.type === 'ola') && elem.componentRefId
-        ? settingsStore.amplifierTypes.find(a => a.id === elem.componentRefId)
+        ? findDeviceLibraryById(settingsStore.platformDeviceLibraries, elem.componentRefId, 'amplifier')
         : undefined
       const buLib = elem.type === 'bu' && elem.componentRefId
-        ? settingsStore.branchingUnitTypes.find(b => b.id === elem.componentRefId)
+        ? toRuntimeBranchingLibrary(findDeviceLibraryById(settingsStore.platformDeviceLibraries, elem.componentRefId, 'branching'))
         : undefined
       const jointLib = elem.type === 'joint' && elem.componentRefId
-        ? settingsStore.jointBoxTypes.find(j => j.id === elem.componentRefId)
+        ? toRuntimeJointBoxLibrary(findDeviceLibraryById(settingsStore.platformDeviceLibraries, elem.componentRefId, 'joint'))
         : undefined
       const equalizerLib = elem.type === 'equalizer' && elem.componentRefId
-        ? settingsStore.equalizerTypes.find(e => e.id === elem.componentRefId)
+        ? toRuntimeEqualizerLibrary(findDeviceLibraryById(settingsStore.platformDeviceLibraries, elem.componentRefId, 'equalizer'))
         : undefined
       if (elem.type === 'bu' && elem.componentRefId) {
         if (buLib?.subType === 'ROADM' || buLib?.subType === 'OADM') {

@@ -22,6 +22,11 @@ import {
 } from 'lucide-vue-next'
 import type { ConnectorElement } from '@/types'
 import { calculateDistance } from '@/utils/geo'
+import {
+  getDeviceLibrariesByCategory,
+  type RuntimeBranchingLibrary,
+  toRuntimeBranchingLibrary,
+} from '@/services/platform/deviceRuntime'
 
 const props = defineProps<{
   visible: boolean
@@ -38,6 +43,12 @@ const connectorStore = useConnectorStore()
 const appStore = useAppStore()
 const routeStore = useRouteStore()
 const buConfigStore = useBUConfigStore()  // 使用共享的 BU 配置 store
+
+const platformBranchingLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'branching')
+    .map(toRuntimeBranchingLibrary)
+    .filter((item): item is RuntimeBranchingLibrary => Boolean(item)),
+)
 
 // 当前编辑的 BU 元素
 const currentBu = computed(() => {
@@ -102,7 +113,7 @@ const paramsModified = ref(false)
 // BU 器件选项
 const buDeviceOptions = computed(() => [
   { value: '', label: '-- 请选择 --' },
-  ...settingsStore.branchingUnitTypes.map(b => ({
+  ...platformBranchingLibraries.value.map(b => ({
     value: b.id,
     label: `${b.name} - ${b.portCount}端口`
   }))
@@ -111,7 +122,7 @@ const buDeviceOptions = computed(() => [
 // 获取选中器件
 const selectedDevice = computed(() => {
   if (!selectedDeviceId.value) return null
-  return settingsStore.branchingUnitTypes.find(b => b.id === selectedDeviceId.value) || null
+  return platformBranchingLibraries.value.find(b => b.id === selectedDeviceId.value) || null
 })
 
 // 从器件加载参数
@@ -425,8 +436,12 @@ const createNewDevice = () => {
 }
 
 // 初始化
-watch(() => props.visible, (visible) => {
+watch(() => props.visible, async (visible) => {
   if (visible && props.buId) {
+    if (settingsStore.platformDeviceLibraries.length === 0) {
+      await settingsStore.loadPlatformDeviceLibraries()
+    }
+
     // 优先从共享的 store 加载
     const cached = buConfigStore.getConfig(props.buId)
     
@@ -770,12 +785,12 @@ watch(() => props.visible, (visible) => {
           </button>
         </div>
         <div class="flex-1 overflow-auto p-4">
-          <div v-if="settingsStore.branchingUnitTypes.length === 0" class="text-center py-8 text-gray-500">
+          <div v-if="platformBranchingLibraries.length === 0" class="text-center py-8 text-gray-500">
             器件库中暂无 BU 器件，请先新建
           </div>
           <div v-else class="space-y-2">
-            <div 
-              v-for="device in settingsStore.branchingUnitTypes" 
+            <div
+              v-for="device in platformBranchingLibraries"
               :key="device.id"
               class="p-3 border rounded-lg cursor-pointer transition-colors"
               :class="selectedDeviceId === device.id ? 'border-blue-500 bg-blue-50' : 'hover:border-gray-400'"

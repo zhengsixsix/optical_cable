@@ -6,6 +6,11 @@ import { useAppStore } from '@/stores/app'
 import { Button, Input, Select } from '@/shared/components/base'
 import { X, Settings, Lock, Unlock, RotateCcw, Check, Cable, SlidersHorizontal, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import type { CableSegment, RiskLevel } from '@/types/cableSegment'
+import {
+  findDeviceLibraryById,
+  getDeviceLibrariesByCategory,
+  toRuntimeEqualizerLibrary,
+} from '@/services/platform/deviceRuntime'
 
 const props = defineProps<{
   visible: boolean
@@ -53,9 +58,9 @@ const originalData = ref<{
 
 // 均衡器型号选项
 const equalizerTypeOptions = computed(() => {
-  return settingsStore.equalizerTypes
-    .filter(e => e.id)
-    .map(e => ({ value: e.id, label: e.name }))
+  return getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'equalizer')
+    .filter(e => e.id != null)
+    .map(e => ({ value: String(e.id), label: e.name || String(e.id) }))
 })
 
 const equalizerRoleOptions = [
@@ -110,6 +115,12 @@ watch(() => props.segment, (newSegment) => {
   }
 }, { immediate: true })
 
+watch(() => props.visible, async (visible) => {
+  if (visible && settingsStore.platformDeviceLibraries.length === 0) {
+    await settingsStore.loadPlatformDeviceLibraries()
+  }
+}, { immediate: true })
+
 // 当缩型选择变化时，更新名称
 watch(() => editForm.cableTypeId, (newId) => {
   const mapping = settingsStore.routePlanningConfig.armorMappings?.find(m => m.cableTypeId === newId)
@@ -120,7 +131,9 @@ watch(() => editForm.cableTypeId, (newId) => {
 
 // 当均衡器型号选择变化时，同步型号名称
 watch(() => editForm.equalizerTypeId, (newId) => {
-  const eq = settingsStore.equalizerTypes.find(e => e.id === newId)
+  const eq = toRuntimeEqualizerLibrary(
+    findDeviceLibraryById(settingsStore.platformDeviceLibraries, newId, 'equalizer'),
+  )
   if (eq) editForm.equalizerTypeName = eq.name
 })
 

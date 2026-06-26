@@ -37,6 +37,19 @@ import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
 import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
 import { runSimulation } from '@/services/SimulationApiService'
 import type { SpanScanResult, ScanPoint } from '@/services/SimulationApiService'
+import {
+  getDeviceLibrariesByCategory,
+  type RuntimeAmplifierLibrary,
+  type RuntimeBranchingLibrary,
+  type RuntimeEqualizerLibrary,
+  type RuntimeFiberLibrary,
+  type RuntimeJointBoxLibrary,
+  toRuntimeAmplifierLibrary,
+  toRuntimeBranchingLibrary,
+  toRuntimeEqualizerLibrary,
+  toRuntimeFiberLibrary,
+  toRuntimeJointBoxLibrary,
+} from '@/services/platform/deviceRuntime'
 
 const props = defineProps<{
   visible: boolean
@@ -116,6 +129,32 @@ const connectorStore = useConnectorStore()
 const sldStore = useSLDStore()
 const buConfigStore = useBUConfigStore()  // 使用共享的 BU 配置 store
 const cableSegmentStore = useCableSegmentStore()
+
+const platformFiberLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'fiber')
+    .map(toRuntimeFiberLibrary)
+    .filter((item): item is RuntimeFiberLibrary => Boolean(item)),
+)
+const platformAmplifierLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'amplifier')
+    .map(toRuntimeAmplifierLibrary)
+    .filter((item): item is RuntimeAmplifierLibrary => Boolean(item)),
+)
+const platformBranchingLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'branching')
+    .map(toRuntimeBranchingLibrary)
+    .filter((item): item is RuntimeBranchingLibrary => Boolean(item)),
+)
+const platformEqualizerLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'equalizer')
+    .map(toRuntimeEqualizerLibrary)
+    .filter((item): item is RuntimeEqualizerLibrary => Boolean(item)),
+)
+const platformJointBoxLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'joint')
+    .map(toRuntimeJointBoxLibrary)
+    .filter((item): item is RuntimeJointBoxLibrary => Boolean(item)),
+)
 
 // 当前活动步骤
 const activeStep = ref<'link' | 'model' | 'fiber' | 'amplifier' | 'wdm' | 'bu' | 'result'>('link')
@@ -206,7 +245,7 @@ const resolveRplTableForRoute = (routeId?: string | null) => {
 }
 
 const equalizerTypeOptions = computed(() =>
-  settingsStore.equalizerTypes
+  platformEqualizerLibraries.value
     .filter(type => type.id)
     .map(type => ({ value: type.id, label: type.name }))
 )
@@ -237,7 +276,7 @@ interface SegmentPlacementConfig {
 }
 
 const createPlannedEqualizer = (overrides: Partial<PlannedEqualizer> = {}): PlannedEqualizer => {
-  const defaultType = settingsStore.equalizerTypes.find(type => type.id === overrides.componentRefId) || settingsStore.equalizerTypes[0]
+  const defaultType = platformEqualizerLibraries.value.find(type => type.id === overrides.componentRefId) || platformEqualizerLibraries.value[0]
   const normalized = normalizeEqualizerConfig({
     equalizerRole: overrides.equalizerRole,
     attenuationMode: overrides.attenuationMode ?? defaultType?.attenuationMode,
@@ -355,7 +394,7 @@ const inferAutoJointSubType = (
 }
 
 const selectJointBoxTypeForSubtype = (subType: ReturnType<typeof inferAutoJointSubType>) =>
-  settingsStore.jointBoxTypes.find(type => type.subType === subType)
+  platformJointBoxLibraries.value.find(type => type.subType === subType)
 
 const buildPlannedEqualizersFromSegments = () => {
   const routeId = selectedRouteId.value || routeStore.currentRouteId || null
@@ -365,7 +404,7 @@ const buildPlannedEqualizersFromSegments = () => {
     .sort((a, b) => a.startKp - b.startKp)
 
   if (segmentEqualizers.length === 0) {
-    const defaultType = settingsStore.equalizerTypes[0]
+    const defaultType = platformEqualizerLibraries.value[0]
     const totalLength = linkInfo.value?.trunkLength
       || linkInfo.value?.totalLength
       || segmentConfigs[segmentConfigs.length - 1]?.endKp
@@ -391,7 +430,7 @@ const buildPlannedEqualizersFromSegments = () => {
   }
 
   return segmentEqualizers.map((segment, index) => {
-    const equalizerType = settingsStore.equalizerTypes.find(type => type.id === segment.equalizerTypeId)
+    const equalizerType = platformEqualizerLibraries.value.find(type => type.id === segment.equalizerTypeId)
     const midKp = Number(((segment.startKp + segment.endKp) / 2).toFixed(1))
     return createPlannedEqualizer({
       kp: midKp,
@@ -434,7 +473,7 @@ const ensurePlannedEqualizersReady = () => {
 }
 
 const addPlannedEqualizer = () => {
-  if (settingsStore.equalizerTypes.length === 0) {
+  if (platformEqualizerLibraries.value.length === 0) {
     return
   }
 
@@ -606,7 +645,7 @@ const fiberParams = reactive<Record<string, number>>({
 const fiberParamSources = reactive<Record<string, 'device' | 'manual' | 'undefined'>>({})
 
 const fiberTypeOptions = computed(() => 
-  settingsStore.fiberTypes
+  platformFiberLibraries.value
     .filter(f => f.id)
     .map(f => ({ 
       value: f.id, 
@@ -618,7 +657,7 @@ const fiberTypeOptions = computed(() =>
 const updateFiberFromDevice = () => {
   if (!selectedFiberTypeId.value) return
   
-  const fiber = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
+  const fiber = platformFiberLibraries.value.find(f => f.id === selectedFiberTypeId.value)
   if (fiber) {
     fiberParams.attenuation = fiber.attenuationCoeff || 0.165
     fiberParams.effectiveArea = fiber.effectiveArea || 130
@@ -658,7 +697,7 @@ const amplifierParams = reactive<Record<string, number>>({
 const amplifierParamSources = reactive<Record<string, 'device' | 'manual' | 'undefined'>>({})
 
 const amplifierTypeOptions = computed(() => 
-  settingsStore.amplifierTypes
+  platformAmplifierLibraries.value
     .filter(a => a.id)
     .map(a => ({ 
       value: a.id, 
@@ -693,7 +732,7 @@ const constraints = reactive({
 const updateAmplifierFromDevice = () => {
   if (!selectedAmplifierTypeId.value) return
   
-  const amp = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
+  const amp = platformAmplifierLibraries.value.find(a => a.id === selectedAmplifierTypeId.value)
   if (amp) {
     amplifierParams.gain = amp.gain || 18
     amplifierParams.noiseFigure = amp.noiseFigure || 4.8
@@ -762,7 +801,7 @@ const initialNliValue = ref(-90.0)
 const PLACEHOLDER_VALUE = '__none__'
 const buDeviceOptions = computed(() => [
   { value: PLACEHOLDER_VALUE, label: '-- 请选择 --' },
-  ...settingsStore.branchingUnitTypes
+  ...platformBranchingLibraries.value
     .filter(b => b.id)
     .map(b => ({
       value: b.id,
@@ -782,8 +821,8 @@ const buConfigs = computed(() => {
       const storedConfig = configsSnapshot[bu.id] || null
       const deviceId = storedConfig?.componentRefId || ''
       const device = deviceId 
-        ? settingsStore.branchingUnitTypes.find(d => d.id === deviceId)
-        : settingsStore.branchingUnitTypes[0] || null
+        ? platformBranchingLibraries.value.find(d => d.id === deviceId)
+        : platformBranchingLibraries.value[0] || null
       
       const isConfigured = !!(storedConfig?.componentRefId && storedConfig?.buNextHopUpstream && storedConfig?.buNextHopDownstream)
       
@@ -815,7 +854,7 @@ const buConfigs = computed(() => {
       const storedConfig = configsSnapshot[bu.id] || null
       const deviceId = storedConfig?.componentRefId || bu.componentRefId || ''
       const device = deviceId 
-        ? settingsStore.branchingUnitTypes.find(d => d.id === deviceId)
+        ? platformBranchingLibraries.value.find(d => d.id === deviceId)
         : null
       
       const isConfigured = !!(storedConfig?.componentRefId && storedConfig?.buNextHopUpstream && storedConfig?.buNextHopDownstream) || (
@@ -986,7 +1025,7 @@ const updateBuConfig = (buId: string, field: string, value: string | number | bo
 
 // 从器件库加载 BU 参数 - 同时更新共享 store 和 connectorStore
 const loadBuParamsFromDevice = (buId: string, deviceId: string) => {
-  const device = settingsStore.branchingUnitTypes.find(d => d.id === deviceId)
+  const device = platformBranchingLibraries.value.find(d => d.id === deviceId)
   if (device) {
     // 更新共享的 buConfigStore
     buConfigStore.updateConfig(buId, {
@@ -1282,8 +1321,8 @@ const startCalculation = async () => {
       ? { mode: 'fixed' as const, fixedLength: fixedSpanLength.value }
       : { mode: 'scan' as const, scanRange: { min: spanScanConfig.min, max: spanScanConfig.max, step: spanScanConfig.step } }
 
-    const fiberType = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
-    const ampType = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
+    const fiberType = platformFiberLibraries.value.find(f => f.id === selectedFiberTypeId.value)
+    const ampType = platformAmplifierLibraries.value.find(a => a.id === selectedAmplifierTypeId.value)
 
     const response = await runSimulation({
       linkId: selectedRouteId.value,
@@ -1838,7 +1877,7 @@ const syncPlannedEqualizersToConnector = (
 
   plannedEqualizers.value.forEach((equalizer, index) => {
     const normalized = normalizeEqualizerConfig(equalizer)
-    const typeInfo = settingsStore.equalizerTypes.find(type => type.id === equalizer.componentRefId)
+    const typeInfo = platformEqualizerLibraries.value.find(type => type.id === equalizer.componentRefId)
     const position = getPositionByKP(equalizer.kp, route, configTotalLength, rplRecords)
     const payload = {
       name: equalizer.name.trim() || `EQ-${String(index + 1).padStart(2, '0')}`,
@@ -1997,8 +2036,8 @@ const applyAndClose = async () => {
     const configTotalLength = linkInfo.value?.trunkLength || linkInfo.value?.totalLength || 0
     const rplRecords = getSelectedRplRecords(route.id)
     const spanLengthVal = calculationResult.value.systemConfig.avgSpanLength || 80
-    const ampType = settingsStore.amplifierTypes.find(a => a.id === selectedAmplifierTypeId.value)
-    const fiberType = settingsStore.fiberTypes.find(f => f.id === selectedFiberTypeId.value)
+    const ampType = platformAmplifierLibraries.value.find(a => a.id === selectedAmplifierTypeId.value)
+    const fiberType = platformFiberLibraries.value.find(f => f.id === selectedFiberTypeId.value)
     const simAmplifiers = calculationResult.value.amplifiers
     
     // ── 构建主干/分支路径坐标（优先 rawTrunkCoordinates，否则从 segment 拓扑重建） ──
@@ -2423,18 +2462,22 @@ const applyAndClose = async () => {
 }
 
 // 初始化
-watch(() => props.visible, (visible) => {
+watch(() => props.visible, async (visible) => {
   if (visible) {
+    if (settingsStore.platformDeviceLibraries.length === 0) {
+      await settingsStore.loadPlatformDeviceLibraries()
+    }
+
     // 加载当前选中的路由和 RPL
     selectedRouteId.value = routeStore.currentRouteId || ''
     selectedRplId.value = resolveRplTableForRoute(routeStore.currentRouteId || null)?.id || ''
     
     // 加载器件库默认值
-    if (settingsStore.fiberTypes.length > 0 && !selectedFiberTypeId.value) {
-      selectedFiberTypeId.value = settingsStore.fiberTypes[0].id
+    if (platformFiberLibraries.value.length > 0 && !selectedFiberTypeId.value) {
+      selectedFiberTypeId.value = platformFiberLibraries.value[0].id
     }
-    if (settingsStore.amplifierTypes.length > 0 && !selectedAmplifierTypeId.value) {
-      selectedAmplifierTypeId.value = settingsStore.amplifierTypes[0].id
+    if (platformAmplifierLibraries.value.length > 0 && !selectedAmplifierTypeId.value) {
+      selectedAmplifierTypeId.value = platformAmplifierLibraries.value[0].id
     }
     
     activeStep.value = 'link'
@@ -2615,7 +2658,7 @@ watch(() => props.visible, (visible) => {
                     <Button
                       variant="outline"
                       size="sm"
-                      :disabled="settingsStore.equalizerTypes.length === 0"
+                      :disabled="platformEqualizerLibraries.length === 0"
                       @click="addPlannedEqualizer"
                     >
                       <Plus class="w-4 h-4 mr-1" />
@@ -2623,7 +2666,7 @@ watch(() => props.visible, (visible) => {
                     </Button>
                   </div>
 
-                  <div v-if="settingsStore.equalizerTypes.length === 0" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                  <div v-if="platformEqualizerLibraries.length === 0" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
                     器件库里还没有均衡器型号，请先到器件库管理补充型号。
                   </div>
 

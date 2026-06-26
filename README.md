@@ -1,62 +1,36 @@
 # 海底光缆智能规划软件
 
-## 技术栈
+前端项目，基于 Vue 3、Vite、Pinia、Vue Router、OpenLayers 和 Three.js。
 
-- **框架**: Vue 3.4+ (Composition API + `<script setup>`)
-- **构建工具**: Vite 5.x
-- **状态管理**: Pinia 2.x
-- **路由**: Vue Router 4.x
-- **UI 组件**: shadcn-vue 风格组件 + Tailwind CSS
-- **地图引擎**: OpenLayers 10.x
-- **3D 渲染**: Three.js 0.181.x
-- **GeoTIFF 解析**: geotiff 2.x
-- **类型检查**: TypeScript 5.x (strict mode)
+## 后端
 
-## 项目结构
+业务接口统一走线上平台后端。开发环境默认通过 Vite 将 `/platform-api` 代理到线上接口：
 
-```
-src/
-├── components/          # 组件
-│   ├── layout/         # 布局组件
-│   ├── map/            # 地图组件
-│   ├── panels/         # 面板组件
-│   ├── ui/             # UI 基础组件
-│   └── visualization/  # 可视化组件
-├── lib/                # 工具库
-├── repositories/       # 数据仓库层
-│   ├── interfaces/     # 接口定义
-│   └── mock/           # Mock 实现
-├── router/             # 路由配置
-├── stores/             # Pinia 状态管理
-├── types/              # TypeScript 类型
-├── utils/              # 工具函数
-└── views/              # 页面视图
+```text
+http://47.92.110.176:9108
 ```
 
-## 开始使用
+如需在部署环境中使用同源路径，请在 Web 服务层把 `/platform-api` 反向代理到同一线上后端。
 
-### 1. 安装依赖
+## 开发
 
 ```bash
-pnpm install
+npm install
+npm run dev
 ```
 
-### 2. 复制数据文件
-
-从原项目复制以下文件到 `public/` 目录：
-
-- `dem.tif` - DEM 高程数据
-- `output2.tif` - GeoTIFF 地图数据
-- `data/` 目录 - Excel 数据文件
-
-### 3. 启动开发服务器
+## 构建
 
 ```bash
-pnpm dev
+npm run build
+npm run preview
 ```
 
-### 4. 构建生产版本
+## 目录
 
-```bash
-pnpm build
+```text
+src/            应用源码
+public/image/   地图和设备图标
 ```
+
+本地 DEM、共享 GIS 数据、构建产物、临时分析文件和旧 server 已从运行路径中移除。

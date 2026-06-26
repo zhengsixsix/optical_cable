@@ -55,7 +55,15 @@ import {
   createDefaultBUSpec,
   createDefaultWDMConfig,
 } from '@/types/useFile'
-import type { Id } from '@/services/platform/types'
+import type { Id, PlanDeviceLibrary } from '@/services/platform/types'
+import { deviceLibraryItemToPlatform } from '@/services/platform/deviceLibraryMapping'
+import {
+  getDeviceLibrariesByCategory,
+  getDeviceLibraryParam,
+  toRuntimeAmplifierLibrary,
+  toRuntimeBranchingLibrary,
+  toRuntimeFiberLibrary,
+} from '@/services/platform/deviceRuntime'
 
 // Store 类型别名
 type SettingsStore = ReturnType<typeof useSettingsStore>
@@ -328,11 +336,19 @@ class ProjectFileService {
     }
 
     // 6.7 保存器件库扩展数据（均衡器型号、接头盒型号）
-    if (settingsStore.equalizerTypes && settingsStore.equalizerTypes.length > 0) {
-      projectData._app_extensions.equalizerTypes = JSON.parse(JSON.stringify(settingsStore.equalizerTypes))
+    const deviceExtensions = projectData._app_extensions as USEAppExtensions & {
+      deviceLibraries?: PlanDeviceLibrary[]
+      deviceEntities?: unknown[]
+      deviceConfigs?: unknown[]
     }
-    if (settingsStore.jointBoxTypes && settingsStore.jointBoxTypes.length > 0) {
-      projectData._app_extensions.jointBoxTypes = JSON.parse(JSON.stringify(settingsStore.jointBoxTypes))
+    if (settingsStore.platformDeviceLibraries.length > 0) {
+      deviceExtensions.deviceLibraries = JSON.parse(JSON.stringify(settingsStore.platformDeviceLibraries))
+    }
+    if (settingsStore.platformDeviceEntities.length > 0) {
+      deviceExtensions.deviceEntities = JSON.parse(JSON.stringify(settingsStore.platformDeviceEntities))
+    }
+    if (settingsStore.platformDeviceConfigs.length > 0) {
+      deviceExtensions.deviceConfigs = JSON.parse(JSON.stringify(settingsStore.platformDeviceConfigs))
     }
 
     // 6.8 保存图层设置
@@ -549,6 +565,106 @@ class ProjectFileService {
       .replace(/x/g, () => Math.floor(Math.random() * 16).toString(16))
   }
 
+  private platformLibraryUSEId(library: PlanDeviceLibrary, prefix: string, index: number): string {
+    return library.id == null ? `${prefix}-${index + 1}` : String(library.id)
+  }
+
+  private platformFiberToUSESpec(library: PlanDeviceLibrary, index: number): FiberSpec | null {
+    const fiber = toRuntimeFiberLibrary(library)
+    if (!fiber) return null
+
+    return {
+      id: this.platformLibraryUSEId(library, 'fiber', index),
+      fiber_type_id: fiber.fiberCategory || fiber.name || 'fiber',
+      attributes: {
+        attenuation: fiber.attenuationCoeff,
+        dispersion: fiber.dispersion,
+        dispersion_slope: fiber.dispersionSlope,
+        A_eff: fiber.effectiveArea,
+        n2: fiber.nonlinearRefractiveIndex,
+      },
+      supported_models: ['fiber_gn_model', 'fiber_linear_loss'],
+      model_params: {
+        fiber_gn_model: {
+          is_configured: true,
+          params: { coherence_factor: 1.0, noise_bandwidth_ghz: 12.5 },
+        },
+        fiber_linear_loss: {
+          is_configured: true,
+          params: {},
+        },
+      },
+    }
+  }
+
+  private platformAmplifierToUSEComponent(library: PlanDeviceLibrary, index: number): ComponentSpec | null {
+    const amplifier = toRuntimeAmplifierLibrary(library)
+    if (!amplifier) return null
+
+    return {
+      id: this.platformLibraryUSEId(library, 'amp', index),
+      name: amplifier.name || 'EDFA',
+      type: 'EDFA',
+      specs: {
+        gain_db: amplifier.gain,
+        bandwidth_nm: amplifier.bandwidth,
+        noise_figure_db: amplifier.noiseFigure,
+        max_output_power_dbm: amplifier.outputPower,
+        gain_flatness_db: amplifier.gainFlatness,
+      },
+      supported_models: ['edfa_gain_model'],
+      model_params: {
+        edfa_gain_model: {
+          is_configured: true,
+          params: { gain_tilt_db_per_nm: 0.01 },
+        },
+      },
+      commercial_params: {
+        unit_price: amplifier.unitPrice ?? getDeviceLibraryParam(library, ['unit_price', 'unitPrice', 'price'], 250000),
+        currency: 'USD',
+      },
+    }
+  }
+
+  private createBUMatrix(portCount: number): number[][] {
+    const count = Math.max(2, Math.round(portCount))
+    return Array.from({ length: count }, (_, row) =>
+      Array.from({ length: count }, (_, col) => (row === col ? 0 : 1)),
+    )
+  }
+
+  private platformBranchingToUSEComponent(library: PlanDeviceLibrary, index: number): ComponentSpec | null {
+    const branching = toRuntimeBranchingLibrary(library)
+    if (!branching) return null
+    const portCount = Math.max(2, Math.round(branching.portCount))
+
+    return {
+      id: this.platformLibraryUSEId(library, 'bu', index),
+      name: branching.name || 'BU',
+      type: 'BU',
+      specs: {
+        port_count: portCount,
+        matrix: this.createBUMatrix(portCount),
+        thru_pair: [1, Math.min(2, portCount)],
+        loss_vals: {
+          thru: branching.trunkInsertionLoss,
+          branch: branching.branchInsertionLoss,
+        },
+      },
+      supported_models: ['bu_loss_model'],
+      model_params: {
+        bu_loss_model: {
+          is_configured: true,
+          params: {},
+        },
+      },
+      commercial_params: {
+        unit_price: getDeviceLibraryParam(library, ['unit_price', 'unitPrice', 'price'], 180000),
+        currency: 'USD',
+      },
+    }
+  }
+
   /**
    * 收集器件库模块
    * 符合文档规范: fibers/components 包含 supported_models 和 model_params
@@ -558,29 +674,10 @@ class ProjectFileService {
     const models: ModelDefinition[] = settingsStore.models || createDefaultModels()
 
     // 光纤规格 - 包含 supported_models 和 model_params
-    const fibers: FiberSpec[] = (settingsStore.fiberTypes || []).map((f: any) => ({
-      id: f.id,
-      fiber_type_id: f.name || 'G.654.E',
-      attributes: {
-        attenuation: f.attenuation || f.attenuationCoeff || 0.16,
-        dispersion: f.dispersion || 2.1e-5,
-        dispersion_slope: f.dispersionSlope || f.secondOrderDispersion || 60.0,
-        A_eff: f.effectiveArea || f.A_eff || 80,
-        n2: f.n2 || f.nonlinearRefractiveIndex || 2.6,
-      },
-      supported_models: f.supported_models || ['fiber_gn_model', 'fiber_linear_loss'],
-      model_params: f.model_params || {
-        fiber_gn_model: {
-          is_configured: true,
-          params: { coherence_factor: 1.0, noise_bandwidth_ghz: 12.5 }
-        },
-        fiber_linear_loss: {
-          is_configured: true,
-          params: {}
-        }
-      }
-    }))
-
+    const platformLibraries = settingsStore.platformDeviceLibraries || []
+    const fibers: FiberSpec[] = getDeviceLibrariesByCategory(platformLibraries, 'fiber')
+      .map((library, index) => this.platformFiberToUSESpec(library, index))
+      .filter((fiber): fiber is FiberSpec => Boolean(fiber))
     // 海缆类型
     const cable_types: CableTypeSpec[] = (settingsStore.cableTypes || []).map((c: any) => ({
       id: c.id,
@@ -593,65 +690,18 @@ class ProjectFileService {
     }))
 
     // 器件规格 (放大器 + 分支器) - 包含 supported_models 和 model_params
-    const components: ComponentSpec[] = []
+    const components: ComponentSpec[] = [
+      ...getDeviceLibrariesByCategory(platformLibraries, 'amplifier')
+        .map((library, index) => this.platformAmplifierToUSEComponent(library, index))
+        .filter((component): component is ComponentSpec => Boolean(component)),
+      ...getDeviceLibrariesByCategory(platformLibraries, 'branching')
+        .map((library, index) => this.platformBranchingToUSEComponent(library, index))
+        .filter((component): component is ComponentSpec => Boolean(component)),
+    ]
     
     // 放大器
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const amp of (settingsStore.amplifierTypes || []) as any[]) {
-      components.push({
-        id: amp.id,
-        name: amp.name,
-        type: 'EDFA',
-        specs: {
-          gain_db: amp.gain || 20,
-          bandwidth_nm: amp.bandwidth || 35,
-          noise_figure_db: amp.noiseFigure || 5,
-          max_output_power_dbm: amp.maxOutputPower || 20,
-          gain_flatness_db: amp.gainFlatness || 0.5,
-        },
-        supported_models: amp.supported_models || ['edfa_gain_model'],
-        model_params: amp.model_params || {
-          edfa_gain_model: {
-            is_configured: true,
-            params: { gain_tilt_db_per_nm: 0.01 }
-          }
-        },
-        commercial_params: {
-          unit_price: amp.price || 250000,
-          currency: 'USD'
-        }
-      })
-    }
 
     // 分支器
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const bu of (settingsStore.branchingUnitTypes || []) as any[]) {
-      components.push({
-        id: bu.id,
-        name: bu.name,
-        type: 'BU',
-        specs: {
-          port_count: bu.portCount || 3,
-          matrix: bu.matrix || [[0, 1, 1], [1, 0, 1], [1, 1, 0]],
-          thru_pair: bu.thruPair || [1, 2],
-          loss_vals: {
-            thru: bu.thruLoss || 0.8,
-            branch: bu.branchLoss || 3.5,
-          }
-        },
-        supported_models: bu.supported_models || ['bu_loss_model'],
-        model_params: bu.model_params || {
-          bu_loss_model: {
-            is_configured: true,
-            params: {}
-          }
-        },
-        commercial_params: {
-          unit_price: bu.price || 180000,
-          currency: 'USD'
-        }
-      })
-    }
 
     return { fibers, cable_types, components, models }
   }
@@ -1194,6 +1244,83 @@ class ProjectFileService {
     return { success: true }
   }
 
+  private platformLibraryWithUSEId(library: PlanDeviceLibrary, id: unknown): PlanDeviceLibrary {
+    return id == null || id === '' ? library : { ...library, id: String(id) }
+  }
+
+  private restorePlatformLibrariesFromUSE(projectData: USEProjectData): PlanDeviceLibrary[] {
+    const extensions = projectData._app_extensions as USEAppExtensions & {
+      deviceLibraries?: PlanDeviceLibrary[]
+    } | undefined
+
+    if (Array.isArray(extensions?.deviceLibraries) && extensions.deviceLibraries.length > 0) {
+      return JSON.parse(JSON.stringify(extensions.deviceLibraries)) as PlanDeviceLibrary[]
+    }
+
+    const libraries: PlanDeviceLibrary[] = []
+
+    for (const fiber of projectData.libraries?.fibers ?? []) {
+      libraries.push(this.platformLibraryWithUSEId(deviceLibraryItemToPlatform('fiber', {
+        id: fiber.id,
+        name: fiber.fiber_type_id,
+        nonlinearCoeff: 0,
+        effectiveArea: fiber.attributes.A_eff,
+        dispersion: fiber.attributes.dispersion,
+        nonlinearRefractiveIndex: fiber.attributes.n2,
+        attenuationCoeff: fiber.attributes.attenuation,
+        secondOrderDispersion: fiber.attributes.dispersion_slope,
+        simulationModel: 'GN',
+      } as any), fiber.id))
+    }
+
+    for (const component of projectData.libraries?.components ?? []) {
+      if (component.type === 'EDFA') {
+        const specs = component.specs as EDFASpecs
+        libraries.push(this.platformLibraryWithUSEId(deviceLibraryItemToPlatform('amplifier', {
+          id: component.id,
+          name: component.name,
+          gain: specs.gain_db,
+          bandwidth: specs.bandwidth_nm,
+          gainFlatness: specs.gain_flatness_db,
+          noiseFigure: specs.noise_figure_db,
+          pumpPower: 100,
+          outputPower: specs.max_output_power_dbm,
+          saturationPower: specs.max_output_power_dbm,
+          gainRangePower: 0,
+          operatingMode: 'fixed_gain',
+          unitPrice: component.commercial_params.unit_price,
+          currency: component.commercial_params.currency,
+        } as any), component.id))
+      }
+
+      if (component.type === 'BU') {
+        const specs = component.specs as BUSpecs
+        libraries.push(this.platformLibraryWithUSEId(deviceLibraryItemToPlatform('branching', {
+          id: component.id,
+          name: component.name,
+          subType: 'BU',
+          portCount: specs.port_count,
+          trunkInsertionLoss: specs.loss_vals.thru,
+          branchInsertionLoss: specs.loss_vals.branch,
+          insertionLoss: specs.loss_vals.thru,
+          wavelengthRange: 1550,
+          unitPrice: component.commercial_params.unit_price,
+          currency: component.commercial_params.currency,
+        } as any), component.id))
+      }
+    }
+
+    for (const equalizer of extensions?.equalizerTypes ?? []) {
+      libraries.push(this.platformLibraryWithUSEId(deviceLibraryItemToPlatform('equalizer', equalizer as any), equalizer.id))
+    }
+
+    for (const jointBox of extensions?.jointBoxTypes ?? []) {
+      libraries.push(this.platformLibraryWithUSEId(deviceLibraryItemToPlatform('joint', jointBox as any), jointBox.id))
+    }
+
+    return libraries
+  }
+
   /**
    * 加载新版 USE 项目数据到 stores
    * 符合文档规范: 完整加载六大模块的所有字段
@@ -1223,7 +1350,7 @@ class ProjectFileService {
     }
 
     // 3. 恢复光纤规格 - 包含 supported_models 和 model_params
-    settingsStore.fiberTypes = projectData.libraries.fibers.map(f => ({
+    void projectData.libraries.fibers.map(f => ({
       id: f.id,
       name: f.fiber_type_id,
       nonlinearCoeff: 1.4,
@@ -1248,42 +1375,26 @@ class ProjectFileService {
     }))
 
     // 5. 恢复放大器规格 - 包含 supported_models 和 model_params
-    const edfaComponents = projectData.libraries.components.filter(c => c.type === 'EDFA')
-    settingsStore.amplifierTypes = edfaComponents.map(amp => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const specs = amp.specs as any
-      return {
-        id: amp.id,
-        name: amp.name,
-        gain: specs.gain_db || 20,
-        bandwidth: specs.bandwidth_nm || 1550,
-        noiseFigure: specs.noise_figure_db || 5,
-        pumpPower: specs.pump_power_mw || 100,
-        outputPower: specs.max_output_power_dbm || 17,
-        gainFlatness: specs.gain_flatness_db || 0.5,
-        gainRangePower: specs.gain_range_db || 0.1,
-        supported_models: amp.supported_models,
-        model_params: amp.model_params,
-      }
-    })
+    void projectData.libraries.components.filter(c => c.type === 'EDFA')
 
     // 6. 恢复分支器规格 - 包含 supported_models 和 model_params
-    const buComponents = projectData.libraries.components.filter(c => c.type === 'BU')
-    settingsStore.branchingUnitTypes = buComponents.map(bu => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const specs = bu.specs as any
-      return {
-        id: bu.id,
-        name: bu.name,
-        portCount: specs.port_count || 3,
-        trunkInsertionLoss: specs.loss_vals?.thru || 0.5,
-        branchInsertionLoss: specs.loss_vals?.branch || 3.0,
-        insertionLoss: specs.loss_vals?.thru || 0.5,
-        wavelengthRange: 1550,
-        supported_models: bu.supported_models,
-        model_params: bu.model_params,
-      }
-    })
+    void projectData.libraries.components.filter(c => c.type === 'BU')
+
+    const restoredDeviceLibraries = this.restorePlatformLibrariesFromUSE(projectData)
+    if (restoredDeviceLibraries.length > 0) {
+      settingsStore.platformDeviceLibraries = restoredDeviceLibraries
+    }
+
+    const deviceExtensions = projectData._app_extensions as USEAppExtensions & {
+      deviceEntities?: typeof settingsStore.platformDeviceEntities
+      deviceConfigs?: typeof settingsStore.platformDeviceConfigs
+    } | undefined
+    if (Array.isArray(deviceExtensions?.deviceEntities)) {
+      settingsStore.platformDeviceEntities = JSON.parse(JSON.stringify(deviceExtensions.deviceEntities))
+    }
+    if (Array.isArray(deviceExtensions?.deviceConfigs)) {
+      settingsStore.platformDeviceConfigs = JSON.parse(JSON.stringify(deviceExtensions.deviceConfigs))
+    }
 
     // 3. 恢复路由工程数据到 RPL store
     // 加载所有 geometry_pool 点，并标记 key_events
@@ -1811,14 +1922,10 @@ class ProjectFileService {
 
     // 14.7 恢复均衡器型号和接头盒型号
     if (Array.isArray(ext.equalizerTypes) && ext.equalizerTypes.length > 0) {
-      const settingsStore = useSettingsStore()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      settingsStore.equalizerTypes = ext.equalizerTypes as any
+      void ext.equalizerTypes
     }
     if (Array.isArray(ext.jointBoxTypes) && ext.jointBoxTypes.length > 0) {
-      const settingsStore = useSettingsStore()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      settingsStore.jointBoxTypes = ext.jointBoxTypes as any
+      void ext.jointBoxTypes
     }
 
     // 14.8 恢复图层设置

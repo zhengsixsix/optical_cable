@@ -5,6 +5,7 @@ import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranc
 import { platformDeviceConfigApi, platformDeviceEntityApi, platformDeviceLibraryApi } from '@/services/platform/api'
 import type {
   PlanDeviceConfig,
+  PlanDeviceConfigSave,
   PlanDeviceConfigSearch,
   PlanDeviceEntity,
   PlanDeviceEntitySearch,
@@ -243,6 +244,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const platformDeviceLibraries = ref<PlanDeviceLibrary[]>([])
   const platformDeviceEntities = ref<PlanDeviceEntity[]>([])
   const deviceConfigLoading = ref(false)
+  const deviceConfigSyncing = ref(false)
   const deviceConfigSyncError = ref<string | null>(null)
   const deviceLibraryLoading = ref(false)
   const deviceLibrarySyncing = ref(false)
@@ -368,6 +370,35 @@ export const useSettingsStore = defineStore('settings', () => {
       throw error
     } finally {
       deviceConfigLoading.value = false
+    }
+  }
+
+  async function savePlatformDeviceConfig(config: PlanDeviceConfigSave, reloadSearch?: PlanDeviceConfigSearch) {
+    deviceConfigSyncing.value = true
+    deviceConfigSyncError.value = null
+    try {
+      const id = await platformDeviceConfigApi.save(config)
+      await loadPlatformDeviceConfigs(reloadSearch ?? { deviceTypeCd: config.deviceTypeCd })
+      return id
+    } catch (error) {
+      deviceConfigSyncError.value = error instanceof Error ? error.message : '器件配置保存失败'
+      throw error
+    } finally {
+      deviceConfigSyncing.value = false
+    }
+  }
+
+  async function removePlatformDeviceConfig(id: number | string, search: PlanDeviceConfigSearch | string) {
+    deviceConfigSyncing.value = true
+    deviceConfigSyncError.value = null
+    try {
+      await platformDeviceConfigApi.remove(id)
+      await loadPlatformDeviceConfigs(typeof search === 'string' ? { deviceTypeCd: search } : search)
+    } catch (error) {
+      deviceConfigSyncError.value = error instanceof Error ? error.message : '器件配置删除失败'
+      throw error
+    } finally {
+      deviceConfigSyncing.value = false
     }
   }
 
@@ -822,6 +853,7 @@ export const useSettingsStore = defineStore('settings', () => {
     platformDeviceLibraries,
     platformDeviceEntities,
     deviceConfigLoading,
+    deviceConfigSyncing,
     deviceConfigSyncError,
     deviceLibraryLoading,
     deviceLibrarySyncing,
@@ -830,6 +862,8 @@ export const useSettingsStore = defineStore('settings', () => {
     deviceEntitySyncing,
     deviceEntitySyncError,
     loadPlatformDeviceConfigs,
+    savePlatformDeviceConfig,
+    removePlatformDeviceConfig,
     loadPlatformDeviceLibraries,
     loadPlatformDeviceLibraryDetail,
     savePlatformDeviceLibrary,

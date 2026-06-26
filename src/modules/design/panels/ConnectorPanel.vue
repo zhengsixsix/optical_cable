@@ -7,6 +7,7 @@ import { useConnectorStore } from '@/stores/connector'
 import { connectorTypeLabels, connectorStatusLabels, connectorFilterLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus } from '@/types'
 import { Plus, Trash2, Edit2, Link2 } from 'lucide-vue-next'
+import { getDeviceLibraryNameById } from '@/services/platform/deviceRuntime'
 
 const connectorStore = useConnectorStore()
 const appStore = useAppStore()
@@ -16,20 +17,16 @@ const settingsStore = useSettingsStore()
 const getComponentName = (type: ConnectorType, refId?: string) => {
   if (!refId) return null
   if (type === 'amplifier_e' || type === 'amplifier_w') {
-    const amp = settingsStore.amplifierTypes.find(a => a.id === refId)
-    return amp?.name || null
+    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'amplifier')
   }
   if (type === 'bu') {
-    const bu = settingsStore.branchingUnitTypes.find(b => b.id === refId)
-    return bu?.name || null
+    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'branching')
   }
   if (type === 'joint') {
-    const jb = settingsStore.jointBoxTypes.find(j => j.id === refId)
-    return jb?.name || null
+    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'joint')
   }
   if (type === 'equalizer') {
-    const eq = settingsStore.equalizerTypes.find(e => e.id === refId)
-    return eq?.name || null
+    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'equalizer')
   }
   return null
 }
@@ -37,8 +34,7 @@ const getComponentName = (type: ConnectorType, refId?: string) => {
 // 根据光纤ID从器件库获取光纤名称
 const getFiberName = (refId?: string) => {
   if (!refId) return null
-  const fiber = settingsStore.fiberTypes.find(f => f.id === refId)
-  return fiber?.name || null
+  return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'fiber')
 }
 
 const emit = defineEmits<{

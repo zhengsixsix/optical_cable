@@ -35,6 +35,15 @@ import { Cable, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, F
 import { calculateDistance as geoCalcDistance } from '@/utils/geo'
 import { enrichOrderedRoutePointsWithDepth, getRoutePositionAtKP } from '@/utils/routePosition'
 import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
+import {
+  getDeviceLibrariesByCategory,
+  type RuntimeAmplifierLibrary,
+  type RuntimeEqualizerLibrary,
+  type RuntimeFiberLibrary,
+  toRuntimeAmplifierLibrary,
+  toRuntimeEqualizerLibrary,
+  toRuntimeFiberLibrary,
+} from '@/services/platform/deviceRuntime'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
@@ -44,6 +53,24 @@ const monitorStore = useMonitorStore()
 const routeStore = useRouteStore()
 const cableSegmentStore = useCableSegmentStore()
 const router = useRouter()
+
+const platformFiberLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'fiber')
+    .map(toRuntimeFiberLibrary)
+    .filter((item): item is RuntimeFiberLibrary => Boolean(item)),
+)
+
+const platformAmplifierLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'amplifier')
+    .map(toRuntimeAmplifierLibrary)
+    .filter((item): item is RuntimeAmplifierLibrary => Boolean(item)),
+)
+
+const platformEqualizerLibraries = computed(() =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'equalizer')
+    .map(toRuntimeEqualizerLibrary)
+    .filter((item): item is RuntimeEqualizerLibrary => Boolean(item)),
+)
 
 // 项目类型检测
 const hasValidProject = computed(() => {
@@ -121,7 +148,11 @@ const openNewProject = () => {
   appStore.openDialog('new-project')
 }
 
-onMounted(() => {
+onMounted(async () => {
+  if (settingsStore.platformDeviceLibraries.length === 0) {
+    await settingsStore.loadPlatformDeviceLibraries()
+  }
+
   routeStore.ensureTransmissionMockRoute()
 
   // 确保有 RPL 数据（从路由守卫迁移至此，显式处理）
@@ -1164,8 +1195,7 @@ const generateFiberSpans = (sortedRepeaters: Record<string, any>[]) => {
   existingFibers.forEach(f => connectorStore.deleteElement(f.id))
   
   // 从器件库获取光纤类型
-  const fiberTypes = settingsStore.fiberTypes || []
-  const defaultFiber = fiberTypes[0]
+  const defaultFiber = platformFiberLibraries.value[0]
   const fiberName = defaultFiber?.name || '光纤'
   const fiberCategory = defaultFiber?.fiberCategory || 'G.654.E'
   
@@ -1323,8 +1353,8 @@ const showDeviceLibraryWarning = ref(false)
 // 提交参数并计算 - 打开系统规划链路配置对话框
 const handleSubmit = () => {
   // 检查器件库是否有数据（光纤类型和放大器类型）
-  const hasFiber = settingsStore.fiberTypes.length > 0
-  const hasAmplifier = settingsStore.amplifierTypes.length > 0
+  const hasFiber = platformFiberLibraries.value.length > 0
+  const hasAmplifier = platformAmplifierLibraries.value.length > 0
   if (!hasFiber || !hasAmplifier) {
     showDeviceLibraryWarning.value = true
     return
@@ -1364,7 +1394,7 @@ const syncEqualizersFromSegments = (routePointsList: any[]) => {
       configuredTotalLength: totalLength,
       rplRecords,
     })
-    const eqType = settingsStore.equalizerTypes.find(e => e.id === seg.equalizerTypeId)
+    const eqType = platformEqualizerLibraries.value.find(e => e.id === seg.equalizerTypeId)
     connectorStore.addElement({
       type: 'equalizer',
       name: `EQ-${String(idx + 1).padStart(2, '0')}`,
@@ -2317,8 +2347,8 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
         <div class="px-6 py-5">
           <p class="text-gray-600 mb-2">系统规划需要器件库中的光纤类型和放大器类型数据，当前缺少：</p>
           <ul class="text-sm text-gray-500 mb-5 space-y-1 pl-4">
-            <li v-if="settingsStore.fiberTypes.length === 0" class="list-disc text-amber-600">光纤类型（0 条记录）</li>
-            <li v-if="settingsStore.amplifierTypes.length === 0" class="list-disc text-amber-600">放大器类型（0 条记录）</li>
+            <li v-if="platformFiberLibraries.length === 0" class="list-disc text-amber-600">光纤类型（0 条记录）</li>
+            <li v-if="platformAmplifierLibraries.length === 0" class="list-disc text-amber-600">放大器类型（0 条记录）</li>
           </ul>
           <div class="flex gap-3">
             <Button class="flex-1 bg-blue-600 hover:bg-blue-700 text-white" @click="goToDeviceLibrarySettings">

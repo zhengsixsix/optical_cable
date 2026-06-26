@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="jb-bg-select" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+  </defs>
+  <!-- 外圆背景（选中时加粗边框） -->
+  <circle cx="32" cy="32" r="28" fill="url(#jb-bg-select)" stroke="#0f172a" stroke-width="4"/>
+  <!-- 接头盒主体（椭圆胶囊形状） -->
+  <rect x="12" y="22" width="40" height="20" rx="10" ry="10" fill="#ffffff" stroke="#0f172a" stroke-width="3"/>
+  <!-- 左侧光纤接入线 -->
+  <line x1="4" y1="29" x2="12" y2="29" stroke="#0f172a" stroke-width="3" stroke-linecap="round"/>
+  <line x1="4" y1="35" x2="12" y2="35" stroke="#0f172a" stroke-width="3" stroke-linecap="round"/>
+  <!-- 右侧光纤接出线 -->
+  <line x1="52" y1="29" x2="60" y2="29" stroke="#0f172a" stroke-width="3" stroke-linecap="round"/>
+  <line x1="52" y1="35" x2="60" y2="35" stroke="#0f172a" stroke-width="3" stroke-linecap="round"/>
+  <!-- 中间熔接点标记 -->
+  <circle cx="32" cy="32" r="5.5" fill="#334155" stroke="#0f172a" stroke-width="2"/>
+  <!-- 熔接点内部 -->
+  <circle cx="32" cy="32" r="2.8" fill="#94a3b8"/>
+  <!-- 横向连接线 -->
+  <line x1="12" y1="32" x2="52" y2="32" stroke="#475569" stroke-width="2" stroke-dasharray="3,2"/>
+</svg>

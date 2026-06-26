@@ -3,7 +3,7 @@ import type { User } from '@/stores/user'
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent, Button, Input } from '@/shared/components/base'
 import {
-  ClipboardList, Plus, Search, Filter, Clock, CheckCircle, AlertTriangle, ArrowRight, ChevronRight, Calendar, MapPin, Wrench, Ship, FileText, XCircle
+  ClipboardList, Plus, Search, Filter, Clock, CheckCircle, AlertTriangle, ArrowRight, ChevronRight, Calendar, MapPin, Wrench, Ship, FileText, XCircle, User as UserIcon
 } from 'lucide-vue-next'
 import { useMonitorStore } from '@/stores/monitor'
 const monitorStore = useMonitorStore()
@@ -403,7 +403,7 @@ const updateOrderStatus = (orderId: string, newStatus: WorkOrderStatus) => {
                 </div>
                 <div class="text-sm font-medium text-gray-800 mt-1">{{ order.title }}</div>
                 <div class="flex items-center gap-4 mt-1.5 text-xs text-gray-400">
-                  <span v-if="order.assignee" class="flex items-center gap-1"><User class="w-3 h-3" />{{ order.assignee }}</span>
+                  <span v-if="order.assignee" class="flex items-center gap-1"><UserIcon class="w-3 h-3" />{{ order.assignee }}</span>
                   <span class="flex items-center gap-1"><Calendar class="w-3 h-3" />{{ order.scheduledDate }}</span>
                   <span v-if="order.kpLocation" class="flex items-center gap-1"><MapPin class="w-3 h-3" />KP{{ order.kpLocation }}</span>
                   <span class="flex items-center gap-1"><Clock class="w-3 h-3" />{{ order.estimatedDuration }}</span>
@@ -461,7 +461,7 @@ const updateOrderStatus = (orderId: string, newStatus: WorkOrderStatus) => {
               <div class="flex items-center gap-2">
                 <template v-if="order.status === 'pending'">
                   <Button size="sm" @click.stop="updateOrderStatus(order.id, 'assigned')">
-                    <User class="w-3.5 h-3.5 mr-1" /> 指派
+                    <UserIcon class="w-3.5 h-3.5 mr-1" /> 指派
                   </Button>
                 </template>
                 <template v-if="order.status === 'assigned'">

@@ -16,6 +16,7 @@ import { Activity, AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Radio,
 import type { LogCategory } from '@/types'
 import { useConnectorStore } from '@/stores/connector'
 import { useRPLStore } from '@/stores/rpl'
+import { firstDeviceLibraryByCategory, toRuntimeFiberLibrary } from '@/services/platform/deviceRuntime'
 
 const connectorStore = useConnectorStore()
 const monitorStore = useMonitorStore()
@@ -36,9 +37,10 @@ const linkTotalLength = computed(() => {
   return rplStore.currentTable?.metadata?.totalLength || routeStore.selectedRoute?.totalLength || 0
 })
 const linkFiberType = computed(() => {
-  // 从 settingsStore 的光纤类型中取第一个
-  const ft = settingsStore.fiberTypes?.[0]
-  return ft?.name || 'G.654.E'
+  const fiber = toRuntimeFiberLibrary(
+    firstDeviceLibraryByCategory(settingsStore.platformDeviceLibraries, 'fiber'),
+  )
+  return fiber?.name || 'G.654.E'
 })
 
 // 筛选条件
@@ -191,7 +193,11 @@ const refreshPerformanceData = () => {
   if (temperatureHistory.value.length > 30) temperatureHistory.value.shift()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  if (settingsStore.platformDeviceLibraries.length === 0) {
+    await settingsStore.loadPlatformDeviceLibraries()
+  }
+
   if (hasData.value) {
     generateHistoryData()
     refreshTimer = setInterval(refreshPerformanceData, 10000)

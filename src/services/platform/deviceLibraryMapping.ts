@@ -7,6 +7,7 @@ import type {
 } from '@/types/settings'
 import type { ConnectorElement } from '@/types/connector'
 import type { Id, PlatformBindFunc, PlanDeviceEntity, PlanDeviceLibrary } from './types'
+import { buildDeviceValueList, deviceValueListToMap } from './deviceAttributes'
 
 export type LocalDeviceLibraryType = 'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'
 
@@ -74,13 +75,17 @@ function getLocalParams(bindFuncList?: PlatformBindFunc[] | null): Record<string
   return bindFunc?.defaultInputParams ?? {}
 }
 
-function normalizeType(deviceTypeCd?: string | null, params?: Record<string, unknown>): LocalDeviceLibraryType | null {
+function normalizeType(
+  deviceTypeCd?: string | null,
+  params?: Record<string, unknown>,
+  dialogWindowId?: string | null,
+): LocalDeviceLibraryType | null {
   const paramType = params?.localType
   if (paramType === 'fiber' || paramType === 'amplifier' || paramType === 'branching' || paramType === 'equalizer' || paramType === 'joint') {
     return paramType
   }
 
-  const normalizedCode = String(deviceTypeCd || '').trim().toUpperCase()
+  const normalizedCode = String(deviceTypeCd || dialogWindowId || '').trim().toUpperCase()
   return platformCodeToLocalDeviceType[normalizedCode] ?? null
 }
 
@@ -97,17 +102,89 @@ function currency(value: unknown): 'USD' | 'CNY' | 'EUR' {
   return value === 'CNY' || value === 'EUR' || value === 'USD' ? value : 'USD'
 }
 
+function localDeviceItemToValueMap(
+  type: LocalDeviceLibraryType,
+  item: LocalDeviceLibraryItem,
+): Record<string, unknown> {
+  if (type === 'fiber') {
+    const fiber = item as FiberType & { fiberCategory?: string }
+    return {
+      fiber_category: fiber.fiberCategory ?? fiber.name,
+      nonlinear_coeff: fiber.nonlinearCoeff,
+      effective_area: fiber.effectiveArea,
+      dispersion: fiber.dispersion,
+      nonlinear_index: fiber.nonlinearRefractiveIndex,
+      attenuation: fiber.attenuationCoeff,
+      dispersion_slope: fiber.secondOrderDispersion,
+      simulation_model: fiber.simulationModel,
+    }
+  }
+
+  if (type === 'amplifier') {
+    const amplifier = item as AmplifierType
+    return {
+      gain: amplifier.gain,
+      bandwidth: amplifier.bandwidth,
+      gain_flatness: amplifier.gainFlatness,
+      noise_figure: amplifier.noiseFigure,
+      pump_power: amplifier.pumpPower,
+      output_power: amplifier.outputPower,
+      saturation_power: amplifier.saturationPower,
+      gain_range_power: amplifier.gainRangePower,
+      operating_mode: amplifier.operatingMode,
+      unit_price: amplifier.unitPrice,
+      currency: amplifier.currency,
+    }
+  }
+
+  if (type === 'branching') {
+    const branching = item as BranchingUnitType
+    return {
+      sub_type: branching.subType,
+      port_count: branching.portCount,
+      trunk_insertion_loss: branching.trunkInsertionLoss,
+      branch_insertion_loss: branching.branchInsertionLoss,
+      insertion_loss: branching.insertionLoss,
+      wavelength_range: branching.wavelengthRange,
+      unit_price: branching.unitPrice,
+      currency: branching.currency,
+    }
+  }
+
+  if (type === 'equalizer') {
+    const equalizer = item as EqualizerType
+    return {
+      attenuation_mode: equalizer.attenuationMode,
+      default_attenuation_db: equalizer.defaultAttenuationDb,
+      unit_price: equalizer.unitPrice,
+      currency: equalizer.currency,
+      remarks: equalizer.remarks,
+    }
+  }
+
+  const jointBox = item as JointBoxType
+  return {
+    sub_type: jointBox.subType,
+    insertion_loss: jointBox.insertionLoss,
+    max_fiber_pairs: jointBox.maxFiberPairs,
+    unit_price: jointBox.unitPrice,
+    currency: jointBox.currency,
+    remarks: jointBox.remarks,
+  }
+}
+
+function mergedDeviceParams(device: PlanDeviceLibrary): Record<string, string> {
+  return {
+    ...Object.fromEntries(Object.entries(getLocalParams(device.bindFuncList)).map(([key, value]) => [key, value == null ? '' : String(value)])),
+    ...deviceValueListToMap(device.deviceValueList),
+  }
+}
+
 export function deviceLibraryItemToPlatform(
   type: LocalDeviceLibraryType,
   item: LocalDeviceLibraryItem & PlatformBackedItem,
 ): PlanDeviceLibrary {
   const platformId = typeof item.platformId === 'number' ? item.platformId : numeric(item.id, NaN)
-  const params = clonePlainObject({
-    ...item,
-    localId: item.id,
-    localType: type,
-  }) as Record<string, unknown>
-  delete params.platformId
 
   return {
     id: Number.isFinite(platformId) ? platformId : undefined,
@@ -115,10 +192,8 @@ export function deviceLibraryItemToPlatform(
     deviceTypeCd: localDeviceTypeToPlatformCode[type],
     iconSize: defaultIconSize,
     dialogWindowId: type,
-    bindFuncList: [{
-      name: LOCAL_DEVICE_LIBRARY_PARAMS,
-      defaultInputParams: params,
-    }],
+    bindFuncList: [],
+    deviceValueList: buildDeviceValueList(localDeviceItemToValueMap(type, item)),
   }
 }
 
@@ -126,8 +201,8 @@ export function platformDeviceLibraryToLocal(device: PlanDeviceLibrary): {
   type: LocalDeviceLibraryType
   item: LocalDeviceLibraryItem & PlatformBackedItem
 } | null {
-  const params = getLocalParams(device.bindFuncList)
-  const type = normalizeType(device.deviceTypeCd, params)
+  const params = mergedDeviceParams(device)
+  const type = normalizeType(device.deviceTypeCd, params, device.dialogWindowId)
   if (!type) return null
 
   const id = platformLocalId(device.id)

@@ -8,6 +8,11 @@ import { connectorTypeLabels, connectorStatusLabels } from '@/types'
 import type { ConnectorType, ConnectorStatus, ConnectorElement } from '@/types'
 import { X, Save } from 'lucide-vue-next'
 import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
+import {
+  getDeviceLibrariesByCategory,
+  findDeviceLibraryById,
+  toRuntimeEqualizerLibrary,
+} from '@/services/platform/deviceRuntime'
 
 const props = defineProps<{
   visible: boolean
@@ -24,6 +29,11 @@ const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 
 const isEdit = computed(() => !!props.editId)
+
+const libraryOptions = (category: 'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint') =>
+  getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, category)
+    .filter(item => item.id != null)
+    .map(item => ({ value: String(item.id), label: item.name || String(item.id) }))
 
 // 表单数据
 const formData = ref({
@@ -55,33 +65,23 @@ const isEqualizerType = computed(() => formData.value.type === 'equalizer')
 const componentOptions = computed(() => {
   const type = formData.value.type
   if (type === 'amplifier_e' || type === 'amplifier_w') {
-    return settingsStore.amplifierTypes
-      .filter(a => a.id)
-      .map(a => ({ value: a.id, label: a.name }))
+    return libraryOptions('amplifier')
   }
   if (type === 'bu') {
-    return settingsStore.branchingUnitTypes
-      .filter(b => b.id)
-      .map(b => ({ value: b.id, label: b.name }))
+    return libraryOptions('branching')
   }
   if (type === 'joint') {
-    return settingsStore.jointBoxTypes
-      .filter(j => j.id)
-      .map(j => ({ value: j.id, label: j.name }))
+    return libraryOptions('joint')
   }
   if (type === 'equalizer') {
-    return settingsStore.equalizerTypes
-      .filter(e => e.id)
-      .map(e => ({ value: e.id, label: e.name }))
+    return libraryOptions('equalizer')
   }
   return []
 })
 
 // 光纤类型选项
 const fiberOptions = computed(() => {
-  return settingsStore.fiberTypes
-    .filter(f => f.id)
-    .map(f => ({ value: f.id, label: f.name }))
+  return libraryOptions('fiber')
 })
 
 // 是否显示器件选择
@@ -142,7 +142,11 @@ const resetForm = () => {
 }
 
 // 加载编辑数据
-watch(() => [props.visible, props.editId], () => {
+watch(() => [props.visible, props.editId], async () => {
+  if (props.visible && settingsStore.platformDeviceLibraries.length === 0) {
+    await settingsStore.loadPlatformDeviceLibraries()
+  }
+
   if (props.visible && props.editId) {
     const elem = connectorStore.elements.find(e => e.id === props.editId)
     if (elem) {
@@ -178,7 +182,9 @@ watch(() => [props.visible, props.editId], () => {
 // 当均衡器型号选定时，自动填充默认光衰参数
 watch(() => formData.value.componentRefId, (newId) => {
   if (formData.value.type !== 'equalizer' || !newId || newId === '__none__') return
-  const eq = settingsStore.equalizerTypes.find(e => e.id === newId)
+  const eq = toRuntimeEqualizerLibrary(
+    findDeviceLibraryById(settingsStore.platformDeviceLibraries, newId, 'equalizer'),
+  )
   if (eq) {
     formData.value.attenuationMode = eq.attenuationMode
     formData.value.attenuationDb = eq.defaultAttenuationDb

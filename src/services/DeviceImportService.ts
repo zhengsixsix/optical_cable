@@ -4,6 +4,7 @@
  */
 
 import type { FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types/settings'
+import { deviceLibraryItemToPlatform } from '@/services/platform/deviceLibraryMapping'
 
 // 导入结果
 export interface ImportResult {
@@ -608,11 +609,11 @@ export class DeviceImportService {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function applyImportResultToStore(result: ImportResult, settingsStore: any): Promise<string> {
   const syncTasks: Array<Promise<unknown> | undefined> = []
-  result.fiberTypes.forEach(f => syncTasks.push(settingsStore.addFiberType(f)))
-  result.amplifierTypes.forEach(a => syncTasks.push(settingsStore.addAmplifierType(a)))
-  result.branchingUnitTypes.forEach(b => syncTasks.push(settingsStore.addBranchingUnitType(b)))
-  result.equalizerTypes.forEach(e => syncTasks.push(settingsStore.addEqualizerType(e)))
-  result.jointBoxTypes.forEach(j => syncTasks.push(settingsStore.addJointBoxType(j)))
+  result.fiberTypes.forEach(f => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('fiber', f))))
+  result.amplifierTypes.forEach(a => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('amplifier', a))))
+  result.branchingUnitTypes.forEach(b => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('branching', b))))
+  result.equalizerTypes.forEach(e => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('equalizer', e))))
+  result.jointBoxTypes.forEach(j => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('joint', j))))
   await Promise.all(syncTasks.filter(Boolean))
   const s = result.summary
   return `导入成功：光纤${s.fiberCount}、放大器${s.amplifierCount}、分支器${s.branchingUnitCount}、均衡器${s.equalizerCount}、接头盒${s.jointCount}`

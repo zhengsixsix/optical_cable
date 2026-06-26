@@ -187,7 +187,6 @@ export interface PlanDeviceConfig {
 }
 
 export interface PlanDeviceConfigSearch extends PagedSearch {
-  id?: Id | null
   deviceTypeCd: string
   name?: string | null
   code?: string | null

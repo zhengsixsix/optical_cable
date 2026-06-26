@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouteStore } from '@/stores/route'
-import { DEFAULT_GEO_TIFF_URL, getCachedGeoTiffSource } from '@/utils/geoTiffCache'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
-import WebGLTileLayer from 'ol/layer/WebGLTile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import { createBaseTileSource } from '@/utils/mapTileSource'
@@ -74,7 +72,6 @@ let deviceLayer: VectorLayer<VectorSource> | null = null
 let cableSource: VectorSource | null = null
 let cableLayer: VectorLayer<VectorSource> | null = null
 
-const geoTiffUrl = DEFAULT_GEO_TIFF_URL
 const compactDeviceZoom = 5
 
 // 根据设备类型和状态获取图标路径
@@ -276,11 +273,6 @@ const initMap = () => {
   if (!mapContainer.value) return
   
   // 加载 GeoTIFF 影像
-  const rgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], 1] }
-  const geoTiffEntry = getCachedGeoTiffSource(geoTiffUrl)
-  const geoTiffLayers = [
-    new WebGLTileLayer({ source: geoTiffEntry.source, style: rgbStyle, visible: true, opacity: 1 })
-  ]
   
   // 创建光缆图层
   cableSource = new VectorSource()
@@ -301,9 +293,8 @@ const initMap = () => {
     layers: [
       new TileLayer({ 
         source: createBaseTileSource(),
-        opacity: 0.5
+        opacity: 1
       }),
-      ...geoTiffLayers,
       cableLayer,
       deviceLayer
     ],

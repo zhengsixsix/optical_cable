@@ -6,11 +6,9 @@ import { useRouteStore } from '@/stores/route'
 import { useRPLStore } from '@/stores/rpl'
 import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
 import { calculateDistance } from '@/utils/geo'
-import { DEFAULT_GEO_TIFF_URL, getCachedGeoTiffSource } from '@/utils/geoTiffCache'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
-import WebGLTileLayer from 'ol/layer/WebGLTile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import { createBaseTileSource } from '@/utils/mapTileSource'
@@ -82,7 +80,6 @@ let routeLayer: VectorLayer<VectorSource> | null = null
 let pointSource: VectorSource | null = null
 let pointLayer: VectorLayer<VectorSource> | null = null
 
-const geoTiffUrl = DEFAULT_GEO_TIFF_URL
 const simplifiedPointZoom = 5
 
 // ========== Step 6.2: 放大器沿路由拖拽 ==========
@@ -1017,11 +1014,6 @@ const initMap = () => {
   if (!mapContainer.value) return
   
   // 加载 GeoTIFF 影像
-  const rgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], 1] }
-  const geoTiffEntry = getCachedGeoTiffSource(geoTiffUrl)
-  const geoTiffLayers = [
-    new WebGLTileLayer({ source: geoTiffEntry.source, style: rgbStyle, visible: true, opacity: 1 })
-  ]
   
   routeSource = new VectorSource()
   routeLayer = new VectorLayer({
@@ -1040,9 +1032,8 @@ const initMap = () => {
     layers: [
       new TileLayer({ 
         source: createBaseTileSource(),
-        opacity: 0.5
+        opacity: 1
       }),
-      ...geoTiffLayers,
       routeLayer,
       pointLayer
     ],

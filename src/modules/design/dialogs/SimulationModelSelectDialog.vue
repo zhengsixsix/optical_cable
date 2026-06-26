@@ -5,6 +5,7 @@ import { Button, Tooltip } from '@/shared/components/base'
 import { Cpu, Radio, Zap, GitBranch, AlertTriangle, CheckCircle, X, Save, Settings } from 'lucide-vue-next'
 import { useSettingsStore } from '@/stores/settings'
 import type { FiberSimModel, EDFAModel, BUModel, SimulationModelConfig } from '@/types/systemPlanning'
+import { getDeviceLibrariesByCategory } from '@/services/platform/deviceRuntime'
 
 const props = defineProps<{
   visible: boolean
@@ -17,6 +18,8 @@ const emit = defineEmits<{
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
+const platformFiberLibraries = computed(() => getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'fiber'))
+const platformAmplifierLibraries = computed(() => getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'amplifier'))
 
 // 本地配置状态
 const config = ref<SimulationModelConfig>({
@@ -53,20 +56,12 @@ const parameterCheck = computed(() => {
   const warnings: string[] = []
   
   // 检查光纤参数
-  if (settingsStore.fiberTypes.length === 0) {
+  if (platformFiberLibraries.value.length === 0) {
     issues.push('未导入光纤参数，请先在器件库中添加光纤类型')
-  } else {
-    const selectedModel = config.value.fiberModel
-    const fiberWithModel = settingsStore.fiberTypes.filter(f => 
-      f.modelDrawers?.[`${selectedModel.toLowerCase()}Params` as keyof typeof f.modelDrawers]
-    )
-    if (fiberWithModel.length === 0) {
-      warnings.push(`当前光纤未配置 ${selectedModel} 模型参数，将使用默认值`)
-    }
   }
   
   // 检查放大器参数
-  if (settingsStore.amplifierTypes.length === 0) {
+  if (platformAmplifierLibraries.value.length === 0) {
     issues.push('未导入放大器参数，请先在器件库中添加放大器类型')
   }
   
@@ -117,8 +112,12 @@ const handleConfirm = () => {
 }
 
 // 监听打开状态，重置为当前配置
-watch(() => props.visible, (visible) => {
+watch(() => props.visible, async (visible) => {
   if (visible) {
+    if (settingsStore.platformDeviceLibraries.length === 0) {
+      await settingsStore.loadPlatformDeviceLibraries()
+    }
+
     config.value = {
       ...settingsStore.simulationModelConfig,
       saveAsTemplate: false,
