@@ -2,8 +2,14 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types'
 import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes, defaultEqualizerTypes, defaultJointBoxTypes } from '@/types/settings'
-import { platformDeviceEntityApi, platformDeviceLibraryApi } from '@/services/platform/api'
-import type { PlanDeviceEntity, PlanDeviceEntitySearch, PlanDeviceLibrary } from '@/services/platform/types'
+import { platformDeviceConfigApi, platformDeviceEntityApi, platformDeviceLibraryApi } from '@/services/platform/api'
+import type {
+  PlanDeviceConfig,
+  PlanDeviceConfigSearch,
+  PlanDeviceEntity,
+  PlanDeviceEntitySearch,
+  PlanDeviceLibrary,
+} from '@/services/platform/types'
 import type { 
   SystemPlanningParams, 
   SimulationModelConfig,
@@ -232,8 +238,11 @@ export const useSettingsStore = defineStore('settings', () => {
   const equalizerTypes = ref<EqualizerType[]>([])
   const jointBoxTypes = ref<JointBoxType[]>([])
   const currentLibraryFile = ref('')
+  const platformDeviceConfigs = ref<PlanDeviceConfig[]>([])
   const platformDeviceLibraries = ref<PlanDeviceLibrary[]>([])
   const platformDeviceEntities = ref<PlanDeviceEntity[]>([])
+  const deviceConfigLoading = ref(false)
+  const deviceConfigSyncError = ref<string | null>(null)
   const deviceLibraryLoading = ref(false)
   const deviceLibrarySyncing = ref(false)
   const deviceLibrarySyncError = ref<string | null>(null)
@@ -338,6 +347,32 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const loadDeviceLibraryFromPlatform = loadPlatformDeviceLibraries
 
+  async function loadPlatformDeviceConfigs(search: PlanDeviceConfigSearch) {
+    deviceConfigLoading.value = true
+    deviceConfigSyncError.value = null
+    try {
+      const response = await platformDeviceConfigApi.search({
+        pageNumber: 1,
+        pageSize: 1000,
+        ...search,
+      })
+      platformDeviceConfigs.value = response.data ?? []
+      return response
+    } catch (error) {
+      deviceConfigSyncError.value = error instanceof Error ? error.message : '器件配置加载失败'
+      throw error
+    } finally {
+      deviceConfigLoading.value = false
+    }
+  }
+
+  async function loadPlatformDeviceLibraryDetail(id: number | string) {
+    const detail = await platformDeviceLibraryApi.detail(id)
+    const index = platformDeviceLibraries.value.findIndex(item => String(item.id) === String(id))
+    if (index >= 0) platformDeviceLibraries.value[index] = { ...platformDeviceLibraries.value[index], ...detail }
+    return detail
+  }
+
   async function savePlatformDeviceLibrary(library: PlanDeviceLibrary) {
     deviceLibrarySyncing.value = true
     deviceLibrarySyncError.value = null
@@ -346,6 +381,7 @@ export const useSettingsStore = defineStore('settings', () => {
         ...library,
         iconSize: library.iconSize ?? { width: 48, height: 48 },
         bindFuncList: library.bindFuncList ?? [],
+        deviceValueList: library.deviceValueList ?? [],
       }
       const id = await platformDeviceLibraryApi.save(payload)
       const saved = { ...payload, id }
@@ -406,7 +442,7 @@ export const useSettingsStore = defineStore('settings', () => {
     deviceEntitySyncError.value = null
     try {
       const id = await platformDeviceEntityApi.save(entity)
-      const saved = { ...entity, id }
+      const saved = { ...entity, id, deviceValueList: entity.deviceValueList ?? [] }
       const index = platformDeviceEntities.value.findIndex(item => item.id === id || (entity.id != null && item.id === entity.id))
       if (index >= 0) platformDeviceEntities.value[index] = saved
       else platformDeviceEntities.value.push(saved)
@@ -431,6 +467,13 @@ export const useSettingsStore = defineStore('settings', () => {
     } finally {
       deviceEntitySyncing.value = false
     }
+  }
+
+  async function loadPlatformDeviceEntityDetail(id: number | string) {
+    const detail = await platformDeviceEntityApi.detail(id)
+    const index = platformDeviceEntities.value.findIndex(item => String(item.id) === String(id))
+    if (index >= 0) platformDeviceEntities.value[index] = { ...platformDeviceEntities.value[index], ...detail }
+    return detail
   }
 
   // Actions
@@ -770,18 +813,24 @@ export const useSettingsStore = defineStore('settings', () => {
     equalizerTypes,
     jointBoxTypes,
     currentLibraryFile,
+    platformDeviceConfigs,
     platformDeviceLibraries,
     platformDeviceEntities,
+    deviceConfigLoading,
+    deviceConfigSyncError,
     deviceLibraryLoading,
     deviceLibrarySyncing,
     deviceLibrarySyncError,
     deviceEntityLoading,
     deviceEntitySyncing,
     deviceEntitySyncError,
+    loadPlatformDeviceConfigs,
     loadPlatformDeviceLibraries,
+    loadPlatformDeviceLibraryDetail,
     savePlatformDeviceLibrary,
     removePlatformDeviceLibrary,
     loadPlatformDeviceEntities,
+    loadPlatformDeviceEntityDetail,
     savePlatformDeviceEntity,
     removePlatformDeviceEntity,
     loadDeviceLibraryFromPlatform,
