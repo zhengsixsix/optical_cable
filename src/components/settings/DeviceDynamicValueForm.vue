@@ -15,6 +15,7 @@ const props = defineProps<{
   configs: PlanDeviceConfig[]
   modelValue: Record<string, string>
   libraryValues?: Record<string, string>
+  valueScope?: 'library' | 'entity'
 }>()
 
 const emit = defineEmits<{
@@ -94,22 +95,6 @@ const optionsForConfig = (config: PlanDeviceConfig) =>
   config.dicCode ? dictionaryOptions.value[String(config.dicCode)] ?? [] : []
 
 const groupTitle = (name: string) => name.startsWith('【') ? name : `【${name}】`
-
-const sourceLabel = (row: DeviceAttributeRow) => {
-  if (row.source === 'entity') return '实例覆盖'
-  if (row.source === 'library') return '器件库'
-  if (row.source === 'default') return '默认值'
-  if (row.source === 'reused') return '复用值'
-  return '未填写'
-}
-
-const sourceClass = (row: DeviceAttributeRow) => {
-  if (row.source === 'entity') return 'border-blue-200 bg-blue-50 text-blue-700'
-  if (row.source === 'library') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (row.source === 'default') return 'border-gray-200 bg-gray-50 text-gray-600'
-  if (row.source === 'reused') return 'border-amber-200 bg-amber-50 text-amber-700'
-  return 'border-red-200 bg-red-50 text-red-600'
-}
 </script>
 
 <template>
@@ -139,24 +124,14 @@ const sourceClass = (row: DeviceAttributeRow) => {
           <span class="truncate">{{ group.groupName }}（点击{{ openGroups[group.groupCode] ? '收起' : '展开' }}）</span>
         </span>
       </button>
-      <div v-else>
-        <h3 class="mb-4 font-medium text-gray-800 dark:text-gray-100">{{ groupTitle(group.groupName) }}</h3>
-      </div>
 
       <div v-show="!group.drawer || openGroups[group.groupCode]" :class="group.drawer ? 'border-t bg-white p-4 dark:border-gray-700 dark:bg-gray-800' : ''">
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div v-for="row in group.rows" :key="row.configCode" class="min-w-0">
             <div class="mb-1 flex items-center gap-2">
               <label class="block truncate text-sm text-gray-600 dark:text-gray-300">{{ row.label }}</label>
-              <span
-                v-if="row.source === 'entity' || row.source === 'library'"
-                class="shrink-0 rounded border px-1.5 py-0.5 text-[11px]"
-                :class="sourceClass(row)"
-              >
-                {{ sourceLabel(row) }}
-              </span>
             </div>
-            <div class="flex min-h-[38px] items-center gap-2">
+            <div class="grid min-h-[38px] grid-cols-[minmax(0,1fr)_80px] items-center gap-2">
               <input
                 v-if="isBooleanConfig(row.config)"
                 type="checkbox"
@@ -168,7 +143,7 @@ const sourceClass = (row: DeviceAttributeRow) => {
                 v-else-if="isDateTimeConfig(row.config)"
                 type="datetime-local"
                 :value="row.value"
-                class="h-[38px] min-w-0 flex-1 rounded-md border bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-200"
+                class="h-[38px] min-w-0 rounded-md border bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-200"
                 style="border-color: var(--app-border-color)"
                 @input="event => updateValue(row.configCode, (event.target as HTMLInputElement).value)"
               />
@@ -176,17 +151,17 @@ const sourceClass = (row: DeviceAttributeRow) => {
                 v-else-if="isSelectConfig(row.config)"
                 :model-value="row.value"
                 :options="optionsForConfig(row.config)"
-                class="min-w-0 flex-1"
+                class="min-w-0"
                 @update:model-value="value => updateValue(row.configCode, value)"
               />
               <Input
                 v-else
                 :type="textInputTypeForConfig(row.config)"
                 :model-value="row.value"
-                class="min-w-0 flex-1"
+                class="min-w-0"
                 @update:model-value="value => updateValue(row.configCode, value)"
               />
-              <span v-if="row.unit" class="w-20 shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ row.unit }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ row.unit || '' }}</span>
             </div>
           </div>
         </div>

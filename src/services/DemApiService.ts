@@ -1,6 +1,6 @@
 /**
- * DEM API 客户端服务
- * 线上 Swagger 当前未提供 DEM 相关接口；调用方应使用本地数据回退或保持空态。
+ * DEM API client.
+ * The terrain and depth profile panels use the online DEM service directly.
  */
 
 export interface DemMeta {
@@ -27,46 +27,125 @@ export interface DemPointResult {
   elevation: number
 }
 
+export interface DemProfilePoint {
+  distance: number
+  depth: number
+}
+
+export interface DemProfileResult {
+  points: DemProfilePoint[]
+  totalDistance?: number
+}
+
+export type DemProfileRequest =
+  | {
+      mode: 'extent'
+      extent: [number, number, number, number]
+      sampleCount?: number
+    }
+  | {
+      mode: 'segment'
+      segment: {
+        startPoint: { lon: number; lat: number }
+        endPoint: { lon: number; lat: number }
+      }
+      sampleCount?: number
+    }
+
+const DEFAULT_DEM_API_BASE = 'http://47.92.110.176:9104'
+const env = import.meta.env ?? {}
+
+const DEM_API_BASE = (
+  env.VITE_DEM_API_URL ||
+  env.VITE_API_BASE_URL ||
+  DEFAULT_DEM_API_BASE
+).replace(/\/+$/, '')
+
+async function readApiData<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const result = await response.json()
+
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.error || fallbackMessage)
+  }
+
+  return result.data as T
+}
+
 /**
- * 获取所有DEM元数据
+ * Fetch all DEM metadata.
  */
 export async function fetchDemMeta(): Promise<DemMeta[]> {
-  return []
+  const response = await fetch(`${DEM_API_BASE}/api/dem/meta`)
+  return readApiData<DemMeta[]>(response, '获取DEM元数据失败')
 }
 
 /**
- * 裁剪获取区域高程数据
- * @param bbox 经纬度边界 [minX, minY, maxX, maxY]
- * @param width 输出宽度（默认128）
- * @param height 输出高度（默认128）
+ * Clip elevation data for a lon/lat bbox: [minX, minY, maxX, maxY].
  */
 export async function fetchDemClip(
-  _bbox: [number, number, number, number],
-  _width = 128,
-  _height = 128
+  bbox: [number, number, number, number],
+  width = 128,
+  height = 128,
 ): Promise<DemClipResult> {
-  throw new Error('线上 Swagger 暂未提供 DEM 裁剪接口')
+  const [minX, minY, maxX, maxY] = bbox
+  const params = new URLSearchParams({
+    minX: String(minX),
+    minY: String(minY),
+    maxX: String(maxX),
+    maxY: String(maxY),
+    width: String(width),
+    height: String(height),
+  })
+
+  const response = await fetch(`${DEM_API_BASE}/api/dem/clip?${params.toString()}`)
+  return readApiData<DemClipResult>(response, '裁剪DEM数据失败')
 }
 
 /**
- * 查询单点高程
- * @param lon 经度
- * @param lat 纬度
+ * Query elevation for a single lon/lat point.
  */
 export async function fetchDemPoint(lon: number, lat: number): Promise<DemPointResult> {
-  return { lon, lat, elevation: 0 }
+  const params = new URLSearchParams({
+    lon: String(lon),
+    lat: String(lat),
+  })
+
+  const response = await fetch(`${DEM_API_BASE}/api/dem/point?${params.toString()}`)
+  return readApiData<DemPointResult>(response, '查询高程失败')
 }
 
 /**
- * 检查DEM服务是否可用
+ * Fetch a depth profile for a selected extent or route segment.
  */
-export async function checkDemService(): Promise<boolean> {
-  return false
+export async function fetchDemProfile(payload: DemProfileRequest): Promise<DemProfileResult> {
+  const response = await fetch(`${DEM_API_BASE}/api/dem/profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  return readApiData<DemProfileResult>(response, '加载剖面数据失败')
 }
 
 /**
- * 获取DEM API基础地址
+ * Check if the DEM service is available.
+ */
+export async function checkDemService(timeoutMs = 3000): Promise<boolean> {
+  try {
+    const response = await fetch(`${DEM_API_BASE}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    const result = await response.json()
+    return response.ok && result.status === 'ok'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Get the DEM API base URL.
  */
 export function getDemApiBase(): string {
-  return ''
+  return DEM_API_BASE
 }

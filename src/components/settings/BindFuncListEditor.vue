@@ -21,6 +21,7 @@ const valueTypeOptions = [
   { value: 'string', label: 'String' },
   { value: 'number', label: 'Number' },
   { value: 'boolean', label: 'Boolean' },
+  { value: 'field', label: 'FIELD' },
   { value: 'json', label: 'JSON' },
 ]
 
@@ -37,6 +38,13 @@ const updateFunc = (funcIndex: number, patch: Partial<BindFuncDraft>) => {
   emitDrafts(drafts.value.map((item, index) => (
     index === funcIndex ? { ...item, ...patch } : item
   )))
+}
+
+const setDefaultFunc = (funcIndex: number) => {
+  emitDrafts(drafts.value.map((item, index) => ({
+    ...item,
+    isDefault: index === funcIndex,
+  })))
 }
 
 const updateParam = (
@@ -82,6 +90,7 @@ const removeParam = (funcIndex: number, paramIndex: number) => {
 const valuePlaceholder = (type: BindFuncParamValueType) => {
   if (type === 'number') return '如 30'
   if (type === 'boolean') return 'true / false'
+  if (type === 'field') return '动态属性 code，如 attenuation'
   if (type === 'json') return '{"key":"value"}'
   return '参数值'
 }
@@ -133,6 +142,16 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
             @update:model-value="value => updateFunc(funcIndex, { name: String(value) })"
           />
         </div>
+        <label class="inline-flex shrink-0 items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+          <input
+            type="radio"
+            class="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+            :checked="func.isDefault"
+            name="default-bind-func"
+            @change="setDefaultFunc(funcIndex)"
+          />
+          默认函数
+        </label>
         <button
           type="button"
           class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-50 hover:text-red-600"
@@ -163,7 +182,7 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
           <div class="grid grid-cols-[minmax(150px,1fr)_120px_minmax(180px,1.3fr)_36px] gap-2 text-xs text-gray-500">
             <span>参数名</span>
             <span>类型</span>
-            <span>默认值</span>
+            <span>值</span>
             <span></span>
           </div>
           <div

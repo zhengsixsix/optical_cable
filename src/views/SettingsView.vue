@@ -6,6 +6,7 @@ import { useProjectManager } from '@/composables'
 import { useSettingsStore } from '@/stores/settings'
 import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
 import BindFuncListEditor from '@/components/settings/BindFuncListEditor.vue'
+import DeviceDynamicValueForm from '@/components/settings/DeviceDynamicValueForm.vue'
 import DeviceTypeTabs from '@/components/settings/DeviceTypeTabs.vue'
 import IconUploadField from '@/components/settings/IconUploadField.vue'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
@@ -35,10 +36,12 @@ import {
 } from 'lucide-vue-next'
 import type {BUConfig, ArmorMapping, RedundancyConfig} from '@/stores/settings'
 import { platformDictionaryApi } from '@/services/platform/api'
-import type { Id, PlanDeviceConfig, PlanDeviceLibrary, PlatformDictionary } from '@/services/platform/types'
+import type { Id, PlanDeviceConfig, PlanDeviceEntity, PlanDeviceLibrary, PlatformDictionary } from '@/services/platform/types'
 import type { BindFuncDraft } from '@/services/platform/bindFuncForm'
 import { bindFuncDraftsToList, bindFuncListToDrafts } from '@/services/platform/bindFuncForm'
 import {
+  buildDeviceValueList,
+  deviceValueListToMap,
   mergeDeviceConfigsWithDefaults,
 } from '@/services/platform/deviceAttributes'
 import {
@@ -121,7 +124,7 @@ const platformLibraryContextMenu = reactive({
 })
 
 const tabs = [
-  {id: 'equipment', label: '器件库配置'},
+  {id: 'equipment', label: '器件实例管理'},
   {id: 'route', label: '路径规划配置'},
   {id: 'monitoring', label: '监控系统配置'},
 ]
@@ -129,6 +132,7 @@ const tabs = [
 // 弹窗状态
 const showPlatformLibraryDialog = ref(false)
 const showPlatformConfigDialog = ref(false)
+const showPlatformEntityDialog = ref(false)
 const showMapSelectDialog = ref(false)
 const showCableTypeCreateDialog = ref(false)
 const cableTypePresetArmor = ref('')  // 预设的铠装类型
@@ -196,27 +200,57 @@ const selectedPlatformStoredConfigs = computed(() => {
 })
 
 const activePlatformDeviceConfigs = computed(() =>
-  selectedPlatformLibrary.value
-    ? mergeDeviceConfigsWithDefaults(selectedPlatformDeviceTypeCd.value, selectedPlatformStoredConfigs.value)
-    : [],
+  mergeDeviceConfigsWithDefaults(selectedPlatformDeviceTypeCd.value || activePlatformDeviceTypeCd.value, selectedPlatformStoredConfigs.value),
 )
 
 const platformConfigPreview = (library?: PlanDeviceLibrary | null) => {
   if (!library?.id || !sameId(library.id, selectedPlatformLibraryId.value)) return []
   const configs = mergeDeviceConfigsWithDefaults(library.deviceTypeCd || activePlatformDeviceTypeCd.value, selectedPlatformStoredConfigs.value)
+  const valueMap = deviceValueListToMap(library.deviceValueList)
   return configs
     .filter(config => Boolean(config.code?.trim()))
     .slice(0, 3)
     .map(config => {
       const code = String(config.code)
+      const value = valueMap[code] ?? config.defaultValue ?? ''
       return {
         code,
         label: config.name || code,
-        value: config.defaultValue == null || config.defaultValue === '' ? '-' : String(config.defaultValue),
+        value: value === '' ? '-' : String(value),
         unit: config.unit || '',
       }
     })
 }
+
+const platformEntityConfigPreview = (entity: PlanDeviceEntity) => {
+  const libraryValueMap = deviceValueListToMap(selectedPlatformLibrary.value?.deviceValueList)
+  const entityValueMap = deviceValueListToMap(entity.deviceValueList)
+  return activePlatformDeviceConfigs.value
+    .filter(config => Boolean(config.code?.trim()))
+    .slice(0, 3)
+    .map(config => {
+      const code = String(config.code)
+      const value = entityValueMap[code] ?? libraryValueMap[code] ?? config.defaultValue ?? ''
+      return {
+        code,
+        label: config.name || code,
+        value: value === '' ? '-' : String(value),
+        unit: config.unit || '',
+      }
+    })
+}
+
+const platformEntityList = computed(() => {
+  const libraryId = selectedPlatformLibraryId.value
+  if (!libraryId) return []
+  return settingsStore.platformDeviceEntities.filter(entity => sameId(entity.libraryId, libraryId))
+})
+
+const platformEntityLibrariesForType = computed(() =>
+  settingsStore.platformDeviceLibraries.filter(library =>
+    !library.deviceTypeCd || String(library.deviceTypeCd) === activePlatformDeviceTypeCd.value,
+  ),
+)
 
 const ensurePlatformLibrarySelection = () => {
   if (platformLibraryTab.value && filteredPlatformLibraries.value.some(item => sameId(item.id, platformLibraryTab.value))) {
@@ -240,6 +274,20 @@ const loadSelectedPlatformConfigs = async () => {
   })
 }
 
+const loadSelectedPlatformEntities = async () => {
+  if (!selectedPlatformLibraryId.value) {
+    settingsStore.platformDeviceEntities = []
+    return
+  }
+
+  await settingsStore.loadPlatformDeviceEntities({
+    pageNumber: 1,
+    pageSize: 1000,
+    libraryId: selectedPlatformLibraryId.value,
+    projectId: appStore.projectState.currentProject?.platformProjectId || null,
+  })
+}
+
 const defaultPlatformLibraryForm = () => ({
   id: undefined as Id | undefined,
   name: '',
@@ -254,6 +302,24 @@ const defaultPlatformLibraryForm = () => ({
 })
 
 const platformLibraryForm = reactive(defaultPlatformLibraryForm())
+const platformEntityForm = reactive({
+  id: undefined as Id | undefined,
+  name: '',
+  deviceTypeCd: '',
+  libraryId: '',
+  longitude: '' as number | string,
+  latitude: '' as number | string,
+  sortNum: '' as number | string,
+  projectId: appStore.projectState.currentProject?.platformProjectId || '' as Id | '',
+  iconId: '' as Id | '',
+  iconName: '',
+  iconWidth: 48,
+  iconHeight: 48,
+  dialogWindowId: '',
+  bindFuncList: [] as BindFuncDraft[],
+  values: {} as Record<string, string>,
+  libraryValues: {} as Record<string, string>,
+})
 const platformConfigForm = reactive({
   id: undefined as Id | undefined,
   name: '',
@@ -287,6 +353,27 @@ const sameId = (left: unknown, right: unknown) => {
 
 const resetPlatformLibraryForm = () => {
   Object.assign(platformLibraryForm, defaultPlatformLibraryForm())
+}
+
+const resetPlatformEntityForm = () => {
+  Object.assign(platformEntityForm, {
+    id: undefined,
+    name: '',
+    deviceTypeCd: activePlatformDeviceTypeCd.value,
+    libraryId: selectedPlatformLibraryId.value == null ? '' : String(selectedPlatformLibraryId.value),
+    longitude: '',
+    latitude: '',
+    sortNum: '',
+    projectId: appStore.projectState.currentProject?.platformProjectId || '',
+    iconId: '',
+    iconName: '',
+    iconWidth: 48,
+    iconHeight: 48,
+    dialogWindowId: '',
+    bindFuncList: [],
+    values: {},
+    libraryValues: {},
+  })
 }
 
 const resetPlatformConfigForm = () => {
@@ -417,6 +504,7 @@ const loadPlatformLibraries = async () => {
     await settingsStore.loadPlatformDeviceLibraries({ pageNumber: 1, pageSize: 1000, deviceTypeCd: activePlatformDeviceTypeCd.value })
     ensurePlatformLibrarySelection()
     await loadSelectedPlatformConfigs()
+    await loadSelectedPlatformEntities()
   } catch (error) {
     appStore.showNotification({ type: 'warning', message: `器件库加载失败：${(error as Error).message}` })
   }
@@ -428,6 +516,7 @@ const selectPlatformLibrary = (library: PlanDeviceLibrary) => {
   showPlatformConfigDialog.value = false
   closePlatformLibraryContextMenu()
   void loadSelectedPlatformConfigs()
+  void loadSelectedPlatformEntities()
 }
 
 function closePlatformLibraryContextMenu() {
@@ -446,6 +535,7 @@ const openPlatformLibraryContextMenu = (event: MouseEvent, library: PlanDeviceLi
   resetPlatformConfigForm()
   showPlatformConfigDialog.value = false
   void loadSelectedPlatformConfigs()
+  void loadSelectedPlatformEntities()
 }
 
 const editContextPlatformLibrary = () => {
@@ -467,6 +557,113 @@ const openCreatePlatformLibrary = async () => {
   }
   resetPlatformLibraryForm()
   showPlatformLibraryDialog.value = true
+}
+
+const applyLibraryToEntityForm = async (libraryId: Id | '') => {
+  if (!libraryId) return
+  const detail = await settingsStore.loadPlatformDeviceLibraryDetail(libraryId)
+  const deviceTypeCd = detail.deviceTypeCd || activePlatformDeviceTypeCd.value
+  await settingsStore.loadPlatformDeviceConfigs({ deviceTypeCd })
+  platformEntityForm.deviceTypeCd = deviceTypeCd
+  platformEntityForm.libraryId = String(detail.id ?? libraryId)
+  platformEntityForm.libraryValues = deviceValueListToMap(detail.deviceValueList)
+  platformEntityForm.values = {
+    ...platformEntityForm.libraryValues,
+    ...platformEntityForm.values,
+  }
+  platformEntityForm.bindFuncList = bindFuncListToDrafts(detail.bindFuncList, nextBindFuncDraftId)
+  platformEntityForm.iconId = detail.iconId ?? ''
+  platformEntityForm.iconName = detail.iconName || ''
+  platformEntityForm.iconWidth = detail.iconSize?.width ?? 48
+  platformEntityForm.iconHeight = detail.iconSize?.height ?? 48
+  platformEntityForm.dialogWindowId = detail.dialogWindowId || ''
+}
+
+const openCreatePlatformEntity = async () => {
+  if (!activePlatformDeviceTypeCd.value) {
+    appStore.showNotification({ type: 'warning', message: '请先选择器件类型' })
+    return
+  }
+  if (!selectedPlatformLibraryId.value) {
+    appStore.showNotification({ type: 'warning', message: '请先选择器件型号' })
+    return
+  }
+  resetPlatformEntityForm()
+  await applyLibraryToEntityForm(selectedPlatformLibraryId.value)
+  showPlatformEntityDialog.value = true
+}
+
+const openEditPlatformEntity = async (entity: PlanDeviceEntity) => {
+  if (!entity.id) return
+  const detail = await settingsStore.loadPlatformDeviceEntityDetail(entity.id)
+  resetPlatformEntityForm()
+  if (detail.libraryId) await applyLibraryToEntityForm(detail.libraryId)
+  Object.assign(platformEntityForm, {
+    id: detail.id,
+    name: detail.name || '',
+    deviceTypeCd: detail.deviceTypeCd || platformEntityForm.deviceTypeCd,
+    libraryId: String(detail.libraryId ?? platformEntityForm.libraryId),
+    longitude: detail.longitude ?? '',
+    latitude: detail.latitude ?? '',
+    sortNum: detail.sortNum ?? '',
+    projectId: detail.projectId ?? appStore.projectState.currentProject?.platformProjectId ?? '',
+    iconId: detail.iconId ?? platformEntityForm.iconId,
+    iconName: detail.iconName || platformEntityForm.iconName,
+    iconWidth: detail.iconSize?.width ?? platformEntityForm.iconWidth,
+    iconHeight: detail.iconSize?.height ?? platformEntityForm.iconHeight,
+    dialogWindowId: detail.dialogWindowId || platformEntityForm.dialogWindowId,
+    bindFuncList: bindFuncListToDrafts(detail.bindFuncList?.length ? detail.bindFuncList : bindFuncDraftsToList(platformEntityForm.bindFuncList), nextBindFuncDraftId),
+    values: {
+      ...platformEntityForm.libraryValues,
+      ...deviceValueListToMap(detail.deviceValueList),
+    },
+  })
+  showPlatformEntityDialog.value = true
+}
+
+const savePlatformEntity = async () => {
+  if (!platformEntityForm.libraryId) {
+    appStore.showNotification({ type: 'warning', message: '请选择器件型号' })
+    return
+  }
+
+  try {
+    await settingsStore.savePlatformDeviceEntity({
+      id: platformEntityForm.id,
+      name: platformEntityForm.name || null,
+      deviceTypeCd: platformEntityForm.deviceTypeCd || activePlatformDeviceTypeCd.value,
+      libraryId: optionalId(platformEntityForm.libraryId) ?? null,
+      longitude: optionalNumber(platformEntityForm.longitude) ?? null,
+      latitude: optionalNumber(platformEntityForm.latitude) ?? null,
+      projectId: optionalId(platformEntityForm.projectId) ?? null,
+      sortNum: optionalNumber(platformEntityForm.sortNum) ?? 999,
+      iconId: optionalId(platformEntityForm.iconId) ?? null,
+      iconSize: {
+        width: optionalNumber(platformEntityForm.iconWidth) ?? 48,
+        height: optionalNumber(platformEntityForm.iconHeight) ?? 48,
+      },
+      dialogWindowId: platformEntityForm.dialogWindowId || null,
+      bindFuncList: bindFuncDraftsToList(platformEntityForm.bindFuncList),
+      deviceValueList: buildDeviceValueList(platformEntityForm.values),
+    })
+    await loadSelectedPlatformEntities()
+    showPlatformEntityDialog.value = false
+    appStore.showNotification({ type: 'success', message: '器件实例已保存' })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `器件实例保存失败：${(error as Error).message}` })
+  }
+}
+
+const deletePlatformEntity = async (entity: PlanDeviceEntity) => {
+  if (!entity.id) return
+  if (!window.confirm(`确认删除器件实例「${entity.name || entity.id}」？`)) return
+  try {
+    await settingsStore.removePlatformDeviceEntity(entity.id)
+    await loadSelectedPlatformEntities()
+    appStore.showNotification({ type: 'success', message: '器件实例已删除' })
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `器件实例删除失败：${(error as Error).message}` })
+  }
 }
 
 const openEditPlatformLibrary = async (library: PlanDeviceLibrary) => {
@@ -553,7 +750,14 @@ watch(activePlatformDeviceTypeCd, deviceTypeCd => {
   platformLibraryTab.value = null
   resetPlatformConfigForm()
   showPlatformConfigDialog.value = false
+  showPlatformEntityDialog.value = false
+  settingsStore.platformDeviceEntities = []
   if (deviceTypeCd) void loadPlatformLibraries()
+})
+
+watch(() => platformEntityForm.libraryId, libraryId => {
+  if (!showPlatformEntityDialog.value || !libraryId) return
+  void applyLibraryToEntityForm(libraryId)
 })
 
 // 将坐标对象转换为字符串格式
@@ -2355,13 +2559,14 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
           </Card>
         </div>
 
-        <!-- 器件库配置 -->
+        <!-- 器件实例管理 -->
         <div v-if="activeTab === 'equipment'" class="space-y-6">
           <Card>
             <CardContent class="p-5">
               <div class="mb-4 flex items-center justify-between border-b pb-3">
                 <div>
-                  <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100">器件库管理</h3>
+                  <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100">器件实例管理</h3>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">选择器件类型和器件型号后，维护当前工程中的器件实例。</p>
                 </div>
                 <div class="flex gap-2">
                   <Button variant="outline" size="sm" @click="loadPlatformLibraries">刷新</Button>
@@ -2380,7 +2585,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
 
               <div v-else class="mt-3 space-y-4">
                 <div v-if="settingsStore.deviceLibraryLoading" class="px-1 py-3 text-sm text-gray-400">
-                  正在加载器件...
+                  正在加载器件型号...
                 </div>
                 <div
                   v-else
@@ -2400,33 +2605,25 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                     @contextmenu="event => openPlatformLibraryContextMenu(event, library)"
                   >
                     {{ library.name || '-' }}
+                    <span v-if="Number(library.isDefault ?? 0) === 1" class="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">默认</span>
                   </button>
-                  <button
-                    type="button"
-                    class="mb-2 flex h-7 w-7 shrink-0 items-center justify-center rounded text-gray-500 transition hover:bg-gray-100 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/5"
-                    :disabled="!activePlatformDeviceTypeCd"
-                    title="新增器件"
-                    @click="openCreatePlatformLibrary"
-                  >
-                    <Plus class="h-4 w-4" />
-                  </button>
-                  <span v-if="filteredPlatformLibraries.length === 0" class="mb-2 text-sm text-gray-400">暂无器件</span>
+                  <span v-if="filteredPlatformLibraries.length === 0" class="mb-2 text-sm text-gray-400">暂无器件型号，请到系统设置维护器件库</span>
                 </div>
 
                 <section class="rounded-lg border" style="border-color: var(--app-border-color)">
                   <div class="flex items-center justify-between border-b px-3 py-2" style="border-color: var(--app-border-color)">
                     <div class="min-w-0">
                       <div class="flex items-center gap-2">
-                        <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">器件配置</span>
-                        <span class="text-xs text-gray-400">{{ activePlatformDeviceConfigs.length }} 项</span>
+                        <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">器件实例</span>
+                        <span class="text-xs text-gray-400">{{ platformEntityList.length }} 条</span>
                       </div>
                       <div class="mt-1 truncate text-xs text-gray-400">
-                        当前器件：{{ selectedPlatformLibrary?.name || '请选择上方器件' }}
+                        当前器件型号：{{ selectedPlatformLibrary?.name || '请选择上方器件型号' }}
                       </div>
                     </div>
-                    <Button variant="outline" size="sm" :disabled="!selectedPlatformLibrary" @click="openCreatePlatformConfig">
+                    <Button variant="outline" size="sm" :disabled="!selectedPlatformLibrary" @click="openCreatePlatformEntity">
                       <Plus class="mr-1 h-4 w-4" />
-                      新增配置
+                      新增实例
                     </Button>
                   </div>
 
@@ -2434,46 +2631,56 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                     <table class="w-full text-sm">
                       <thead class="bg-gray-100 dark:bg-white/5">
                         <tr>
-                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">配置名称</th>
-                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">编码</th>
-                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">类型</th>
-                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">分组</th>
-                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">默认值</th>
+                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">名称</th>
+                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">位置</th>
+                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">属性预览</th>
+                          <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">函数</th>
                           <th class="px-3 py-2 text-center font-medium text-gray-700 dark:text-gray-300">操作</th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr v-if="settingsStore.deviceConfigLoading">
-                          <td colspan="6" class="px-3 py-8 text-center text-gray-400">正在加载器件配置...</td>
+                        <tr v-if="settingsStore.deviceEntityLoading">
+                          <td colspan="5" class="px-3 py-8 text-center text-gray-400">正在加载器件实例...</td>
                         </tr>
                         <tr v-else-if="!selectedPlatformLibrary">
-                          <td colspan="6" class="px-3 py-8 text-center text-gray-400">请先在上方选择一个器件</td>
+                          <td colspan="5" class="px-3 py-8 text-center text-gray-400">请先在上方选择一个器件型号</td>
                         </tr>
-                        <tr v-else-if="activePlatformDeviceConfigs.length === 0">
-                          <td colspan="6" class="px-3 py-8 text-center text-gray-400">当前器件暂无配置</td>
+                        <tr v-else-if="platformEntityList.length === 0">
+                          <td colspan="5" class="px-3 py-8 text-center text-gray-400">当前器件型号暂无实例</td>
                         </tr>
                         <tr
-                          v-for="(config, index) in activePlatformDeviceConfigs"
+                          v-for="entity in platformEntityList"
                           v-else
-                          :key="String(config.id ?? config.code ?? index)"
+                          :key="String(entity.id ?? entity.name ?? '')"
                           class="border-t hover:bg-gray-50 dark:hover:bg-white/5"
                         >
                           <td class="px-3 py-3 align-top">
-                            <div class="font-medium text-gray-800 dark:text-gray-100">{{ config.name || '-' }}</div>
-                            <div v-if="!config.id" class="mt-1 text-xs text-gray-400">默认配置</div>
+                            <div class="font-medium text-gray-800 dark:text-gray-100">{{ entity.name || '-' }}</div>
+                            <div class="mt-1 text-xs text-gray-400">{{ entity.id || '-' }} · {{ entity.libraryName || selectedPlatformLibrary?.name || '-' }}</div>
                           </td>
-                          <td class="px-3 py-3 align-top font-mono text-xs text-gray-600 dark:text-gray-300">{{ config.code || '-' }}</td>
-                          <td class="px-3 py-3 align-top text-gray-600 dark:text-gray-300">{{ config.dataTypeCd || 'STRING' }}</td>
-                          <td class="px-3 py-3 align-top text-gray-600 dark:text-gray-300">{{ config.groupName || config.groupCode || '-' }}</td>
                           <td class="px-3 py-3 align-top text-gray-600 dark:text-gray-300">
-                            {{ config.defaultValue == null || config.defaultValue === '' ? '-' : config.defaultValue }}{{ config.unit || '' }}
+                            {{ entity.longitude ?? '-' }}, {{ entity.latitude ?? '-' }}
+                          </td>
+                          <td class="px-3 py-3 align-top">
+                            <div class="flex flex-wrap gap-1">
+                              <span
+                                v-for="attribute in platformEntityConfigPreview(entity)"
+                                :key="attribute.code"
+                                class="rounded border px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300"
+                              >
+                                {{ attribute.label }}: {{ attribute.value }}{{ attribute.unit }}
+                              </span>
+                              <span v-if="platformEntityConfigPreview(entity).length === 0" class="text-xs text-gray-400">暂无属性配置</span>
+                            </div>
+                          </td>
+                          <td class="px-3 py-3 align-top text-gray-600 dark:text-gray-300">
+                            {{ entity.bindFuncList?.find(func => Number(func.isDefault ?? 0) === 1)?.name || entity.bindFuncList?.[0]?.name || '-' }}
                           </td>
                           <td class="px-3 py-3 text-center align-top">
-                            <button class="mx-1 text-primary hover:brightness-90" @click="openEditPlatformConfig(config)">修改</button>
+                            <button class="mx-1 text-primary hover:brightness-90" @click="openEditPlatformEntity(entity)">修改</button>
                             <button
-                              class="mx-1 text-red-500 hover:text-red-700 disabled:cursor-not-allowed disabled:text-gray-300"
-                              :disabled="!config.id"
-                              @click="deletePlatformConfig(config)"
+                              class="mx-1 text-red-500 hover:text-red-700"
+                              @click="deletePlatformEntity(entity)"
                             >
                               删除
                             </button>
@@ -2587,6 +2794,90 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
         <div class="flex justify-center gap-4 p-4 border-t">
           <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="savePlatformLibrary">保存</Button>
           <Button variant="outline" class="px-6" @click="showPlatformLibraryDialog = false">取消</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 器件实例弹窗 -->
+  <Teleport to="body">
+    <div v-if="showPlatformEntityDialog" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" @click="showPlatformEntityDialog = false" />
+      <div class="relative flex max-h-[88vh] w-[980px] max-w-[calc(100vw-48px)] flex-col rounded-lg bg-white shadow-xl dark:bg-gray-800">
+        <div class="flex items-center justify-between border-b px-5 py-3" style="border-color: var(--app-border-color)">
+          <h3 class="font-bold text-gray-800 dark:text-gray-100">{{ platformEntityForm.id ? '修改器件实例' : '新增器件实例' }}</h3>
+          <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showPlatformEntityDialog = false">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div class="flex-1 space-y-4 overflow-y-auto bg-gray-50/60 p-5 dark:bg-gray-900/40">
+          <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+            <h4 class="mb-4 text-sm font-semibold text-gray-800 dark:text-gray-100">实例信息</h4>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">名称</label>
+                <Input v-model="platformEntityForm.name" placeholder="如 EDFA-001" />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">器件类型</label>
+                <Select
+                  v-model="platformEntityForm.deviceTypeCd"
+                  :options="platformDeviceTypeOptions"
+                  disabled
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">器件型号</label>
+                <Select
+                  v-model="platformEntityForm.libraryId"
+                  :options="platformEntityLibrariesForType.map(library => ({ value: String(library.id ?? ''), label: library.name || String(library.id ?? '') }))"
+                  placeholder="请选择器件型号"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">项目 ID</label>
+                <Input v-model="platformEntityForm.projectId" placeholder="当前工程平台 ID" />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">经度</label>
+                <Input v-model="platformEntityForm.longitude" type="number" />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">纬度</label>
+                <Input v-model="platformEntityForm.latitude" type="number" />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">排序</label>
+                <Input v-model="platformEntityForm.sortNum" type="number" placeholder="999" />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-gray-600 dark:text-gray-400">参数窗口标识</label>
+                <Input v-model="platformEntityForm.dialogWindowId" placeholder="可选" />
+              </div>
+            </div>
+          </section>
+
+          <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">实例属性</h4>
+              <span class="text-xs text-gray-400">{{ activePlatformDeviceConfigs.length }} 项</span>
+            </div>
+            <DeviceDynamicValueForm
+              v-model="platformEntityForm.values"
+              :configs="activePlatformDeviceConfigs"
+              :library-values="platformEntityForm.libraryValues"
+            />
+          </section>
+
+          <section class="rounded-md border bg-white p-4 dark:bg-gray-800" style="border-color: var(--app-border-color)">
+            <BindFuncListEditor v-model="platformEntityForm.bindFuncList" />
+          </section>
+        </div>
+
+        <div class="flex justify-center gap-4 border-t p-4" style="border-color: var(--app-border-color)">
+          <Button class="px-6" :disabled="settingsStore.deviceEntitySyncing" @click="savePlatformEntity">保存</Button>
+          <Button variant="outline" class="px-6" @click="showPlatformEntityDialog = false">取消</Button>
         </div>
       </div>
     </div>

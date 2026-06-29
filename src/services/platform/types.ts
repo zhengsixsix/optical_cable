@@ -163,6 +163,7 @@ export interface PlatformIconSize {
 
 export interface PlatformBindFunc {
   name?: string
+  isDefault?: 0 | 1 | number | null
   defaultInputParams?: Record<string, unknown>
 }
 
@@ -273,6 +274,7 @@ export interface PlanDeviceLibrary {
   dialogWindowName?: string | null
   bindFuncList?: PlatformBindFunc[] | null
   deviceValueList?: Array<PlanDeviceValueSave | PlanDeviceValueSimple> | null
+  isDefault?: 0 | 1 | number | null
 }
 
 export interface PlanDeviceLibrarySearch extends PagedSearch {
@@ -281,6 +283,7 @@ export interface PlanDeviceLibrarySearch extends PagedSearch {
   name?: string | null
   deviceTypeCd?: string | null
   dialogWindowId?: string | null
+  isDefault?: 0 | 1 | number | null
 }
 
 export interface PlanDeviceEntity {

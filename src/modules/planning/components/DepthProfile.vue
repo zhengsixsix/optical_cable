@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Loader2 } from 'lucide-vue-next'
+import { fetchDemProfile } from '@/services/DemApiService'
 
 interface ProfilePoint {
   distance: number
   depth: number
 }
 
-// 线段信息类型
 interface SegmentInfo {
   id: string
   routeId: string
@@ -37,40 +37,52 @@ const hoverInfo = ref({
   x: 0,
   y: 0,
   distance: 0,
-  elevation: 0  // 正值=海拔，负值=水深
+  elevation: 0,
 })
 
-// 加载剖面数据（框选区域模式 - 沿左上角到右下角对角线采样）
 const loadProfileData = async (extent: [number, number, number, number]) => {
   loading.value = true
   hasData.value = false
 
   try {
-    void extent
-    profileData.value = []
+    const result = await fetchDemProfile({
+      mode: 'extent',
+      extent,
+      sampleCount: 100,
+    })
+    profileData.value = result.points || []
+    hasData.value = profileData.value.length > 0
+    if (hasData.value) nextTick(() => drawProfile())
   } catch {
-    // 加载失败时 hasData 保持 false
+    profileData.value = []
   } finally {
     loading.value = false
   }
 }
 
-// 加载剖面数据（线段模式 - 沿线段起终点采样 DEM）
 const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
   loading.value = true
   hasData.value = false
 
   try {
-    void segment
-    profileData.value = []
+    const result = await fetchDemProfile({
+      mode: 'segment',
+      segment: {
+        startPoint: segment.startPoint,
+        endPoint: segment.endPoint,
+      },
+      sampleCount: 100,
+    })
+    profileData.value = result.points || []
+    hasData.value = profileData.value.length > 0
+    if (hasData.value) nextTick(() => drawProfile())
   } catch {
-    // 加载失败时 hasData 保持 false
+    profileData.value = []
   } finally {
     loading.value = false
   }
 }
 
-// 绘制剖面图
 const drawProfile = () => {
   const canvas = canvasRef.value
   const container = containerRef.value
@@ -96,7 +108,7 @@ const drawProfile = () => {
   const seabedData = profileData.value
   if (seabedData.length === 0) return
 
-  const maxDistance = Math.max(...seabedData.map(d => d.distance))
+  const maxDistance = Math.max(...seabedData.map(d => d.distance)) || 1
   const depths = seabedData.map(d => d.depth)
   const minElev = Math.min(...depths)
   const maxElev = Math.max(...depths)
@@ -108,7 +120,6 @@ const drawProfile = () => {
 
   ctx.clearRect(0, 0, width, height)
 
-  // 天空背景
   if (seaLevelY > padding.top) {
     const skyGradient = ctx.createLinearGradient(0, padding.top, 0, seaLevelY)
     skyGradient.addColorStop(0, '#87CEEB')
@@ -117,7 +128,6 @@ const drawProfile = () => {
     ctx.fillRect(padding.left, padding.top, chartWidth, seaLevelY - padding.top)
   }
 
-  // 海水背景
   if (seaLevelY < height - padding.bottom) {
     const waterGradient = ctx.createLinearGradient(0, seaLevelY, 0, height - padding.bottom)
     waterGradient.addColorStop(0, '#4A90D9')
@@ -126,7 +136,6 @@ const drawProfile = () => {
     ctx.fillRect(padding.left, seaLevelY, chartWidth, height - padding.bottom - seaLevelY)
   }
 
-  // 海平面线
   ctx.beginPath()
   ctx.strokeStyle = '#2196F3'
   ctx.lineWidth = 2
@@ -136,7 +145,6 @@ const drawProfile = () => {
   ctx.stroke()
   ctx.setLineDash([])
 
-  // 地形填充
   ctx.beginPath()
   ctx.moveTo(xScale(seabedData[0].distance), yScale(seabedData[0].depth))
   seabedData.forEach(point => ctx.lineTo(xScale(point.distance), yScale(point.depth)))
@@ -151,7 +159,6 @@ const drawProfile = () => {
   ctx.fillStyle = terrainGradient
   ctx.fill()
 
-  // 海底轮廓
   ctx.beginPath()
   ctx.strokeStyle = '#5D4037'
   ctx.lineWidth = 2
@@ -159,7 +166,6 @@ const drawProfile = () => {
   seabedData.forEach(point => ctx.lineTo(xScale(point.distance), yScale(point.depth)))
   ctx.stroke()
 
-  // 海缆线路
   const cableData = seabedData.map(p => ({ distance: p.distance, depth: p.depth + 5 }))
   ctx.beginPath()
   ctx.strokeStyle = '#FF5722'
@@ -168,57 +174,48 @@ const drawProfile = () => {
   cableData.forEach(point => ctx.lineTo(xScale(point.distance), yScale(point.depth)))
   ctx.stroke()
 
-  // ========== 绘制坐标轴 ==========
   ctx.fillStyle = '#374151'
   ctx.font = '10px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
 
-  // X轴刻度（距离 km）
   const xTickCount = 5
   for (let i = 0; i <= xTickCount; i++) {
     const dist = (maxDistance / xTickCount) * i
     const x = xScale(dist)
-    
-    // 刻度线
+
     ctx.beginPath()
     ctx.strokeStyle = '#9CA3AF'
     ctx.lineWidth = 1
     ctx.moveTo(x, height - padding.bottom)
     ctx.lineTo(x, height - padding.bottom + 4)
     ctx.stroke()
-    
-    // 刻度标签
+
     ctx.fillText(dist.toFixed(1), x, height - padding.bottom + 6)
   }
-  
-  // X轴标题
+
   ctx.fillStyle = '#6B7280'
   ctx.fillText('距离 (km)', padding.left + chartWidth / 2, height - 6)
 
-  // Y轴刻度（高程/水深 m）
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = '#374151'
-  
+
   const yTickCount = 5
   for (let i = 0; i <= yTickCount; i++) {
     const elev = minElev + (elevRange / yTickCount) * (yTickCount - i)
     const y = padding.top + (chartHeight / yTickCount) * i
-    
-    // 刻度线
+
     ctx.beginPath()
     ctx.strokeStyle = '#9CA3AF'
     ctx.lineWidth = 1
     ctx.moveTo(padding.left - 4, y)
     ctx.lineTo(padding.left, y)
     ctx.stroke()
-    
-    // 刻度标签
+
     ctx.fillText(elev.toFixed(0), padding.left - 6, y)
   }
-  
-  // Y轴标题
+
   ctx.save()
   ctx.translate(10, padding.top + chartHeight / 2)
   ctx.rotate(-Math.PI / 2)
@@ -227,11 +224,9 @@ const drawProfile = () => {
   ctx.fillText('高程 (m)', 0, 0)
   ctx.restore()
 
-  // 存储交互数据
-  ; (canvas as any)._profileData = { seabedData, xScale, yScale, padding, maxDistance, chartWidth, chartHeight }
+  ;(canvas as any)._profileData = { seabedData, xScale, yScale, padding, maxDistance, chartWidth, chartHeight }
 }
 
-// 鼠标事件
 const handleMouseMove = (e: MouseEvent) => {
   const canvas = canvasRef.value
   if (!canvas) return
@@ -258,7 +253,7 @@ const handleMouseMove = (e: MouseEvent) => {
     x: x + 10,
     y: y - 40,
     distance: nearestPoint.distance,
-    elevation: nearestPoint.depth  // 保留原始值，正=陆地，负=海洋
+    elevation: nearestPoint.depth,
   }
 }
 
@@ -286,12 +281,10 @@ onUnmounted(() => {
   containerRef.value?.removeEventListener('mouseleave', handleMouseLeave)
 })
 
-// 监听 extent 变化（框选区域模式）
 watch(() => props.extent, (newExtent) => {
   if (newExtent) loadProfileData(newExtent)
 }, { immediate: true })
 
-// 监听 segmentInfo 变化（线段选中模式）
 watch(() => props.segmentInfo, (newSegment) => {
   if (newSegment) {
     loadProfileDataFromSegment(newSegment)
