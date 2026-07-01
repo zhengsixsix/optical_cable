@@ -1,97 +1,226 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { useConnectorStore } from '@/stores/connector'
-import { connectorTypeLabels, connectorStatusLabels, connectorFilterLabels } from '@/types'
-import type { ConnectorType, ConnectorStatus } from '@/types'
-import { Plus, Trash2, Edit2, Link2 } from 'lucide-vue-next'
-import { getDeviceLibraryNameById } from '@/services/platform/deviceRuntime'
+import { Edit2, Link2, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { platformDeviceEntityToConnectorElement } from '@/services/platform/deviceLibraryMapping'
+import type { Id, PlanDeviceEntity, PlatformDictionary } from '@/services/platform/types'
 
 const connectorStore = useConnectorStore()
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
-
-// 根据器件ID从器件库获取器件名称
-const getComponentName = (type: ConnectorType, refId?: string) => {
-  if (!refId) return null
-  if (type === 'amplifier_e' || type === 'amplifier_w') {
-    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'amplifier')
-  }
-  if (type === 'bu') {
-    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'branching')
-  }
-  if (type === 'joint') {
-    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'joint')
-  }
-  if (type === 'equalizer') {
-    return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'equalizer')
-  }
-  return null
-}
-
-// 根据光纤ID从器件库获取光纤名称
-const getFiberName = (refId?: string) => {
-  if (!refId) return null
-  return getDeviceLibraryNameById(settingsStore.platformDeviceLibraries, refId, 'fiber')
-}
+const currentProjectId = computed(() => appStore.projectState.currentProject?.platformProjectId ?? null)
+const loadingPlatformEntities = ref(false)
+const filterType = ref('all')
 
 const emit = defineEmits<{
   (e: 'edit', id: string): void
   (e: 'add'): void
 }>()
 
-// 筛选类型
-const filterType = ref<ConnectorType | 'all'>('all')
+const normalizeCode = (value: unknown) =>
+  String(value ?? '').trim().toUpperCase().replace(/[\s_\-./()（）·:：]+/g, '')
 
-// 筛选后的接线元列表（排除海缆段，海缆段属于路由规划阶段数据）
-const filteredElements = computed(() => {
-  const base = connectorStore.elements.filter(e => e.type !== 'cable_segment')
-  if (filterType.value === 'all') {
-    return base
+const sameId = (left: unknown, right: unknown) => {
+  if (left == null || right == null || left === '' || right === '') return false
+  return String(left) === String(right)
+}
+
+const dictionaryByCode = computed(() => {
+  const map = new Map<string, PlatformDictionary>()
+  for (const item of settingsStore.platformDeviceTypeDictionaries) {
+    if (!item.code) continue
+    map.set(normalizeCode(item.code), item)
   }
-  // 放大器类型合并过滤（amplifier_e 和 amplifier_w 一起过滤）
-  if (filterType.value === 'amplifier_e') {
-    return base.filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
-  }
-  return base.filter(e => e.type === filterType.value)
+  return map
 })
 
-// 获取类型样式
-const getTypeClass = (type: ConnectorType) => {
-  const classes: Record<ConnectorType, string> = {
-    landing: 'bg-blue-100 text-blue-700',
-    amplifier_e: 'bg-green-100 text-green-700',
-    amplifier_w: 'bg-green-100 text-green-700',
-    bu: 'bg-purple-100 text-purple-700',
-    equalizer: 'bg-amber-100 text-amber-700',
-    underwater: 'bg-gray-100 text-gray-700',
-    cable_segment: 'bg-amber-100 text-amber-700',
-    fiber: 'bg-orange-100 text-orange-700',
-    ola: 'bg-green-100 text-green-700',
-    joint: 'bg-slate-100 text-slate-700'
+const deviceTypeLabel = (entity: PlanDeviceEntity) => {
+  const code = entity.deviceTypeCd || ''
+  const dictionary = dictionaryByCode.value.get(normalizeCode(code))
+  return entity.typeName || dictionary?.name || code || '-'
+}
+
+const libraryLabel = (entity: PlanDeviceEntity) => {
+  if (entity.libraryName) return entity.libraryName
+  const library = settingsStore.platformDeviceLibraries.find(item => sameId(item.id, entity.libraryId))
+  return library?.name || '-'
+}
+
+const formatValue = (value: unknown) => {
+  if (value == null || value === '') return '-'
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '-'
+  return String(value)
+}
+
+const formatCoordinate = (value: unknown) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '-'
+  return numeric.toFixed(6).replace(/\.?0+$/, '')
+}
+
+const badgePalette = [
+  'bg-blue-50 text-blue-700 border-blue-100',
+  'bg-emerald-50 text-emerald-700 border-emerald-100',
+  'bg-amber-50 text-amber-700 border-amber-100',
+  'bg-slate-50 text-slate-700 border-slate-100',
+  'bg-cyan-50 text-cyan-700 border-cyan-100',
+]
+
+const typeBadgeClass = (code?: string | null) => {
+  const source = normalizeCode(code)
+  const index = Array.from(source).reduce((sum, char) => sum + char.charCodeAt(0), 0) % badgePalette.length
+  return badgePalette[index] || badgePalette[0]
+}
+
+const dictionaryFilterOptions = computed(() =>
+  settingsStore.platformDeviceTypeDictionaries
+    .filter(item => item.code)
+    .map(item => ({
+      key: String(item.code),
+      code: String(item.code),
+      label: item.name ? `${item.name}` : String(item.code),
+    })),
+)
+
+const entityCodeFilterOptions = computed(() => {
+  const dictionaryCodes = new Set(dictionaryFilterOptions.value.map(option => normalizeCode(option.code)))
+  const options: Array<{ key: string; code: string; label: string }> = []
+  const used = new Set<string>()
+
+  for (const entity of settingsStore.platformDeviceEntities) {
+    const code = entity.deviceTypeCd || ''
+    const normalized = normalizeCode(code)
+    if (!code || dictionaryCodes.has(normalized) || used.has(normalized)) continue
+    used.add(normalized)
+    options.push({
+      key: code,
+      code,
+      label: entity.typeName || code,
+    })
   }
-  return classes[type] || 'bg-gray-100 text-gray-700'
+
+  return options
+})
+
+const filterOptions = computed(() => [
+  ...dictionaryFilterOptions.value,
+  ...entityCodeFilterOptions.value,
+])
+
+const filteredEntities = computed(() => {
+  if (filterType.value === 'all') return settingsStore.platformDeviceEntities
+  const selectedCode = normalizeCode(filterType.value)
+  return settingsStore.platformDeviceEntities.filter(entity =>
+    normalizeCode(entity.deviceTypeCd) === selectedCode,
+  )
+})
+
+const ensureConnectorTable = () => {
+  if (connectorStore.currentTable) return true
+  const projectName = appStore.currentProjectName || '默认接线元表'
+  connectorStore.createTable(projectName.endsWith('接线元表') ? projectName : `${projectName}_接线元表`)
+  return Boolean(connectorStore.currentTable)
 }
 
-// 获取状态样式
-const getStatusClass = (status: ConnectorStatus) => {
-  const classes: Record<ConnectorStatus, string> = {
-    active: 'bg-green-500',
-    standby: 'bg-yellow-500',
-    fault: 'bg-red-500',
-    planned: 'bg-gray-400'
+const syncConnectorStoreFromEntities = () => {
+  ensureConnectorTable()
+  if (!connectorStore.currentTable) return
+  connectorStore.currentTable.elements = settingsStore.platformDeviceEntities
+    .map(platformDeviceEntityToConnectorElement)
+    .filter(element => element.type !== 'cable_segment')
+  connectorStore.currentTable.updatedAt = new Date().toISOString()
+}
+
+const loadConnectorEntities = async (deviceTypeCd = filterType.value) => {
+  const projectId = currentProjectId.value
+  const selectedDeviceTypeCd = deviceTypeCd === 'all' ? '' : deviceTypeCd
+
+  loadingPlatformEntities.value = true
+  try {
+    await settingsStore.loadPlatformDeviceLibraries()
+    await settingsStore.loadPlatformDeviceEntities({
+      ...(projectId ? { projectId } : {}),
+      ...(selectedDeviceTypeCd ? { deviceTypeCd: selectedDeviceTypeCd } : {}),
+      pageNumber: 1,
+      pageSize: 1000,
+    })
+    syncConnectorStoreFromEntities()
+  } catch (error) {
+    appStore.showNotification({
+      type: 'error',
+      message: `器件实例加载失败：${(error as Error).message}`,
+    })
+  } finally {
+    loadingPlatformEntities.value = false
   }
-  return classes[status]
 }
 
-// 删除接线元
-const handleDelete = (id: string) => {
-  connectorStore.deleteElement(id)
-  appStore.showNotification({ type: 'success', message: '接线元已删除' })
+const loadDeviceTypeDictionaries = async () => {
+  try {
+    await settingsStore.loadPlatformDeviceTypeDictionaries()
+    if (filterType.value !== 'all' && !filterOptions.value.some(option => normalizeCode(option.code) === normalizeCode(filterType.value))) {
+      filterType.value = 'all'
+    }
+  } catch (error) {
+    appStore.showNotification({
+      type: 'error',
+      message: `器件类型字典加载失败：${(error as Error).message}`,
+    })
+  }
 }
 
+const refreshPanelData = async () => {
+  await loadDeviceTypeDictionaries()
+  await loadConnectorEntities()
+}
+
+const handleFilterChange = (deviceTypeCd: string) => {
+  filterType.value = deviceTypeCd
+  void loadConnectorEntities(deviceTypeCd)
+}
+
+const localElementIdForEntity = (entity: PlanDeviceEntity) => {
+  const existing = connectorStore.elements.find(element => sameId(element.platformEntityId, entity.id))
+  if (existing) return existing.id
+
+  const localElement = platformDeviceEntityToConnectorElement(entity)
+  const { id: _ignored, ...localData } = localElement
+  return connectorStore.addElement(localData) ?? null
+}
+
+const handleEdit = (entity: PlanDeviceEntity) => {
+  const localId = localElementIdForEntity(entity)
+  if (!localId) return
+  emit('edit', localId)
+}
+
+const deleteConnector = async (entity: PlanDeviceEntity) => {
+  if (!entity.id) return
+
+  try {
+    await settingsStore.removePlatformDeviceEntity(entity.id)
+    const localElement = connectorStore.elements.find(element => sameId(element.platformEntityId, entity.id))
+    if (localElement) connectorStore.deleteElement(localElement.id)
+    appStore.showNotification({ type: 'success', message: '器件实例已删除' })
+  } catch (error) {
+    appStore.showNotification({
+      type: 'error',
+      message: `器件实例删除失败：${(error as Error).message}`,
+    })
+  }
+}
+
+onMounted(() => {
+  void loadDeviceTypeDictionaries()
+  void loadConnectorEntities()
+})
+
+watch(currentProjectId, () => {
+  void loadConnectorEntities()
+})
 </script>
 
 <template>
@@ -101,119 +230,107 @@ const handleDelete = (id: string) => {
         <Link2 class="w-4 h-4 text-purple-500" />
         接线元管理
       </span>
-      <Button variant="ghost" size="sm" class="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50" @click="emit('add')">
-        <Plus class="w-4 h-4 mr-1" /> 添加
-      </Button>
+      <div class="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-7 px-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+          :disabled="loadingPlatformEntities || settingsStore.deviceTypeDictionaryLoading"
+          title="刷新器件类型字典和平台器件实例"
+          @click="refreshPanelData"
+        >
+          <RefreshCw class="w-4 h-4" :class="loadingPlatformEntities || settingsStore.deviceTypeDictionaryLoading ? 'animate-spin' : ''" />
+        </Button>
+        <Button variant="ghost" size="sm" class="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50" @click="emit('add')">
+          <Plus class="w-4 h-4 mr-1" /> 添加
+        </Button>
+      </div>
     </CardHeader>
+
     <CardContent class="flex-1 overflow-hidden flex flex-col pt-0">
-      <!-- 筛选栏 -->
       <div class="flex gap-2 mb-3 flex-wrap border-b border-gray-100 pb-2">
         <button
           :class="[
             'px-2.5 py-1 text-xs font-medium transition-colors border-b-2',
-            filterType === 'all' 
-              ? 'border-blue-500 text-blue-600' 
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+            filterType === 'all'
+              ? 'border-blue-500 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700',
           ]"
-          @click="filterType = 'all'"
+          @click="handleFilterChange('all')"
         >
           全部
         </button>
         <button
-          v-for="(label, type) in connectorFilterLabels"
-          :key="type"
+          v-for="option in filterOptions"
+          :key="option.key"
           :class="[
             'px-2.5 py-1 text-xs font-medium transition-colors border-b-2',
-            filterType === type 
-              ? 'border-blue-500 text-blue-600' 
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+            normalizeCode(filterType) === normalizeCode(option.code)
+              ? 'border-blue-500 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700',
           ]"
-          @click="filterType = type as ConnectorType"
+          @click="handleFilterChange(option.code)"
         >
-          {{ label }}
+          {{ option.label }}
         </button>
+        <span v-if="settingsStore.deviceTypeDictionaryLoading" class="px-2.5 py-1 text-xs text-gray-400">加载中...</span>
       </div>
 
-      <!-- 接线元列表 -->
       <div class="flex-1 overflow-auto pr-1">
-        <div v-if="filteredElements.length === 0" class="text-center py-8 text-gray-400 text-xs">
-          <p>暂无接线元数据</p>
+        <div v-if="loadingPlatformEntities" class="text-center py-8 text-gray-400 text-xs">
+          <RefreshCw class="mx-auto mb-2 h-5 w-5 animate-spin text-blue-500" />
+          <p>正在加载器件实例...</p>
         </div>
-        
+        <div v-else-if="filteredEntities.length === 0" class="text-center py-8 text-gray-400 text-xs">
+          <p>暂无器件实例数据</p>
+        </div>
+
         <div v-else class="space-y-2">
           <div
-            v-for="elem in filteredElements"
-            :key="elem.id"
+            v-for="entity in filteredEntities"
+            :key="entity.id ?? `${entity.name}-${entity.deviceTypeCd}-${entity.libraryId}`"
             class="p-2.5 border border-gray-200 rounded-md hover:border-blue-300 transition-colors bg-white group"
           >
-            <div class="flex items-start justify-between">
+            <div class="flex items-start justify-between gap-2">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1.5">
+                  <span class="font-bold text-sm text-gray-800 truncate">{{ entity.name || entity.id || '未命名器件实例' }}</span>
                   <span
-                    class="w-2 h-2 rounded-full flex-shrink-0"
-                    :class="getStatusClass(elem.status)"
-                    :title="connectorStatusLabels[elem.status]"
-                  />
-                  <span class="font-bold text-sm text-gray-800 truncate">{{ elem.name }}</span>
-                  <span 
                     class="text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0"
-                    :class="[getTypeClass(elem.type), 'bg-opacity-50 border-opacity-20']"
+                    :class="typeBadgeClass(entity.deviceTypeCd)"
                   >
-                    {{ connectorTypeLabels[elem.type] }}
+                    {{ deviceTypeLabel(entity) }}
                   </span>
                 </div>
-                <div class="text-xs text-gray-500 space-y-0.5 pl-4">
-                  <!-- 海缆段显示 -->
-                  <div v-if="elem.type === 'cable_segment'" class="space-y-0.5">
-                    <div class="flex items-center gap-3">
-                      <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }} - {{ elem.endKp?.toFixed(1) }}</span> km</span>
-                      <span class="w-px h-3 bg-gray-300"></span>
-                      <span>长度: <span class="font-medium text-gray-700">{{ (elem.length || 0).toFixed(1) }}</span> km</span>
-                    </div>
-                    <div class="flex items-center gap-3">
-                      <span>缆型: <span class="font-medium text-amber-600">{{ elem.cableTypeName || 'LW' }}</span></span>
-                      <span class="w-px h-3 bg-gray-300"></span>
-                      <span>余量: <span class="font-medium text-gray-700">{{ elem.slack ?? 3 }}%</span></span>
-                      <span class="w-px h-3 bg-gray-300"></span>
-                      <span>埋深: <span class="font-medium text-gray-700">{{ elem.burialDepth ?? 1.0 }}m</span></span>
-                    </div>
+
+                <div class="grid grid-cols-2 gap-x-3 gap-y-1 pl-0 text-xs text-gray-500">
+                  <div>
+                    器件库：
+                    <span class="font-medium text-blue-600">{{ libraryLabel(entity) }}</span>
                   </div>
-                  <!-- 光纤段显示 -->
-                  <div v-else-if="elem.type === 'fiber'" class="flex items-center gap-3">
-                    <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }} - {{ elem.endKp?.toFixed(1) }}</span> km</span>
-                    <span class="w-px h-3 bg-gray-300"></span>
-                    <span>长度: <span class="font-medium text-gray-700">{{ (elem.length || (elem.endKp ? elem.endKp - elem.kp : 0)).toFixed(1) }}</span> km</span>
+                  <div>
+                    经度：
+                    <span class="font-medium text-gray-700">{{ formatCoordinate(entity.longitude) }}</span>
                   </div>
-                  <!-- 其他类型显示 -->
-                  <div v-else class="flex items-center gap-3">
-                    <span>KP: <span class="font-medium text-gray-700">{{ elem.kp.toFixed(1) }}</span> km</span>
-                    <span class="w-px h-3 bg-gray-300"></span>
-                    <span>水深: <span class="font-medium text-gray-700">{{ elem.depth.toFixed(1) }}</span> m</span>
-                  </div>
-                  <div v-if="getComponentName(elem.type, elem.componentRefId)" class="text-blue-500">
-                    器件: {{ getComponentName(elem.type, elem.componentRefId) }}
-                  </div>
-                  <div v-if="getFiberName(elem.fiberRefId)" class="text-orange-500">
-                    光纤类型: {{ getFiberName(elem.fiberRefId) }}
-                  </div>
-                  <div v-if="elem.specifications" class="text-gray-400">规格: {{ elem.specifications }}</div>
-                  <div v-if="elem.type === 'equalizer'" class="text-amber-600">
-                    模式: {{ elem.equalizerRole || 'T' }} · {{ elem.attenuationMode === 'fixed' ? 'F-ATT' : '可调' }}<span v-if="elem.attenuationDb"> · {{ elem.attenuationDb }} dB</span>
+                  <div>
+                    纬度：
+                    <span class="font-medium text-gray-700">{{ formatCoordinate(entity.latitude) }}</span>
                   </div>
                 </div>
               </div>
+
               <div class="flex gap-1 flex-shrink-0">
-                <button 
-                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100" 
-                  @click="emit('edit', elem.id)"
+                <button
+                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100"
                   title="编辑"
+                  @click="handleEdit(entity)"
                 >
                   <Edit2 class="w-3.5 h-3.5 text-gray-500 hover:text-blue-600" />
                 </button>
-                <button 
-                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100" 
-                  @click="handleDelete(elem.id)"
+                <button
+                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100"
                   title="删除"
+                  @click="deleteConnector(entity)"
                 >
                   <Trash2 class="w-3.5 h-3.5 text-gray-500 hover:text-red-600" />
                 </button>

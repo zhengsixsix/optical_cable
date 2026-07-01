@@ -21,6 +21,7 @@ export type ConnectorStatus = 'active' | 'standby' | 'fault' | 'planned'
 // 接线元记录
 export interface ConnectorElement {
   id: string
+  platformEntityId?: string | number
   name: string
   type: ConnectorType
   kp: number

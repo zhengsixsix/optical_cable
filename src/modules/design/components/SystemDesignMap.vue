@@ -41,9 +41,11 @@ const props = withDefaults(defineProps<{
   draggableAmplifiers?: boolean
   /** 放大器落位时使用的路由点（用于光纤线跟随路由几何渲染） */
   placementRoutePoints?: any[]
+  coordinatePicking?: boolean
 }>(), {
   draggableAmplifiers: false,
-  placementRoutePoints: () => []
+  placementRoutePoints: () => [],
+  coordinatePicking: false
 })
 
 const routeStore = useRouteStore()
@@ -61,6 +63,7 @@ const emit = defineEmits<{
   (e: 'delete', type: 'point' | 'line' | 'segment', id: string | null): void
   /** Step 6.2: 放大器拖拽完成 */
   (e: 'amplifier-moved', data: { id: string; newKp: number; longitude: number; latitude: number }): void
+  (e: 'coordinate-picked', coordinate: { longitude: number; latitude: number }): void
 }>()
 
 // 右键菜单状态
@@ -914,6 +917,11 @@ const flyToPoint = (pointId: string) => {
   // 处理指针移动 - 显示鼠标样式
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const handlePointerMove = (evt: Record<string, any>) => {
+  if (props.coordinatePicking) {
+    mapContainer.value!.style.cursor = 'crosshair'
+    return
+  }
+
   const features = map?.getFeaturesAtPixel(evt.pixel, {
     layerFilter: layer => layer === pointLayer
   })
@@ -1083,6 +1091,14 @@ const initMap = () => {
   // 点击事件
   map.on('click', (evt) => {
     contextMenu.value.visible = false
+
+    if (props.coordinatePicking) {
+      emit('coordinate-picked', {
+        longitude: evt.coordinate[0],
+        latitude: evt.coordinate[1],
+      })
+      return
+    }
     
     // 检查是否点击了设备点
     const pointFeatures = map!.getFeaturesAtPixel(evt.pixel, {
@@ -1306,6 +1322,13 @@ onUnmounted(() => {
 <template>
   <div class="w-full h-full relative" @click="closeContextMenu">
     <div ref="mapContainer" class="w-full h-full" />
+
+    <div
+      v-if="coordinatePicking"
+      class="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-md border border-blue-200 bg-white/95 px-3 py-1.5 text-xs font-medium text-blue-700 shadow pointer-events-none"
+    >
+      点击地图选择经纬度
+    </div>
     
     <!-- 右键菜单 -->
     <div 

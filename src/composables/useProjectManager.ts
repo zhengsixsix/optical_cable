@@ -321,9 +321,18 @@ export function useProjectManager() {
 
   async function syncCurrentDeviceEntitiesToPlatform(projectId: Id) {
     const connectorStore = useConnectorStore()
+    const settingsStore = useSettingsStore()
+    if (settingsStore.platformDeviceLibraries.length === 0) {
+      await settingsStore.loadPlatformDeviceLibraries()
+    }
     const deviceEntities = connectorStore.elements
       .filter(element => element.type !== 'fiber' && element.type !== 'cable_segment')
-      .map((element, index) => connectorElementToDeviceEntity(element, projectId, index + 1))
+      .map((element, index) => connectorElementToDeviceEntity(
+        element,
+        projectId,
+        index + 1,
+        settingsStore.platformDeviceLibraries,
+      ))
       .filter((entity): entity is NonNullable<typeof entity> => entity !== null)
 
     if (deviceEntities.length === 0) return 0

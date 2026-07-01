@@ -31,7 +31,7 @@ import type { SpanScanResult, OpticalLink, ModulationFormat, FiberSpan, LinkNode
 import type { SpanScanConfig } from '@/types/systemPlanning'
 import { MODULATION_PARAMS } from '@/types/simulation'
 import { connectorTypeLabels } from '@/types/connector'
-import { Cable, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle, DollarSign, Activity } from 'lucide-vue-next'
+import { Cable, GitBranch, Calculator, Save, RotateCcw, FileSpreadsheet, Send, FileText, Edit3, TrendingUp, Database, Waves, Sliders, BarChart2, Cpu, Target, AlertCircle, DollarSign, Activity, X } from 'lucide-vue-next'
 import { calculateDistance as geoCalcDistance } from '@/utils/geo'
 import { enrichOrderedRoutePointsWithDepth, getRoutePositionAtKP } from '@/utils/routePosition'
 import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
@@ -540,9 +540,9 @@ const costConfigForPanel = computed(() => {
   }
 })
 
-// 跳转到工程设置页面
+// 跳转到路径规划管理页面
 const goToProjectSettings = () => {
-  router.push('/settings')
+  router.push({ path: '/settings', query: { tab: 'route' } })
 }
 
 // 计算结果 - 从 rplStore 动态获取总长度，联动放大器配置
@@ -666,6 +666,8 @@ const showPlanningWizard = ref(false)  // 一站式配置向导
 const showLinkConfigDialog = ref(false)  // 系统规划链路配置对话框
 const currentLinkName = ref('')  // 当前计算的链路名称
 const editConnectorId = ref<string | null>(null)
+const showConnectorCoordinatePicker = ref(false)
+const connectorPickedCoordinate = ref<{ longitude: number; latitude: number } | null>(null)
 
 // 数据管理下拉菜单
 const showDataMenu = ref(false)
@@ -878,14 +880,36 @@ const openConnectorAdd = () => {
       routeStore.currentRouteId || undefined
     )
   }
+  showConnectorCoordinatePicker.value = false
+  connectorPickedCoordinate.value = null
   editConnectorId.value = null
   showConnectorDialog.value = true
 }
 
 // 打开接线元编辑弹框
 const openConnectorEdit = (id: string) => {
+  showConnectorCoordinatePicker.value = false
+  connectorPickedCoordinate.value = null
   editConnectorId.value = id
   showConnectorDialog.value = true
+}
+
+const closeConnectorDialog = () => {
+  showConnectorDialog.value = false
+  showConnectorCoordinatePicker.value = false
+}
+
+const startConnectorCoordinatePick = () => {
+  showConnectorCoordinatePicker.value = true
+}
+
+const cancelConnectorCoordinatePick = () => {
+  showConnectorCoordinatePicker.value = false
+}
+
+const handleConnectorCoordinatePicked = (coordinate: { longitude: number; latitude: number }) => {
+  connectorPickedCoordinate.value = { ...coordinate }
+  showConnectorCoordinatePicker.value = false
 }
 
 // Step 4: 打开模型选择弹窗
@@ -1362,10 +1386,10 @@ const handleSubmit = () => {
   showLinkConfigDialog.value = true
 }
 
-// 跳转到工程设置器件库页面
+// 跳转到器件库管理页面
 const goToDeviceLibrarySettings = () => {
   showDeviceLibraryWarning.value = false
-  router.push({ path: '/settings', query: { tab: 'equipment' } })
+  router.push('/device-library')
 }
 
 // ─── 均衡器落位辅助 ────────────────────────────────────────────────
@@ -2241,8 +2265,39 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
   <ConnectorDialog
     :visible="showConnectorDialog"
     :editId="editConnectorId"
-    @close="showConnectorDialog = false"
-    @saved="showConnectorDialog = false" />
+    :picking-coordinate="showConnectorCoordinatePicker"
+    :picked-coordinate="connectorPickedCoordinate"
+    @pick-coordinate="startConnectorCoordinatePick"
+    @cancel-pick-coordinate="cancelConnectorCoordinatePick"
+    @close="closeConnectorDialog"
+    @saved="closeConnectorDialog" />
+
+  <Teleport to="body">
+    <div v-if="showConnectorCoordinatePicker" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+      <div class="flex h-[76vh] w-[920px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg bg-white shadow-2xl">
+        <div class="flex items-center justify-between border-b bg-gray-50 px-4 py-3">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-800">选择经纬度</h3>
+            <p class="mt-0.5 text-xs text-gray-500">在地图上点击接线元位置</p>
+          </div>
+          <button class="rounded p-1 hover:bg-gray-200" @click="cancelConnectorCoordinatePick">
+            <X class="h-4 w-4 text-gray-500" />
+          </button>
+        </div>
+        <div class="min-h-0 flex-1">
+          <SystemDesignMap
+            :route-points="routePoints"
+            :selected-point-id="selectedPointId"
+            :draggable-amplifiers="false"
+            :placement-route-points="placementRoutePoints"
+            coordinate-picking
+            @coordinate-picked="handleConnectorCoordinatePicked"
+          />
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <WDMConfigDialog 
     :visible="showWDMConfigDialog" 
     @close="showWDMConfigDialog = false"

@@ -70,9 +70,9 @@ export interface RuntimeJointBoxLibrary {
 const categoryMatchers: Record<DeviceLibraryCategory, string[]> = {
   fiber: ['FIB', 'FIBER', 'OPTICAL_FIBER', '光纤', '光缆'],
   amplifier: ['AMP', 'AMPLIFIER', 'EDFA', 'OLA', 'REPEATER', '放大器', '中继器'],
-  branching: ['BU', 'BRANCHING', 'BRANCHING_UNIT', '分支器', '分支单元'],
-  equalizer: ['EQ', 'EQUALIZER', '均衡器'],
-  joint: ['JB', 'JOINT', 'JOINT_BOX', '接头盒'],
+  branching: ['SPL', 'SPLITTER', 'BU', 'BRANCHING', 'BRANCHING_UNIT', '分支器', '分支单元'],
+  equalizer: ['EQL', 'EQ', 'EQUALIZER', '均衡器'],
+  joint: ['SCL', 'JB', 'JOINT', 'JOINT_BOX', '接头盒'],
 }
 
 const valueAliases = {

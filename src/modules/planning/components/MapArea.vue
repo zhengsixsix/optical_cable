@@ -3157,18 +3157,18 @@ const handleRunPlanning = async () => {
     }
   }
 
-  // 路由规划接口当前未出现在线上 Swagger 中；后端补齐前保持空态。
+  // 规划服务当前使用本地 mock fallback，保持后续路线、RPL、传输系统规划流程可用。
   isPlanningLoading.value = true
-  appStore.showNotification({ type: 'info', message: '正在检查线上规划接口...' })
+  appStore.showNotification({ type: 'info', message: '正在准备规划数据...' })
 
   const serviceAvailable = await checkRoutePlanningService()
   if (!serviceAvailable) {
     isPlanningLoading.value = false
     appStore.showNotification({
       type: 'error',
-      message: '暂无接口'
+      message: '规划服务暂不可用'
     })
-    appStore.addLog('ERROR', '线上 Swagger 暂未提供路由规划接口')
+    appStore.addLog('ERROR', '路由规划服务暂不可用')
     return
   }
 

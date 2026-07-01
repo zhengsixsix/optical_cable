@@ -2,7 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types'
 import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes, defaultEqualizerTypes, defaultJointBoxTypes } from '@/types/settings'
-import { platformDeviceConfigApi, platformDeviceEntityApi, platformDeviceLibraryApi } from '@/services/platform/api'
+import type { RespVO } from '@/services/platform/client'
+import { platformDeviceConfigApi, platformDeviceEntityApi, platformDeviceLibraryApi, platformDictionaryApi } from '@/services/platform/api'
 import type {
   PlanDeviceConfig,
   PlanDeviceConfigSave,
@@ -11,6 +12,7 @@ import type {
   PlanDeviceEntitySearch,
   PlanDeviceLibrary,
   PlanDeviceLibrarySearch,
+  PlatformDictionary,
 } from '@/services/platform/types'
 import type { 
   SystemPlanningParams, 
@@ -31,6 +33,7 @@ import type {
 import { createDefaultModels } from '@/types/useFile'
 
 const STORAGE_KEY = 'cable-planner-settings'
+const DEVICE_TYPE_DICTIONARY_TYPE = 'DEVICE_TYPE'
 
 // 多点坐标接口 - USE文件规范: imported_landing_points
 export interface WaypointConfig {
@@ -240,9 +243,13 @@ export const useSettingsStore = defineStore('settings', () => {
   const equalizerTypes = ref<EqualizerType[]>([])
   const jointBoxTypes = ref<JointBoxType[]>([])
   const currentLibraryFile = ref('')
+  const platformDeviceTypeDictionaries = ref<PlatformDictionary[]>([])
   const platformDeviceConfigs = ref<PlanDeviceConfig[]>([])
   const platformDeviceLibraries = ref<PlanDeviceLibrary[]>([])
   const platformDeviceEntities = ref<PlanDeviceEntity[]>([])
+  const deviceTypeDictionaryLoading = ref(false)
+  const deviceTypeDictionaryLoaded = ref(false)
+  const deviceTypeDictionarySyncError = ref<string | null>(null)
   const deviceConfigLoading = ref(false)
   const deviceConfigSyncing = ref(false)
   const deviceConfigSyncError = ref<string | null>(null)
@@ -289,6 +296,16 @@ export const useSettingsStore = defineStore('settings', () => {
     costFactors: costFactors.value,
   })
 
+  let deviceTypeDictionaryPromise: Promise<PlatformDictionary[]> | null = null
+  let allDeviceLibrariesPromise: Promise<RespVO<PlanDeviceLibrary[]>> | null = null
+
+  const isAllDeviceLibrarySearch = (search: PlanDeviceLibrarySearch = {}) => {
+    const entries = Object.entries(search)
+    return entries.length === 0 || entries.every(([key, value]) =>
+      ['pageNumber', 'pageSize'].includes(key) || value == null || value === '',
+    )
+  }
+
   // 从 localStorage 加载
   function loadFromLocalStorage() {
     try {
@@ -332,10 +349,41 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function loadPlatformDeviceTypeDictionaries(force = false) {
+    if (!force && deviceTypeDictionaryLoaded.value) return platformDeviceTypeDictionaries.value
+    if (!force && deviceTypeDictionaryPromise) return deviceTypeDictionaryPromise
+
+    deviceTypeDictionaryLoading.value = true
+    deviceTypeDictionarySyncError.value = null
+
+    deviceTypeDictionaryPromise = platformDictionaryApi.listItem(DEVICE_TYPE_DICTIONARY_TYPE)
+      .then(items => {
+        platformDeviceTypeDictionaries.value = items ?? []
+        deviceTypeDictionaryLoaded.value = true
+        return platformDeviceTypeDictionaries.value
+      })
+      .catch(error => {
+        deviceTypeDictionarySyncError.value = error instanceof Error ? error.message : '器件类型字典加载失败'
+        throw error
+      })
+      .finally(() => {
+        deviceTypeDictionaryLoading.value = false
+        deviceTypeDictionaryPromise = null
+      })
+
+    return deviceTypeDictionaryPromise
+  }
+
   async function loadPlatformDeviceLibraries(search: PlanDeviceLibrarySearch = {}) {
+    const allSearch = isAllDeviceLibrarySearch(search)
+    if (allSearch && allDeviceLibrariesPromise) {
+      return allDeviceLibrariesPromise
+    }
+
     deviceLibraryLoading.value = true
     deviceLibrarySyncError.value = null
-    try {
+
+    const request = (async () => {
       const response = await platformDeviceLibraryApi.search({
         pageNumber: 1,
         pageSize: 1000,
@@ -344,12 +392,33 @@ export const useSettingsStore = defineStore('settings', () => {
       platformDeviceLibraries.value = response.data ?? []
       if (platformDeviceLibraries.value.length) currentLibraryFile.value = '平台器件库'
       return response
+    })()
+
+    if (allSearch) {
+      allDeviceLibrariesPromise = request
+        .finally(() => {
+          allDeviceLibrariesPromise = null
+        })
+    }
+
+    try {
+      return await request
     } catch (error) {
       deviceLibrarySyncError.value = error instanceof Error ? error.message : '器件库加载失败'
       throw error
     } finally {
       deviceLibraryLoading.value = false
     }
+  }
+
+  async function ensurePlatformDeviceLibrariesLoaded(search: PlanDeviceLibrarySearch = {}) {
+    if (platformDeviceLibraries.value.length > 0) return platformDeviceLibraries.value
+    if (isAllDeviceLibrarySearch(search) && allDeviceLibrariesPromise) {
+      const response = await allDeviceLibrariesPromise
+      return response.data ?? []
+    }
+    const response = await loadPlatformDeviceLibraries(search)
+    return response.data ?? []
   }
 
   const loadDeviceLibraryFromPlatform = loadPlatformDeviceLibraries
@@ -849,9 +918,12 @@ export const useSettingsStore = defineStore('settings', () => {
     equalizerTypes,
     jointBoxTypes,
     currentLibraryFile,
+    platformDeviceTypeDictionaries,
     platformDeviceConfigs,
     platformDeviceLibraries,
     platformDeviceEntities,
+    deviceTypeDictionaryLoading,
+    deviceTypeDictionarySyncError,
     deviceConfigLoading,
     deviceConfigSyncing,
     deviceConfigSyncError,
@@ -861,10 +933,12 @@ export const useSettingsStore = defineStore('settings', () => {
     deviceEntityLoading,
     deviceEntitySyncing,
     deviceEntitySyncError,
+    loadPlatformDeviceTypeDictionaries,
     loadPlatformDeviceConfigs,
     savePlatformDeviceConfig,
     removePlatformDeviceConfig,
     loadPlatformDeviceLibraries,
+    ensurePlatformDeviceLibrariesLoaded,
     loadPlatformDeviceLibraryDetail,
     savePlatformDeviceLibrary,
     removePlatformDeviceLibrary,

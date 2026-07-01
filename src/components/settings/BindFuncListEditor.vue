@@ -90,7 +90,7 @@ const removeParam = (funcIndex: number, paramIndex: number) => {
 const valuePlaceholder = (type: BindFuncParamValueType) => {
   if (type === 'number') return '如 30'
   if (type === 'boolean') return 'true / false'
-  if (type === 'field') return '动态属性 code，如 attenuation'
+  if (type === 'field') return '参数编码，如 attenuation'
   if (type === 'json') return '{"key":"value"}'
   return '参数值'
 }
@@ -100,14 +100,14 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
   <section class="space-y-3">
     <div class="flex items-start justify-between gap-4">
       <div>
-        <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">绑定函数列表</h4>
+        <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">功能配置</h4>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          每条函数先填写 name，再按需添加子级默认参数。
+          从器件库带出的功能可继续调整，保存时会随接线元一起提交。
         </p>
       </div>
       <Button variant="outline" size="sm" class="shrink-0" @click="addFunc">
         <Plus class="w-4 h-4 mr-1" />
-        添加绑定函数
+        添加功能
       </Button>
     </div>
 
@@ -116,7 +116,7 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
       class="rounded-md border border-dashed px-4 py-6 text-center text-sm text-gray-400 dark:text-gray-500"
       style="border-color: var(--app-border-color)"
     >
-      暂无绑定函数，点击“添加绑定函数”创建。
+      暂无功能配置，可按需添加。
     </div>
 
     <div
@@ -138,7 +138,7 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
         <div class="min-w-0 flex-1">
           <Input
             :model-value="func.name"
-            placeholder="绑定函数 name，如 FUNC_SENSOR_COLLECT_DATA"
+            placeholder="功能标识，如 FUNC_SENSOR_COLLECT_DATA"
             @update:model-value="value => updateFunc(funcIndex, { name: String(value) })"
           />
         </div>
@@ -150,12 +150,12 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
             name="default-bind-func"
             @change="setDefaultFunc(funcIndex)"
           />
-          默认函数
+          默认功能
         </label>
         <button
           type="button"
           class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-50 hover:text-red-600"
-          title="删除绑定函数"
+          title="删除功能"
           @click="removeFunc(funcIndex)"
         >
           <Trash2 class="h-4 w-4" />
@@ -164,10 +164,10 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
 
       <div v-if="func.expanded" class="space-y-3 border-t px-3 py-3" style="border-color: var(--app-border-color)">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-gray-500 dark:text-gray-400">子级默认参数</span>
+          <span class="text-xs font-medium text-gray-500 dark:text-gray-400">默认入参</span>
           <Button variant="outline" size="sm" @click="addParam(funcIndex)">
             <Plus class="w-4 h-4 mr-1" />
-            添加子级
+            添加入参
           </Button>
         </div>
 
@@ -175,12 +175,12 @@ const valuePlaceholder = (type: BindFuncParamValueType) => {
           v-if="func.params.length === 0"
           class="rounded-md bg-gray-50 px-3 py-4 text-center text-xs text-gray-400 dark:bg-white/5 dark:text-gray-500"
         >
-          当前函数暂无子级参数。
+          当前功能暂无默认入参。
         </div>
 
         <div v-else class="space-y-2">
           <div class="grid grid-cols-[minmax(150px,1fr)_120px_minmax(180px,1.3fr)_36px] gap-2 text-xs text-gray-500">
-            <span>参数名</span>
+            <span>入参名</span>
             <span>类型</span>
             <span>值</span>
             <span></span>

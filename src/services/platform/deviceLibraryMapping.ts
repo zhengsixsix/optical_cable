@@ -28,9 +28,9 @@ export const LOCAL_DEVICE_ENTITY_PARAMS = 'LOCAL_DEVICE_ENTITY_PARAMS'
 export const localDeviceTypeToPlatformCode: Record<LocalDeviceLibraryType, string> = {
   fiber: 'FIB',
   amplifier: 'AMP',
-  branching: 'BU',
-  equalizer: 'EQ',
-  joint: 'JB',
+  branching: 'SPL',
+  equalizer: 'EQL',
+  joint: 'SCL',
 }
 
 const platformCodeToLocalDeviceType: Record<string, LocalDeviceLibraryType> = {
@@ -41,11 +41,15 @@ const platformCodeToLocalDeviceType: Record<string, LocalDeviceLibraryType> = {
   AMPLIFIER: 'amplifier',
   EDFA: 'amplifier',
   OLA: 'amplifier',
+  SPL: 'branching',
+  SPLITTER: 'branching',
   BU: 'branching',
   BRANCHING: 'branching',
   BRANCHING_UNIT: 'branching',
+  EQL: 'equalizer',
   EQ: 'equalizer',
   EQUALIZER: 'equalizer',
+  SCL: 'joint',
   JB: 'joint',
   JOINT: 'joint',
   JOINT_BOX: 'joint',
@@ -57,21 +61,62 @@ const connectorTypeToPlatformCode: Record<string, string> = {
   amplifier_e: 'AMP',
   amplifier_w: 'AMP',
   ola: 'AMP',
-  bu: 'BU',
-  equalizer: 'EQ',
-  joint: 'JB',
+  bu: 'SPL',
+  equalizer: 'EQL',
+  joint: 'SCL',
   fiber: 'FIB',
   cable_segment: 'CABLE',
 }
 
-const defaultIconSize = { width: 48, height: 48 }
-
-function clonePlainObject<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
+const platformCodeToConnectorType: Record<string, ConnectorElement['type']> = {
+  LANDING: 'landing',
+  LANDING_STATION: 'landing',
+  UNDERWATER: 'underwater',
+  UNDERWATER_STATION: 'underwater',
+  AMP: 'amplifier_e',
+  AMPLIFIER: 'amplifier_e',
+  EDFA: 'amplifier_e',
+  OLA: 'ola',
+  SPL: 'bu',
+  SPLITTER: 'bu',
+  BU: 'bu',
+  BRANCHING: 'bu',
+  BRANCHING_UNIT: 'bu',
+  EQL: 'equalizer',
+  EQ: 'equalizer',
+  EQUALIZER: 'equalizer',
+  SCL: 'joint',
+  JB: 'joint',
+  JOINT: 'joint',
+  JOINT_BOX: 'joint',
+  FIB: 'fiber',
+  FIBER: 'fiber',
+  OPTICAL_FIBER: 'fiber',
+  CABLE: 'cable_segment',
 }
 
-function getLocalParams(bindFuncList?: PlatformBindFunc[] | null): Record<string, unknown> {
-  const bindFunc = bindFuncList?.find(item => item.name === LOCAL_DEVICE_LIBRARY_PARAMS)
+const defaultIconSize = { width: 48, height: 48 }
+
+function cloneBindFuncList(bindFuncList?: PlatformBindFunc[] | null): PlatformBindFunc[] {
+  return (bindFuncList ?? [])
+    .filter(bindFunc => Boolean(bindFunc.name?.trim()))
+    .map(bindFunc => ({
+      name: bindFunc.name,
+      isDefault: bindFunc.isDefault ?? 0,
+      defaultInputParams: Object.fromEntries(
+        Object.entries(bindFunc.defaultInputParams ?? {}).map(([key, value]) => [
+          key,
+          value == null ? '' : String(value),
+        ]),
+      ),
+    }))
+}
+
+function getLocalParams(
+  bindFuncList?: PlatformBindFunc[] | null,
+  name = LOCAL_DEVICE_LIBRARY_PARAMS,
+): Record<string, unknown> {
+  const bindFunc = bindFuncList?.find(item => item.name === name)
   return bindFunc?.defaultInputParams ?? {}
 }
 
@@ -96,6 +141,22 @@ function platformLocalId(platformId: number | string | undefined) {
 function numeric(value: unknown, fallback = 0): number {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : fallback
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  if (value == null || value === '') return undefined
+  return String(value)
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function normalizeConnectorType(value?: string | null): ConnectorElement['type'] {
+  const normalized = String(value || '').trim().toUpperCase()
+  return platformCodeToConnectorType[normalized] ?? 'landing'
 }
 
 function currency(value: unknown): 'USD' | 'CNY' | 'EUR' {
@@ -298,36 +359,85 @@ export function connectorElementToDeviceEntity(
   element: ConnectorElement,
   projectId: Id,
   sortNum: number,
+  libraries: PlanDeviceLibrary[] = [],
 ): PlanDeviceEntity | null {
   if (element.longitude == null || element.latitude == null) return null
 
-  const deviceTypeCd = connectorTypeToPlatformCode[element.type] || String(element.type).toUpperCase()
   const libraryId = numeric(element.componentRefId || element.fiberRefId, NaN)
+  const library = Number.isFinite(libraryId)
+    ? libraries.find(item => String(item.id) === String(libraryId))
+    : null
+  const deviceTypeCd = library?.deviceTypeCd || connectorTypeToPlatformCode[element.type] || String(element.type).toUpperCase()
+  const libraryValues = deviceValueListToMap(library?.deviceValueList)
 
   return {
+    id: element.platformEntityId,
     name: element.name,
     deviceTypeCd,
-    iconSize: defaultIconSize,
-    dialogWindowId: element.type,
-    bindFuncList: [{
-      name: LOCAL_DEVICE_ENTITY_PARAMS,
-      defaultInputParams: clonePlainObject({
-        connectorId: element.id,
-        connectorType: element.type,
-        kp: element.kp,
-        endKp: element.endKp,
-        depth: element.depth,
-        status: element.status,
-        specifications: element.specifications,
-        remarks: element.remarks,
-        componentRefId: element.componentRefId,
-        fiberRefId: element.fiberRefId,
-      }),
-    }],
+    iconId: library?.iconId ?? null,
+    iconSize: library?.iconSize ?? defaultIconSize,
+    dialogWindowId: library?.dialogWindowId ?? null,
+    bindFuncList: cloneBindFuncList(library?.bindFuncList),
     libraryId: Number.isFinite(libraryId) ? libraryId : undefined,
     longitude: element.longitude,
     latitude: element.latitude,
     projectId,
     sortNum,
+    deviceValueList: buildDeviceValueList(libraryValues),
+  }
+}
+
+export function platformDeviceEntityToConnectorElement(entity: PlanDeviceEntity): ConnectorElement {
+  const params = getLocalParams(entity.bindFuncList, LOCAL_DEVICE_ENTITY_PARAMS)
+  const connectorType = params.connectorType && typeof params.connectorType === 'string'
+    ? normalizeConnectorType(params.connectorType)
+    : normalizeConnectorType(entity.deviceTypeCd || entity.dialogWindowId)
+
+  const libraryId = entity.libraryId == null ? '' : String(entity.libraryId)
+  const isFiber = connectorType === 'fiber'
+  const componentRefId = isFiber ? stringOrUndefined(params.componentRefId) : (stringOrUndefined(params.componentRefId) || libraryId)
+  const fiberRefId = isFiber ? (stringOrUndefined(params.fiberRefId) || libraryId) : stringOrUndefined(params.fiberRefId)
+
+  return {
+    id: String(params.connectorId || entity.id || `platform-device-entity-${Date.now()}`),
+    platformEntityId: entity.id,
+    name: String(entity.name || entity.libraryName || entity.id || '接线元'),
+    type: connectorType,
+    kp: numeric(params.kp),
+    endKp: optionalNumber(params.endKp),
+    longitude: numeric(entity.longitude),
+    latitude: numeric(entity.latitude),
+    depth: numeric(params.depth),
+    status: (params.status === 'active' || params.status === 'standby' || params.status === 'fault' || params.status === 'planned')
+      ? params.status
+      : 'planned',
+    specifications: String(params.specifications || entity.libraryName || ''),
+    manufacturer: stringOrUndefined(params.manufacturer),
+    installDate: stringOrUndefined(params.installDate),
+    remarks: String(params.remarks || ''),
+    componentRefId,
+    fiberRefId,
+    buPortCount: optionalNumber(params.buPortCount),
+    buTrunkLoss: optionalNumber(params.buTrunkLoss),
+    buBranchLoss: optionalNumber(params.buBranchLoss),
+    buBranchTarget: stringOrUndefined(params.buBranchTarget),
+    buNextHopUpstream: stringOrUndefined(params.buNextHopUpstream),
+    buNextHopDownstream: stringOrUndefined(params.buNextHopDownstream),
+    equalizerRole: params.equalizerRole === 'S' ? 'S' : params.equalizerRole === 'T' ? 'T' : undefined,
+    attenuationMode: params.attenuationMode === 'fixed' ? 'fixed' : params.attenuationMode === 'adjustable' ? 'adjustable' : undefined,
+    attenuationDb: optionalNumber(params.attenuationDb),
+    jointSubType: stringOrUndefined(params.jointSubType) as ConnectorElement['jointSubType'],
+    buSubType: stringOrUndefined(params.buSubType) as ConnectorElement['buSubType'],
+    fromDeviceId: stringOrUndefined(params.fromDeviceId),
+    toDeviceId: stringOrUndefined(params.toDeviceId),
+    length: optionalNumber(params.length),
+    cableTypeId: stringOrUndefined(params.cableTypeId),
+    cableTypeName: stringOrUndefined(params.cableTypeName),
+    armorType: stringOrUndefined(params.armorType),
+    slack: optionalNumber(params.slack),
+    burialDepth: optionalNumber(params.burialDepth),
+    riskLevel: params.riskLevel === 'high' || params.riskLevel === 'medium' || params.riskLevel === 'low'
+      ? params.riskLevel
+      : undefined,
   }
 }

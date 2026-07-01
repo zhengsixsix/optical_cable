@@ -486,25 +486,17 @@ const togglePanel = (panel: string) => {
           <span :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/settings') || $route.path.includes('/device-library') }">设置</span>
           <div
             class="absolute top-full left-0 bg-white text-gray-800 shadow-lg rounded-b-md py-1 min-w-[180px] hidden group-hover:block border border-gray-200 z-50">
-            <div class="relative group/sub">
-              <a href="#"
-                class="flex items-center justify-between px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">
-                <span>系统设置</span>
-                <ChevronRight class="w-3.5 h-3.5 text-gray-400" />
-              </a>
-              <div class="absolute left-full top-0 pl-1 hidden group-hover/sub:block z-50">
-                <div class="min-w-[180px] bg-white text-gray-800 shadow-lg rounded-md py-1 border border-gray-200">
-                  <RouterLink to="/device-library"
-                    class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
-                    active-class="bg-primary/10 text-primary font-medium">器件库管理</RouterLink>
-                </div>
-              </div>
-            </div>
-            <RouterLink to="/settings"
+            <RouterLink to="/device-library"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
-              active-class="bg-primary/10 text-primary font-medium">工程设置</RouterLink>
+              active-class="bg-primary/10 text-primary font-medium">器件库管理</RouterLink>
+            <RouterLink :to="{ path: '/settings', query: { tab: 'route' } }"
+              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
+              :class="{ 'bg-primary/10 text-primary font-medium': $route.path === '/settings' && ($route.query.tab === 'route' || !$route.query.tab) }">路径规划管理</RouterLink>
+            <RouterLink :to="{ path: '/settings', query: { tab: 'monitoring' } }"
+              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
+              :class="{ 'bg-primary/10 text-primary font-medium': $route.path === '/settings' && $route.query.tab === 'monitoring' }">监控系统管理</RouterLink>
             <a href="#" @click.prevent="showModal('显示风格设置')"
-              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">显示风格设置...</a>
+              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700">系统风格管理</a>
           </div>
         </div>
 
