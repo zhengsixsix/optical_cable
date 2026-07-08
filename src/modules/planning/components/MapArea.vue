@@ -39,7 +39,7 @@ import LineString from 'ol/geom/LineString'
 import Circle from 'ol/geom/Circle'
 import {Style, Stroke, Fill, Icon, Circle as CircleStyle, Text} from 'ol/style'
 import Heatmap from 'ol/layer/Heatmap'
-import {fromLonLat, toLonLat, transform, get as getProjection} from 'ol/proj'
+import { toLonLat, transform, transformExtent } from 'ol/proj'
 import 'ol/ol.css'
 
 import {useShpLoader} from '@/services/ShpLoader'
@@ -54,10 +54,9 @@ import earthquakeIconUrl from '@/assets/earthquake.svg'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import type { Route } from '@/types'
 import type { SegmentGenerateConfig, CableSegment, CableSegmentSummary } from '@/types/cableSegment'
-import { fetchRoutePlanning, checkRoutePlanningService } from '@/services/RoutePlanningApiService'
-import type { RoutePlanningRequest } from '@/services/RoutePlanningApiService'
-import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
+import { fetchRoutePlanningByProjectId } from '@/services/RoutePlanningApiService'
 import { applyCableSegmentsToRplRecords } from '@/services/RPLSyncService'
+import type { AlgorithmRouteBundleResult } from '@/services/RouteDataConverter'
 import {
   buildRouteRiskCostSummary,
   validateCableSegments,
@@ -67,6 +66,16 @@ import {
   type RouteRiskCostSummary,
 } from '@/services/PlanningInsightService'
 import { firstDeviceLibraryByCategory } from '@/services/platform/deviceRuntime'
+import { calculatePolylineLengthKm, slicePolylineByDistanceKm } from '@/utils/polyline'
+import { getSharedRoutePointRenderKey } from '@/utils/routePointRenderKey'
+import {
+  createRoutePlanningRectRangeFromExtent,
+  DEFAULT_CHINA_LON_LAT_EXTENT,
+  DEFAULT_CHINA_MAP_CENTER,
+  DEFAULT_CHINA_MAP_ZOOM,
+  type LonLatExtent,
+  type RoutePlanningRectRange,
+} from '@/utils/routePlanningViewport'
 
 const mapStore = useMapStore()
 const layerStore = useLayerStore()
@@ -106,6 +115,7 @@ const currentSegmentGenerateTime = ref('')  // 生成时间
 const routeGeometryIssues = ref<PlanningIssue[]>([])
 const cableSegmentIssues = ref<PlanningIssue[]>([])
 const riskCostSummary = ref<RouteRiskCostSummary | null>(null)
+const algorithmSegmentsByRouteId = ref<Record<string, CableSegment[]>>({})
 
 interface RouteEditSnapshot {
   routeId: string
@@ -845,10 +855,19 @@ const handleViewParetoChart = () => {
 const handleSelectRoute = (routeId: string) => {
   // 重绘路径以更新选中状态
   routeStore.selectRoute(routeId)
+  applyAlgorithmSegmentsForRoute(routeId)
   const selected = routeStore.paretoRoutes.find(route => route.id === routeId) || null
   refreshRouteGeometryValidation(selected)
   updateRiskCostHeatmap(selected)
   drawParetoRoutes()
+}
+
+const applyAlgorithmSegmentsForRoute = (routeId: string) => {
+  const segments = algorithmSegmentsByRouteId.value[routeId]
+  if (!segments) return
+  cableSegmentStore.setCurrentRoute(routeId)
+  cableSegmentStore.setSegments(segments)
+  refreshCableSegmentValidation(segments)
 }
 
 const ensureSelectedRoute = () => {
@@ -905,8 +924,19 @@ const refreshCableSegmentValidation = (segments: CableSegment[] = cableSegmentSt
   return result
 }
 
+const getRiskCostSummarySource = (route: Route | null = activeRoute.value) => {
+  if (!route) return null
+  const selectedRouteSegments = cableSegmentStore.segments.filter(segment => (
+    !segment.routeId || segment.routeId === route.id
+  ))
+  return selectedRouteSegments.length > 0 ? { segments: selectedRouteSegments } : route
+}
+
 const refreshRiskCostSummary = (route: Route | null = activeRoute.value) => {
-  riskCostSummary.value = buildRouteRiskCostSummary(route, settingsStore.routePlanningConfig.armorMappings || [])
+  riskCostSummary.value = buildRouteRiskCostSummary(
+    getRiskCostSummarySource(route),
+    settingsStore.routePlanningConfig.armorMappings || [],
+  )
   return riskCostSummary.value
 }
 
@@ -1155,6 +1185,29 @@ const handleCloseCableSegmentConfig = () => {
   drawParetoRoutes()
 }
 
+const applyAlgorithmRouteResult = (result: AlgorithmRouteBundleResult, sourceLabel: string) => {
+  routeStore.setParetoRoutes(result.routes)
+  algorithmSegmentsByRouteId.value = result.segmentsByRouteId
+  const firstRoute = result.routes[0] || null
+
+  if (firstRoute) {
+    routeStore.selectRoute(firstRoute.id)
+    cableSegmentStore.setCurrentRoute(firstRoute.id)
+    cableSegmentStore.setSegments(result.segmentsByRouteId[firstRoute.id] || [])
+  } else {
+    cableSegmentStore.clearSegments()
+  }
+
+  refreshRouteGeometryValidation(firstRoute)
+  refreshCableSegmentValidation(firstRoute ? result.segmentsByRouteId[firstRoute.id] || [] : [])
+  updateRiskCostHeatmap(firstRoute)
+  drawParetoRoutes()
+  appStore.addLog(
+    'INFO',
+    `${sourceLabel}: ${result.routes.length} 条可见路线，原始候选 ${result.diagnostics.fmmPathCount} 条`,
+  )
+}
+
 // 根据 KP 查找海缆段
 const findCableSegmentByKp = (kp: number): CableSegment | null => {
   return cableSegmentStore.segments.find(s => kp >= s.startKp && kp < s.endKp) || null
@@ -1341,8 +1394,8 @@ const initMap = () => {
     ],
     view: new View({
       projection: 'EPSG:4326',
-      center: [0, 20],
-      zoom: 1,
+      center: [...DEFAULT_CHINA_MAP_CENTER],
+      zoom: DEFAULT_CHINA_MAP_ZOOM,
       minZoom: 0,
       maxZoom: 18,
     }),
@@ -2059,6 +2112,13 @@ const drawParetoRoutes = async () => {
   // 优先使用 paretoRoutes 绘制多条路线（路由规划模式）
   if (routeStore.paretoRoutes.length > 0) {
     const routes = routeStore.paretoRoutes
+    const renderedSharedRoutePointKeys = new Set<string>()
+    const selectedSharedRoutePointKeys = new Set<string>()
+    routeStore.selectedRoute?.points.forEach(point => {
+      const key = getSharedRoutePointRenderKey(point.type, point.coordinates)
+      if (key) selectedSharedRoutePointKeys.add(key)
+    })
+
     for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
       const route = routes[routeIndex]
       const baseColor = routeColors[routeIndex % routeColors.length]
@@ -2083,6 +2143,9 @@ const drawParetoRoutes = async () => {
         !branchLandingIds.has(seg.startPointId) && !branchLandingIds.has(seg.endPointId)
       )
       const hasBranching = route.points.some(p => p.type === 'branching')
+      const rawTrunkCoords = (route.rawTrunkCoordinates || [])
+        .filter(coord => Number.isFinite(coord[0]) && Number.isFinite(coord[1]))
+      const canUseRawTrunkGeometry = !hasBranching && rawTrunkCoords.length >= 2
 
       // 按 segments 顺序收集坐标，构建完整折线（仅主干段）
       const allCoords: [number, number][] = []
@@ -2098,13 +2161,16 @@ const drawParetoRoutes = async () => {
       if (allCoords.length < 2) {
         route.points.forEach(p => allCoords.push(p.coordinates))
       }
+      if (canUseRawTrunkGeometry) {
+        allCoords.splice(0, allCoords.length, ...rawTrunkCoords)
+      }
 
       if (allCoords.length >= 2) {
-        const hasFineSegments = isRouteSelected && cableSegmentStore.segments.length > 0
+        const hasFineSegments = isRouteSelected && cableSegmentStore.segments.some(segment => segment.routeId === route.id)
 
         if (hasFineSegments && !isEditingRoute.value) {
           // ====== 有海缆段且非编辑模式，直接按段画主干线（每段自带颜色、标签） ======
-          const cableSegs = cableSegmentStore.segments
+          const cableSegs = cableSegmentStore.segments.filter(segment => segment.routeId === route.id)
 
           // 构建 segGeos：仅使用主干段，排除分支段避免 KP 空间错乱
           let kpOff = 0
@@ -2117,6 +2183,10 @@ const drawParetoRoutes = async () => {
             kpOff += (seg.length || 0)
           }
           const routeTotalKp = kpOff  // 全路由总 KP
+          const rawTrunkLengthKm = canUseRawTrunkGeometry ? calculatePolylineLengthKm(rawTrunkCoords) : 0
+          const kpToRawDistance = (kp: number) => routeTotalKp > 0
+            ? (kp / routeTotalKp) * rawTrunkLengthKm
+            : kp
 
           // 收集分段边界 KP
           const bKps = new Set<number>()
@@ -2168,7 +2238,10 @@ const drawParetoRoutes = async () => {
             const sKp = boundaries[i], eKp = boundaries[i + 1]
             if (eKp <= sKp) continue
 
-            if (hasBranching) {
+            if (canUseRawTrunkGeometry && rawTrunkLengthKm > 0) {
+              const coords = slicePolylineByDistanceKm(rawTrunkCoords, kpToRawDistance(sKp), kpToRawDistance(eKp))
+              makeFineFeature(coords, sKp, eKp, i)
+            } else if (hasBranching) {
               // 分支拓扑：逐 segGeo 单独绘制，避免跨不连续分支产生跳线
               for (const r of segGeos) {
                 if (eKp <= r.startKp || sKp >= r.endKp) continue
@@ -2248,6 +2321,10 @@ const drawParetoRoutes = async () => {
       for (const [pointIndex, point] of route.points.entries()) {
         // waypoint 不显示
         if (point.type !== 'landing' && point.type !== 'branching') continue
+        const sharedPointKey = getSharedRoutePointRenderKey(point.type, point.coordinates)
+        if (!sharedPointKey || renderedSharedRoutePointKeys.has(sharedPointKey)) continue
+        renderedSharedRoutePointKeys.add(sharedPointKey)
+        const isSharedPointSelected = isRouteSelected || selectedSharedRoutePointKeys.has(sharedPointKey)
 
         const pointFeature = new Feature({
           geometry: new Point(point.coordinates),
@@ -2263,29 +2340,29 @@ const drawParetoRoutes = async () => {
           pointFeature.setStyle(new Style({
             image: new Icon({
               src: iconUrl,
-              scale: isRouteSelected ? 0.22 : 0.18,
+              scale: isSharedPointSelected ? 0.22 : 0.18,
               anchor: [0.5, 0.5],
             }),
             text: point.name ? new Text({
               text: point.name,
               offsetY: 18,
-              font: isRouteSelected ? 'bold 12px sans-serif' : '12px sans-serif',
-              fill: new Fill({color: isRouteSelected ? '#ef4444' : '#333'}),
+              font: isSharedPointSelected ? 'bold 12px sans-serif' : '12px sans-serif',
+              fill: new Fill({color: isSharedPointSelected ? '#ef4444' : '#333'}),
               stroke: new Stroke({color: '#fff', width: 3}),
             }) : undefined,
           }))
         } else if (point.type === 'branching') {
-          const radius = isRouteSelected ? 11 : 9
+          const radius = isSharedPointSelected ? 11 : 9
           pointFeature.setStyle(new Style({
             image: new CircleStyle({
               radius: radius,
               fill: new Fill({color: '#a855f7'}),
-              stroke: new Stroke({color: '#fff', width: isRouteSelected ? 3 : 2}),
+              stroke: new Stroke({color: '#fff', width: isSharedPointSelected ? 3 : 2}),
             }),
             text: point.name ? new Text({
               text: point.name,
               offsetY: -(radius + 8),
-              font: isRouteSelected ? 'bold 12px sans-serif' : '12px sans-serif',
+              font: isSharedPointSelected ? 'bold 12px sans-serif' : '12px sans-serif',
               fill: new Fill({color: '#a855f7'}),
               stroke: new Stroke({color: '#fff', width: 3}),
             }) : undefined,
@@ -2307,6 +2384,10 @@ const drawParetoRoutes = async () => {
             Math.abs(p.coordinates[1] - branchTo.coord[1]) < 1e-6
           )
           if (alreadyDrawn) continue
+          const branchStationKey = getSharedRoutePointRenderKey('landing', branchTo.coord)
+          if (!branchStationKey || renderedSharedRoutePointKeys.has(branchStationKey)) continue
+          renderedSharedRoutePointKeys.add(branchStationKey)
+          const isBranchStationSelected = selectedSharedRoutePointKeys.has(branchStationKey)
 
           const branchStationFeature = new Feature({
             geometry: new Point(branchTo.coord),
@@ -2321,14 +2402,14 @@ const drawParetoRoutes = async () => {
           branchStationFeature.setStyle(new Style({
             image: new Icon({
               src: branchIconUrl,
-              scale: 0.18,
+              scale: isBranchStationSelected ? 0.22 : 0.18,
               anchor: [0.5, 0.5],
             }),
             text: branchTo.name ? new Text({
               text: branchTo.name,
               offsetY: 18,
-              font: '12px sans-serif',
-              fill: new Fill({color: '#333'}),
+              font: isBranchStationSelected ? 'bold 12px sans-serif' : '12px sans-serif',
+              fill: new Fill({color: isBranchStationSelected ? '#ef4444' : '#333'}),
               stroke: new Stroke({color: '#fff', width: 3}),
             }) : undefined,
           }))
@@ -2664,6 +2745,7 @@ watch(() => monitorStore.devices.length, (newLen) => {
 
 watch(() => cableSegmentStore.segments, (segments) => {
   refreshCableSegmentValidation(segments)
+  refreshRiskCostSummary(activeRoute.value)
 }, { deep: true, immediate: true })
 
 // 监听 connectorStore 中 OLA 元素变化（系统规划应用配置时触发）
@@ -3105,6 +3187,11 @@ const handleStopPlanning = () => {
 
   // 清除 store 中的路径数据
   routeStore.clearParetoRoutes()
+  cableSegmentStore.clearSegments()
+  algorithmSegmentsByRouteId.value = {}
+  routeGeometryIssues.value = []
+  cableSegmentIssues.value = []
+  riskCostSummary.value = null
 
   // 关闭 Pareto 分析面板（已用新组件替代）
   // appStore.setPanelVisible('paretoAnalysisPanel', false)
@@ -3128,193 +3215,66 @@ const togglePlanning = () => {
 // 规划加载状态
 const isPlanningLoading = ref(false)
 
+const getCurrentRoutePlanningRectRange = (): RoutePlanningRectRange => {
+  if (!map) {
+    return createRoutePlanningRectRangeFromExtent(DEFAULT_CHINA_LON_LAT_EXTENT)
+  }
+
+  const size = map.getSize()
+  if (!size || size[0] <= 0 || size[1] <= 0) {
+    return createRoutePlanningRectRangeFromExtent(DEFAULT_CHINA_LON_LAT_EXTENT)
+  }
+
+  const view = map.getView()
+  const extent = view.calculateExtent(size)
+  const projection = view.getProjection().getCode()
+  const lonLatExtent = projection === 'EPSG:4326'
+    ? extent as LonLatExtent
+    : transformExtent(extent, projection, 'EPSG:4326') as LonLatExtent
+
+  return createRoutePlanningRectRangeFromExtent(lonLatExtent)
+}
+
 const handleRunPlanning = async () => {
-  const config = settingsStore.routePlanningConfig
-
-  // 根据规划模式检查配置
-  if (config.mode === 'multi-point') {
-    const validWaypoints = (config.waypoints || []).filter(
-        wp => wp.lon !== 0 || wp.lat !== 0
-    )
-    if (validWaypoints.length < 2) {
-      appStore.showNotification({
-        type: 'warning',
-        message: '多点规划至少需要2个有效的登陆站坐标，请在工程设置中配置'
-      })
-      appStore.addLog('WARN', `运行规划失败：多点规划需要至少2个坐标，当前只有${validWaypoints.length}个`)
-      return
-    }
-  } else {
-    if (!config.isConfigured ||
-        (config.startPoint.lon === 0 && config.startPoint.lat === 0) ||
-        (config.endPoint.lon === 0 && config.endPoint.lat === 0)) {
-      appStore.showNotification({
-        type: 'warning',
-        message: '请先在工程设置中配置起点和终点坐标'
-      })
-      appStore.addLog('WARN', '运行规划失败：未配置起点和终点')
-      return
-    }
-  }
-
-  // 规划服务当前使用本地 mock fallback，保持后续路线、RPL、传输系统规划流程可用。
+  algorithmSegmentsByRouteId.value = {}
+  routeStore.clearParetoRoutes()
+  cableSegmentStore.clearSegments()
+  routeGeometryIssues.value = []
+  cableSegmentIssues.value = []
+  riskCostSummary.value = null
+  clearRoutes()
+  isPlanning.value = false
   isPlanningLoading.value = true
-  appStore.showNotification({ type: 'info', message: '正在准备规划数据...' })
-
-  const serviceAvailable = await checkRoutePlanningService()
-  if (!serviceAvailable) {
-    isPlanningLoading.value = false
-    appStore.showNotification({
-      type: 'error',
-      message: '规划服务暂不可用'
-    })
-    appStore.addLog('ERROR', '路由规划服务暂不可用')
-    return
-  }
-
-  // 查询每个站点的高程，自动判断水下/岸上
-  appStore.showNotification({ type: 'info', message: '正在查询站点高程数据...' })
-  const demServiceAvailable = await checkDemService()
-  
-  // 查询单点高程的辅助函数
-  const queryPointElevation = async (lon: number, lat: number): Promise<number> => {
-    if (!demServiceAvailable) return 0
-    try {
-      const result = await fetchDemPoint(lon, lat)
-      // 高程 < 0 表示水下，返回正数水深；>= 0 表示岸上，返回 0
-      return result.elevation < 0 ? Math.abs(result.elevation) : 0
-    } catch {
-      return 0
-    }
-  }
-
-  // 根据模式查询站点高程
-  if (config.mode === 'multi-point') {
-    // 多点模式：查询所有途经点的高程
-    const waypoints = config.waypoints || []
-    for (const wp of waypoints) {
-      if (wp.lon && wp.lat) {
-        wp.depth = await queryPointElevation(wp.lon, wp.lat)
-      }
-    }
-  } else {
-    // 点对点模式：查询起点和终点的高程
-    if (config.startPoint.lon && config.startPoint.lat) {
-      config.startPoint.depth = await queryPointElevation(config.startPoint.lon, config.startPoint.lat)
-    }
-    if (config.endPoint.lon && config.endPoint.lat) {
-      config.endPoint.depth = await queryPointElevation(config.endPoint.lon, config.endPoint.lat)
-    }
-  }
-
-  // auto 模式：从地图视口自动计算规划范围
-  if ((!config.rangeMode || config.rangeMode === 'auto') && map) {
-    const extent = map.getView().calculateExtent(map.getSize())
-    // extent = [minX, minY, maxX, maxY] 在 EPSG:4326 下即 [minLon, minLat, maxLon, maxLat]
-    const projection = map.getView().getProjection().getCode()
-    let minLon = extent[0], minLat = extent[1], maxLon = extent[2], maxLat = extent[3]
-    if (projection === 'EPSG:3857') {
-      const sw = toLonLat([extent[0], extent[1]])
-      const ne = toLonLat([extent[2], extent[3]])
-      minLon = sw[0]; minLat = sw[1]; maxLon = ne[0]; maxLat = ne[1]
-    }
-    settingsStore.updateRoutePlanningConfig({
-      planningRange: {
-        northwest: { lon: minLon, lat: maxLat },
-        southeast: { lon: maxLon, lat: minLat }
-      }
-    })
-    appStore.addLog('INFO', `自动规划范围: [${minLon.toFixed(2)}, ${minLat.toFixed(2)}] ~ [${maxLon.toFixed(2)}, ${maxLat.toFixed(2)}]`)
-  }
-
-  // 构建规划请求参数 - 包含所有配置参数
-  const armorMappings = config.armorMappings || []
-  const highRiskMapping = armorMappings.find(m => m.riskLevel === 'high')
-  const mediumRiskMapping = armorMappings.find(m => m.riskLevel === 'medium')
-
-  const request: RoutePlanningRequest = {
-    mode: config.mode,
-    planningRange: config.planningRange,
-    gridResolution: config.gridResolution || 500,  // 栅格分辨率
-    riskConfig: {
-      highRiskThreshold: highRiskMapping?.riskThreshold ?? 3,
-      mediumRiskThreshold: mediumRiskMapping?.riskThreshold ?? 2
-    },
-    // 铠装映射配置 - 包含单价和缆型信息
-    armorMappings: armorMappings.map(m => ({
-      riskLevel: m.riskLevel,
-      riskThreshold: m.riskThreshold,
-      cableTypeId: m.cableTypeId,
-      cableTypeName: m.cableTypeName,
-      unitPrice: m.unitPrice
-    })),
-    // BU 分支器配置
-    buList: (config.buList || []).map(bu => ({
-      id: bu.id,
-      name: bu.name,
-      lon: bu.lon,
-      lat: bu.lat,
-      portLimit: bu.portLimit
-    })),
-    // 冗余策略配置
-    redundancyConfig: config.redundancyConfig ? {
-      enabled: config.redundancyConfig.enabled,
-      costLimitType: config.redundancyConfig.costLimitType,
-      relativeCostPercent: config.redundancyConfig.relativeCostPercent,
-      absoluteCostLimit: config.redundancyConfig.absoluteCostLimit,
-      criticalNodes: config.redundancyConfig.criticalNodes?.length ? config.redundancyConfig.criticalNodes : undefined
-    } : undefined,
-    // 避障区域
-    avoidanceZones: config.avoidanceZones || undefined,
-  }
-
-  if (config.mode === 'multi-point') {
-    // USE规范: imported_landing_points
-    request.waypoints = (config.waypoints || []).filter(wp => wp.lon !== 0 || wp.lat !== 0).map(wp => ({
-      lon: wp.lon,
-      lat: wp.lat,
-      name: wp.name,
-      depth: wp.depth  // 包含水深信息
-    }))
-  } else {
-    request.startPoint = {
-      lon: config.startPoint.lon,
-      lat: config.startPoint.lat,
-      name: config.startPoint.name,
-      depth: config.startPoint.depth
-    }
-    request.endPoint = {
-      lon: config.endPoint.lon,
-      lat: config.endPoint.lat,
-      name: config.endPoint.name,
-      depth: config.endPoint.depth
-    }
-  }
+  appStore.showNotification({ type: 'info', message: '正在调用后端路由规划服务...' })
 
   try {
-    appStore.showNotification({ type: 'info', message: '正在计算路由规划...' })
-    
-    // 统一走后端 A* 规划（含多点+BU 分支网络）
-    const result = await fetchRoutePlanning(request)
-    // 将后端返回的路由数据设置到 store
-    if (result.routes && result.routes.length > 0) {
-      routeStore.setParetoRoutesFromApi(result.routes, config)
-    } else {
+    const projectId = String(appStore.projectState?.currentProject?.platformProjectId ?? '')
+    if (!projectId || projectId === 'undefined' || projectId === 'null') {
       isPlanningLoading.value = false
       appStore.showNotification({
         type: 'error',
-        message: '后端规划服务未返回有效路由，请检查配置参数或后端日志'
+        message: '未找到当前项目ID，请先打开项目'
       })
-      appStore.addLog('ERROR', '后端规划服务返回空路由')
+      appStore.addLog('ERROR', '运行规划失败：未找到项目ID')
       return
     }
 
-    // 在地图上绘制路径
-    const initialRoute = ensureSelectedRoute()
-    drawParetoRoutes()
-    refreshRouteGeometryValidation(initialRoute)
-    updateRiskCostHeatmap(initialRoute)
+    const rectRange = getCurrentRoutePlanningRectRange()
+    appStore.addLog('INFO', `路由规划视口范围 rectRange: [${rectRange.join(', ')}]`)
 
+    const algorithmResult = await fetchRoutePlanningByProjectId(projectId, rectRange)
+
+    if (algorithmResult.routes.length === 0) {
+      isPlanningLoading.value = false
+      appStore.showNotification({
+        type: 'error',
+        message: '后端未返回有效路由数据'
+      })
+      appStore.addLog('ERROR', '后端路由规划返回空结果')
+      return
+    }
+
+    applyAlgorithmRouteResult(algorithmResult, '后端路由规划结果')
     // 同步到 rplStore 和 connectorStore（生成设备级海缆段）
     syncRouteToRPL()
 
@@ -3322,31 +3282,12 @@ const handleRunPlanning = async () => {
     isPlanning.value = true
     isPlanningLoading.value = false
 
-    // 显示成功消息
-    if (config.mode === 'multi-point') {
-      const waypointCount = request.waypoints?.length || 0
-      const buCount = config.buList?.length || 0
-      if (buCount > 0) {
-        appStore.showNotification({
-          type: 'success',
-          message: `多点规划完成，已生成 ${waypointCount} 个登陆站 + ${buCount} 个 BU 的分支网络`
-        })
-        appStore.addLog('INFO', `多点规划完成: ${waypointCount} 个登陆站, ${buCount} 个 BU`)
-      } else {
-        appStore.showNotification({
-          type: 'success',
-          message: `多点规划完成，已生成 ${waypointCount} 个登陆站的路由`
-        })
-        appStore.addLog('INFO', `多点规划完成: 共 ${waypointCount} 个登陆站`)
-      }
-    } else {
-      const routeCount = routeStore.paretoRoutes.length || 3
-      appStore.showNotification({
-        type: 'success',
-        message: `规划运行完成，已生成 ${routeCount} 条 Pareto 最优路径`
-      })
-      appStore.addLog('INFO', `规划运行完成: 生成 ${routeCount} 条 Pareto 路径`)
-    }
+    const routeCount = routeStore.paretoRoutes.length || 0
+    appStore.showNotification({
+      type: 'success',
+      message: `算法结果已叠加，已生成 ${routeCount} 条路径方案`
+    })
+    appStore.addLog('INFO', `算法结果叠加完成: 生成 ${routeCount} 条路径方案`)
   } catch (error: any) {
     isPlanningLoading.value = false
     appStore.showNotification({

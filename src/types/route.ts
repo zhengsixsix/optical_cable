@@ -71,6 +71,42 @@ export interface RouteRiskAnalysis {
   overall: number      // 综合风险 0-1
 }
 
+// 路由沿算法矩阵采样摘要
+export interface RouteMatrixSample {
+  points: number
+  min: number
+  max: number
+  avg: number
+  start: number
+  end: number
+}
+
+export interface RouteMatrixSamples {
+  cost?: RouteMatrixSample
+  risk?: RouteMatrixSample
+}
+
+export interface RouteFmmMetadata {
+  pointCount: number
+  length?: number
+  totalCost?: number
+  totalRisk?: number
+}
+
+export type RouteSegmentSource = 'riskBased' | 'fixedSpacing' | 'fmmFallback' | 'none'
+
+export interface RouteAlgorithmSummary {
+  originalFmmIndex?: number
+  duplicateOriginalIndexes?: number[]
+  algorithmTotalCost?: number
+  algorithmTotalRisk?: number
+  highRiskLength: number
+  mediumRiskLength: number
+  lowRiskLength: number
+  armorEstimatedCost: number
+  segmentSource: RouteSegmentSource
+}
+
 // 路由
 export interface Route {
   id: string
@@ -88,6 +124,9 @@ export interface Route {
   updatedAt: Date
   // 后端原始 A* 路径坐标（用于精确放大器落位等）
   rawTrunkCoordinates?: [number, number][]
+  rawMatrixSamples?: RouteMatrixSamples
+  fmmPathMeta?: RouteFmmMetadata
+  algorithmSummary?: RouteAlgorithmSummary
   rawBranches?: Array<{ fromBuId: string; toLandingName: string; coordinates: [number, number][] }>
   rawNamedPoints?: Array<{ id: string; type: string; lon: number; lat: number; name: string }>
 }

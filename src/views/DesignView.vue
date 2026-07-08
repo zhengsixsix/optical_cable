@@ -153,7 +153,9 @@ onMounted(async () => {
     await settingsStore.loadPlatformDeviceLibraries()
   }
 
-  routeStore.ensureTransmissionMockRoute()
+  if (!routeStore.selectedRoute) {
+    appStore.addLog('INFO', '系统设计未检测到真实路由规划结果，未自动生成调试路线')
+  }
 
   // 确保有 RPL 数据（从路由守卫迁移至此，显式处理）
   ensureRPLData()

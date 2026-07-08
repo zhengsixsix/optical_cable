@@ -28,6 +28,7 @@ import type {
   PagedSearch,
   Id,
 } from './types'
+import type { RoutePlanningRectRange } from '@/utils/routePlanningViewport'
 
 function encryptPasswordFields<T extends Record<string, unknown>>(payload: T, fields: string[]): T {
   const next = { ...payload }
@@ -110,6 +111,7 @@ export const platformMenuApi = {
 export const platformDictionaryApi = {
   search: (payload: PagedSearch = { pageNumber: 1, pageSize: 10 }) =>
     platformClient.postWithPage<PlatformDictionary[]>('/sys/dic/search/list', payload),
+  listItemByType: (type: string) => platformClient.post<PlatformDictionary[]>('/sys/dic/search/listItem', { type }),
   listItem: (type: string) => platformClient.post<PlatformDictionary[]>('/sys/dic/search/listItem', { type }),
   save: (payload: Record<string, unknown>) => platformClient.post<string>('/sys/dic/save', payload),
   remove: (payload: { id: string; type: string }) => platformClient.post<boolean>('/sys/dic/remove', payload),
@@ -126,6 +128,11 @@ export const platformProjectApi = {
   save: (payload: PlanProject) => platformClient.post<Id>('/plan/project/save', payload),
   detail: (id: Id) => platformClient.post<PlanProject>('/plan/project/detail', { id }),
   remove: (id: Id) => platformClient.post<boolean>('/plan/project/remove', { id }),
+  routePlan: (id: string | number, rectRange?: RoutePlanningRectRange) => {
+    const payload: { id: string; rectRange?: RoutePlanningRectRange } = { id: String(id) }
+    if (rectRange) payload.rectRange = rectRange
+    return platformClient.post<unknown>('/plan/project/plan/route', payload)
+  },
 }
 
 export const platformPointApi = {
@@ -221,7 +228,7 @@ export const platformEndpointDefinitions: EndpointDefinition[] = [
   { key: 'dicSave', group: '1.5 Dictionary Management', name: 'Save dictionary', path: '/sys/dic/save', defaultPayload: { id: null, type: 'PLAN_TYPE', code: '', name: '', detail: '', sortNum: 999, isValidCd: '1' } },
   { key: 'dicRemove', group: '1.5 Dictionary Management', name: 'Delete dictionary', path: '/sys/dic/remove', defaultPayload: { id: null, type: 'PLAN_TYPE' } },
   { key: 'dicSearch', group: '1.5 Dictionary Management', name: 'Search dictionaries by type', path: '/sys/dic/search/list', defaultPayload: { pageNumber: 1, pageSize: 10, type: 'PLAN_TYPE' } },
-  { key: 'dicListItem', group: '1.5 Dictionary Management', name: 'Dictionary list items', path: '/sys/dic/search/listItem', defaultPayload: { type: 'PLAN_TYPE' } },
+  { key: 'dicListItem', group: '1.5 Dictionary Management', name: 'Dictionary list items by type', path: '/sys/dic/search/listItem', defaultPayload: { type: 'PLAN_TYPE' } },
   { key: 'logSearch', group: '1.6 Log Management', name: 'Search operation logs', path: '/sys/log/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, title: '', businessType: null, method: null, requestMethod: null, operatorType: null, operName: null, orgName: null, operUrl: null, operIp: null, operLocation: null, operParam: null, jsonResult: null, status: null, errorMsg: null, operTime: null, costTime: null } },
   { key: 'projectSave', group: '2.1 Project Management', name: 'Save project', path: '/plan/project/save', defaultPayload: { id: null, name: '', remarks: '', isPublic: 0 } },
   { key: 'projectRemove', group: '2.1 Project Management', name: 'Delete project', path: '/plan/project/remove', defaultPayload: { id: null } },

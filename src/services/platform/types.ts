@@ -78,6 +78,9 @@ export interface PlatformDictionary {
   sortNum?: number
   isValidCd?: string
   type?: string
+  editable?: number | null
+  menderName?: string
+  modifyTime?: string
 }
 
 export interface PlanProject {

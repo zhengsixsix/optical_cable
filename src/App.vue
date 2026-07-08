@@ -3,7 +3,6 @@ import { useAppStore } from '@/stores/app'
 import { useLayerStore } from '@/stores/layer'
 import { useUserStore } from '@/stores/user'
 import { ref, onMounted } from 'vue'
-import { useRouteStore } from '@/stores/route'
 import { initAppearance, useProjectManager, type CreateProjectParams } from '@/composables'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
@@ -30,7 +29,6 @@ interface PlatformProjectDraft {
   status: 'draft' | 'stationed' | 'ready'
 }
 
-const routeStore = useRouteStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
 const userStore = useUserStore()
@@ -40,8 +38,6 @@ const resumePlatformProject = ref<PlatformProjectDraft | null>(null)
 onMounted(async () => {
   // 初始化外观设置
   initAppearance()
-  // 初始化数据
-  await routeStore.loadRoutes()
   appStore.addLog('INFO', '应用初始化完成')
 })
 

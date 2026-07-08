@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { PLATFORM_USER_KEY, setPlatformToken } from '@/services/platform/client'
 import { platformAuthApi, platformMenuApi, platformRoleApi, platformUserApi } from '@/services/platform/api'
+import type { PageModel } from '@/services/platform/client'
 import type { PcAuthInfo, PlatformMenu, PlatformRole, PlatformUser } from '@/services/platform/types'
 
 export type UserRole = 'admin' | 'user'
@@ -45,6 +46,38 @@ export interface MenuPermission {
   url?: string
   children: MenuPermission[]
   funcList: MenuPermission[]
+}
+
+export interface LoadUsersOptions {
+  approvedPageNumber?: number
+  approvedPageSize?: number
+  pendingPageNumber?: number
+  pendingPageSize?: number
+  disabledPageNumber?: number
+  disabledPageSize?: number
+}
+
+export interface LoadUsersResult {
+  success: boolean
+  message: string
+  pages: {
+    approved: PageModel | null
+    pending: PageModel | null
+    disabled: PageModel | null
+  }
+}
+
+export interface LoadRolesOptions {
+  includeDisabled?: boolean
+  pageNumber?: number
+  pageSize?: number
+  keyword?: string
+}
+
+export interface LoadRolesResult {
+  success: boolean
+  message: string
+  page: PageModel | null
 }
 
 function normalizeTextMap(value: unknown, keyField = 'code', valueField = 'name'): Record<string, string> {
@@ -250,24 +283,51 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  async function loadUsers(): Promise<{ success: boolean; message: string }> {
+  async function loadUsers(options: LoadUsersOptions = {}): Promise<LoadUsersResult> {
     try {
-      const [approvedResponse, pendingResponse] = await Promise.all([
-        platformUserApi.search({ pageNumber: 1, pageSize: 100 }),
-        platformUserApi.searchRegister({ pageNumber: 1, pageSize: 100 }),
+      const [approvedResponse, pendingResponse, disabledResponse] = await Promise.all([
+        platformUserApi.search({
+          pageNumber: options.approvedPageNumber ?? 1,
+          pageSize: options.approvedPageSize ?? 10,
+          approvalCd: 'approved',
+          isValidCd: '1',
+        }),
+        platformUserApi.searchRegister({
+          pageNumber: options.pendingPageNumber ?? 1,
+          pageSize: options.pendingPageSize ?? 10,
+          approvalCd: 'pending',
+        }),
+        platformUserApi.search({
+          pageNumber: options.disabledPageNumber ?? 1,
+          pageSize: options.disabledPageSize ?? 10,
+          isValidCd: '0',
+        }),
       ])
       const approved = (approvedResponse.data ?? []).map(user => mapPlatformUserToUser(user, 'approved'))
       const pending = (pendingResponse.data ?? []).map(user => mapPlatformUserToUser(user, 'pending'))
+      const disabled = (disabledResponse.data ?? []).map(user => mapPlatformUserToUser(user, 'disabled'))
 
       const byId = new Map<string, User>()
-      for (const user of [...approved, ...pending]) {
+      for (const user of [...approved, ...pending, ...disabled]) {
         byId.set(user.id, user)
       }
       users.value = Array.from(byId.values())
 
-      return { success: true, message: '用户列表加载成功' }
+      return {
+        success: true,
+        message: '用户列表加载成功',
+        pages: {
+          approved: approvedResponse.page ?? null,
+          pending: pendingResponse.page ?? null,
+          disabled: disabledResponse.page ?? null,
+        },
+      }
     } catch (error) {
-      return { success: false, message: (error as Error).message || '用户列表加载失败' }
+      return {
+        success: false,
+        message: (error as Error).message || '用户列表加载失败',
+        pages: { approved: null, pending: null, disabled: null },
+      }
     }
   }
 
@@ -367,17 +427,19 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  async function loadRoles(options: { includeDisabled?: boolean } = {}): Promise<{ success: boolean; message: string }> {
+  async function loadRoles(options: LoadRolesOptions = {}): Promise<LoadRolesResult> {
     try {
+      const keyword = options.keyword?.trim()
       const response = await platformRoleApi.search({
-        pageNumber: 1,
-        pageSize: 100,
+        pageNumber: options.pageNumber ?? 1,
+        pageSize: options.pageSize ?? 10,
         ...(options.includeDisabled ? {} : { isValidCd: '1' }),
+        ...(keyword ? { name: keyword } : {}),
       })
       roles.value = (response.data ?? []).map(mapPlatformRoleToRoleOption)
-      return { success: true, message: '角色列表加载成功' }
+      return { success: true, message: '角色列表加载成功', page: response.page ?? null }
     } catch (error) {
-      return { success: false, message: (error as Error).message || '角色列表加载失败' }
+      return { success: false, message: (error as Error).message || '角色列表加载失败', page: null }
     }
   }
 

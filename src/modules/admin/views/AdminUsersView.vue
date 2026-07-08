@@ -1,18 +1,35 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Ban, CheckCircle, KeyRound, RefreshCw, ShieldCheck, Trash2, UserCheck, UserX } from 'lucide-vue-next'
+import { Ban, CheckCircle, KeyRound, RefreshCw, ShieldCheck, Trash2, UserCheck, UserX, Users } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
+import AdminPagination from '../components/AdminPagination.vue'
 import { useAppStore } from '@/stores/app'
 import { useUserStore, type User, type UserStatus } from '@/stores/user'
+
+type UserBucket = 'pending' | 'approved' | 'disabled'
 
 const userStore = useUserStore()
 const appStore = useAppStore()
 const isLoading = ref(false)
 const actionUserId = ref<string | null>(null)
+const activeBucket = ref<UserBucket>('approved')
 const selectedUserId = ref<string | null>(null)
 const selectedRoleIds = ref<string[]>([])
+const isRoleDialogOpen = ref(false)
 const isRoleLoading = ref(false)
 const isSavingRoles = ref(false)
+const pendingPageNumber = ref(1)
+const pendingPageSize = ref(10)
+const pendingTotal = ref(0)
+const approvedPageNumber = ref(1)
+const approvedPageSize = ref(10)
+const approvedTotal = ref(0)
+const disabledPageNumber = ref(1)
+const disabledPageSize = ref(10)
+const disabledTotal = ref(0)
+const rolePageNumber = ref(1)
+const rolePageSize = ref(10)
+const roleTotal = ref(0)
 
 const pendingUsers = computed(() => userStore.users.filter(user => user.status === 'pending'))
 const approvedUsers = computed(() => userStore.users.filter(user => user.status === 'approved'))
@@ -20,12 +37,32 @@ const disabledUsers = computed(() => userStore.users.filter(user => user.status 
 const roleOptions = computed(() => userStore.roles)
 const selectedUser = computed(() => userStore.users.find(user => user.id === selectedUserId.value) ?? null)
 
-const metrics = computed(() => [
-  { label: '全部账户', value: userStore.users.length, tone: 'text-slate-950' },
-  { label: '待审批', value: pendingUsers.value.length, tone: 'text-amber-700' },
-  { label: '已启用', value: approvedUsers.value.length, tone: 'text-emerald-700' },
-  { label: '禁用/拒绝', value: disabledUsers.value.length, tone: 'text-slate-600' },
+const buckets = computed(() => [
+  { key: 'pending' as const, label: '待审批', count: pendingTotal.value, description: '注册后等待处理的账户' },
+  { key: 'approved' as const, label: '已启用', count: approvedTotal.value, description: '当前可登录平台的账户' },
+  { key: 'disabled' as const, label: '禁用/拒绝', count: disabledTotal.value, description: '已禁用或审核拒绝的账户' },
 ])
+const activeBucketLabel = computed(() => buckets.value.find(item => item.key === activeBucket.value)?.label ?? '-')
+const activeUsers = computed(() => {
+  if (activeBucket.value === 'pending') return pendingUsers.value
+  if (activeBucket.value === 'disabled') return disabledUsers.value
+  return approvedUsers.value
+})
+const activeTotal = computed(() => {
+  if (activeBucket.value === 'pending') return pendingTotal.value
+  if (activeBucket.value === 'disabled') return disabledTotal.value
+  return approvedTotal.value
+})
+const activePageNumber = computed(() => {
+  if (activeBucket.value === 'pending') return pendingPageNumber.value
+  if (activeBucket.value === 'disabled') return disabledPageNumber.value
+  return approvedPageNumber.value
+})
+const activePageSize = computed(() => {
+  if (activeBucket.value === 'pending') return pendingPageSize.value
+  if (activeBucket.value === 'disabled') return disabledPageSize.value
+  return approvedPageSize.value
+})
 
 const getStatusText = (status: UserStatus) => {
   const map: Record<UserStatus, string> = {
@@ -63,12 +100,29 @@ const roleSummary = (user: User) => {
 async function loadUsers() {
   isLoading.value = true
   try {
-    const result = await userStore.loadUsers()
+    const result = await userStore.loadUsers({
+      pendingPageNumber: pendingPageNumber.value,
+      pendingPageSize: pendingPageSize.value,
+      approvedPageNumber: approvedPageNumber.value,
+      approvedPageSize: approvedPageSize.value,
+      disabledPageNumber: disabledPageNumber.value,
+      disabledPageSize: disabledPageSize.value,
+    })
     if (!result.success) {
       appStore.showNotification({ type: 'error', message: result.message })
     }
-    if (!selectedUserId.value && userStore.users.length > 0) {
-      await selectUser(userStore.users[0])
+    pendingTotal.value = Number(result.pages.pending?.dataTotal ?? pendingUsers.value.length)
+    approvedTotal.value = Number(result.pages.approved?.dataTotal ?? approvedUsers.value.length)
+    disabledTotal.value = Number(result.pages.disabled?.dataTotal ?? disabledUsers.value.length)
+    if (result.pages.pending?.pageNumber) pendingPageNumber.value = Number(result.pages.pending.pageNumber)
+    if (result.pages.pending?.pageSize) pendingPageSize.value = Number(result.pages.pending.pageSize)
+    if (result.pages.approved?.pageNumber) approvedPageNumber.value = Number(result.pages.approved.pageNumber)
+    if (result.pages.approved?.pageSize) approvedPageSize.value = Number(result.pages.approved.pageSize)
+    if (result.pages.disabled?.pageNumber) disabledPageNumber.value = Number(result.pages.disabled.pageNumber)
+    if (result.pages.disabled?.pageSize) disabledPageSize.value = Number(result.pages.disabled.pageSize)
+    if (selectedUserId.value && !userStore.users.some(user => user.id === selectedUserId.value)) {
+      selectedUserId.value = null
+      isRoleDialogOpen.value = false
     }
   } finally {
     isLoading.value = false
@@ -76,14 +130,56 @@ async function loadUsers() {
 }
 
 async function loadRoles() {
-  const result = await userStore.loadRoles()
+  const result = await userStore.loadRoles({
+    pageNumber: rolePageNumber.value,
+    pageSize: rolePageSize.value,
+  })
   if (!result.success) {
     appStore.showNotification({ type: 'error', message: result.message })
   }
+  roleTotal.value = Number(result.page?.dataTotal ?? roleOptions.value.length)
+  if (result.page?.pageNumber) rolePageNumber.value = Number(result.page.pageNumber)
+  if (result.page?.pageSize) rolePageSize.value = Number(result.page.pageSize)
 }
 
 async function loadInitialData() {
   await Promise.all([loadUsers(), loadRoles()])
+}
+
+function changeBucket(bucket: UserBucket) {
+  activeBucket.value = bucket
+}
+
+function changeActivePage(page: number) {
+  if (activeBucket.value === 'pending') pendingPageNumber.value = page
+  else if (activeBucket.value === 'disabled') disabledPageNumber.value = page
+  else approvedPageNumber.value = page
+  void loadUsers()
+}
+
+function changeActivePageSize(size: number) {
+  if (activeBucket.value === 'pending') {
+    pendingPageSize.value = size
+    pendingPageNumber.value = 1
+  } else if (activeBucket.value === 'disabled') {
+    disabledPageSize.value = size
+    disabledPageNumber.value = 1
+  } else {
+    approvedPageSize.value = size
+    approvedPageNumber.value = 1
+  }
+  void loadUsers()
+}
+
+function changeRolePage(page: number) {
+  rolePageNumber.value = page
+  void loadRoles()
+}
+
+function changeRolePageSize(size: number) {
+  rolePageSize.value = size
+  rolePageNumber.value = 1
+  void loadRoles()
 }
 
 async function runUserAction(userId: string, action: () => Promise<{ success: boolean; message: string }>) {
@@ -99,9 +195,10 @@ async function runUserAction(userId: string, action: () => Promise<{ success: bo
   }
 }
 
-async function selectUser(user: User) {
+async function openRoleDialog(user: User) {
   selectedUserId.value = user.id
   selectedRoleIds.value = []
+  isRoleDialogOpen.value = true
   isRoleLoading.value = true
   try {
     if (roleOptions.value.length === 0) {
@@ -118,6 +215,11 @@ async function selectUser(user: User) {
   }
 }
 
+function closeRoleDialog() {
+  if (isSavingRoles.value) return
+  isRoleDialogOpen.value = false
+}
+
 function toggleRole(roleId: string) {
   selectedRoleIds.value = selectedRoleIds.value.includes(roleId)
     ? selectedRoleIds.value.filter(id => id !== roleId)
@@ -131,6 +233,7 @@ async function handleSaveRoles() {
     const result = await userStore.assignUserRoles(selectedUser.value.id, selectedRoleIds.value)
     appStore.showNotification({ type: result.success ? 'success' : 'error', message: result.message })
     if (result.success) {
+      isRoleDialogOpen.value = false
       await loadUsers()
     }
   } finally {
@@ -145,13 +248,13 @@ const handleEnable = (userId: string) => runUserAction(userId, () => userStore.e
 
 function handleDelete(userId: string) {
   if (confirm('确定要删除该用户吗？此操作不可恢复。')) {
-    runUserAction(userId, () => userStore.deleteUser(userId))
+    void runUserAction(userId, () => userStore.deleteUser(userId))
   }
 }
 
 function handleResetPassword(userId: string) {
   if (confirm('确定要重置该用户密码吗？')) {
-    runUserAction(userId, () => userStore.resetUserPassword(userId))
+    void runUserAction(userId, () => userStore.resetUserPassword(userId))
   }
 }
 
@@ -161,11 +264,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="p-6 space-y-5">
+  <section class="space-y-5 p-6">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h2 class="text-lg font-semibold text-slate-950">账户管理</h2>
-        <p class="mt-1 text-sm text-slate-500">用户审批、状态维护、密码重置和角色分配全部在页面内完成。</p>
+        <p class="mt-1 text-sm text-slate-500">左侧选择账户状态，右侧处理当前状态下的账户。</p>
       </div>
       <Button variant="outline" :disabled="isLoading" @click="loadInitialData">
         <RefreshCw class="mr-2 h-4 w-4" :class="{ 'animate-spin': isLoading }" />
@@ -173,153 +276,144 @@ onMounted(() => {
       </Button>
     </div>
 
-    <div class="grid grid-cols-4 gap-3 max-[960px]:grid-cols-2">
-      <div v-for="metric in metrics" :key="metric.label" class="rounded-md border border-slate-200 bg-white px-4 py-3">
-        <div class="text-xs text-slate-500">{{ metric.label }}</div>
-        <div class="mt-1 text-2xl font-semibold" :class="metric.tone">{{ metric.value }}</div>
-      </div>
+    <div class="admin-master-detail-layout admin-wide-master">
+      <aside class="flex min-h-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-white">
+        <div class="border-b border-slate-200 px-4 py-3">
+          <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Users class="h-4 w-4 text-cyan-700" />
+            账户状态
+          </div>
+          <p class="mt-1 text-xs text-slate-500">按状态切换右侧账户列表</p>
+        </div>
+
+        <div class="min-h-0 flex-1 overflow-auto p-2">
+          <button
+            v-for="bucket in buckets"
+            :key="bucket.key"
+            type="button"
+            class="mb-1 flex w-full items-center justify-between gap-3 rounded-md px-3 py-2.5 text-left text-sm transition hover:bg-slate-50"
+            :class="activeBucket === bucket.key ? 'bg-cyan-50 font-medium text-cyan-800 ring-1 ring-cyan-100' : 'text-slate-600'"
+            @click="changeBucket(bucket.key)"
+          >
+            <span class="min-w-0">
+              <span class="block truncate">{{ bucket.label }}</span>
+              <span class="mt-0.5 block truncate text-xs text-slate-400">{{ bucket.description }}</span>
+            </span>
+            <span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{{ bucket.count }}</span>
+          </button>
+        </div>
+      </aside>
+
+      <section class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-white">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-900">账户列表</h3>
+            <p class="mt-1 text-xs text-slate-500">当前状态：{{ activeBucketLabel }}，共 {{ activeTotal }} 条。</p>
+          </div>
+        </div>
+
+        <div class="min-h-0 flex-1 overflow-auto">
+          <table class="w-full min-w-[1080px] border-separate border-spacing-0 text-left text-sm">
+            <thead class="sticky top-0 z-[1] bg-slate-50 text-xs text-slate-500">
+              <tr>
+                <th class="border-b border-slate-200 px-4 py-2.5 font-medium">账户</th>
+                <th class="border-b border-slate-200 px-4 py-2.5 font-medium">手机</th>
+                <th class="border-b border-slate-200 px-4 py-2.5 font-medium">角色</th>
+                <th class="border-b border-slate-200 px-4 py-2.5 font-medium">时间</th>
+                <th class="w-24 border-b border-slate-200 px-4 py-2.5 font-medium">状态</th>
+                <th class="w-[340px] border-b border-slate-200 px-4 py-2.5 text-right font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="user in activeUsers" :key="user.id" class="h-14 hover:bg-slate-50">
+                <td class="border-b border-slate-100 px-4 py-2 align-middle font-medium text-slate-900">{{ user.username }}</td>
+                <td class="border-b border-slate-100 px-4 py-2 align-middle text-slate-600">{{ user.phone || '-' }}</td>
+                <td class="border-b border-slate-100 px-4 py-2 align-middle text-slate-600">{{ roleSummary(user) }}</td>
+                <td class="border-b border-slate-100 px-4 py-2 align-middle text-xs text-slate-500">
+                  {{ activeBucket === 'pending' ? formatDate(user.createdAt) : formatDate(user.lastLoginAt || user.createdAt) }}
+                </td>
+                <td class="border-b border-slate-100 px-4 py-2 align-middle">
+                  <span :class="['rounded-full px-2 py-0.5 text-xs ring-1', getStatusClass(user.status)]">
+                    {{ getStatusText(user.status) }}
+                  </span>
+                </td>
+                <td class="border-b border-slate-100 px-4 py-2 align-middle">
+                  <div class="admin-table-actions">
+                    <template v-if="user.status === 'pending'">
+                      <Button size="sm" :disabled="actionUserId === user.id" @click="handleApprove(user.id)">
+                        <UserCheck class="mr-1 h-4 w-4" />通过
+                      </Button>
+                      <Button size="sm" variant="destructive" :disabled="actionUserId === user.id" @click="handleReject(user.id)">
+                        <UserX class="mr-1 h-4 w-4" />拒绝
+                      </Button>
+                    </template>
+                    <template v-else>
+                      <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="openRoleDialog(user)">
+                        <ShieldCheck class="mr-1 h-4 w-4" />角色
+                      </Button>
+                      <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="handleResetPassword(user.id)">
+                        <KeyRound class="mr-1 h-4 w-4" />重置
+                      </Button>
+                      <Button
+                        v-if="user.status === 'approved'"
+                        size="sm"
+                        variant="outline"
+                        :disabled="actionUserId === user.id"
+                        @click="handleDisable(user.id)"
+                      >
+                        <Ban class="mr-1 h-4 w-4" />禁用
+                      </Button>
+                      <Button
+                        v-else
+                        size="sm"
+                        variant="outline"
+                        :disabled="actionUserId === user.id"
+                        @click="handleEnable(user.id)"
+                      >
+                        <CheckCircle class="mr-1 h-4 w-4" />启用
+                      </Button>
+                      <Button size="sm" variant="destructive" :disabled="actionUserId === user.id" @click="handleDelete(user.id)">
+                        <Trash2 class="h-4 w-4" />
+                      </Button>
+                    </template>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div v-if="isLoading" class="px-4 py-8 text-center text-sm text-slate-400">正在加载账户...</div>
+          <div v-else-if="activeUsers.length === 0" class="px-4 py-12 text-center text-sm text-slate-400">暂无账户</div>
+        </div>
+
+        <AdminPagination
+          :page-number="activePageNumber"
+          :page-size="activePageSize"
+          :total="activeTotal"
+          :loading="isLoading"
+          @change-page="changeActivePage"
+          @change-page-size="changeActivePageSize"
+        />
+      </section>
     </div>
 
-    <div class="grid min-h-[560px] grid-cols-[minmax(0,1fr)_360px] gap-4 max-[1180px]:grid-cols-1">
-      <div class="overflow-hidden rounded-md border border-slate-200 bg-white">
-        <div v-if="isLoading" class="px-4 py-8 text-center text-sm text-slate-400">正在加载线上用户...</div>
-        <template v-else>
-          <div class="border-b border-slate-200 bg-amber-50/70 px-4 py-2 text-sm font-medium text-amber-800">
-            待审批 ({{ pendingUsers.length }})
-          </div>
-          <div v-if="pendingUsers.length === 0" class="border-b border-slate-100 px-4 py-5 text-sm text-slate-400">
-            暂无待审批用户
-          </div>
-          <div
-            v-for="user in pendingUsers"
-            :key="user.id"
-            class="grid grid-cols-[minmax(180px,1fr)_170px_220px] items-center gap-3 border-b border-slate-100 px-4 py-3 hover:bg-slate-50"
-            :class="{ 'bg-cyan-50/70': selectedUserId === user.id }"
-            @click="selectUser(user)"
-          >
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-slate-900">{{ user.username }}</span>
-                <span :class="['rounded-full px-2 py-0.5 text-xs ring-1', getStatusClass(user.status)]">
-                  {{ getStatusText(user.status) }}
-                </span>
-              </div>
-              <div class="mt-1 text-xs text-slate-500">手机: {{ user.phone || '-' }} · 注册: {{ formatDate(user.createdAt) }}</div>
-            </div>
-            <div class="text-sm text-slate-500">{{ roleSummary(user) }}</div>
-            <div class="flex justify-end gap-2" @click.stop>
-              <Button size="sm" :disabled="actionUserId === user.id" @click="handleApprove(user.id)">
-                <UserCheck class="mr-1 h-4 w-4" />通过
-              </Button>
-              <Button size="sm" variant="destructive" :disabled="actionUserId === user.id" @click="handleReject(user.id)">
-                <UserX class="mr-1 h-4 w-4" />拒绝
-              </Button>
-            </div>
-          </div>
-
-          <div class="border-b border-slate-200 bg-emerald-50/70 px-4 py-2 text-sm font-medium text-emerald-800">
-            已启用用户 ({{ approvedUsers.length }})
-          </div>
-          <div v-if="approvedUsers.length === 0" class="border-b border-slate-100 px-4 py-5 text-sm text-slate-400">
-            暂无已启用用户
-          </div>
-          <div
-            v-for="user in approvedUsers"
-            :key="user.id"
-            class="grid grid-cols-[minmax(180px,1fr)_170px_280px] items-center gap-3 border-b border-slate-100 px-4 py-3 hover:bg-slate-50"
-            :class="{ 'bg-cyan-50/70': selectedUserId === user.id }"
-            @click="selectUser(user)"
-          >
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-slate-900">{{ user.username }}</span>
-                <span :class="['rounded-full px-2 py-0.5 text-xs ring-1', getStatusClass(user.status)]">
-                  {{ getStatusText(user.status) }}
-                </span>
-              </div>
-              <div class="mt-1 text-xs text-slate-500">手机: {{ user.phone || '-' }} · 最后登录: {{ formatDate(user.lastLoginAt) }}</div>
-            </div>
-            <div class="truncate text-sm text-slate-500">{{ roleSummary(user) }}</div>
-            <div class="flex flex-wrap justify-end gap-2" @click.stop>
-              <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="selectUser(user)">
-                <ShieldCheck class="mr-1 h-4 w-4" />角色
-              </Button>
-              <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="handleResetPassword(user.id)">
-                <KeyRound class="mr-1 h-4 w-4" />重置
-              </Button>
-              <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="handleDisable(user.id)">
-                <Ban class="mr-1 h-4 w-4" />禁用
-              </Button>
-              <Button size="sm" variant="destructive" :disabled="actionUserId === user.id" @click="handleDelete(user.id)">
-                <Trash2 class="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          <div class="border-b border-slate-200 bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700">
-            已禁用/拒绝 ({{ disabledUsers.length }})
-          </div>
-          <div v-if="disabledUsers.length === 0" class="px-4 py-5 text-sm text-slate-400">暂无已禁用用户</div>
-          <div
-            v-for="user in disabledUsers"
-            :key="user.id"
-            class="grid grid-cols-[minmax(180px,1fr)_170px_280px] items-center gap-3 border-b border-slate-100 px-4 py-3 hover:bg-slate-50"
-            :class="{ 'bg-cyan-50/70': selectedUserId === user.id }"
-            @click="selectUser(user)"
-          >
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-slate-600">{{ user.username }}</span>
-                <span :class="['rounded-full px-2 py-0.5 text-xs ring-1', getStatusClass(user.status)]">
-                  {{ getStatusText(user.status) }}
-                </span>
-              </div>
-              <div class="mt-1 text-xs text-slate-500">手机: {{ user.phone || '-' }}</div>
-            </div>
-            <div class="truncate text-sm text-slate-500">{{ roleSummary(user) }}</div>
-            <div class="flex flex-wrap justify-end gap-2" @click.stop>
-              <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="selectUser(user)">
-                <ShieldCheck class="mr-1 h-4 w-4" />角色
-              </Button>
-              <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="handleResetPassword(user.id)">
-                <KeyRound class="mr-1 h-4 w-4" />重置
-              </Button>
-              <Button size="sm" variant="outline" :disabled="actionUserId === user.id" @click="handleEnable(user.id)">
-                <CheckCircle class="mr-1 h-4 w-4" />启用
-              </Button>
-              <Button size="sm" variant="destructive" :disabled="actionUserId === user.id" @click="handleDelete(user.id)">
-                <Trash2 class="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </template>
-      </div>
-
-      <aside class="rounded-md border border-slate-200 bg-white">
-        <div class="border-b border-slate-200 px-4 py-3">
-          <h3 class="font-semibold text-slate-900">页面内角色分配</h3>
-          <p class="mt-1 text-xs text-slate-500">选择左侧用户后维护角色，不再打开二级弹层。</p>
+    <div
+      v-if="isRoleDialogOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6"
+      @click.self="closeRoleDialog"
+    >
+      <div class="admin-form-dialog flex max-h-full flex-col overflow-hidden rounded-md bg-white shadow-xl">
+        <div class="border-b border-slate-200 px-5 py-4">
+          <h3 class="text-base font-semibold text-slate-950">分配角色</h3>
+          <p class="mt-1 text-xs text-slate-500">{{ selectedUser?.username || '-' }} · {{ selectedUser?.phone || '-' }}</p>
         </div>
-        <div v-if="!selectedUser" class="px-4 py-10 text-center text-sm text-slate-400">
-          请选择一个用户
-        </div>
-        <div v-else class="p-4">
-          <div class="rounded-md bg-slate-50 p-3">
-            <div class="text-sm font-medium text-slate-900">{{ selectedUser.username }}</div>
-            <div class="mt-1 text-xs text-slate-500">手机: {{ selectedUser.phone || '-' }}</div>
-            <div class="mt-2">
-              <span :class="['rounded-full px-2 py-0.5 text-xs ring-1', getStatusClass(selectedUser.status)]">
-                {{ getStatusText(selectedUser.status) }}
-              </span>
-            </div>
-          </div>
 
-          <div class="mt-4 space-y-2">
-            <div v-if="isRoleLoading" class="py-8 text-center text-sm text-slate-400">正在加载用户角色...</div>
-            <div v-else-if="roleOptions.length === 0" class="py-8 text-center text-sm text-slate-400">暂无可分配角色</div>
+        <div class="min-h-0 overflow-auto px-5 py-4">
+          <div v-if="isRoleLoading" class="py-8 text-center text-sm text-slate-400">正在加载角色...</div>
+          <div v-else-if="roleOptions.length === 0" class="py-8 text-center text-sm text-slate-400">暂无可分配角色</div>
+          <div v-else class="space-y-2">
             <label
               v-for="role in roleOptions"
-              v-else
               :key="role.id"
               class="flex cursor-pointer items-start gap-3 rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50"
             >
@@ -337,15 +431,25 @@ onMounted(() => {
               </span>
             </label>
           </div>
-
-          <div class="mt-4 flex justify-end">
-            <Button :disabled="isSavingRoles || isRoleLoading" @click="handleSaveRoles">
-              <ShieldCheck class="mr-2 h-4 w-4" />
-              保存角色
-            </Button>
-          </div>
+          <AdminPagination
+            class="mt-3"
+            :page-number="rolePageNumber"
+            :page-size="rolePageSize"
+            :total="roleTotal"
+            :loading="isRoleLoading"
+            @change-page="changeRolePage"
+            @change-page-size="changeRolePageSize"
+          />
         </div>
-      </aside>
+
+        <div class="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
+          <Button variant="outline" :disabled="isSavingRoles" @click="closeRoleDialog">取消</Button>
+          <Button :disabled="isSavingRoles || isRoleLoading" @click="handleSaveRoles">
+            <ShieldCheck class="mr-2 h-4 w-4" />
+            保存角色
+          </Button>
+        </div>
+      </div>
     </div>
   </section>
 </template>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Plus, RefreshCw, Save, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
+import { Pencil, Plus, RefreshCw, Save, Search, ShieldCheck, Trash2, X } from 'lucide-vue-next'
 import { Button, Input } from '@/shared/components/base'
+import AdminPagination from '../components/AdminPagination.vue'
 import { useAppStore } from '@/stores/app'
 import { useUserStore, type MenuPermission, type RoleOption } from '@/stores/user'
 
@@ -19,9 +20,13 @@ const appStore = useAppStore()
 const isLoading = ref(false)
 const isSaving = ref(false)
 const isDeleting = ref(false)
+const isRoleDialogOpen = ref(false)
 const searchKeyword = ref('')
 const currentRoleId = ref<string | null>(null)
 const selectedMenuIds = ref<string[]>([])
+const rolePageNumber = ref(1)
+const rolePageSize = ref(10)
+const roleTotal = ref(0)
 
 const roleForm = reactive({
   id: '',
@@ -33,18 +38,10 @@ const roleForm = reactive({
   isSys: 0,
 })
 
-const filteredRoles = computed(() => {
-  const keyword = searchKeyword.value.trim().toLowerCase()
-  if (!keyword) return userStore.roles
-
-  return userStore.roles.filter(role =>
-    role.name.toLowerCase().includes(keyword) ||
-    (role.code || '').toLowerCase().includes(keyword) ||
-    (role.description || '').toLowerCase().includes(keyword),
-  )
-})
-
+const filteredRoles = computed(() => userStore.roles)
+const currentRole = computed(() => userStore.roles.find(role => role.id === currentRoleId.value) ?? null)
 const flatMenuNodes = computed(() => flattenMenuTree(userStore.menuTree))
+const dialogTitle = computed(() => roleForm.id ? '编辑角色' : '新增角色')
 
 function collectMenuIds(menu: MenuPermission): string[] {
   return [
@@ -73,8 +70,6 @@ function flattenMenuTree(tree: MenuPermission[], level = 0): FlatMenuNode[] {
 }
 
 function resetForm() {
-  currentRoleId.value = null
-  selectedMenuIds.value = []
   Object.assign(roleForm, {
     id: '',
     code: '',
@@ -99,26 +94,61 @@ function applyRoleToForm(role: RoleOption) {
   })
 }
 
-async function loadAll() {
+async function loadAll(resetPage = false) {
+  if (resetPage) rolePageNumber.value = 1
   isLoading.value = true
   try {
     const [rolesResult, treeResult] = await Promise.all([
-      userStore.loadRoles({ includeDisabled: true }),
+      userStore.loadRoles({
+        includeDisabled: true,
+        pageNumber: rolePageNumber.value,
+        pageSize: rolePageSize.value,
+        keyword: searchKeyword.value,
+      }),
       userStore.loadMenuTree(),
     ])
     if (!rolesResult.success) appStore.showNotification({ type: 'error', message: rolesResult.message })
+    roleTotal.value = Number(rolesResult.page?.dataTotal ?? userStore.roles.length)
+    if (rolesResult.page?.pageNumber) rolePageNumber.value = Number(rolesResult.page.pageNumber)
+    if (rolesResult.page?.pageSize) rolePageSize.value = Number(rolesResult.page.pageSize)
     if (!treeResult.success) appStore.showNotification({ type: 'error', message: treeResult.message })
+    if (currentRoleId.value && !userStore.roles.some(role => role.id === currentRoleId.value)) {
+      currentRoleId.value = null
+      selectedMenuIds.value = []
+      resetForm()
+    }
   } finally {
     isLoading.value = false
   }
 }
 
-async function startCreateRole() {
-  resetForm()
-  await userStore.loadMenuTree()
+function changeRolePage(page: number) {
+  rolePageNumber.value = page
+  void loadAll()
 }
 
-async function editRole(role: RoleOption) {
+function changeRolePageSize(size: number) {
+  rolePageSize.value = size
+  void loadAll(true)
+}
+
+function openCreateRoleDialog() {
+  resetForm()
+  isRoleDialogOpen.value = true
+}
+
+function openEditRoleDialog() {
+  if (!currentRole.value) return
+  applyRoleToForm(currentRole.value)
+  isRoleDialogOpen.value = true
+}
+
+function closeRoleDialog() {
+  if (isSaving.value) return
+  isRoleDialogOpen.value = false
+}
+
+async function selectRole(role: RoleOption) {
   applyRoleToForm(role)
   isLoading.value = true
   try {
@@ -152,7 +182,7 @@ function toggleMenu(node: FlatMenuNode) {
   selectedMenuIds.value = Array.from(selected)
 }
 
-async function saveRoleAndMenus() {
+async function saveRoleInfo() {
   if (!roleForm.code.trim() || !roleForm.name.trim()) {
     appStore.showNotification({ type: 'warning', message: '请输入角色编码和名称' })
     return
@@ -169,31 +199,46 @@ async function saveRoleAndMenus() {
       sortNum: Number(roleForm.sortNum) || 999,
       isSys: Number(roleForm.isSys) || 0,
     })
-    if (!roleResult.success || !roleResult.roleId) {
-      appStore.showNotification({ type: 'error', message: roleResult.message })
-      return
-    }
+    appStore.showNotification({ type: roleResult.success ? 'success' : 'error', message: roleResult.message })
+    if (!roleResult.success || !roleResult.roleId) return
 
-    const menusResult = await userStore.saveRoleMenus(roleResult.roleId, selectedMenuIds.value)
-    appStore.showNotification({
-      type: menusResult.success ? 'success' : 'error',
-      message: menusResult.success ? '角色权限保存成功' : menusResult.message,
-    })
     currentRoleId.value = roleResult.roleId
     roleForm.id = roleResult.roleId
+    isRoleDialogOpen.value = false
+    await loadAll()
   } finally {
     isSaving.value = false
   }
 }
 
-async function deleteRole(role: RoleOption) {
-  if (!confirm(`确定要删除角色「${role.name}」吗？`)) return
+async function saveRolePermissions() {
+  if (!currentRoleId.value) {
+    appStore.showNotification({ type: 'warning', message: '请先选择角色' })
+    return
+  }
+
+  isSaving.value = true
+  try {
+    const result = await userStore.saveRoleMenus(currentRoleId.value, selectedMenuIds.value)
+    appStore.showNotification({ type: result.success ? 'success' : 'error', message: result.success ? '角色权限保存成功' : result.message })
+  } finally {
+    isSaving.value = false
+  }
+}
+
+async function deleteCurrentRole() {
+  if (!currentRole.value || !confirm(`确定要删除角色「${currentRole.value.name}」吗？`)) return
 
   isDeleting.value = true
   try {
-    const result = await userStore.deleteRole(role.id)
+    const result = await userStore.deleteRole(currentRole.value.id)
     appStore.showNotification({ type: result.success ? 'success' : 'error', message: result.message })
-    if (result.success && currentRoleId.value === role.id) resetForm()
+    if (result.success) {
+      currentRoleId.value = null
+      selectedMenuIds.value = []
+      resetForm()
+      await loadAll()
+    }
   } finally {
     isDeleting.value = false
   }
@@ -206,37 +251,43 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="p-6 space-y-5">
+  <section class="space-y-5 p-6">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h2 class="text-lg font-semibold text-slate-950">权限管理</h2>
-        <p class="mt-1 text-sm text-slate-500">角色资料与功能权限树集中维护，所有编辑动作都在页面内完成。</p>
+        <p class="mt-1 text-sm text-slate-500">左侧选择角色，右侧维护该角色的功能权限。</p>
       </div>
-      <Button variant="outline" :disabled="isLoading" @click="loadAll">
+      <Button variant="outline" :disabled="isLoading" @click="loadAll()">
         <RefreshCw class="mr-2 h-4 w-4" :class="{ 'animate-spin': isLoading }" />
         刷新
       </Button>
     </div>
 
-    <div class="grid min-h-[650px] grid-cols-[300px_minmax(0,1fr)] overflow-hidden rounded-md border border-slate-200 bg-white max-[1080px]:grid-cols-1">
-      <aside class="min-h-0 border-r border-slate-200 max-[1080px]:border-r-0 max-[1080px]:border-b">
+    <div class="admin-master-detail-layout admin-wide-master">
+      <aside class="flex min-h-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-white">
         <div class="space-y-3 border-b border-slate-200 p-3">
+          <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <ShieldCheck class="h-4 w-4 text-cyan-700" />
+            角色列表
+          </div>
           <div class="relative">
             <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input v-model="searchKeyword" class="pl-9" placeholder="搜索角色" />
+            <Input v-model="searchKeyword" class="pl-9" placeholder="搜索角色" @keyup.enter="loadAll(true)" />
           </div>
-          <Button class="w-full" :disabled="isLoading" @click="startCreateRole">
+          <Button class="w-full" :disabled="isLoading" @click="openCreateRoleDialog">
             <Plus class="mr-2 h-4 w-4" />
             新增角色
           </Button>
         </div>
-        <div class="max-h-[590px] overflow-auto divide-y divide-slate-100">
+
+        <div class="min-h-0 flex-1 overflow-auto divide-y divide-slate-100">
           <button
             v-for="role in filteredRoles"
             :key="role.id"
+            type="button"
             class="w-full px-4 py-3 text-left hover:bg-slate-50"
             :class="{ 'bg-cyan-50': currentRoleId === role.id }"
-            @click="editRole(role)"
+            @click="selectRole(role)"
           >
             <span class="flex items-center justify-between gap-2">
               <span class="truncate text-sm font-medium text-slate-800">{{ role.name }}</span>
@@ -254,61 +305,45 @@ onMounted(() => {
             暂无角色
           </div>
         </div>
+
+        <AdminPagination
+          :page-number="rolePageNumber"
+          :page-size="rolePageSize"
+          :total="roleTotal"
+          :loading="isLoading"
+          @change-page="changeRolePage"
+          @change-page-size="changeRolePageSize"
+        />
       </aside>
 
-      <section class="min-h-0 min-w-0">
-        <div class="grid grid-cols-2 gap-4 border-b border-slate-200 p-4 max-[760px]:grid-cols-1">
-          <label class="space-y-1.5">
-            <span class="text-xs text-slate-500">角色编码</span>
-            <Input v-model="roleForm.code" placeholder="例如 admin" />
-          </label>
-          <label class="space-y-1.5">
-            <span class="text-xs text-slate-500">角色名称</span>
-            <Input v-model="roleForm.name" placeholder="例如 系统管理员" />
-          </label>
-          <label class="space-y-1.5">
-            <span class="text-xs text-slate-500">状态</span>
-            <select v-model="roleForm.isValidCd" class="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm">
-              <option value="1">启用</option>
-              <option value="0">停用</option>
-            </select>
-          </label>
-          <label class="space-y-1.5">
-            <span class="text-xs text-slate-500">排序</span>
-            <Input v-model="roleForm.sortNum" type="number" />
-          </label>
-          <label class="col-span-2 space-y-1.5 max-[760px]:col-span-1">
-            <span class="text-xs text-slate-500">简介</span>
-            <Input v-model="roleForm.description" placeholder="角色说明" />
-          </label>
-        </div>
-
-        <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-          <div class="flex items-center gap-2 text-sm font-medium text-slate-700">
-            <ShieldCheck class="h-4 w-4" />
-            <span>功能权限</span>
-            <span class="text-xs text-slate-400">已选 {{ selectedMenuIds.length }}</span>
+      <section class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-white">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-900">功能权限</h3>
+            <p class="mt-1 text-xs text-slate-500">
+              <template v-if="currentRole">当前角色：{{ currentRole.name }}，已选 {{ selectedMenuIds.length }} 项。</template>
+              <template v-else>请选择左侧角色。</template>
+            </p>
           </div>
-          <div class="flex items-center gap-2">
-            <Button
-              v-if="currentRoleId"
-              variant="destructive"
-              size="sm"
-              :disabled="isDeleting || isSaving"
-              @click="deleteRole({ id: currentRoleId, code: roleForm.code, name: roleForm.name })"
-            >
+          <div class="flex flex-wrap justify-end gap-2">
+            <Button v-if="currentRole" variant="outline" :disabled="isLoading || isSaving" @click="openEditRoleDialog">
+              <Pencil class="mr-1 h-4 w-4" />
+              编辑资料
+            </Button>
+            <Button v-if="currentRole" variant="destructive" :disabled="isDeleting || isSaving" @click="deleteCurrentRole">
               <Trash2 class="mr-1 h-4 w-4" />
-              删除角色
+              删除
             </Button>
-            <Button :disabled="isSaving || isLoading" @click="saveRoleAndMenus">
+            <Button :disabled="!currentRole || isSaving || isLoading" @click="saveRolePermissions">
               <Save class="mr-1 h-4 w-4" />
-              保存
+              保存权限
             </Button>
           </div>
         </div>
 
-        <div class="max-h-[390px] overflow-auto p-4">
+        <div class="min-h-0 flex-1 overflow-auto p-4">
           <div v-if="isLoading" class="py-10 text-center text-sm text-slate-400">正在加载权限...</div>
+          <div v-else-if="!currentRole" class="py-12 text-center text-sm text-slate-400">请选择一个角色</div>
           <div v-else-if="flatMenuNodes.length === 0" class="py-10 text-center text-sm text-slate-400">暂无功能权限</div>
           <div v-else class="space-y-1">
             <label
@@ -331,6 +366,66 @@ onMounted(() => {
           </div>
         </div>
       </section>
+    </div>
+
+    <div
+      v-if="isRoleDialogOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6"
+      @click.self="closeRoleDialog"
+    >
+      <div class="admin-form-dialog flex max-h-full flex-col overflow-hidden rounded-md bg-white shadow-xl">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h3 class="text-base font-semibold text-slate-950">{{ dialogTitle }}</h3>
+            <p class="mt-1 text-xs text-slate-500">维护角色编码、名称和状态。</p>
+          </div>
+          <button
+            type="button"
+            class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            :disabled="isSaving"
+            title="关闭"
+            @click="closeRoleDialog"
+          >
+            <X class="h-4 w-4" />
+          </button>
+        </div>
+
+        <div class="min-h-0 overflow-auto px-5 py-4">
+          <div class="grid gap-3">
+            <label class="block space-y-1.5">
+              <span class="text-xs text-slate-500">角色编码</span>
+              <Input v-model="roleForm.code" placeholder="例如 admin" :disabled="isSaving" />
+            </label>
+            <label class="block space-y-1.5">
+              <span class="text-xs text-slate-500">角色名称</span>
+              <Input v-model="roleForm.name" placeholder="例如 系统管理员" :disabled="isSaving" />
+            </label>
+            <label class="block space-y-1.5">
+              <span class="text-xs text-slate-500">状态</span>
+              <select v-model="roleForm.isValidCd" class="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm" :disabled="isSaving">
+                <option value="1">启用</option>
+                <option value="0">停用</option>
+              </select>
+            </label>
+            <label class="block space-y-1.5">
+              <span class="text-xs text-slate-500">排序</span>
+              <Input v-model="roleForm.sortNum" type="number" :disabled="isSaving" />
+            </label>
+            <label class="block space-y-1.5">
+              <span class="text-xs text-slate-500">简介</span>
+              <Input v-model="roleForm.description" placeholder="角色说明" :disabled="isSaving" />
+            </label>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
+          <Button variant="outline" :disabled="isSaving" @click="closeRoleDialog">取消</Button>
+          <Button :disabled="isSaving" @click="saveRoleInfo">
+            <Save class="mr-2 h-4 w-4" />
+            保存
+          </Button>
+        </div>
+      </div>
     </div>
   </section>
 </template>

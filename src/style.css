@@ -733,6 +733,60 @@ textarea {
 
 /* ========== Dialog/Modal 样式修复 ========== */
 
+/* ========== 系统管理主从布局 ========== */
+.admin-master-detail-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+  height: calc(100vh - 164px);
+  min-height: 560px;
+}
+
+.admin-master-detail-layout > * {
+  height: 100%;
+  min-height: 0;
+}
+
+.admin-master-detail-layout.admin-wide-master {
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+
+.admin-master-detail-layout.admin-log-layout {
+  grid-template-columns: 420px minmax(0, 1fr);
+}
+
+.admin-form-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.admin-form-dialog.admin-form-dialog-wide {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.admin-table-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.admin-table-actions > * {
+  flex-shrink: 0;
+}
+
+@media (max-width: 960px) {
+  .admin-master-detail-layout,
+  .admin-master-detail-layout.admin-wide-master,
+  .admin-master-detail-layout.admin-log-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 560px;
+  }
+}
+
 /* 深色主题下 Dialog 背景 */
 .theme-dark .bg-white.rounded-xl,
 .theme-dark .bg-white.rounded-lg {

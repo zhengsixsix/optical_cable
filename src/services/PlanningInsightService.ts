@@ -37,6 +37,11 @@ export interface RouteRiskCostSummary {
   bands: RouteRiskCostBand[]
 }
 
+type RiskCostSegment = {
+  length?: number
+  riskLevel?: 'high' | 'medium' | 'low'
+}
+
 const RISK_LABELS: Record<'high' | 'medium' | 'low', string> = {
   high: '高风险',
   medium: '中风险',
@@ -119,7 +124,7 @@ const segmentsIntersect = (p1: Coord, q1: Coord, p2: Coord, q2: Coord): boolean 
 }
 
 export function buildRouteRiskCostSummary(
-  route: Pick<Route, 'segments'> | null | undefined,
+  route: { segments: RiskCostSegment[] } | null | undefined,
   armorMappings: ArmorMapping[] = [],
 ): RouteRiskCostSummary | null {
   if (!route || !route.segments || route.segments.length === 0) return null

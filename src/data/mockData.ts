@@ -8,7 +8,6 @@
 import type {
   ConnectorElement,
   LayerConfig,
-  Route,
   RPLRecord,
   SLDEquipment,
   SLDFiberSegment,
@@ -42,7 +41,6 @@ export interface SegmentConfigData {
 
 export const mockSegmentConfigs: SegmentConfigData[] = []
 export const mockTransmissionParams: Partial<SLDTransmissionParams> = {}
-export const mockRoutes: Route[] = []
 export const mockLayers: LayerConfig[] = []
 export const mockMonitorDevices = []
 export const mockAlarmHistory = []
@@ -52,7 +50,6 @@ export const mockMonitorPanelDevices = []
 export const mockMonitorPanelStats = {}
 export const mockRouteStats = {}
 export const mockReportData = {}
-export const mockParetoRoutes: Route[] = []
 
 export const repeaterModelOptions = [
   { value: 'EREP-C', label: 'EREP-C (C波段)' },

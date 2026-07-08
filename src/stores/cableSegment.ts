@@ -259,7 +259,7 @@ export const useCableSegmentStore = defineStore('cableSegment', () => {
   }
 
   function clearSegments() {
-    segments.value = segments.value.filter(s => s.isLocked)
+    segments.value = []
   }
 
   function toggleLock(segmentId: string) {

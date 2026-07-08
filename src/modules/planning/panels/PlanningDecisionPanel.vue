@@ -36,6 +36,12 @@ interface ConstructionRow {
   note: string
 }
 
+const RISK_SCORE: Record<RiskLevel, number> = {
+  low: 0.18,
+  medium: 0.38,
+  high: 0.65,
+}
+
 const routeStore = useRouteStore()
 const cableSegmentStore = useCableSegmentStore()
 const settingsStore = useSettingsStore()
@@ -68,6 +74,35 @@ const currentRouteSegments = computed(() => {
   if (!routeId) return []
   return cableSegmentStore.segments.filter(segment => !segment.routeId || segment.routeId === routeId)
 })
+
+const riskAnalysisSegments = computed<Array<{ length: number; riskLevel?: string }>>(() => {
+  if (currentRouteSegments.value.length > 0) return currentRouteSegments.value
+  return currentRoute.value?.segments || []
+})
+
+const getWeightedRiskScore = (segments: Array<{ length?: number; riskLevel?: string }>) => {
+  const totalLength = segments.reduce((sum, segment) => sum + (segment.length || 0), 0)
+  if (totalLength <= 0) return 0
+
+  const weighted = segments.reduce((sum, segment) => {
+    const level = (segment.riskLevel || 'low') as RiskLevel
+    return sum + (segment.length || 0) * (RISK_SCORE[level] || RISK_SCORE.low)
+  }, 0)
+  return weighted / totalLength
+}
+
+const getRouteRiskScore = (route: Route) => {
+  if (route.algorithmSummary) {
+    const segments = [
+      { length: route.algorithmSummary.highRiskLength, riskLevel: 'high' },
+      { length: route.algorithmSummary.mediumRiskLength, riskLevel: 'medium' },
+      { length: route.algorithmSummary.lowRiskLength, riskLevel: 'low' },
+    ]
+    const score = getWeightedRiskScore(segments)
+    if (score > 0) return score
+  }
+  return getWeightedRiskScore(route.segments)
+}
 
 const selectedSegment = computed(() => routeStore.selectedSegmentInfo)
 
@@ -103,7 +138,7 @@ const routeOverview = computed(() => {
   const route = currentRoute.value
   if (!route) return null
 
-  const totalLength = route.segments.reduce((sum, segment) => sum + (segment.length || 0), 0)
+  const totalLength = route.totalLength || riskAnalysisSegments.value.reduce((sum, segment) => sum + (segment.length || 0), 0)
   const maxDepth = route.segments.reduce((max, segment) => Math.max(max, segment.depth || 0), 0)
   const avgDepth = route.segments.length > 0
     ? route.segments.reduce((sum, segment) => sum + (segment.depth || 0), 0) / route.segments.length
@@ -115,8 +150,8 @@ const routeOverview = computed(() => {
     avgDepth,
     geometrySegments: route.segments.length,
     cableSegments: currentRouteSegments.value.length,
-    riskScore: route.risk?.overall ?? route.riskScore ?? 0,
-    totalCost: (route.cost?.total || route.totalCost || 0) / 1000,
+    riskScore: getWeightedRiskScore(riskAnalysisSegments.value),
+    algorithmTotalCost: (route.fmmPathMeta?.totalCost ?? route.algorithmSummary?.algorithmTotalCost ?? route.cost?.total ?? route.totalCost ?? 0) / 1000,
   }
 })
 
@@ -127,7 +162,7 @@ const summaryItems = computed(() => {
   const segmentCount = overview.cableSegments || overview.geometrySegments
   return [
     `总长 ${overview.totalLength.toFixed(1)} km`,
-    `风险 ${(overview.riskScore * 10).toFixed(1)} / 10`,
+    `风险 ${(overview.riskScore * 10).toFixed(2)} / 10`,
     `最大水深 ${Math.round(overview.maxDepth)} m`,
     `分段 ${segmentCount} 段`,
   ]
@@ -138,9 +173,10 @@ const riskBands = computed<RiskBandRow[]>(() => {
   if (!route) return []
 
   const lengths: Record<RiskLevel, number> = { high: 0, medium: 0, low: 0 }
-  const totalLength = route.segments.reduce((sum, segment) => sum + (segment.length || 0), 0)
+  const sourceSegments = riskAnalysisSegments.value
+  const totalLength = sourceSegments.reduce((sum, segment) => sum + (segment.length || 0), 0)
 
-  route.segments.forEach(segment => {
+  sourceSegments.forEach(segment => {
     const level = (segment.riskLevel || 'low') as RiskLevel
     lengths[level] += segment.length || 0
   })
@@ -157,14 +193,18 @@ const riskBands = computed<RiskBandRow[]>(() => {
   }))
 })
 
+const armorEstimatedCost = computed(() =>
+  riskBands.value.reduce((sum, band) => sum + band.cost, 0),
+)
+
 const compareRows = computed<CompareRow[]>(() =>
   routeStore.paretoRoutes.map((route, index) => ({
     id: route.id,
     label: route.name || `路径${index + 1}`,
     length: route.totalLength || route.segments.reduce((sum, segment) => sum + (segment.length || 0), 0),
-    cost: (route.cost?.total || route.totalCost || 0) / 1000,
-    risk: route.risk?.overall ?? route.riskScore ?? 0,
-    highRiskLength: route.segments
+    cost: (route.fmmPathMeta?.totalCost ?? route.algorithmSummary?.algorithmTotalCost ?? route.cost?.total ?? route.totalCost ?? 0) / 1000,
+    risk: getRouteRiskScore(route),
+    highRiskLength: route.algorithmSummary?.highRiskLength ?? route.segments
       .filter(segment => segment.riskLevel === 'high')
       .reduce((sum, segment) => sum + (segment.length || 0), 0),
     isCurrent: route.id === currentRoute.value?.id,
@@ -287,7 +327,10 @@ const formatCost = (value: number) => {
   if (value >= 1000) return `${(value / 10).toFixed(1)} 万元`
   return `${value.toFixed(0)} 千元`
 }
-const formatRisk = (value: number) => `${(value * 10).toFixed(1)} / 10`
+const formatRiskScore = (value?: number) => {
+  if (value == null || !Number.isFinite(value)) return '--'
+  return `${(Math.max(0, Math.min(1, value)) * 10).toFixed(2)} / 10`
+}
 
 const bandStyles = (level: RiskLevel) => {
   if (level === 'high') {
@@ -365,6 +408,29 @@ const selectRoute = (routeId: string) => {
 
       <div class="min-h-0 flex-1 overflow-auto bg-white px-2.5 py-2.5">
         <template v-if="activeTab === 'risk'">
+          <section class="mb-2.5 overflow-hidden rounded border border-slate-200">
+            <div class="grid grid-cols-3 gap-px bg-slate-200">
+              <div class="bg-white px-3 py-2">
+                <div class="text-[11px] text-slate-500">算法总成本</div>
+                <div class="mt-1 text-[13px] font-semibold text-slate-800">
+                  {{ routeOverview ? formatCost(routeOverview.algorithmTotalCost) : '--' }}
+                </div>
+              </div>
+              <div class="bg-white px-3 py-2">
+                <div class="text-[11px] text-slate-500">风险评分</div>
+                <div class="mt-1 text-[13px] font-semibold text-slate-800">
+                  {{ formatRiskScore(routeOverview?.riskScore) }}
+                </div>
+              </div>
+              <div class="bg-white px-3 py-2">
+                <div class="text-[11px] text-slate-500">铠装估算</div>
+                <div class="mt-1 text-[13px] font-semibold text-slate-800">
+                  {{ formatCost(armorEstimatedCost) }}
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section class="overflow-hidden rounded border border-slate-200">
             <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
               <span class="text-[13px] font-semibold text-slate-800">风险分布</span>
@@ -479,8 +545,8 @@ const selectRoute = (routeId: string) => {
                 </div>
                 <div class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-500">
                   <div>总长：<span class="font-semibold text-slate-700">{{ formatKm(row.length) }}</span></div>
-                  <div>成本：<span class="font-semibold text-slate-700">{{ formatCost(row.cost) }}</span></div>
-                  <div>风险：<span class="font-semibold text-slate-700">{{ formatRisk(row.risk) }}</span></div>
+                  <div>算法成本：<span class="font-semibold text-slate-700">{{ formatCost(row.cost) }}</span></div>
+                  <div>风险评分：<span class="font-semibold text-slate-700">{{ formatRiskScore(row.risk) }}</span></div>
                   <div>高风险：<span class="font-semibold text-slate-700">{{ formatKm(row.highRiskLength) }}</span></div>
                 </div>
               </button>
