@@ -1,10 +1,13 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { FilePlus, FolderOpen, Save, X, Loader2, RefreshCw, Trash2, HardDrive, ArrowRight, CheckCircle2, Clock3, PencilLine } from 'lucide-vue-next'
+import { FilePlus, FolderOpen, Save, X, Loader2, RefreshCw, Trash2, HardDrive, ArrowRight, CheckCircle2, Clock3, PencilLine, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
 import { Button, Select, Input } from '@/shared/components/base'
 import { platformProjectApi } from '@/services/platform/api'
-import type { Id, PlanPoint, PlanProject } from '@/services/platform/types'
+import type { PageModel } from '@/services/platform/client'
+import { getPlanProjectDraftStatus, isPublicFlag, normalizePlanProject } from '@/services/platform/normalizers'
+import type { NormalizedPlanPoint, NormalizedPlanProject } from '@/services/platform/normalizers'
+import type { Id, PlanProject } from '@/services/platform/types'
 
 interface Props {
   mode: 'new' | 'open' | 'save' | 'save-as'
@@ -19,8 +22,8 @@ interface LayerItem {
 }
 
 interface PlatformProjectDraft {
-  project: PlanProject
-  points: PlanPoint[]
+  project: NormalizedPlanProject
+  points: NormalizedPlanPoint[]
   status: 'draft' | 'stationed' | 'ready'
 }
 
@@ -50,6 +53,10 @@ const platformProjects = ref<PlatformProjectDraft[]>([])
 const selectedPlatformProjectId = ref<Id | null>(null)
 const platformSearchKeyword = ref('')
 const platformProjectLoading = ref(false)
+const platformProjectPage = ref<PageModel | null>(null)
+const platformProjectPageNumber = ref(1)
+const platformProjectPageSize = ref(10)
+const platformProjectTotal = ref(0)
 
 // 预加载图层设置
 const layerList = ref<LayerItem[]>([
@@ -81,6 +88,9 @@ watch(() => props.visible, (val) => {
     }
     fileName.value = ''
     selectedPlatformProjectId.value = null
+    platformProjectPage.value = null
+    platformProjectPageNumber.value = 1
+    platformProjectTotal.value = 0
     if (props.mode === 'open') {
       loadPlatformProjects()
     }
@@ -156,12 +166,26 @@ const selectedPlatformProject = computed(() =>
   platformProjects.value.find(item => item.project.id === selectedPlatformProjectId.value) ?? null,
 )
 
-function getProjectDraftStatus(points: PlanPoint[]): PlatformProjectDraft['status'] {
-  const validPoints = points.filter(point => typeof point.longitude === 'number' && typeof point.latitude === 'number')
-  if (validPoints.length === 0) return 'draft'
-  if (validPoints.length < 2) return 'stationed'
-  return 'ready'
-}
+const platformProjectPageTotal = computed(() => {
+  const responsePageTotal = Number(platformProjectPage.value?.pageTotal ?? 0)
+  if (Number.isFinite(responsePageTotal) && responsePageTotal > 0) return responsePageTotal
+  return Math.max(1, Math.ceil(platformProjectTotal.value / platformProjectPageSize.value))
+})
+
+const platformProjectPageStart = computed(() =>
+  platformProjectTotal.value === 0 ? 0 : (platformProjectPageNumber.value - 1) * platformProjectPageSize.value + 1,
+)
+
+const platformProjectPageEnd = computed(() =>
+  Math.min(platformProjectPageNumber.value * platformProjectPageSize.value, platformProjectTotal.value),
+)
+
+const platformProjectHasPreviousPage = computed(() => platformProjectPageNumber.value > 1)
+
+const platformProjectHasNextPage = computed(() => {
+  if (typeof platformProjectPage.value?.hasNextPage === 'boolean') return platformProjectPage.value.hasNextPage
+  return platformProjectPageNumber.value < platformProjectPageTotal.value
+})
 
 function getStatusLabel(status: PlatformProjectDraft['status']) {
   if (status === 'draft') return '项目草稿'
@@ -202,18 +226,23 @@ function openOrContinuePlatformProject(draft: PlatformProjectDraft) {
   emit('continue-platform', draft)
 }
 
-async function loadPlatformProjects() {
+async function loadPlatformProjects(resetPage = false) {
+  if (resetPage) platformProjectPageNumber.value = 1
   platformProjectLoading.value = true
   try {
     const response = await platformProjectApi.search({
-      pageNumber: 1,
-      pageSize: 100,
+      pageNumber: platformProjectPageNumber.value,
+      pageSize: platformProjectPageSize.value,
       name: platformSearchKeyword.value.trim() || undefined,
     })
     const projects = response.data ?? []
+    platformProjectPage.value = response.page ?? null
+    platformProjectTotal.value = Number(response.page?.dataTotal ?? projects.length)
+    if (response.page?.pageNumber) platformProjectPageNumber.value = Number(response.page.pageNumber)
     platformProjects.value = projects.map(project => {
-      const points = project.pointList ?? []
-      return { project, points, status: getProjectDraftStatus(points) }
+      const normalizedProject = normalizePlanProject(project)
+      const points = normalizedProject.pointList
+      return { project: normalizedProject, points, status: getPlanProjectDraftStatus(points) }
     })
     selectedPlatformProjectId.value = platformProjects.value[0]?.project.id ?? null
   } catch (error) {
@@ -223,16 +252,24 @@ async function loadPlatformProjects() {
   }
 }
 
+function changePlatformProjectPage(page: number) {
+  if (platformProjectLoading.value) return
+  const nextPage = Math.min(Math.max(1, page), platformProjectPageTotal.value)
+  if (nextPage === platformProjectPageNumber.value) return
+  platformProjectPageNumber.value = nextPage
+  void loadPlatformProjects()
+}
+
 async function deletePlatformProject(project: PlanProject) {
   if (!project.id) return
   isProcessing.value = true
   try {
     await platformProjectApi.remove(project.id)
-    platformProjects.value = platformProjects.value.filter(item => item.project.id !== project.id)
-    if (selectedPlatformProjectId.value === project.id) {
-      selectedPlatformProjectId.value = platformProjects.value[0]?.project.id ?? null
-    }
     appStore.showNotification({ type: 'success', message: `平台项目已删除：${getProjectName(project)}` })
+    if (platformProjects.value.length <= 1 && platformProjectPageNumber.value > 1) {
+      platformProjectPageNumber.value -= 1
+    }
+    await loadPlatformProjects()
   } catch (error) {
     appStore.showNotification({ type: 'error', message: `删除平台项目失败：${(error as Error).message}` })
   } finally {
@@ -387,65 +424,91 @@ const handleSubmit = async () => {
                   v-model="platformSearchKeyword"
                   placeholder="搜索平台项目名称"
                   class="flex-1"
-                  @keyup.enter="loadPlatformProjects"
+                  @keyup.enter="loadPlatformProjects(true)"
                 />
-                <Button variant="outline" :disabled="platformProjectLoading" @click="loadPlatformProjects">
+                <Button variant="outline" :disabled="platformProjectLoading" @click="loadPlatformProjects(true)">
                   <RefreshCw class="w-4 h-4 mr-1" :class="{ 'animate-spin': platformProjectLoading }" />
                   刷新
                 </Button>
               </div>
 
-              <div class="h-[360px] border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
-                <div v-if="platformProjectLoading" class="h-full flex items-center justify-center text-gray-500">
+              <div class="h-[360px] border border-gray-200 rounded-lg overflow-hidden bg-gray-50 flex flex-col">
+                <div v-if="platformProjectLoading" class="flex-1 flex items-center justify-center text-gray-500">
                   <Loader2 class="w-5 h-5 mr-2 animate-spin" />
                   正在加载平台项目
                 </div>
-                <div v-else-if="platformProjects.length === 0" class="h-full flex flex-col items-center justify-center text-gray-400">
+                <div v-else-if="platformProjects.length === 0" class="flex-1 flex flex-col items-center justify-center text-gray-400">
                   <FolderOpen class="w-10 h-10 mb-2 text-gray-300" />
                   <p>暂无平台项目</p>
                 </div>
-                <div v-else class="h-full overflow-auto divide-y divide-gray-100 bg-white">
-                  <div
-                    v-for="draft in platformProjects"
-                    :key="draft.project.id"
-                    role="button"
-                    tabindex="0"
-                    class="w-full text-left px-4 py-3.5 hover:bg-blue-50 transition-colors grid grid-cols-[24px_minmax(0,1fr)_116px_40px] items-center gap-3"
-                    :class="selectedPlatformProjectId === draft.project.id ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : ''"
-                    @click="selectedPlatformProjectId = draft.project.id ?? null"
-                    @keydown.enter="selectedPlatformProjectId = draft.project.id ?? null"
-                    @keydown.space.prevent="selectedPlatformProjectId = draft.project.id ?? null"
-                  >
-                    <component :is="getStatusIcon(draft.status)" class="w-5 h-5 text-blue-500" />
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2 min-w-0 pr-4">
-                        <span class="font-medium text-gray-900 truncate">{{ getProjectName(draft.project) }}</span>
-                        <span :class="['text-[10px] px-1.5 py-0.5 rounded border shrink-0', getStatusClass(draft.status)]">{{ getStatusLabel(draft.status) }}</span>
+                <template v-else>
+                  <div class="min-h-0 flex-1 overflow-auto divide-y divide-gray-100 bg-white">
+                    <div
+                      v-for="draft in platformProjects"
+                      :key="draft.project.id"
+                      role="button"
+                      tabindex="0"
+                      class="w-full text-left px-4 py-3.5 hover:bg-blue-50 transition-colors grid grid-cols-[24px_minmax(0,1fr)_116px_40px] items-center gap-3"
+                      :class="selectedPlatformProjectId === draft.project.id ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : ''"
+                      @click="selectedPlatformProjectId = draft.project.id ?? null"
+                      @keydown.enter="selectedPlatformProjectId = draft.project.id ?? null"
+                      @keydown.space.prevent="selectedPlatformProjectId = draft.project.id ?? null"
+                    >
+                      <component :is="getStatusIcon(draft.status)" class="w-5 h-5 text-blue-500" />
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 min-w-0 pr-4">
+                          <span class="font-medium text-gray-900 truncate">{{ getProjectName(draft.project) }}</span>
+                          <span :class="['text-[10px] px-1.5 py-0.5 rounded border shrink-0', getStatusClass(draft.status)]">{{ getStatusLabel(draft.status) }}</span>
+                        </div>
+                        <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 min-w-0 pr-4">
+                          <span class="shrink-0">{{ getPointProgressLabel(draft) }}</span>
+                          <span class="text-gray-300">/</span>
+                        <span class="shrink-0">{{ isPublicFlag(draft.project.isPublic) ? '公开' : '私有' }}</span>
+                        </div>
                       </div>
-                      <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 min-w-0 pr-4">
-                        <span class="shrink-0">{{ getPointProgressLabel(draft) }}</span>
-                        <span class="text-gray-300">/</span>
-                        <span class="shrink-0">{{ draft.project.isPublic === 1 ? '公开' : '私有' }}</span>
-                      </div>
+                      <Button
+                        size="sm"
+                        :variant="draft.status === 'ready' ? 'outline' : 'default'"
+                        class="w-full justify-center"
+                        @click.stop="openOrContinuePlatformProject(draft)"
+                      >
+                        {{ draft.status === 'ready' ? '打开' : '继续创建' }}
+                        <ArrowRight class="w-3.5 h-3.5 ml-1" />
+                      </Button>
+                      <button
+                        type="button"
+                        class="w-9 h-9 inline-flex items-center justify-center rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
+                        @click.stop="deletePlatformProject(draft.project)"
+                      >
+                        <Trash2 class="w-4 h-4" />
+                      </button>
                     </div>
-                    <Button
-                      size="sm"
-                      :variant="draft.status === 'ready' ? 'outline' : 'default'"
-                      class="w-full justify-center"
-                      @click.stop="openOrContinuePlatformProject(draft)"
-                    >
-                      {{ draft.status === 'ready' ? '打开' : '继续创建' }}
-                      <ArrowRight class="w-3.5 h-3.5 ml-1" />
-                    </Button>
-                    <button
-                      type="button"
-                      class="w-9 h-9 inline-flex items-center justify-center rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
-                      @click.stop="deletePlatformProject(draft.project)"
-                    >
-                      <Trash2 class="w-4 h-4" />
-                    </button>
                   </div>
-                </div>
+                  <div class="flex items-center justify-between gap-3 border-t border-gray-100 bg-white px-4 py-2 text-xs text-gray-500">
+                    <span>显示 {{ platformProjectPageStart }}-{{ platformProjectPageEnd }} / 共 {{ platformProjectTotal }} 个项目</span>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="inline-flex h-7 w-7 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        :disabled="!platformProjectHasPreviousPage"
+                        title="上一页"
+                        @click="changePlatformProjectPage(platformProjectPageNumber - 1)"
+                      >
+                        <ChevronLeft class="w-4 h-4" />
+                      </button>
+                      <span class="min-w-[78px] text-center text-gray-600">第 {{ platformProjectPageNumber }} / {{ platformProjectPageTotal }} 页</span>
+                      <button
+                        type="button"
+                        class="inline-flex h-7 w-7 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        :disabled="!platformProjectHasNextPage"
+                        title="下一页"
+                        @click="changePlatformProjectPage(platformProjectPageNumber + 1)"
+                      >
+                        <ChevronRight class="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </template>
               </div>
 
               <div class="flex items-center justify-between pt-1 border-t border-gray-100">

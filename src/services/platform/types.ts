@@ -88,7 +88,7 @@ export interface PlanProject {
   name?: string
   desc?: string
   remarks?: string
-  isPublic?: 0 | 1
+  isPublic?: 0 | 1 | string | null
   pointList?: PlanPoint[]
 }
 
@@ -97,12 +97,12 @@ export interface PlanPoint {
   projectId?: Id
   projectName?: string
   name?: string
-  longitude?: number
-  latitude?: number
-  sortNum?: number
+  longitude?: number | string | null
+  latitude?: number | string | null
+  sortNum?: number | string | null
   coordinate?: {
-    x?: number
-    y?: number
+    x?: number | string | null
+    y?: number | string | null
   }
 }
 

@@ -17,6 +17,7 @@ import { projectFileService, type OpenProjectResult, type ProjectMetadata, type 
 import { applyImportResultToStore } from '@/services/DeviceImportService'
 import { platformPointApi, platformProjectApi } from '@/services/platform/api'
 import { connectorElementToDeviceEntity } from '@/services/platform/deviceLibraryMapping'
+import { isPublicFlag, normalizePlanPoints, normalizePlanProject } from '@/services/platform/normalizers'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
 import type { Id } from '@/services/platform/types'
 import { generateUUID } from '@/types/useFile'
@@ -261,19 +262,19 @@ export function useProjectManager() {
         platformPointApi.search({ pageNumber: 1, pageSize: 100, projectId }),
       ])
 
+      const normalizedProject = normalizePlanProject(project)
       const metadata: ProjectMetadata = {
-        name: project.name || `平台项目 ${projectId}`,
+        name: normalizedProject.name || `平台项目 ${projectId}`,
         path: `platform://${projectId}`,
         type: 'use',
         uuid: `platform-${projectId}`,
         platformProjectId: projectId,
         lastModified: new Date().toISOString(),
         creatorId: userStore.currentUser?.id || '',
-        allowOtherUsers: project.isPublic === 1,
+        allowOtherUsers: isPublicFlag(normalizedProject.isPublic),
       }
 
-      const points = (pointResponse.data ?? [])
-        .filter(point => typeof point.longitude === 'number' && typeof point.latitude === 'number')
+      const points = normalizePlanPoints(pointResponse.data)
         .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
 
       const settingsStore = useSettingsStore()

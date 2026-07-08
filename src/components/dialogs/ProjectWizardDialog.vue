@@ -14,16 +14,17 @@ import {
   uploadProjectWizardLayer,
 } from '@/services/platform/projectWizardSync'
 import { platformPlanLayerApi } from '@/services/platform/api'
+import { isPublicFlag, normalizePlanPoints } from '@/services/platform/normalizers'
 import type { UppyUploadProgress } from '@/services/platform/uppyUpload'
-import type { Id, PlanLayer, PlanLayerTypeDic } from '@/services/platform/types'
+import type { Id, PlanLayer, PlanLayerTypeDic, PlanPoint } from '@/services/platform/types'
 
 interface Props {
   visible: boolean
   resumeProject?: {
     id: Id
     name?: string
-    isPublic?: 0 | 1
-    points?: Array<{ id?: Id; name?: string; longitude?: number; latitude?: number; sortNum?: number }>
+    isPublic?: 0 | 1 | string | null
+    points?: PlanPoint[]
   } | null
 }
 
@@ -402,10 +403,9 @@ function applyResumeProject() {
 
   wizardSyncState.projectId = resume.id
   projectName.value = resume.name || `平台项目 ${resume.id}`
-  allowOtherUsers.value = resume.isPublic === 1
+  allowOtherUsers.value = isPublicFlag(resume.isPublic)
 
-  const points = (resume.points ?? [])
-    .filter(point => typeof point.longitude === 'number' && typeof point.latitude === 'number')
+  const points = normalizePlanPoints(resume.points)
     .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
 
   if (points.length >= 3) {
@@ -512,9 +512,7 @@ const wizardSubtitle = computed(() => props.resumeProject
   ? `继续补全「${projectName.value || props.resumeProject.name || '未命名项目'}」的站点、范围和资源配置`
   : '按步骤创建平台项目草稿、配置站点范围，并进入规划')
 
-const resumeValidPointCount = computed(() => (props.resumeProject?.points ?? [])
-  .filter(point => typeof point.longitude === 'number' && typeof point.latitude === 'number')
-  .length)
+const resumeValidPointCount = computed(() => normalizePlanPoints(props.resumeProject?.points).length)
 
 function buildWizardSyncPayload() {
   return {
