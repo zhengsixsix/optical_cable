@@ -9,6 +9,12 @@ import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import { createBaseTileSource } from '@/utils/mapTileSource'
+import {
+  MAP_DISPLAY_PROJECTION,
+  fromMapCoordinate,
+  toMapCoordinate,
+  toMapCoordinates,
+} from '@/utils/mapProjection'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
@@ -124,8 +130,8 @@ const initMap = () => {
       markerLayer,
     ],
     view: new View({
-      projection: 'EPSG:4326',
-      center: [120, 30],
+      projection: MAP_DISPLAY_PROJECTION,
+      center: toMapCoordinate([120, 30]),
       zoom: 4,
     }),
   })
@@ -133,7 +139,8 @@ const initMap = () => {
   renderExistingMarkers()
 
   map.on('pointermove', (evt) => {
-    hoverCoord.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
+    const [lon, lat] = fromMapCoordinate(evt.coordinate as [number, number])
+    hoverCoord.value = { lon, lat }
     
     // 框选模式下，实时绘制矩形
     if (props.mode === 'range' && isDrawing.value && drawStartCoord.value) {
@@ -142,14 +149,14 @@ const initMap = () => {
   })
 
   map.on('click', (evt) => {
-    const coord = evt.coordinate
+    const coord = fromMapCoordinate(evt.coordinate as [number, number])
     
     if (props.mode === 'point') {
       // 选点模式
       selectedCoord.value = { lon: coord[0], lat: coord[1] }
       markerSource?.clear()
       markerSource?.addFeature(new Feature({
-        geometry: new Point(coord),
+        geometry: new Point(toMapCoordinate(coord)),
       }))
     } else {
       // 框选模式
@@ -186,7 +193,8 @@ const renderExistingMarkers = () => {
 
   if (props.existingMarkers.length > 0) {
     for (const m of props.existingMarkers) {
-      const feat = new Feature({ geometry: new Point([m.lon, m.lat]) })
+      const mapCoord = toMapCoordinate([m.lon, m.lat])
+      const feat = new Feature({ geometry: new Point(mapCoord) })
       const c = m.color || '#6366f1'
       feat.setStyle(new Style({
         image: new CircleStyle({
@@ -203,7 +211,7 @@ const renderExistingMarkers = () => {
         }),
       }))
       existingMarkerSource!.addFeature(feat)
-      coords.push([m.lon, m.lat])
+      coords.push(mapCoord)
     }
   }
 
@@ -220,13 +228,13 @@ const renderExistingMarkers = () => {
 const drawBox = (start: { lon: number; lat: number }, end: { lon: number; lat: number }) => {
   boxSource?.clear()
   const coordinates = [
-    [
+    toMapCoordinates([
       [start.lon, start.lat],
       [end.lon, start.lat],
       [end.lon, end.lat],
       [start.lon, end.lat],
       [start.lon, start.lat]
-    ]
+    ])
   ]
   boxSource?.addFeature(new Feature({
     geometry: new Polygon(coordinates)

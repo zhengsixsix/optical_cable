@@ -167,9 +167,15 @@ const handleProjectWizardClose = () => {
       <div class="min-w-[220px] max-w-[360px] rounded bg-white px-5 py-4 text-center shadow-2xl border border-slate-200">
         <div class="mx-auto mb-3 h-8 w-8 rounded-full border-2 border-blue-100 border-t-blue-600 animate-spin"></div>
         <div class="text-sm font-medium text-slate-800">{{ appStore.globalLoading.message }}</div>
-        <div v-if="appStore.globalLoading.detail" class="mt-1 text-xs text-slate-500 truncate">
-          {{ appStore.globalLoading.detail }}
-        </div>
+        <Transition name="global-loading-detail" mode="out-in">
+          <div
+            v-if="appStore.globalLoading.detail"
+            :key="appStore.globalLoading.detail"
+            class="mt-1 text-xs text-slate-500 truncate"
+          >
+            {{ appStore.globalLoading.detail }}
+          </div>
+        </Transition>
       </div>
     </div>
   </Transition>
@@ -241,5 +247,20 @@ const handleProjectWizardClose = () => {
 .global-loading-enter-from,
 .global-loading-leave-to {
   opacity: 0;
+}
+
+.global-loading-detail-enter-active,
+.global-loading-detail-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.global-loading-detail-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.global-loading-detail-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 </style>

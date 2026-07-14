@@ -6,7 +6,7 @@ export const useMapStore = defineStore('map', () => {
   // 状态
   const center = ref<Coordinate>([0, 20])
   const zoom = ref(1)
-  const projection = ref<Projection>('EPSG:4326')
+  const projection = ref<Projection>('EPSG:3857')
   const extent = ref<Extent | null>(null)
   const selectedExtent = ref<Extent | null>(null)
   const toolMode = ref<ToolMode>('pan')

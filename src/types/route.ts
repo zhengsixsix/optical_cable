@@ -124,6 +124,7 @@ export interface Route {
   updatedAt: Date
   // 后端原始 A* 路径坐标（用于精确放大器落位等）
   rawTrunkCoordinates?: [number, number][]
+  rawMatrixTraceCoordinates?: [number, number][]
   rawMatrixSamples?: RouteMatrixSamples
   fmmPathMeta?: RouteFmmMetadata
   algorithmSummary?: RouteAlgorithmSummary

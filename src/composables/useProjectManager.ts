@@ -13,13 +13,15 @@ import { useUserStore } from '@/stores/user'
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useRPLStore } from '@/stores/rpl'
+import { useCableSegmentStore } from '@/stores/cableSegment'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
-import { platformPointApi, platformProjectApi } from '@/services/platform/api'
+import { platformProjectApi } from '@/services/platform/api'
 import { connectorElementToDeviceEntity } from '@/services/platform/deviceLibraryMapping'
-import { isPublicFlag, normalizePlanPoints, normalizePlanProject } from '@/services/platform/normalizers'
+import { isPublicFlag, normalizePlanProject } from '@/services/platform/normalizers'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
-import type { Id } from '@/services/platform/types'
+import { queryRoutePlanningByProjectId } from '@/services/RoutePlanningApiService'
+import type { Id, PlanSystemResult } from '@/services/platform/types'
 import { generateUUID } from '@/types/useFile'
 import { useRouter } from 'vue-router'
 
@@ -116,6 +118,12 @@ export type SavePromptChoice = 'save' | 'discard' | 'cancel'
 interface OpenProjectState {
   pendingFile: File | null
   showSavePrompt: boolean
+}
+
+function parsePlatformSystemResult(result: PlanSystemResult | null): unknown | null {
+  const text = result?.['simulation_result.json']
+  if (!text?.trim()) return null
+  return JSON.parse(text)
 }
 
 export function useProjectManager() {
@@ -254,14 +262,25 @@ export function useProjectManager() {
   }
 
   async function openPlatformProject(projectId: Id): Promise<boolean> {
+    const loadingKey = `open-platform-project:${projectId}`
     isProcessing.value = true
+    appStore.showGlobalLoading(
+      '正在打开项目...',
+      '正在加载项目详情、路由规划和系统规划结果',
+      loadingKey,
+    )
 
     try {
-      const [project, pointResponse] = await Promise.all([
+      const [project, routeQuery, systemQuery] = await Promise.all([
         platformProjectApi.detail(projectId),
-        platformPointApi.search({ pageNumber: 1, pageSize: 100, projectId }),
+        queryRoutePlanningByProjectId(projectId)
+          .then(data => ({ data, error: null as Error | null }))
+          .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
+        platformProjectApi.querySystem(projectId)
+          .then(parsePlatformSystemResult)
+          .then(data => ({ data, error: null as Error | null }))
+          .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
       ])
-
       const normalizedProject = normalizePlanProject(project)
       const metadata: ProjectMetadata = {
         name: normalizedProject.name || `平台项目 ${projectId}`,
@@ -274,7 +293,7 @@ export function useProjectManager() {
         allowOtherUsers: isPublicFlag(normalizedProject.isPublic),
       }
 
-      const points = normalizePlanPoints(pointResponse.data)
+      const points = [...normalizedProject.pointList]
         .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
 
       const settingsStore = useSettingsStore()
@@ -294,12 +313,26 @@ export function useProjectManager() {
         })),
         isConfigured: points.length > 0,
       })
+      settingsStore.updatePlatformSystemResult(systemQuery.data)
+
+      const routeStore = useRouteStore()
+      const cableSegmentStore = useCableSegmentStore()
+      routeStore.setAlgorithmRouteResult(routeQuery.data)
+      const firstRoute = routeQuery.data?.routes[0] ?? null
+      if (firstRoute) {
+        routeStore.selectRoute(firstRoute.id)
+        cableSegmentStore.setCurrentRoute(firstRoute.id)
+        cableSegmentStore.setSegments(routeQuery.data?.segmentsByRouteId[firstRoute.id] ?? [])
+      } else {
+        cableSegmentStore.clearSegments()
+      }
 
       appStore.setCurrentProject(metadata)
       projectFileService.setCurrentProject(metadata)
       projectDataStore.setupDataLinks()
       projectDataStore.markDataLoaded()
       appStore.setProjectPhase('route-planning')
+      appStore.showGlobalLoading('正在恢复项目...', metadata.name, loadingKey)
       await router.push('/planning')
 
       appStore.showNotification({
@@ -307,6 +340,18 @@ export function useProjectManager() {
         message: `平台项目已打开：${metadata.name}`,
       })
       appStore.addLog('INFO', `打开平台项目: ${metadata.name} (#${projectId})`)
+      if (routeQuery.error) {
+        appStore.addLog('WARN', `查询路由规划结果失败，已显示项目站点: ${routeQuery.error.message}`)
+      } else if (routeQuery.data) {
+        appStore.addLog('INFO', `已恢复路由规划结果: ${routeQuery.data.routes.length} 条路径方案`)
+      } else {
+        appStore.addLog('INFO', `项目暂无路由规划结果，已显示 ${points.length} 个站点`)
+      }
+      if (systemQuery.error) {
+        appStore.addLog('WARN', `查询系统规划结果失败: ${systemQuery.error.message}`)
+      } else if (systemQuery.data) {
+        appStore.addLog('INFO', '已恢复系统规划结果')
+      }
       return true
     } catch (error) {
       appStore.showNotification({
@@ -317,6 +362,7 @@ export function useProjectManager() {
       return false
     } finally {
       isProcessing.value = false
+      appStore.hideGlobalLoading(loadingKey)
     }
   }
 

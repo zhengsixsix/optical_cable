@@ -1,7 +1,8 @@
 ﻿import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, shallowRef, computed } from 'vue'
 import type { Route, RoutePoint, RouteSegment } from '@/types'
 import { useSettingsStore } from './settings'
+import type { AlgorithmRouteBundleResult } from '@/services/RouteDataConverter'
 
 // 点对点模式
 export interface PlanningParams {
@@ -28,6 +29,7 @@ export const useRouteStore = defineStore('route', () => {
   const currentRouteId = ref<string | null>(null)
   const selectedSegmentId = ref<string | null>(null)
   const paretoRoutes = ref<Route[]>([])
+  const algorithmRouteResult = shallowRef<AlgorithmRouteBundleResult | null>(null)
   const selectedRouteIds = ref<string[]>([])  // 多选路径ID数组
   
   // 悬停线段状态
@@ -236,6 +238,7 @@ export const useRouteStore = defineStore('route', () => {
     currentRouteId.value = null
     selectedRouteIds.value = []
     selectedSegmentId.value = null
+    algorithmRouteResult.value = null
   }
 
   /**
@@ -252,6 +255,11 @@ export const useRouteStore = defineStore('route', () => {
       selectedRouteIds.value = []
     }
     selectedSegmentId.value = null
+  }
+
+  function setAlgorithmRouteResult(result: AlgorithmRouteBundleResult | null) {
+    algorithmRouteResult.value = result
+    setParetoRoutes(result?.routes ?? [])
   }
 
   /**
@@ -707,6 +715,7 @@ export const useRouteStore = defineStore('route', () => {
     currentRouteId,
     selectedSegmentId,
     paretoRoutes,
+    algorithmRouteResult,
     selectedRouteIds,
     hoveredSegmentId,
     hoveredSegmentInfo,
@@ -725,6 +734,7 @@ export const useRouteStore = defineStore('route', () => {
     isRouteSelected,
     clearParetoRoutes,
     setParetoRoutes,
+    setAlgorithmRouteResult,
     setParetoRoutesFromApi,
     updateRoutePoint,
     addRoutePoint,

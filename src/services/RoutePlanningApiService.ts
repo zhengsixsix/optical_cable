@@ -9,6 +9,7 @@ import {
   type RoutePlanningResultFileMap,
 } from '@/services/RoutePlanningResultService'
 import type { RoutePlanningRectRange } from '@/utils/routePlanningViewport'
+import type { Id } from '@/services/platform/types'
 
 const ROUTE_RESULT_FILES = [
   'FMM_path_result.json',
@@ -29,6 +30,17 @@ function toResultFileText(value: unknown): string | undefined {
   if (typeof value === 'string') return value
   if (value === null || value === undefined) return undefined
   return JSON.stringify(value)
+}
+
+function hasResultValue(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0
+  if (Array.isArray(value)) return value.length > 0
+  return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0)
+}
+
+export function hasBackendRoutePlanningData(data: unknown): boolean {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+  return ROUTE_RESULT_FILES.some(filename => hasResultValue((data as Record<string, unknown>)[filename]))
 }
 
 function isClose(actual: unknown, expected: number, tolerance = 1e-6): boolean {
@@ -99,4 +111,14 @@ export async function fetchRoutePlanningByProjectId(
 ): Promise<AlgorithmRouteBundleResult> {
   const data = await platformProjectApi.routePlan(projectId, rectRange)
   return convertBackendRoutePlanningData(data, `routePlan:${projectId}`)
+}
+
+export async function queryRoutePlanningByProjectId(
+  projectId: Id,
+): Promise<AlgorithmRouteBundleResult | null> {
+  const data = await platformProjectApi.queryRoute(projectId)
+  if (!hasBackendRoutePlanningData(data)) return null
+
+  const result = convertBackendRoutePlanningData(data, `backend-queryRoute:${projectId}`)
+  return result.routes.length > 0 ? result : null
 }

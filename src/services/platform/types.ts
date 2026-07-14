@@ -92,6 +92,19 @@ export interface PlanProject {
   pointList?: PlanPoint[]
 }
 
+export interface PlanRouteResult {
+  pointList?: PlanPoint[] | null
+  'cost.txt'?: string | null
+  'risk.txt'?: string | null
+  'FMM_path_result.json'?: unknown[] | string | null
+  'segment_result_base_FixSpacing.json'?: Record<string, unknown> | string | null
+  'segment_result_base_Risk.json'?: Record<string, unknown> | string | null
+}
+
+export interface PlanSystemResult {
+  'simulation_result.json'?: string | null
+}
+
 export interface PlanPoint {
   id?: Id
   projectId?: Id

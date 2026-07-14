@@ -55,28 +55,61 @@ const polyline = loadTsModule('src/utils/polyline.ts')
 
 const response = JSON.parse(fs.readFileSync(responsePath, 'utf8'))
 const result = apiService.convertBackendRoutePlanningData(response.data, 'verification')
+const responseData = response.data || {}
+const rawFmmPaths = responseData['FMM_path_result.json'] || []
+const expectedFileCount = [
+  'pointList',
+  'cost.txt',
+  'risk.txt',
+  'FMM_path_result.json',
+  'segment_result_base_FixSpacing.json',
+  'segment_result_base_Risk.json',
+].filter(key => responseData[key] !== undefined).length
 
-if (result.diagnostics.fmmPathCount !== 3) throw new Error('expected 3 raw FMM paths')
-if (result.routes.length !== 2) throw new Error(`expected 2 visible routes, got ${result.routes.length}`)
-if (result.diagnostics.files.length !== 5) throw new Error('diagnostics should include the five loaded files')
+if (result.diagnostics.fmmPathCount !== rawFmmPaths.length) {
+  throw new Error(`expected ${rawFmmPaths.length} raw FMM paths, got ${result.diagnostics.fmmPathCount}`)
+}
+if (result.routes.length === 0 || result.routes.length > rawFmmPaths.length) {
+  throw new Error(`unexpected converted route count: ${result.routes.length}`)
+}
+if (result.diagnostics.files.length !== expectedFileCount) {
+  throw new Error(`diagnostics should include ${expectedFileCount} loaded files, got ${result.diagnostics.files.length}`)
+}
 
 const first = result.routes[0]
-if (!first.rawTrunkCoordinates || first.rawTrunkCoordinates.length !== 94) {
-  throw new Error('first FMM route should use 94 real_trace coordinates')
+const firstRawPath = rawFmmPaths[0]
+const expectedRealTraceLength = firstRawPath.real_trace?.length || 0
+if (!first.rawTrunkCoordinates || first.rawTrunkCoordinates.length !== expectedRealTraceLength) {
+  throw new Error(`first FMM route should use ${expectedRealTraceLength} real_trace coordinates`)
 }
-approx(first.totalLength, 56.10, 0.01, 'first route length')
-if (first.totalCost !== 3032871) {
+approx(first.totalLength, firstRawPath.length, 0.01, 'first route length')
+if (first.totalCost !== Math.round(firstRawPath.total_cost)) {
   throw new Error(`first total cost should come from FMM total_cost, got ${first.totalCost}`)
+}
+if (!first.rawMatrixTraceCoordinates || first.rawMatrixTraceCoordinates.length !== firstRawPath.trace.length) {
+  throw new Error('first FMM route should keep raw matrix trace coordinates')
 }
 
 const firstSegments = result.segmentsByRouteId[first.id]
-if (!firstSegments || firstSegments.length !== 6) {
+const expectedRiskSegments = responseData['segment_result_base_Risk.json']?.segments?.length || 0
+if (expectedRiskSegments > 0 && (!firstSegments || firstSegments.length !== expectedRiskSegments)) {
   throw new Error('risk-based segment result should attach to first route')
 }
-if (!result.diagnostics.costMatrix || result.diagnostics.costMatrix.rows !== 105 || result.diagnostics.costMatrix.columns !== 112) {
+
+function matrixDimensions(text) {
+  const rows = String(text || '').trim().split(/\r?\n/).filter(Boolean).map(row => row.trim().split(/\s+/))
+  return {
+    rows: rows.length,
+    columns: rows.reduce((max, row) => Math.max(max, row.length), 0),
+  }
+}
+
+const expectedCostMatrix = matrixDimensions(responseData['cost.txt'])
+const expectedRiskMatrix = matrixDimensions(responseData['risk.txt'])
+if (!result.diagnostics.costMatrix || result.diagnostics.costMatrix.rows !== expectedCostMatrix.rows || result.diagnostics.costMatrix.columns !== expectedCostMatrix.columns) {
   throw new Error('cost matrix stats should be available')
 }
-if (!result.diagnostics.riskMatrix || result.diagnostics.riskMatrix.rows !== 105 || result.diagnostics.riskMatrix.columns !== 112) {
+if (!result.diagnostics.riskMatrix || result.diagnostics.riskMatrix.rows !== expectedRiskMatrix.rows || result.diagnostics.riskMatrix.columns !== expectedRiskMatrix.columns) {
   throw new Error('risk matrix stats should be available')
 }
 

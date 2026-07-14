@@ -56,6 +56,17 @@ export interface MatrixPathSample {
   end: number
 }
 
+export interface MatrixGeoReference {
+  west: number
+  south: number
+  east: number
+  north: number
+  rows: number
+  columns: number
+  rowStepDegrees: number
+  columnStepDegrees: number
+}
+
 export interface AlgorithmRouteBundle {
   fmmPaths?: RawPathResult[]
   fixSpacing?: RawSegmentResult
@@ -89,6 +100,7 @@ export interface AlgorithmRouteBundleResult {
     cost?: number[][]
     risk?: number[][]
   }
+  matrixGeoReference?: MatrixGeoReference
   diagnostics: {
     source: string
     version: string
@@ -312,6 +324,84 @@ function getMatrixStats(matrix?: number[][]): MatrixStats | undefined {
     min,
     max,
     avg: sum / count,
+  }
+}
+
+function getMatrixDimensions(matrix?: number[][]): { rows: number; columns: number } | null {
+  if (!matrix || matrix.length === 0) return null
+  const columns = Math.max(...matrix.map(row => row.length), 0)
+  if (columns === 0) return null
+  return { rows: matrix.length, columns }
+}
+
+function fitLinear(samples: Array<[number, number]>): { intercept: number; slope: number } | null {
+  if (samples.length < 2) return null
+
+  const n = samples.length
+  const sumX = samples.reduce((sum, [x]) => sum + x, 0)
+  const sumY = samples.reduce((sum, [, y]) => sum + y, 0)
+  const sumXX = samples.reduce((sum, [x]) => sum + x * x, 0)
+  const sumXY = samples.reduce((sum, [x, y]) => sum + x * y, 0)
+  const denominator = n * sumXX - sumX * sumX
+  if (Math.abs(denominator) < 1e-12) return null
+
+  const slope = (n * sumXY - sumX * sumY) / denominator
+  const intercept = (sumY - slope * sumX) / n
+  return { intercept, slope }
+}
+
+function inferMatrixGeoReference(
+  paths: RawPathResult[] = [],
+  matrix?: number[][],
+): MatrixGeoReference | undefined {
+  const dimensions = getMatrixDimensions(matrix)
+  if (!dimensions || !matrix) return undefined
+  const matrixForIndex = matrix
+
+  const rowLatSamples: Array<[number, number]> = []
+  const colLonSamples: Array<[number, number]> = []
+  const tracePointsForIndex: Array<[number, number]> = []
+
+  paths.forEach(path => {
+    const tracePoints = getPathTracePoints(path)
+    const realCoordinates = extractRealTraceCoordinates(path)
+    const count = Math.min(tracePoints.length, realCoordinates.length)
+    for (let index = 0; index < count; index++) {
+      const [row, col] = tracePoints[index]
+      const [lon, lat] = realCoordinates[index]
+      rowLatSamples.push([row, lat])
+      colLonSamples.push([col, lon])
+      tracePointsForIndex.push([row, col])
+    }
+  })
+
+  if (rowLatSamples.length < 2 || colLonSamples.length < 2) return undefined
+
+  const rowFit = fitLinear(rowLatSamples)
+  const colFit = fitLinear(colLonSamples)
+  if (!rowFit || !colFit) return undefined
+
+  const oneBased = shouldUseOneBasedMatrixIndex(tracePointsForIndex, matrixForIndex)
+  const firstIndex = oneBased ? 1 : 0
+  const rowStartEdge = firstIndex - 0.5
+  const rowEndEdge = firstIndex + dimensions.rows - 0.5
+  const colStartEdge = firstIndex - 0.5
+  const colEndEdge = firstIndex + dimensions.columns - 0.5
+
+  const westEdge = colFit.intercept + colFit.slope * colStartEdge
+  const eastEdge = colFit.intercept + colFit.slope * colEndEdge
+  const firstRowEdgeLat = rowFit.intercept + rowFit.slope * rowStartEdge
+  const lastRowEdgeLat = rowFit.intercept + rowFit.slope * rowEndEdge
+
+  return {
+    west: Math.min(westEdge, eastEdge),
+    south: Math.min(firstRowEdgeLat, lastRowEdgeLat),
+    east: Math.max(westEdge, eastEdge),
+    north: Math.max(firstRowEdgeLat, lastRowEdgeLat),
+    rows: dimensions.rows,
+    columns: dimensions.columns,
+    rowStepDegrees: rowFit.slope,
+    columnStepDegrees: colFit.slope,
   }
 }
 
@@ -544,6 +634,7 @@ export function convertSegmentResultToRoute(
   const rawTrunkCoordinates = fmmCoordinates.length >= 2
     ? fmmCoordinates
     : points.map(point => point.coordinates)
+  const rawMatrixTraceCoordinates = getPathTracePoints(pathResult)
 
   return {
     id: routeId,
@@ -564,6 +655,7 @@ export function convertSegmentResultToRoute(
     createdAt: now,
     updatedAt: now,
     rawTrunkCoordinates,
+    rawMatrixTraceCoordinates,
     rawMatrixSamples: {
       cost: sampleMatrixAlongPath(matrices.cost, pathResult),
       risk: sampleMatrixAlongPath(matrices.risk, pathResult),
@@ -639,6 +731,7 @@ export function convertPathResultToRoute(
     createdAt: now,
     updatedAt: now,
     rawTrunkCoordinates: routeCoordinates,
+    rawMatrixTraceCoordinates: getPathTracePoints(pathResult),
     rawMatrixSamples: {
       cost: sampleMatrixAlongPath(matrices.cost, pathResult),
       risk: sampleMatrixAlongPath(matrices.risk, pathResult),
@@ -864,6 +957,7 @@ export function convertAlgorithmRouteBundle(bundle: AlgorithmRouteBundle): Algor
   }, {})
 
   const duplicateFmmPathCount = duplicateGroups.reduce((sum, group) => sum + group.length - 1, 0)
+  const matrixGeoReference = inferMatrixGeoReference(bundle.fmmPaths || [], riskMatrix || costMatrix)
 
   return {
     routes,
@@ -873,6 +967,7 @@ export function convertAlgorithmRouteBundle(bundle: AlgorithmRouteBundle): Algor
       cost: costMatrix,
       risk: riskMatrix,
     },
+    matrixGeoReference,
     diagnostics: {
       source: bundle.source || 'route_planning_results.zip',
       version: 'algorithm-preview-2026-07-03',

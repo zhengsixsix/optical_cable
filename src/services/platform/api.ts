@@ -25,6 +25,8 @@ import type {
   PlanPoint,
   PlanPointSaveListPayload,
   PlanProject,
+  PlanRouteResult,
+  PlanSystemResult,
   PagedSearch,
   Id,
 } from './types'
@@ -127,6 +129,8 @@ export const platformProjectApi = {
     platformClient.postWithPage<PlanProject[]>('/plan/project/search', payload),
   save: (payload: PlanProject) => platformClient.post<Id>('/plan/project/save', payload),
   detail: (id: Id) => platformClient.post<PlanProject>('/plan/project/detail', { id }),
+  queryRoute: (id: Id) => platformClient.post<PlanRouteResult | null>('/plan/project/query/route', { id }),
+  querySystem: (id: Id) => platformClient.post<PlanSystemResult | null>('/plan/project/query/system', { id }),
   remove: (id: Id) => platformClient.post<boolean>('/plan/project/remove', { id }),
   routePlan: (id: string | number, rectRange?: RoutePlanningRectRange) => {
     const payload: { id: string; rectRange?: RoutePlanningRectRange } = { id: String(id) }
