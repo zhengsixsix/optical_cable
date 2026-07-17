@@ -4,9 +4,14 @@ import { ref, reactive, computed, watch } from 'vue'
 import {useRouter, useRoute} from 'vue-router'
 import { useProjectManager } from '@/composables'
 import { useSettingsStore } from '@/stores/settings'
+import { useRouteStore } from '@/stores/route'
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { platformPlanConfigApi, platformPointApi } from '@/services/platform/api'
+import type { PlanPoint } from '@/services/platform/types'
 import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
+import type { MapRange } from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
 import {
   MapPin,
@@ -39,6 +44,8 @@ import {
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
+const routeStore = useRouteStore()
+const cableSegmentStore = useCableSegmentStore()
 const projectManager = useProjectManager()
 const router = useRouter()
 const route = useRoute()
@@ -328,6 +335,7 @@ initGisConfig()
 
 // 点对点模式地图选点
 const handleMapSelectPoint = (type: 'start' | 'end') => {
+  if (!window.confirm('修改起点终点将会清空之前的规划结果数据')) return
   if (type === 'start') {
     mapSelectType.value = 'start'
     mapSelectTitle.value = '选择起点坐标'
@@ -540,7 +548,7 @@ const handleMapSelect = (type: string) => {
 }
 
 // 地图选点确认
-const handleMapSelectConfirm = (coord: string) => {
+const handleMapSelectConfirm = async (coord: string) => {
   // 多点规划模式下，如果有当前选中的多点ID
   if (currentWaypointId.value) {
     const wp = waypoints.value.find(w => w.id === currentWaypointId.value)
@@ -567,27 +575,86 @@ const handleMapSelectConfirm = (coord: string) => {
   const parts = coord.split(',')
   const lon = parts[0]?.trim() || ''
   const lat = parts[1]?.trim() || ''
+  const previousStart = { lon: startPointConfig.lon, lat: startPointConfig.lat }
+  const previousEnd = { lon: endPointConfig.lon, lat: endPointConfig.lat }
+  let pointChanged = false
 
   if (mapSelectType.value === 'start') {
     // 点对点模式的起点
     startPointConfig.lon = lon
     startPointConfig.lat = lat
     routeConfig.startCoord = coord
+    pointChanged = true
   } else if (mapSelectType.value === 'end') {
     // 点对点模式的终点
     endPointConfig.lon = lon
     endPointConfig.lat = lat
     routeConfig.endCoord = coord
+    pointChanged = true
   } else if (mapSelectType.value === 'range') {
     // 范围框选 - 假设返回 "nwLon,nwLat,seLon,seLat" 格式
     const rangeParts = coord.split(',')
     if (rangeParts.length >= 4) {
+      const previousRange = {
+        nwLon: gisConfig.nwLon,
+        nwLat: gisConfig.nwLat,
+        seLon: gisConfig.seLon,
+        seLat: gisConfig.seLat,
+      }
       gisConfig.nwLon = rangeParts[0]?.trim() || ''
       gisConfig.nwLat = rangeParts[1]?.trim() || ''
       gisConfig.seLon = rangeParts[2]?.trim() || ''
       gisConfig.seLat = rangeParts[3]?.trim() || ''
+      const projectId = appStore.projectState.currentProject?.platformProjectId
+      if (projectId != null) {
+        const loadingKey = `save-planning-scope:${projectId}`
+        appStore.showGlobalLoading('正在保存规划范围', '正在提交框选范围', loadingKey)
+        try {
+          await platformPlanConfigApi.saveScope({
+            projectId,
+            topLeftLng: Number(gisConfig.nwLon),
+            topLeftLat: Number(gisConfig.nwLat),
+            bottomRightLng: Number(gisConfig.seLon),
+            bottomRightLat: Number(gisConfig.seLat),
+          })
+          settingsStore.updateRoutePlanningConfig({
+            rangeMode: 'manual',
+            planningRange: {
+              northwest: { lon: Number(gisConfig.nwLon), lat: Number(gisConfig.nwLat) },
+              southeast: { lon: Number(gisConfig.seLon), lat: Number(gisConfig.seLat) },
+            },
+          })
+          settingsStore.saveToLocalStorage()
+          appStore.showNotification({type: 'success', message: '规划范围已保存'})
+        } catch (error) {
+          gisConfig.nwLon = previousRange.nwLon
+          gisConfig.nwLat = previousRange.nwLat
+          gisConfig.seLon = previousRange.seLon
+          gisConfig.seLat = previousRange.seLat
+          appStore.showNotification({
+            type: 'error',
+            message: `规划范围保存失败：${error instanceof Error ? error.message : String(error)}`,
+          })
+          return
+        } finally {
+          appStore.hideGlobalLoading(loadingKey)
+        }
+      }
     }
     routeConfig.planningRange = coord
+  }
+
+  if (pointChanged) {
+    const saved = await persistSelectedStartAndEnd()
+    if (!saved) {
+      startPointConfig.lon = previousStart.lon
+      startPointConfig.lat = previousStart.lat
+      endPointConfig.lon = previousEnd.lon
+      endPointConfig.lat = previousEnd.lat
+      routeConfig.startCoord = `${previousStart.lon},${previousStart.lat}`
+      routeConfig.endCoord = `${previousEnd.lon},${previousEnd.lat}`
+      return
+    }
   }
   appStore.showNotification({type: 'success', message: `坐标已选择: ${coord}`})
 }
@@ -691,9 +758,12 @@ const createExistingMarker = (name: string, coord: string, color: string): MapMa
 const existingMapMarkers = computed<MapMarker[]>(() => {
   const markers: MapMarker[] = []
 
-  for (const waypoint of waypoints.value) {
-    const marker = createExistingMarker(waypoint.name || '登陆站', waypoint.coord, '#2563eb')
-    if (marker) markers.push(marker)
+  if (routeConfig.mode === 'multi-point') {
+    for (const waypoint of waypoints.value) {
+      if (showMapSelectDialog.value && waypoint.id === currentWaypointId.value) continue
+      const marker = createExistingMarker(waypoint.name || '登陆站', waypoint.coord, '#2563eb')
+      if (marker) markers.push(marker)
+    }
   }
 
   for (const bu of buConfigs.value) {
@@ -701,20 +771,139 @@ const existingMapMarkers = computed<MapMarker[]>(() => {
     if (marker) markers.push(marker)
   }
 
-  const startMarker = createExistingMarker(startPointConfig.name || '起点', `${startPointConfig.lon},${startPointConfig.lat}`, '#2563eb')
-  if (startMarker) markers.push(startMarker)
+  if (!(showMapSelectDialog.value && mapSelectType.value === 'start')) {
+    const startMarker = createExistingMarker(startPointConfig.name || '起点', `${startPointConfig.lon},${startPointConfig.lat}`, '#2563eb')
+    if (startMarker) markers.push(startMarker)
+  }
 
-  const endMarker = createExistingMarker(endPointConfig.name || '终点', `${endPointConfig.lon},${endPointConfig.lat}`, '#16a34a')
-  if (endMarker) markers.push(endMarker)
+  if (!(showMapSelectDialog.value && mapSelectType.value === 'end')) {
+    const endMarker = createExistingMarker(endPointConfig.name || '终点', `${endPointConfig.lon},${endPointConfig.lat}`, '#16a34a')
+    if (endMarker) markers.push(endMarker)
+  }
 
   return markers
+})
+
+const requiredRangeMarkers = computed<MapMarker[]>(() => {
+  if (routeConfig.mode === 'multi-point') {
+    return waypoints.value.flatMap(waypoint => {
+      const marker = createExistingMarker(waypoint.name || '登陆站', waypoint.coord, '#2563eb')
+      return marker ? [marker] : []
+    })
+  }
+
+  const markers = [
+    createExistingMarker(startPointConfig.name || '起点', `${startPointConfig.lon},${startPointConfig.lat}`, '#2563eb'),
+    createExistingMarker(endPointConfig.name || '终点', `${endPointConfig.lon},${endPointConfig.lat}`, '#16a34a'),
+  ]
+  return markers.filter((marker): marker is MapMarker => marker !== null)
+})
+
+const initialPlanningRange = computed<MapRange | null>(() => {
+  if (gisConfig.rangeMode !== 'manual') return null
+  const range: MapRange = {
+    nwLon: Number(gisConfig.nwLon),
+    nwLat: Number(gisConfig.nwLat),
+    seLon: Number(gisConfig.seLon),
+    seLat: Number(gisConfig.seLat),
+  }
+  return [range.nwLon, range.nwLat, range.seLon, range.seLat].every(Number.isFinite)
+    && range.nwLon < range.seLon
+    && range.seLat < range.nwLat
+    ? range
+    : null
 })
 
 const closeSettingsWithoutSaving = () => {
   router.push('/planning')
 }
 
-const handleSave = async () => {
+const sameStation = (
+  current: { name?: string; lon?: number; lat?: number },
+  next: { name?: string; lon?: number; lat?: number },
+) => current.name === next.name
+  && Number(current.lon) === Number(next.lon)
+  && Number(current.lat) === Number(next.lat)
+
+const planningRangeContainsStations = (
+  range: { northwest: { lon: number; lat: number }; southeast: { lon: number; lat: number } },
+  stations: Array<{ lon: number; lat: number }>,
+) => stations.every(station => station.lon >= range.northwest.lon
+  && station.lon <= range.southeast.lon
+  && station.lat <= range.northwest.lat
+  && station.lat >= range.southeast.lat)
+
+const savePlatformStations = async (
+  projectId: string | number,
+  stations: Array<{ id: string; name: string; lon: number; lat: number }>,
+) => {
+  const response = await platformPointApi.search({ projectId, pageNumber: 1, pageSize: 1000 })
+  const existingPoints = [...(response.data ?? [])]
+    .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
+  const pointList: PlanPoint[] = stations.map((station, index) => {
+    const existing = existingPoints.find(point => String(point.id ?? '') === station.id)
+      ?? existingPoints[index]
+    return {
+      id: existing?.id,
+      projectId,
+      name: station.name,
+      longitude: station.lon,
+      latitude: station.lat,
+      sortNum: index + 1,
+    }
+  })
+  await platformPointApi.saveList({ projectId, pointList })
+}
+
+const persistSelectedStartAndEnd = async (): Promise<boolean> => {
+  const projectId = appStore.projectState.currentProject?.platformProjectId
+  const startPoint = {
+    name: startPointConfig.name || '起点',
+    lon: Number(startPointConfig.lon),
+    lat: Number(startPointConfig.lat),
+    depth: startPointConfig.isUnderwater ? 100 : 0,
+  }
+  const endPoint = {
+    name: endPointConfig.name || '终点',
+    lon: Number(endPointConfig.lon),
+    lat: Number(endPointConfig.lat),
+    depth: endPointConfig.isUnderwater ? 100 : 0,
+  }
+  const stations = [
+    { id: 'start', ...startPoint },
+    { id: 'end', ...endPoint },
+  ]
+
+  if (projectId != null) {
+    const loadingKey = `save-route-points:${projectId}`
+    appStore.showGlobalLoading('正在保存起点终点', '正在查询站点ID并提交修改', loadingKey)
+    try {
+      await savePlatformStations(projectId, stations)
+    } catch (error) {
+      appStore.showNotification({
+        type: 'error',
+        message: `站点保存失败：${error instanceof Error ? error.message : String(error)}`,
+      })
+      return false
+    } finally {
+      appStore.hideGlobalLoading(loadingKey)
+    }
+  }
+
+  settingsStore.updateRoutePlanningConfig({
+    startPoint,
+    endPoint,
+    waypoints: stations,
+    isConfigured: stations.every(station => Number.isFinite(station.lon) && Number.isFinite(station.lat)),
+  })
+  settingsStore.saveToLocalStorage()
+  routeStore.clearParetoRoutes()
+  cableSegmentStore.clearSegments()
+  appStore.showNotification({type: 'success', message: '起点终点已保存，原规划结果已清空'})
+  return true
+}
+
+const handleSave = async (): Promise<boolean> => {
   // 点对点模式：从 startPointConfig 和 endPointConfig 获取
   const startPoint = {
     name: startPointConfig.name || '',
@@ -803,6 +992,43 @@ const handleSave = async () => {
     ].filter(wp => wp.lon !== 0 || wp.lat !== 0)
   }
 
+  if (gisConfig.rangeMode === 'manual') {
+    const rangeIsValid = planningRange.northwest.lon < planningRange.southeast.lon
+      && planningRange.northwest.lat > planningRange.southeast.lat
+    if (!rangeIsValid) {
+      appStore.showNotification({type: 'warning', message: '规划范围坐标无效，请重新框选'})
+      return false
+    }
+    if (!planningRangeContainsStations(planningRange, finalWaypoints)) {
+      appStore.showNotification({type: 'warning', message: '规划范围必须包含所有站点，请重新框选'})
+      return false
+    }
+  }
+
+  const originalConfig = settingsStore.routePlanningConfig
+  const stationChanged = routeConfig.mode !== originalConfig.mode
+    || finalWaypoints.length !== (originalConfig.waypoints?.length ?? 0)
+    || (routeConfig.mode === 'point-to-point'
+      ? !sameStation(originalConfig.startPoint, startPoint) || !sameStation(originalConfig.endPoint, endPoint)
+      : finalWaypoints.some((station, index) => !sameStation(originalConfig.waypoints?.[index] ?? {}, station)))
+
+  if (stationChanged && !window.confirm('修改起点终点将会清空之前的规划结果数据')) {
+    return false
+  }
+
+  const platformProjectId = appStore.projectState.currentProject?.platformProjectId
+  if (platformProjectId != null && stationChanged) {
+    try {
+      await savePlatformStations(platformProjectId, finalWaypoints)
+    } catch (error) {
+      appStore.showNotification({
+        type: 'error',
+        message: `站点保存失败：${error instanceof Error ? error.message : String(error)}`,
+      })
+      return false
+    }
+  }
+
   // 路径规划配置保存
   settingsStore.updateRoutePlanningConfig({
     mode: routeConfig.mode as 'point-to-point' | 'multi-point',
@@ -853,7 +1079,12 @@ const handleSave = async () => {
   })
 
   settingsStore.saveToLocalStorage()
+  if (stationChanged) {
+    routeStore.clearParetoRoutes()
+    cableSegmentStore.clearSegments()
+  }
   appStore.showNotification({type: 'success', message: '设置已保存'})
+  return true
 }
 
 const handleReset = () => {
@@ -882,12 +1113,11 @@ const handleReset = () => {
 }
 
 // 开始路由规划 - 保存配置并跳转到规划页面
-const handleStartRoutePlanning = () => {
-  // 先保存配置
-  void handleSave()
-  // 跳转到规划页面
-  router.push('/planning')
-  appStore.showNotification({type: 'info', message: '已跳转到路由规划页面'})
+const handleStartRoutePlanning = async () => {
+  if (await handleSave()) {
+    await router.push('/planning')
+    appStore.showNotification({type: 'info', message: '已跳转到路由规划页面'})
+  }
 }
 
 // 根据风险等级获取铠装类型映射
@@ -1926,6 +2156,8 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
     :title="mapSelectTitle" 
     :mode="mapSelectType === 'range' ? 'range' : 'point'"
     :existing-markers="existingMapMarkers"
+    :required-markers="requiredRangeMarkers"
+    :initial-range="initialPlanningRange"
     @confirm="handleMapSelectConfirm"
   />
 

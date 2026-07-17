@@ -8,7 +8,11 @@ import type {
   PlatformRole,
   PlatformUser,
   PlanConfigGridResolution,
+  PlanConfigChannel,
+  PlanConfigOptimization,
   PlanConfigRedundancy,
+  PlanConfigSnapshot,
+  PlanConfigSpanKm,
   PlanConfigScope,
   PlanDeviceConfig,
   PlanDeviceConfigSave,
@@ -156,10 +160,49 @@ export const platformPointApi = {
 
 export const platformPlanConfigApi = {
   saveScope: (payload: PlanConfigScope) => platformClient.post<boolean>('/plan/planConfig/saveScope', payload),
+  searchScope: (id: Id) => platformClient.post<Omit<PlanConfigScope, 'projectId'> | null>('/plan/planConfig/searchScope', { id }),
   saveGridResolution: (payload: PlanConfigGridResolution) =>
     platformClient.post<boolean>('/plan/planConfig/saveGridResolution', payload),
+  searchGridResolution: (id: Id) => platformClient.post<number | null>('/plan/planConfig/searchGridResolution', { id }),
   saveEnableRedundancy: (payload: PlanConfigRedundancy) =>
     platformClient.post<boolean>('/plan/planConfig/saveEnableRedundancy', payload),
+  searchEnableRedundancy: (id: Id) => platformClient.post<boolean | null>('/plan/planConfig/searchEnableRedundancy', { id }),
+  saveChannelConfig: (payload: PlanConfigChannel) =>
+    platformClient.post<boolean>('/plan/planConfig/saveChannelConfig', payload),
+  searchChannelConfig: (id: Id) =>
+    platformClient.post<Omit<PlanConfigChannel, 'projectId'> | null>('/plan/planConfig/searchChannelConfig', { id }),
+  saveOptimization: (payload: PlanConfigOptimization) =>
+    platformClient.post<boolean>('/plan/planConfig/saveOptimization', payload),
+  searchOptimization: (id: Id) =>
+    platformClient.post<Omit<PlanConfigOptimization, 'projectId'> | null>('/plan/planConfig/searchOptimization', { id }),
+  saveSpanKm: (payload: PlanConfigSpanKm) => platformClient.post<boolean>('/plan/planConfig/saveSpanKm', payload),
+  searchSpanKm: (id: Id) => platformClient.post<number | null>('/plan/planConfig/searchSpanKm', { id }),
+  async searchAll(id: Id): Promise<PlanConfigSnapshot> {
+    const results = await Promise.allSettled([
+      this.searchScope(id),
+      this.searchGridResolution(id),
+      this.searchEnableRedundancy(id),
+      this.searchChannelConfig(id),
+      this.searchOptimization(id),
+      this.searchSpanKm(id),
+    ])
+    const valueAt = <T>(index: number): T | null => {
+      const result = results[index]
+      return result?.status === 'fulfilled' ? result.value as T : null
+    }
+    const errors = results.flatMap((result, index) => result.status === 'rejected'
+      ? [`${['searchScope', 'searchGridResolution', 'searchEnableRedundancy', 'searchChannelConfig', 'searchOptimization', 'searchSpanKm'][index]}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+      : [])
+    return {
+      scope: valueAt<PlanConfigSnapshot['scope']>(0),
+      gridResolution: valueAt<number>(1),
+      enableRedundancy: valueAt<boolean>(2),
+      channelConfig: valueAt<PlanConfigSnapshot['channelConfig']>(3),
+      optimization: valueAt<PlanConfigSnapshot['optimization']>(4),
+      spanKm: valueAt<number>(5),
+      errors,
+    }
+  },
 }
 
 export const platformPlanLayerApi = {
@@ -244,8 +287,17 @@ export const platformEndpointDefinitions: EndpointDefinition[] = [
   { key: 'pointDetail', group: '2.2 Point Management', name: 'Point detail', path: '/plan/point/detail', defaultPayload: { id: null } },
   { key: 'pointSearch', group: '2.2 Point Management', name: 'Search points', path: '/plan/point/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, projectId: null, name: '' } },
   { key: 'planConfigSaveScope', group: '2.3 Plan Config Management', name: 'Save planning scope', path: '/plan/planConfig/saveScope', defaultPayload: { projectId: null, topLeftLng: null, topLeftLat: null, bottomRightLng: null, bottomRightLat: null } },
+  { key: 'planConfigSearchScope', group: '2.3 Plan Config Management', name: 'Search planning scope', path: '/plan/planConfig/searchScope', defaultPayload: { id: null } },
   { key: 'planConfigSaveGridResolution', group: '2.3 Plan Config Management', name: 'Save grid resolution', path: '/plan/planConfig/saveGridResolution', defaultPayload: { projectId: null, gridResolution: null } },
+  { key: 'planConfigSearchGridResolution', group: '2.3 Plan Config Management', name: 'Search grid resolution', path: '/plan/planConfig/searchGridResolution', defaultPayload: { id: null } },
   { key: 'planConfigSaveEnableRedundancy', group: '2.3 Plan Config Management', name: 'Save redundancy flag', path: '/plan/planConfig/saveEnableRedundancy', defaultPayload: { projectId: null, enableRedundancy: null } },
+  { key: 'planConfigSearchEnableRedundancy', group: '2.3 Plan Config Management', name: 'Search redundancy flag', path: '/plan/planConfig/searchEnableRedundancy', defaultPayload: { id: null } },
+  { key: 'planConfigSaveChannelConfig', group: '2.3 Plan Config Management', name: 'Save channel config', path: '/plan/planConfig/saveChannelConfig', defaultPayload: { projectId: null, channelCount: 96, baudRateGbaud: 64, modulationFormat: '16QAM', launchPowerDbm: [], channelFrequenciesThz: [], initialAseNoiseDbm: -90, initialNliNoiseDbm: -90, centerFrequencyThz: 193.1, channelSpacingGhz: 50 } },
+  { key: 'planConfigSearchChannelConfig', group: '2.3 Plan Config Management', name: 'Search channel config', path: '/plan/planConfig/searchChannelConfig', defaultPayload: { id: null } },
+  { key: 'planConfigSaveOptimization', group: '2.3 Plan Config Management', name: 'Save optimization config', path: '/plan/planConfig/saveOptimization', defaultPayload: { projectId: null, targetGsnrDb: 14, targetOsnrDb: 16 } },
+  { key: 'planConfigSearchOptimization', group: '2.3 Plan Config Management', name: 'Search optimization config', path: '/plan/planConfig/searchOptimization', defaultPayload: { id: null } },
+  { key: 'planConfigSaveSpanKm', group: '2.3 Plan Config Management', name: 'Save span length', path: '/plan/planConfig/saveSpanKm', defaultPayload: { projectId: null, spanKm: 70 } },
+  { key: 'planConfigSearchSpanKm', group: '2.3 Plan Config Management', name: 'Search span length', path: '/plan/planConfig/searchSpanKm', defaultPayload: { id: null } },
 ]
 
 platformEndpointDefinitions.push(

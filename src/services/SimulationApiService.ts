@@ -3,6 +3,7 @@
  * 线上 Swagger 当前未提供仿真计算接口；调用方应保持空态。
  */
 import type { SpanScanResult, SpanScanPoint } from '@/types/simulation'
+import type { PlanConfigChannel, PlanConfigOptimization } from '@/services/platform/types'
 
 // 导出类型供外部使用
 export type { SpanScanResult }
@@ -12,7 +13,6 @@ export type { SpanScanResult }
 /** Span 策略 */
 export interface SpanStrategyPayload {
   mode: 'fixed' | 'scan'
-  fixedLength?: number
   scanRange?: {
     min: number
     max: number
@@ -51,20 +51,11 @@ export interface SimulationRequest {
     equalizerUnitPrice?: number
     amplifierName?: string
   }
-  wdmParams: {
-    channelCount: number
-    centerFreq: number
-    channelSpacing: number
-    baudRate: number
-    modulation: string
-    launchPower: number
-    launchPowerMode?: string
-    launchPowerVector?: number[]
-  }
+  channelConfig: Omit<PlanConfigChannel, 'projectId'>
+  optimizationConfig: Omit<PlanConfigOptimization, 'projectId'>
+  spanKm: number
   spanStrategy: SpanStrategyPayload
   constraints: {
-    targetOSNR: number
-    targetGSNR: number
     maxSpanLength: number
     minSpanLength: number
     osnrMargin: number

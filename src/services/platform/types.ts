@@ -125,21 +125,59 @@ export interface PlanPointSaveListPayload {
 }
 
 export interface PlanConfigScope {
-  projectId?: Id | null
+  projectId: Id
   topLeftLng?: number | null
   topLeftLat?: number | null
   bottomRightLng?: number | null
   bottomRightLat?: number | null
 }
 
+export interface PlanConfigSearchProject {
+  id: Id
+}
+
 export interface PlanConfigGridResolution {
-  projectId?: Id | null
+  projectId: Id
   gridResolution?: number | null
 }
 
 export interface PlanConfigRedundancy {
-  projectId?: Id | null
+  projectId: Id
   enableRedundancy?: boolean | null
+}
+
+export interface PlanConfigChannel {
+  projectId: Id
+  channelCount?: number | null
+  baudRateGbaud?: number | null
+  modulationFormat?: string | null
+  launchPowerDbm?: number[] | null
+  channelFrequenciesThz?: number[] | null
+  initialAseNoiseDbm?: number | null
+  initialNliNoiseDbm?: number | null
+  centerFrequencyThz?: number | null
+  channelSpacingGhz?: number | null
+}
+
+export interface PlanConfigOptimization {
+  projectId: Id
+  targetGsnrDb?: number | null
+  targetOsnrDb?: number | null
+}
+
+export interface PlanConfigSpanKm {
+  projectId: Id
+  spanKm?: number | null
+}
+
+export interface PlanConfigSnapshot {
+  scope: Omit<PlanConfigScope, 'projectId'> | null
+  gridResolution: number | null
+  enableRedundancy: boolean | null
+  channelConfig: Omit<PlanConfigChannel, 'projectId'> | null
+  optimization: Omit<PlanConfigOptimization, 'projectId'> | null
+  spanKm: number | null
+  errors: string[]
 }
 
 export type PlanLayerTypeDic =

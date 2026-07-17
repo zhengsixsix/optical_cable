@@ -1,5 +1,12 @@
 import { platformDeviceEntityApi, platformPlanConfigApi, platformPointApi, platformProjectApi } from './api'
-import type { Id, PlanDeviceEntity, PlanPoint, PlanProject } from './types'
+import type {
+  Id,
+  PlanConfigChannel,
+  PlanConfigOptimization,
+  PlanDeviceEntity,
+  PlanPoint,
+  PlanProject,
+} from './types'
 
 export interface SyncPlanningProjectInput {
   id?: Id
@@ -17,6 +24,9 @@ export interface SyncPlanningProjectInput {
     } | null
     gridResolution?: number | null
     enableRedundancy?: boolean | null
+    channelConfig?: Omit<PlanConfigChannel, 'projectId'> | null
+    optimization?: Omit<PlanConfigOptimization, 'projectId'> | null
+    spanKm?: number | null
   }
 }
 
@@ -62,6 +72,27 @@ export async function syncPlanningProjectToPlatform(input: SyncPlanningProjectIn
     await platformPlanConfigApi.saveEnableRedundancy({
       projectId,
       enableRedundancy: input.planConfig.enableRedundancy,
+    })
+  }
+
+  if (input.planConfig?.channelConfig) {
+    await platformPlanConfigApi.saveChannelConfig({
+      projectId,
+      ...input.planConfig.channelConfig,
+    })
+  }
+
+  if (input.planConfig?.optimization) {
+    await platformPlanConfigApi.saveOptimization({
+      projectId,
+      ...input.planConfig.optimization,
+    })
+  }
+
+  if (input.planConfig?.spanKm != null) {
+    await platformPlanConfigApi.saveSpanKm({
+      projectId,
+      spanKm: input.planConfig.spanKm,
     })
   }
 

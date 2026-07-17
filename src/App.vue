@@ -2,7 +2,7 @@
 import { useAppStore } from '@/stores/app'
 import { useLayerStore } from '@/stores/layer'
 import { useUserStore } from '@/stores/user'
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { initAppearance, useProjectManager, type CreateProjectParams } from '@/composables'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ImportExportDialog from '@/components/dialogs/ImportExportDialog.vue'
@@ -33,6 +33,35 @@ const layerStore = useLayerStore()
 const appStore = useAppStore()
 const userStore = useUserStore()
 const projectManager = useProjectManager()
+const globalLoadingElapsedSeconds = ref(0)
+let globalLoadingElapsedTimer: number | null = null
+
+const globalLoadingElapsedText = computed(() => {
+  const minutes = Math.floor(globalLoadingElapsedSeconds.value / 60)
+  const seconds = globalLoadingElapsedSeconds.value % 60
+  return `已用时 ${minutes}分${String(seconds).padStart(2, '0')}秒`
+})
+
+watch(
+  () => appStore.globalLoading.visible,
+  (visible) => {
+    if (globalLoadingElapsedTimer !== null) {
+      window.clearInterval(globalLoadingElapsedTimer)
+      globalLoadingElapsedTimer = null
+    }
+    globalLoadingElapsedSeconds.value = 0
+    if (visible) {
+      globalLoadingElapsedTimer = window.setInterval(() => {
+        globalLoadingElapsedSeconds.value += 1
+      }, 1000)
+    }
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  if (globalLoadingElapsedTimer !== null) window.clearInterval(globalLoadingElapsedTimer)
+})
 const resumePlatformProject = ref<PlatformProjectDraft | null>(null)
 
 onMounted(async () => {
@@ -176,6 +205,9 @@ const handleProjectWizardClose = () => {
             {{ appStore.globalLoading.detail }}
           </div>
         </Transition>
+        <div class="mt-2 text-xs font-medium tabular-nums text-blue-600">
+          {{ globalLoadingElapsedText }}
+        </div>
       </div>
     </div>
   </Transition>

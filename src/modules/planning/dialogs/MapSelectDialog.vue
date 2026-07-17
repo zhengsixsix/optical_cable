@@ -30,17 +30,28 @@ export interface MapMarker {
   color?: string  // 默认 '#6366f1'
 }
 
+export interface MapRange {
+  nwLon: number
+  nwLat: number
+  seLon: number
+  seLat: number
+}
+
 interface Props {
   visible: boolean
   title?: string
   mode?: 'point' | 'range'  // 选点模式 或 框选范围模式
   existingMarkers?: MapMarker[]  // 已有标记点
+  requiredMarkers?: MapMarker[]  // 框选范围必须包含的站点
+  initialRange?: MapRange | null  // 已保存的手动框选范围
 }
 
 const props = withDefaults(defineProps<Props>(), {
   title: '地图选点',
   mode: 'point',
-  existingMarkers: () => []
+  existingMarkers: () => [],
+  requiredMarkers: () => [],
+  initialRange: null,
 })
 
 const emit = defineEmits<{
@@ -55,6 +66,7 @@ const selectedRange = ref<{ nwLon: number; nwLat: number; seLon: number; seLat: 
 const hoverCoord = ref({ lon: 0, lat: 0 })
 const isDrawing = ref(false)
 const drawStartCoord = ref<{ lon: number; lat: number } | null>(null)
+const validationError = ref('')
 
 let map: Map | null = null
 let markerSource: VectorSource | null = null
@@ -66,6 +78,7 @@ const resetSelection = () => {
   selectedRange.value = null
   isDrawing.value = false
   drawStartCoord.value = null
+  validationError.value = ''
   markerSource?.clear()
   boxSource?.clear()
 }
@@ -165,6 +178,7 @@ const initMap = () => {
         isDrawing.value = true
         drawStartCoord.value = { lon: coord[0], lat: coord[1] }
         selectedRange.value = null
+        validationError.value = ''
         boxSource?.clear()
       } else {
         // 结束框选
@@ -241,12 +255,35 @@ const drawBox = (start: { lon: number; lat: number }, end: { lon: number; lat: n
   }))
 }
 
+const renderInitialRange = () => {
+  if (props.mode !== 'range' || !props.initialRange) return
+  const range = props.initialRange
+  if (![range.nwLon, range.nwLat, range.seLon, range.seLat].every(Number.isFinite)
+    || range.nwLon >= range.seLon || range.seLat >= range.nwLat) return
+
+  selectedRange.value = { ...range }
+  drawBox(
+    { lon: range.nwLon, lat: range.nwLat },
+    { lon: range.seLon, lat: range.seLat },
+  )
+}
+
 const handleConfirm = () => {
   if (props.mode === 'point' && selectedCoord.value) {
     const coordStr = `${selectedCoord.value.lon.toFixed(6)},${selectedCoord.value.lat.toFixed(6)}`
     emit('confirm', coordStr)
     emit('update:visible', false)
   } else if (props.mode === 'range' && selectedRange.value) {
+    const missingMarkers = props.requiredMarkers.filter(marker =>
+      marker.lon < selectedRange.value!.nwLon
+      || marker.lon > selectedRange.value!.seLon
+      || marker.lat > selectedRange.value!.nwLat
+      || marker.lat < selectedRange.value!.seLat
+    )
+    if (missingMarkers.length > 0) {
+      validationError.value = `框选范围必须包含所有站点，当前未包含：${missingMarkers.map(marker => marker.name).join('、')}`
+      return
+    }
     // 返回格式: nwLon,nwLat,seLon,seLat
     const coordStr = `${selectedRange.value.nwLon.toFixed(6)},${selectedRange.value.nwLat.toFixed(6)},${selectedRange.value.seLon.toFixed(6)},${selectedRange.value.seLat.toFixed(6)}`
     emit('confirm', coordStr)
@@ -270,6 +307,7 @@ watch(() => props.visible, (val) => {
     setTimeout(() => {
       initMap()
       renderExistingMarkers()
+      renderInitialRange()
       map?.updateSize()
     }, 100)
   }
@@ -278,6 +316,13 @@ watch(() => props.visible, (val) => {
 watch(() => props.existingMarkers, () => {
   renderExistingMarkers()
   map?.updateSize()
+}, { deep: true })
+
+watch(() => props.initialRange, () => {
+  if (!props.visible) return
+  boxSource?.clear()
+  selectedRange.value = null
+  renderInitialRange()
 }, { deep: true })
 
 onUnmounted(() => {
@@ -337,9 +382,14 @@ onUnmounted(() => {
         </div>
 
         <!-- 底部按钮 -->
-        <div class="flex justify-end gap-3 px-4 py-3 border-t">
+        <div class="flex items-center justify-between gap-3 px-4 py-3 border-t">
+          <div class="min-w-0 flex-1 text-sm text-red-600" role="alert">
+            {{ validationError }}
+          </div>
+          <div class="flex shrink-0 gap-3">
           <Button variant="outline" @click="handleCancel">取消</Button>
           <Button :disabled="!hasSelection" @click="handleConfirm">确定</Button>
+          </div>
         </div>
       </div>
     </div>

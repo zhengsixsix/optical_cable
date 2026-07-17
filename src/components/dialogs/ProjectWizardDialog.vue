@@ -195,7 +195,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
 
 // 冗余策略配置（多点模式）
 const redundancyConfig = ref({
-  enabled: false,
+  enableRedundancy: false,
   costLimitType: 'relative' as 'relative' | 'absolute',
   relativeCostPercent: '30',
   absoluteCostLimit: '',
@@ -244,10 +244,10 @@ const existingMapMarkers = computed<MapMarker[]>(() => {
 // GIS 配置 - 与工程设置对齐
 const gisConfig = ref({
   rangeMode: 'auto' as 'auto' | 'manual',
-  nwLon: '',
-  nwLat: '',
-  seLon: '',
-  seLat: '',
+  topLeftLng: '',
+  topLeftLat: '',
+  bottomRightLng: '',
+  bottomRightLat: '',
   gridResolution: '500'
 })
 const showMapSelect = ref(false)
@@ -294,13 +294,13 @@ const handleMapConfirm = (coordStr: string) => {
     currentWaypointId.value = null
   } else if (mapSelectType.value === 'range') {
     // 地图框选返回两个点：西北角,东南角
-    // 格式: "nwLon,nwLat,seLon,seLat" 或者单点 "lon,lat"
+    // 格式: "topLeftLng,topLeftLat,bottomRightLng,bottomRightLat" 或者单点 "lon,lat"
     const parts = coordStr.split(',')
     if (parts.length >= 4) {
-      gisConfig.value.nwLon = parts[0]
-      gisConfig.value.nwLat = parts[1]
-      gisConfig.value.seLon = parts[2]
-      gisConfig.value.seLat = parts[3]
+      gisConfig.value.topLeftLng = parts[0]
+      gisConfig.value.topLeftLat = parts[1]
+      gisConfig.value.bottomRightLng = parts[2]
+      gisConfig.value.bottomRightLat = parts[3]
     }
   }
 }
@@ -384,8 +384,8 @@ const resetForm = () => {
   ]
   buConfigs.value = []
   armorMappings.value = getDefaultArmorMappings()
-  redundancyConfig.value = { enabled: false, costLimitType: 'relative', relativeCostPercent: '30', absoluteCostLimit: '', criticalNodes: [] }
-  gisConfig.value = { rangeMode: 'auto', nwLon: '', nwLat: '', seLon: '', seLat: '', gridResolution: '500' }
+  redundancyConfig.value = { enableRedundancy: false, costLimitType: 'relative', relativeCostPercent: '30', absoluteCostLimit: '', criticalNodes: [] }
+  gisConfig.value = { rangeMode: 'auto', topLeftLng: '', topLeftLat: '', bottomRightLng: '', bottomRightLat: '', gridResolution: '500' }
   layerList.value.forEach(item => {
     item.checked = false
     item.value = ''
@@ -527,22 +527,15 @@ function buildWizardSyncPayload() {
       longitude: wp.longitude,
       latitude: wp.latitude,
     })),
-    gisConfig: {
-      rangeMode: gisConfig.value.rangeMode,
-      planningRange: gisConfig.value.rangeMode === 'manual' ? {
-        northwest: {
-          lon: parseFloat(gisConfig.value.nwLon) || 0,
-          lat: parseFloat(gisConfig.value.nwLat) || 0,
-        },
-        southeast: {
-          lon: parseFloat(gisConfig.value.seLon) || 0,
-          lat: parseFloat(gisConfig.value.seLat) || 0,
-        },
+    planConfig: {
+      scope: gisConfig.value.rangeMode === 'manual' ? {
+        topLeftLng: parseFloat(gisConfig.value.topLeftLng) || 0,
+        topLeftLat: parseFloat(gisConfig.value.topLeftLat) || 0,
+        bottomRightLng: parseFloat(gisConfig.value.bottomRightLng) || 0,
+        bottomRightLat: parseFloat(gisConfig.value.bottomRightLat) || 0,
       } : null,
       gridResolution: parseFloat(gisConfig.value.gridResolution) || 500,
-    },
-    redundancyConfig: {
-      enabled: redundancyConfig.value.enabled,
+      enableRedundancy: redundancyConfig.value.enableRedundancy,
     },
     layers: layerList.value.map(layer => ({
       key: layer.key,
@@ -827,26 +820,15 @@ const handleSubmit = async () => {
       cableTypeName: m.cableTypeName,
       unitPrice: parseFloat(m.unitPrice) || 0
     })),
-    redundancyConfig: {
-      enabled: redundancyConfig.value.enabled,
-      costLimitType: redundancyConfig.value.costLimitType,
-      relativeCostPercent: redundancyConfig.value.costLimitType === 'relative' ? parseFloat(redundancyConfig.value.relativeCostPercent) || 30 : undefined,
-      absoluteCostLimit: redundancyConfig.value.costLimitType === 'absolute' ? parseFloat(redundancyConfig.value.absoluteCostLimit) || undefined : undefined,
-      criticalNodes: redundancyConfig.value.criticalNodes.length > 0 ? redundancyConfig.value.criticalNodes : undefined
-    },
-    gisConfig: {
-      rangeMode: gisConfig.value.rangeMode,
-      planningRange: gisConfig.value.rangeMode === 'manual' ? {
-        northwest: {
-          lon: parseFloat(gisConfig.value.nwLon) || 0,
-          lat: parseFloat(gisConfig.value.nwLat) || 0
-        },
-        southeast: {
-          lon: parseFloat(gisConfig.value.seLon) || 0,
-          lat: parseFloat(gisConfig.value.seLat) || 0
-        }
+    planConfig: {
+      scope: gisConfig.value.rangeMode === 'manual' ? {
+        topLeftLng: parseFloat(gisConfig.value.topLeftLng) || 0,
+        topLeftLat: parseFloat(gisConfig.value.topLeftLat) || 0,
+        bottomRightLng: parseFloat(gisConfig.value.bottomRightLng) || 0,
+        bottomRightLat: parseFloat(gisConfig.value.bottomRightLat) || 0,
       } : null,
-      gridResolution: parseFloat(gisConfig.value.gridResolution) || 500
+      gridResolution: parseFloat(gisConfig.value.gridResolution) || 500,
+      enableRedundancy: redundancyConfig.value.enableRedundancy,
     },
     layers: layerList.value.filter(l => l.checked).map(l => ({
       key: l.key,
@@ -1402,15 +1384,15 @@ const handleSubmit = async () => {
                           <div class="space-y-1">
                             <span class="text-xs font-semibold text-gray-500 uppercase">西北角 (Top-Left)</span>
                             <div class="flex gap-2">
-                              <input v-model="gisConfig.nwLon" placeholder="经度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
-                              <input v-model="gisConfig.nwLat" placeholder="纬度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                              <input v-model="gisConfig.topLeftLng" placeholder="经度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                              <input v-model="gisConfig.topLeftLat" placeholder="纬度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
                             </div>
                           </div>
                           <div class="space-y-1">
                             <span class="text-xs font-semibold text-gray-500 uppercase">东南角 (Bottom-Right)</span>
                             <div class="flex gap-2">
-                              <input v-model="gisConfig.seLon" placeholder="经度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
-                              <input v-model="gisConfig.seLat" placeholder="纬度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                              <input v-model="gisConfig.bottomRightLng" placeholder="经度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
+                              <input v-model="gisConfig.bottomRightLat" placeholder="纬度" class="w-full h-8 px-2 text-xs font-mono border border-gray-200 rounded focus:border-blue-500 outline-none" />
                             </div>
                           </div>
                         </div>
@@ -1502,12 +1484,12 @@ const handleSubmit = async () => {
                   <div class="flex items-center gap-4">
                     <span class="text-sm text-gray-600">启用冗余：</span>
                     <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" v-model="redundancyConfig.enabled" class="sr-only peer" />
+                      <input type="checkbox" v-model="redundancyConfig.enableRedundancy" class="sr-only peer" />
                       <div class="w-10 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
                     </label>
-                    <span class="text-sm text-gray-500">{{ redundancyConfig.enabled ? '已启用' : '未启用' }}</span>
+                    <span class="text-sm text-gray-500">{{ redundancyConfig.enableRedundancy ? '已启用' : '未启用' }}</span>
                   </div>
-                  <template v-if="redundancyConfig.enabled">
+                  <template v-if="redundancyConfig.enableRedundancy">
                     <!-- 关键节点勾选 -->
                     <div>
                       <span class="text-sm font-medium text-gray-600 block mb-2">关键节点（仅为勾选节点的链路生成备份路径）：</span>

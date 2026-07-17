@@ -16,12 +16,12 @@ import { useRPLStore } from '@/stores/rpl'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
-import { platformProjectApi } from '@/services/platform/api'
+import { platformPlanConfigApi, platformProjectApi } from '@/services/platform/api'
 import { connectorElementToDeviceEntity } from '@/services/platform/deviceLibraryMapping'
 import { isPublicFlag, normalizePlanProject } from '@/services/platform/normalizers'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
 import { queryRoutePlanningByProjectId } from '@/services/RoutePlanningApiService'
-import type { Id, PlanSystemResult } from '@/services/platform/types'
+import type { Id, PlanConfigScope, PlanSystemResult } from '@/services/platform/types'
 import { generateUUID } from '@/types/useFile'
 import { useRouter } from 'vue-router'
 
@@ -67,21 +67,11 @@ export interface CreateProjectParams {
     unitPrice: number
   }>
   /** 冗余策略配置（多点规划） */
-  redundancyConfig?: {
-    enabled: boolean
-    costLimitType: 'relative' | 'absolute'
-    relativeCostPercent?: number
-    absoluteCostLimit?: number
-    criticalNodes?: string[]
-  }
   /** GIS 与路由算法设置 */
-  gisConfig?: {
-    rangeMode: 'auto' | 'manual'
-    planningRange?: {
-      northwest: { lon: number; lat: number }
-      southeast: { lon: number; lat: number }
-    } | null
-    gridResolution: number
+  planConfig?: {
+    scope?: Omit<PlanConfigScope, 'projectId'> | null
+    gridResolution?: number | null
+    enableRedundancy?: boolean | null
   }
   layers: Array<{
     key: string
@@ -205,6 +195,9 @@ export function useProjectManager() {
     isProcessing.value = true
     
     try {
+      // 项目切换前先清除上一项目的规划结果，避免新文件无路线时继续显示旧路径。
+      useRouteStore().clearParetoRoutes()
+      useCableSegmentStore().clearSegments()
       const result = await projectFileService.importProject(file)
       
       if (!result.success) {
@@ -271,13 +264,16 @@ export function useProjectManager() {
     )
 
     try {
-      const [project, routeQuery, systemQuery] = await Promise.all([
+      const [project, routeQuery, systemQuery, planConfigQuery] = await Promise.all([
         platformProjectApi.detail(projectId),
         queryRoutePlanningByProjectId(projectId)
           .then(data => ({ data, error: null as Error | null }))
           .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
         platformProjectApi.querySystem(projectId)
           .then(parsePlatformSystemResult)
+          .then(data => ({ data, error: null as Error | null }))
+          .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
+        platformPlanConfigApi.searchAll(projectId)
           .then(data => ({ data, error: null as Error | null }))
           .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
       ])
@@ -297,6 +293,7 @@ export function useProjectManager() {
         .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
 
       const settingsStore = useSettingsStore()
+      settingsStore.resetProjectSettings()
       settingsStore.updateRoutePlanningConfig({
         mode: points.length > 2 ? 'multi-point' : 'point-to-point',
         startPoint: points[0]
@@ -311,9 +308,33 @@ export function useProjectManager() {
           lon: point.longitude!,
           lat: point.latitude!,
         })),
+        ...(planConfigQuery.data?.scope ? {
+          rangeMode: 'manual' as const,
+          planningRange: {
+            northwest: {
+              lon: Number(planConfigQuery.data.scope.topLeftLng ?? 0),
+              lat: Number(planConfigQuery.data.scope.topLeftLat ?? 0),
+            },
+            southeast: {
+              lon: Number(planConfigQuery.data.scope.bottomRightLng ?? 0),
+              lat: Number(planConfigQuery.data.scope.bottomRightLat ?? 0),
+            },
+          },
+        } : {}),
+        ...(planConfigQuery.data?.gridResolution != null
+          ? { gridResolution: Number(planConfigQuery.data.gridResolution) }
+          : {}),
         isConfigured: points.length > 0,
       })
+      settingsStore.updatePlatformPlanConfigSnapshot(planConfigQuery.data)
       settingsStore.updatePlatformSystemResult(systemQuery.data)
+      if (planConfigQuery.error) {
+        appStore.addLog('WARN', `查询项目配置失败: ${planConfigQuery.error.message}`)
+      } else if (planConfigQuery.data?.errors.length) {
+        appStore.addLog('WARN', `部分项目配置查询失败: ${planConfigQuery.data.errors.join('; ')}`)
+      } else if (planConfigQuery.data) {
+        appStore.addLog('INFO', '已恢复项目规划配置')
+      }
 
       const routeStore = useRouteStore()
       const cableSegmentStore = useCableSegmentStore()
@@ -529,7 +550,7 @@ export function useProjectManager() {
    * 新建项目
    */
   async function createProject(params: CreateProjectParams): Promise<boolean> {
-    const { projectType, projectName, allowOtherUsers, platformProjectId, layers, rplFileData, startStation, endStation, waypoints, planningMode, gisConfig, buConfigs, armorMappings, redundancyConfig } = params
+    const { projectType, projectName, allowOtherUsers, platformProjectId, layers, rplFileData, startStation, endStation, waypoints, planningMode, planConfig, buConfigs, armorMappings } = params
     
     // 检查当前是否有未保存的项目
     if (hasOpenProject.value && isDirty.value) {
@@ -592,18 +613,7 @@ export function useProjectManager() {
             remarks: `${projectType.toUpperCase()} project`,
             isPublic: allowOtherUsers ? 1 : 0,
             points: platformPoints.filter(point => point.longitude !== 0 || point.latitude !== 0),
-            planConfig: {
-              scope: gisConfig?.rangeMode === 'manual' && gisConfig.planningRange
-                ? {
-                    topLeftLng: gisConfig.planningRange.northwest.lon,
-                    topLeftLat: gisConfig.planningRange.northwest.lat,
-                    bottomRightLng: gisConfig.planningRange.southeast.lon,
-                    bottomRightLat: gisConfig.planningRange.southeast.lat,
-                  }
-                : null,
-              gridResolution: gisConfig?.gridResolution,
-              enableRedundancy: redundancyConfig?.enabled ?? false,
-            },
+            planConfig,
           })
           newMetadata.platformProjectId = platformResult.projectId
           appStore.addLog('INFO', `平台项目已同步: ${projectName} (#${platformResult.projectId})`)
@@ -675,21 +685,7 @@ export function useProjectManager() {
       }
 
       // Fix 1b: 冗余策略写入 settingsStore
-      if (redundancyConfig) {
-        routeConfigUpdates.redundancyConfig = redundancyConfig
-      }
-
       // Fix 2: GIS 配置写入 settingsStore（rangeMode + planningRange + gridResolution）
-      if (gisConfig) {
-        routeConfigUpdates.rangeMode = gisConfig.rangeMode || 'auto'
-        if (gisConfig.gridResolution) {
-          routeConfigUpdates.gridResolution = gisConfig.gridResolution
-        }
-        if (gisConfig.rangeMode === 'manual' && gisConfig.planningRange) {
-          routeConfigUpdates.planningRange = gisConfig.planningRange
-        }
-      }
-
       settingsStore.updateRoutePlanningConfig(routeConfigUpdates)
       
       // 处理器件库文件

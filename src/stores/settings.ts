@@ -12,6 +12,7 @@ import type {
   PlanDeviceEntitySearch,
   PlanDeviceLibrary,
   PlanDeviceLibrarySearch,
+  PlanConfigSnapshot,
   PlatformDictionary,
 } from '@/services/platform/types'
 import type { 
@@ -285,6 +286,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const systemPlanningCache = ref<SystemPlanningCache | null>(null)
   // 平台 query/system 返回的 simulation_result.json 解析结果
   const platformSystemResult = ref<unknown | null>(null)
+  const platformPlanConfigSnapshot = ref<PlanConfigSnapshot | null>(null)
   
   // 设计视图链路计算摘要缓存 (_app_extensions.designCache)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -754,6 +756,7 @@ export const useSettingsStore = defineStore('settings', () => {
     systemPlanningConfig.value = { ...defaultSystemPlanningParams }
     simulationModelConfig.value = { ...defaultSimulationModelConfig }
     platformSystemResult.value = null
+    platformPlanConfigSnapshot.value = null
   }
 
   // 更新路径规划配置 (不保存到 localStorage，只存储在项目文件中)
@@ -877,6 +880,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function updatePlatformSystemResult(result: unknown | null) {
     platformSystemResult.value = result
+  }
+
+  function updatePlatformPlanConfigSnapshot(snapshot: PlanConfigSnapshot | null) {
+    platformPlanConfigSnapshot.value = snapshot
   }
 
   // 使仿真缓存失效
@@ -1007,6 +1014,7 @@ export const useSettingsStore = defineStore('settings', () => {
     simulationCache,
     systemPlanningCache,
     platformSystemResult,
+    platformPlanConfigSnapshot,
     linkCalcSummaryCache,
     addModel,
     updateModel,
@@ -1015,6 +1023,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateSimulationCache,
     updateSystemPlanningCache,
     updatePlatformSystemResult,
+    updatePlatformPlanConfigSnapshot,
     invalidateSimulationCache,
     invalidateSystemPlanningCache,
     setCurrentLibraryFile,

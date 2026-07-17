@@ -2405,8 +2405,21 @@ const getConfiguredProjectStations = (): ProjectStationMarker[] => {
   })
 }
 
+const getConfiguredPlanningRangeExtent = (): number[] | null => {
+  if (!map || !appStore.hasOpenProject) return null
+  const range = settingsStore.routePlanningConfig.planningRange
+  const west = Number(range?.northwest?.lon)
+  const north = Number(range?.northwest?.lat)
+  const east = Number(range?.southeast?.lon)
+  const south = Number(range?.southeast?.lat)
+  if (![west, north, east, south].every(Number.isFinite)
+    || west >= east || south >= north
+    || (west === 0 && north === 0 && east === 0 && south === 0)) return null
+  return toMapExtent([west, south, east, north])
+}
+
 const drawConfiguredProjectStations = (fitView = true): boolean => {
-  if (!map || !routeSource) return false
+  if (!map || !routeSource || !appStore.hasOpenProject) return false
   const stations = getConfiguredProjectStations()
   if (stations.length === 0) return false
 
@@ -2898,8 +2911,17 @@ const drawParetoRoutes = async () => {
     return  // paretoRoutes 已绘制，直接返回
   }
 
-  // 没有算法路线时，至少显示项目配置中的起点、终点或多站点。
-  if (drawConfiguredProjectStations()) return
+  // 没有算法路线时，保持规划范围视图，并叠加项目起点、终点或多站点。
+  const planningRangeExtent = getConfiguredPlanningRangeExtent()
+  const hasStations = drawConfiguredProjectStations(false)
+  if (planningRangeExtent || hasStations) {
+    map.getView().fit(planningRangeExtent ?? routeSource.getExtent(), {
+      padding: [70, 70, 70, 70],
+      duration: 500,
+      maxZoom: 8,
+    })
+    return
+  }
 
   // Fallback: 如果没有项目站点，使用 monitorStore 设备数据
   if (monitorStore.devices.length > 0) {
@@ -3127,9 +3149,16 @@ watch(() => connectorStore.elements.filter(e => e.type === 'ola').length, (newLe
   }
 })
 
-// 监听 paretoRoutes 变化（USE文件导入时触发）
-watch(() => routeStore.paretoRoutes.length, (newLen) => {
-  if (newLen > 0) {
+// 监听项目和路径结果变化；切换到无结果项目时也必须清除旧路径并显示规划范围/站点。
+watch(
+  () => ({
+    projectKey: appStore.projectState.currentProject?.uuid
+      ?? appStore.projectState.currentProject?.platformProjectId
+      ?? '',
+    routeIds: routeStore.paretoRoutes.map(route => route.id).join('|'),
+  }),
+  () => {
+    if (routeStore.paretoRoutes.length > 0) {
     const initialRoute = ensureSelectedRoute()
     if (map) {
       drawParetoRoutes()
@@ -3148,8 +3177,13 @@ watch(() => routeStore.paretoRoutes.length, (newLen) => {
       }, 100)
       setTimeout(() => clearInterval(checkMap), 5000)
     }
-  }
-}, {immediate: true})
+    } else if (map) {
+      void drawParetoRoutes()
+      isPlanning.value = false
+    }
+  },
+  { immediate: true },
+)
 
 watch(() => settingsStore.routePlanningConfig, () => {
   if (map && routeStore.paretoRoutes.length === 0) {

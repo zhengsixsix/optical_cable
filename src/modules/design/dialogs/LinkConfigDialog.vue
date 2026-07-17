@@ -37,6 +37,8 @@ import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
 import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
 import { runSimulation } from '@/services/SimulationApiService'
 import type { SpanScanResult, ScanPoint } from '@/services/SimulationApiService'
+import { platformPlanConfigApi } from '@/services/platform/api'
+import type { PlanConfigChannel, PlanConfigOptimization } from '@/services/platform/types'
 import {
   getDeviceLibrariesByCategory,
   type RuntimeAmplifierLibrary,
@@ -50,6 +52,10 @@ import {
   toRuntimeFiberLibrary,
   toRuntimeJointBoxLibrary,
 } from '@/services/platform/deviceRuntime'
+
+type NonNullableFields<T> = { [K in keyof T]-?: NonNullable<T[K]> }
+type ChannelConfigState = NonNullableFields<Omit<PlanConfigChannel, 'projectId'>>
+type OptimizationConfigState = NonNullableFields<Omit<PlanConfigOptimization, 'projectId'>>
 
 const props = defineProps<{
   visible: boolean
@@ -73,29 +79,15 @@ export interface LinkConfig {
   amplifierTypeId: string
   amplifierParams: Record<string, number>
   spanStrategy: 'auto' | 'fixed'
-  fixedSpanLength: number
+  spanKm: number
   optimizationTarget: 'min_amplifiers' | 'max_gsnr'
+  optimizationConfig: OptimizationConfigState
   constraints: {
-    targetOSNR: number
-    targetGSNR: number
     maxSpanLength: number
     minSpanLength: number
     osnrMargin: number
   }
-  wdmParams: {
-    channelCount: number
-    centerFreq: number
-    channelSpacing: number
-    baudRate: number
-    modulation: string
-    launchPowerMode: 'uniform' | 'grouped' | 'per_channel' | 'import'
-    launchPower: number
-    launchPowerVector: number[]
-    initialAseMode: 'default' | 'custom'
-    initialAseValue: number
-    initialNliMode: 'default' | 'custom'
-    initialNliValue: number
-  }
+  channelConfig: ChannelConfigState
   buConfigs: BUConfig[]
 }
 
@@ -129,6 +121,7 @@ const connectorStore = useConnectorStore()
 const sldStore = useSLDStore()
 const buConfigStore = useBUConfigStore()  // 使用共享的 BU 配置 store
 const cableSegmentStore = useCableSegmentStore()
+const platformProjectId = computed(() => appStore.projectState.currentProject?.platformProjectId ?? null)
 
 const platformFiberLibraries = computed(() =>
   getDeviceLibrariesByCategory(settingsStore.platformDeviceLibraries, 'fiber')
@@ -707,7 +700,7 @@ const amplifierTypeOptions = computed(() =>
 
 // Span 布局策略
 const spanStrategy = ref<'auto' | 'fixed'>('auto')
-const fixedSpanLength = ref(70)
+const spanKm = ref(70)
 
 // Span 扫描范围配置（auto 模式）
 const spanScanConfig = reactive({
@@ -719,10 +712,13 @@ const spanScanConfig = reactive({
 // 优化目标
 const optimizationTarget = ref<'min_amplifiers' | 'max_gsnr'>('min_amplifiers')
 
+const optimizationConfig = reactive<OptimizationConfigState>({
+  targetGsnrDb: 14,
+  targetOsnrDb: 16,
+})
+
 // 约束条件
 const constraints = reactive({
-  targetOSNR: 16.0,
-  targetGSNR: 14.0,
   maxSpanLength: 100,
   minSpanLength: 30,
   osnrMargin: 1.0
@@ -749,12 +745,16 @@ const updateAmplifierFromDevice = () => {
 watch(selectedAmplifierTypeId, updateAmplifierFromDevice)
 
 // ============ Step 5: WDM 参数配置 ============
-const wdmParams = reactive({
+const channelConfig = reactive<ChannelConfigState>({
   channelCount: 96,
-  centerFreq: 193.1,
-  channelSpacing: 50.0,
-  baudRate: 64.0,
-  modulation: '16QAM'
+  baudRateGbaud: 64,
+  modulationFormat: '16QAM',
+  launchPowerDbm: Array(96).fill(-1.5),
+  channelFrequenciesThz: [],
+  initialAseNoiseDbm: -90,
+  initialNliNoiseDbm: -90,
+  centerFrequencyThz: 193.1,
+  channelSpacingGhz: 50,
 })
 
 const modulationOptions = [
@@ -767,33 +767,209 @@ const modulationOptions = [
 
 // 入纤功率配置
 const launchPowerMode = ref<'uniform' | 'grouped' | 'per_channel' | 'import'>('uniform')
-const uniformLaunchPower = ref(-1.5)
-const perChannelPowers = ref<number[]>([])
+const uniformLaunchPower = computed({
+  get: () => channelConfig.launchPowerDbm?.[0] ?? -1.5,
+  set: (value: number) => {
+    channelConfig.launchPowerDbm = Array(channelConfig.channelCount ?? 1).fill(value)
+  },
+})
 const showPerChannelConfig = ref(false)
+const hydratingChannelConfig = ref(false)
 
 // 初始化逐信道功率
-watch(() => wdmParams.channelCount, (count) => {
-  if (perChannelPowers.value.length !== count) {
-    perChannelPowers.value = Array(count).fill(uniformLaunchPower.value)
-  }
-}, { immediate: true })
+watch(
+  () => [channelConfig.channelCount, channelConfig.centerFrequencyThz, channelConfig.channelSpacingGhz] as const,
+  ([count, centerFrequencyThz, channelSpacingGhz]) => {
+    if (hydratingChannelConfig.value) return
+    const normalizedCount = Math.max(1, Math.trunc(count ?? 1))
+    if (channelConfig.launchPowerDbm?.length !== normalizedCount) {
+      channelConfig.launchPowerDbm = Array(normalizedCount).fill(uniformLaunchPower.value)
+    }
+    channelConfig.channelFrequenciesThz = buildChannelFrequencies(
+      normalizedCount,
+      centerFrequencyThz ?? 193.1,
+      channelSpacingGhz ?? 50,
+    )
+  },
+  { immediate: true, flush: 'sync' },
+)
 
 // 计算信道频率
 const getChannelFrequency = (index: number) => {
-  const startFreq = wdmParams.centerFreq - (wdmParams.channelCount - 1) * wdmParams.channelSpacing / 2000
-  return (startFreq + index * wdmParams.channelSpacing / 1000).toFixed(3)
+  return (channelConfig.channelFrequenciesThz?.[index] ?? 0).toFixed(3)
 }
 
 // 批量填充功率
 const fillAllPowers = () => {
-  perChannelPowers.value = Array(wdmParams.channelCount).fill(uniformLaunchPower.value)
+  channelConfig.launchPowerDbm = Array(channelConfig.channelCount ?? 1).fill(uniformLaunchPower.value)
 }
 
 // 初始性能参数
 const initialAseMode = ref<'default' | 'custom'>('default')
-const initialAseValue = ref(-90.0)
 const initialNliMode = ref<'default' | 'custom'>('default')
-const initialNliValue = ref(-90.0)
+
+const platformConfigLoading = ref(false)
+const platformConfigSaving = ref(false)
+const platformConfigLoadError = ref<string | null>(null)
+
+function buildChannelFrequencies(channelCount: number, centerFrequencyThz: number, channelSpacingGhz: number): number[] {
+  if (!Number.isFinite(channelCount) || channelCount <= 0) return []
+  const start = centerFrequencyThz - (channelCount - 1) * channelSpacingGhz / 2000
+  return Array.from({ length: Math.trunc(channelCount) }, (_, index) =>
+    Number((start + index * channelSpacingGhz / 1000).toFixed(6)),
+  )
+}
+
+function setChannelConfig(config: Omit<PlanConfigChannel, 'projectId'> | null): void {
+  if (!config) return
+  hydratingChannelConfig.value = true
+  Object.assign(channelConfig, Object.fromEntries(
+    Object.entries(config).filter(([, value]) => value != null),
+  ))
+  hydratingChannelConfig.value = false
+  const launchPowerDbm = channelConfig.launchPowerDbm ?? []
+  launchPowerMode.value = launchPowerDbm.length > 0 && launchPowerDbm.every(value => value === launchPowerDbm[0])
+    ? 'uniform'
+    : 'per_channel'
+  initialAseMode.value = channelConfig.initialAseNoiseDbm === -90 ? 'default' : 'custom'
+  initialNliMode.value = channelConfig.initialNliNoiseDbm === -90 ? 'default' : 'custom'
+}
+
+function setOptimizationConfig(config: Omit<PlanConfigOptimization, 'projectId'> | null): void {
+  if (!config) return
+  Object.assign(optimizationConfig, Object.fromEntries(
+    Object.entries(config).filter(([, value]) => value != null),
+  ))
+}
+
+function resetLinkConfig(): void {
+  platformConfigLoadError.value = null
+  hydratingChannelConfig.value = true
+  Object.assign(channelConfig, {
+    channelCount: 96,
+    baudRateGbaud: 64,
+    modulationFormat: '16QAM',
+    launchPowerDbm: Array(96).fill(-1.5),
+    channelFrequenciesThz: buildChannelFrequencies(96, 193.1, 50),
+    initialAseNoiseDbm: -90,
+    initialNliNoiseDbm: -90,
+    centerFrequencyThz: 193.1,
+    channelSpacingGhz: 50,
+  })
+  Object.assign(optimizationConfig, { targetGsnrDb: 14, targetOsnrDb: 16 })
+  spanStrategy.value = 'auto'
+  spanKm.value = 70
+  hydratingChannelConfig.value = false
+
+  const snapshot = settingsStore.platformPlanConfigSnapshot
+  if (snapshot?.channelConfig) setChannelConfig(snapshot.channelConfig)
+  setOptimizationConfig(snapshot?.optimization ?? null)
+  if (snapshot?.spanKm != null) {
+    spanKm.value = snapshot.spanKm
+    spanStrategy.value = 'fixed'
+  }
+
+  spanScanData.value = null
+  spanCursorSpan.value = null
+  spanUserSelectedSpan.value = null
+  calculationResult.value = null
+  calculationError.value = ''
+}
+
+async function loadPlatformLinkConfig(): Promise<void> {
+  const projectId = platformProjectId.value
+  if (projectId == null) return
+
+  platformConfigLoading.value = true
+  try {
+    const results = await Promise.allSettled([
+      platformPlanConfigApi.searchChannelConfig(projectId),
+      platformPlanConfigApi.searchOptimization(projectId),
+      platformPlanConfigApi.searchSpanKm(projectId),
+    ])
+    const [channelResult, optimizationResult, spanResult] = results
+    const errors = results.flatMap((result, index) => result.status === 'rejected'
+      ? [`${['信道配置', '优化配置', '跨段参数'][index]}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+      : [])
+    const channelConfig = channelResult.status === 'fulfilled' ? channelResult.value : null
+    const optimization = optimizationResult.status === 'fulfilled' ? optimizationResult.value : null
+    const loadedSpanKm = spanResult.status === 'fulfilled' ? spanResult.value : null
+    setChannelConfig(channelConfig)
+    setOptimizationConfig(optimization)
+    if (loadedSpanKm != null && Number.isFinite(loadedSpanKm) && loadedSpanKm > 0) {
+      spanKm.value = loadedSpanKm
+      spanStrategy.value = 'fixed'
+      spanScanData.value = null
+      spanCursorSpan.value = null
+      spanUserSelectedSpan.value = null
+    }
+    if (errors.length > 0) {
+      platformConfigLoadError.value = errors.join('; ')
+      appStore.addLog('WARN', `部分项目链路配置加载失败: ${platformConfigLoadError.value}`)
+    } else {
+      appStore.addLog('INFO', `已加载项目链路配置 (#${projectId})`)
+    }
+    settingsStore.updatePlatformPlanConfigSnapshot({
+      ...(settingsStore.platformPlanConfigSnapshot ?? {
+        scope: null,
+        gridResolution: null,
+        enableRedundancy: null,
+      }),
+      channelConfig,
+      optimization,
+      spanKm: loadedSpanKm,
+      errors,
+    })
+  } catch (error) {
+    platformConfigLoadError.value = error instanceof Error ? error.message : String(error)
+    appStore.addLog('WARN', `加载项目链路配置失败: ${platformConfigLoadError.value}`)
+  } finally {
+    platformConfigLoading.value = false
+  }
+}
+
+async function savePlatformLinkConfig(): Promise<void> {
+  const projectId = platformProjectId.value
+  if (projectId == null) return
+  if (platformConfigLoadError.value) {
+    throw new Error(`项目链路配置未完整加载，请重新打开后再试：${platformConfigLoadError.value}`)
+  }
+
+  platformConfigSaving.value = true
+  try {
+    if (spanStrategy.value !== 'fixed') {
+      spanKm.value = spanUserSelectedSpan.value ?? spanScanData.value?.recommendedSpanKm ?? spanKm.value
+    }
+    await Promise.all([
+      platformPlanConfigApi.saveChannelConfig({
+        projectId,
+        ...channelConfig,
+      }),
+      platformPlanConfigApi.saveOptimization({
+        projectId,
+        ...optimizationConfig,
+      }),
+      platformPlanConfigApi.saveSpanKm({
+        projectId,
+        spanKm: spanKm.value,
+      }),
+    ])
+    settingsStore.updatePlatformPlanConfigSnapshot({
+      ...(settingsStore.platformPlanConfigSnapshot ?? {
+        scope: null,
+        gridResolution: null,
+        enableRedundancy: null,
+        errors: [],
+      }),
+      channelConfig: { ...channelConfig },
+      optimization: { ...optimizationConfig },
+      spanKm: spanKm.value,
+    })
+    appStore.addLog('INFO', `已保存项目链路配置 (#${projectId})`)
+  } finally {
+    platformConfigSaving.value = false
+  }
+}
 
 // ============ Step 6: BU 配置 ============
 
@@ -1105,7 +1281,7 @@ const stepStatus = computed(() => ({
   model: !!selectedFiberModel.value && !!selectedAmplifierModel.value,
   fiber: !!selectedFiberTypeId.value,
   amplifier: !!selectedAmplifierTypeId.value,
-  wdm: wdmParams.channelCount > 0,
+  wdm: (channelConfig.channelCount ?? 0) > 0,
   bu: buConfigs.value.length === 0 || buConfigs.value.every(b => b.isConfigured),
   result: calculationResult.value !== null // 计算结果
 }))
@@ -1277,6 +1453,16 @@ const startCalculation = async () => {
     return
   }
 
+  if (platformConfigSaving.value) return
+  try {
+    await savePlatformLinkConfig()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '保存链路配置失败'
+    calculationError.value = message
+    appStore.showNotification({ type: 'error', message: `保存链路配置失败: ${message}` })
+    return
+  }
+
   isCalculating.value = true
   calculationError.value = ''
   activeStep.value = 'result'
@@ -1318,7 +1504,7 @@ const startCalculation = async () => {
     devices.sort((a, b) => a.kp - b.kp)
 
     const spanStrategyPayload = spanStrategy.value === 'fixed'
-      ? { mode: 'fixed' as const, fixedLength: fixedSpanLength.value }
+      ? { mode: 'fixed' as const }
       : { mode: 'scan' as const, scanRange: { min: spanScanConfig.min, max: spanScanConfig.max, step: spanScanConfig.step } }
 
     const fiberType = platformFiberLibraries.value.find(f => f.id === selectedFiberTypeId.value)
@@ -1355,16 +1541,9 @@ const startCalculation = async () => {
         equalizerUnitPrice: settingsStore.costFactors.equalizerCost,
         amplifierName: ampType?.name,
       },
-      wdmParams: {
-        channelCount: wdmParams.channelCount,
-        centerFreq: wdmParams.centerFreq,
-        channelSpacing: wdmParams.channelSpacing,
-        baudRate: wdmParams.baudRate,
-        modulation: wdmParams.modulation,
-        launchPower: uniformLaunchPower.value,
-        launchPowerMode: launchPowerMode.value,
-        launchPowerVector: launchPowerMode.value === 'per_channel' ? perChannelPowers.value : undefined,
-      },
+      channelConfig: { ...channelConfig },
+      optimizationConfig: { ...optimizationConfig },
+      spanKm: spanKm.value,
       spanStrategy: spanStrategyPayload,
       constraints: { ...constraints },
       buConfigs: buConfigs.value.map(bu => ({
@@ -1514,7 +1693,7 @@ const spanFeasibleRange = computed(() => {
   if (!spanScanData.value) return null
   const spans = spanScanData.value.spanLengthsKm
   const gsnrs = spanGsnrArray.value
-  const target = constraints.targetGSNR
+  const target = optimizationConfig.targetGsnrDb ?? 0
   const feasible = spans.filter((_: number, i: number) => gsnrs[i] >= target)
   if (feasible.length === 0) return null
   return { min: feasible[0], max: feasible[feasible.length - 1] }
@@ -2464,6 +2643,7 @@ const applyAndClose = async () => {
 // 初始化
 watch(() => props.visible, async (visible) => {
   if (visible) {
+    resetLinkConfig()
     if (settingsStore.platformDeviceLibraries.length === 0) {
       await settingsStore.loadPlatformDeviceLibraries()
     }
@@ -2479,6 +2659,8 @@ watch(() => props.visible, async (visible) => {
     if (platformAmplifierLibraries.value.length > 0 && !selectedAmplifierTypeId.value) {
       selectedAmplifierTypeId.value = platformAmplifierLibraries.value[0].id
     }
+
+    await loadPlatformLinkConfig()
     
     activeStep.value = 'link'
     void nextTick(() => {
@@ -2943,7 +3125,7 @@ watch(() => props.visible, async (visible) => {
                     </label>
                     <div v-if="spanStrategy === 'fixed'" class="flex items-center gap-2 ml-6">
                       <span class="text-xs text-gray-500">所有 span 使用固定长度：</span>
-                      <Input v-model.number="fixedSpanLength" type="number" class="w-20" />
+                      <Input v-model.number="spanKm" type="number" class="w-20" />
                       <span class="text-xs text-gray-500">km</span>
                     </div>
                   </div>
@@ -2982,12 +3164,12 @@ watch(() => props.visible, async (visible) => {
                     <div class="grid grid-cols-2 gap-3">
                       <div class="flex items-center gap-2">
                         <span class="text-xs text-gray-600 w-32">目标 OSNR (最小值)</span>
-                        <Input v-model.number="constraints.targetOSNR" type="number" class="w-20" />
+                        <Input v-model.number="optimizationConfig.targetOsnrDb" type="number" class="w-20" />
                         <span class="text-xs text-gray-500">dB</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <span class="text-xs text-gray-600 w-32">目标 GSNR (最小值)</span>
-                        <Input v-model.number="constraints.targetGSNR" type="number" class="w-20" />
+                        <Input v-model.number="optimizationConfig.targetGsnrDb" type="number" class="w-20" />
                         <span class="text-xs text-gray-500">dB</span>
                       </div>
                       <div class="flex items-center gap-2">
@@ -3020,23 +3202,23 @@ watch(() => props.visible, async (visible) => {
                   <div class="grid grid-cols-2 gap-4">
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">信道数量 (个)</label>
-                      <Input v-model.number="wdmParams.channelCount" type="number" />
+                      <Input v-model.number="channelConfig.channelCount" type="number" />
                     </div>
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">中心频率 (THz)</label>
-                      <Input v-model.number="wdmParams.centerFreq" type="number" step="0.001" />
+                      <Input v-model.number="channelConfig.centerFrequencyThz" type="number" step="0.001" />
                     </div>
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">信道间隔 (GHz)</label>
-                      <Input v-model.number="wdmParams.channelSpacing" type="number" />
+                      <Input v-model.number="channelConfig.channelSpacingGhz" type="number" />
                     </div>
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">符号速率 (GBaud)</label>
-                      <Input v-model.number="wdmParams.baudRate" type="number" />
+                      <Input v-model.number="channelConfig.baudRateGbaud" type="number" />
                     </div>
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">调制格式</label>
-                      <Select v-model="wdmParams.modulation" :options="modulationOptions" />
+                      <Select v-model="channelConfig.modulationFormat" :options="modulationOptions" />
                     </div>
                   </div>
                 </div>
@@ -3085,11 +3267,11 @@ watch(() => props.visible, async (visible) => {
                             </tr>
                           </thead>
                           <tbody>
-                            <tr v-for="(power, i) in perChannelPowers" :key="i" class="border-t">
+                            <tr v-for="(power, i) in channelConfig.launchPowerDbm" :key="i" class="border-t">
                               <td class="px-3 py-1">Ch {{ i + 1 }}</td>
                               <td class="px-3 py-1 text-gray-500">{{ getChannelFrequency(i) }}</td>
                               <td class="px-3 py-1">
-                                <Input v-model.number="perChannelPowers[i]" type="number" step="0.1" class="w-20" />
+                                <Input v-model.number="channelConfig.launchPowerDbm[i]" type="number" step="0.1" class="w-20" />
                               </td>
                             </tr>
                           </tbody>
@@ -3117,7 +3299,7 @@ watch(() => props.visible, async (visible) => {
                   </div>
                   
                   <div class="mt-3 text-xs text-gray-500">
-                    预览：[{{ uniformLaunchPower }}, {{ uniformLaunchPower }}, ...] (共{{ wdmParams.channelCount }}个)
+                    预览：[{{ uniformLaunchPower }}, {{ uniformLaunchPower }}, ...] (共{{ channelConfig.channelCount }}个)
                     <button class="text-blue-600 ml-2">[查看全部]</button>
                   </div>
                 </div>
@@ -3135,7 +3317,7 @@ watch(() => props.visible, async (visible) => {
                           <span class="text-sm">默认零值</span>
                           <Input 
                             v-if="initialAseMode === 'default'"
-                            v-model.number="initialAseValue" 
+                            v-model.number="channelConfig.initialAseNoiseDbm"
                             type="number" 
                             class="w-20 ml-2" 
                           />
@@ -3159,7 +3341,7 @@ watch(() => props.visible, async (visible) => {
                           <span class="text-sm">默认零值</span>
                           <Input 
                             v-if="initialNliMode === 'default'"
-                            v-model.number="initialNliValue" 
+                            v-model.number="channelConfig.initialNliNoiseDbm"
                             type="number" 
                             class="w-20 ml-2" 
                           />
@@ -3620,8 +3802,8 @@ watch(() => props.visible, async (visible) => {
                             <line v-for="y in [30, 60, 90, 120, 150]" :key="'osy'+y" x1="50" :y1="y" x2="680" :y2="y" stroke-dasharray="4,4" />
                           </g>
                           <!-- 目标门限线 -->
-                          <line x1="50" :y1="150 - (constraints.targetGSNR - 10) * 6" x2="680" :y2="150 - (constraints.targetGSNR - 10) * 6" stroke="#f97316" stroke-width="1" stroke-dasharray="6,3" />
-                          <text x="685" :y="150 - (constraints.targetGSNR - 10) * 6 + 4" class="text-[10px] fill-orange-500">目标</text>
+                          <line x1="50" :y1="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 10) * 6" x2="680" :y2="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 10) * 6" stroke="#f97316" stroke-width="1" stroke-dasharray="6,3" />
+                          <text x="685" :y="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 10) * 6 + 4" class="text-[10px] fill-orange-500">目标</text>
                           <!-- OSNR 曲线 -->
                           <polyline :points="osnrSpectrumPath" fill="none" stroke="#22c55e" stroke-width="2" />
                           <!-- X轴 -->
@@ -3635,7 +3817,7 @@ watch(() => props.visible, async (visible) => {
                       <div class="flex justify-between text-xs text-gray-500 mt-2">
                         <span>最小: {{ calculationResult.metrics.osnr.min }} dB</span>
                         <span>最大: {{ calculationResult.metrics.osnr.max }} dB</span>
-                        <span>裕量: {{ (calculationResult.metrics.osnr.min - constraints.targetGSNR) >= 0 ? '+' : '' }}{{ (calculationResult.metrics.osnr.min - constraints.targetGSNR).toFixed(1) }} dB</span>
+                        <span>裕量: {{ (calculationResult.metrics.osnr.min - (optimizationConfig.targetGsnrDb ?? 0)) >= 0 ? '+' : '' }}{{ (calculationResult.metrics.osnr.min - (optimizationConfig.targetGsnrDb ?? 0)).toFixed(1) }} dB</span>
                       </div>
                     </div>
                     
@@ -3649,8 +3831,8 @@ watch(() => props.visible, async (visible) => {
                             <line v-for="y in [30, 60, 90, 120, 150]" :key="'gy'+y" x1="50" :y1="y" x2="680" :y2="y" stroke-dasharray="4,4" />
                           </g>
                           <!-- 目标门限线 -->
-                          <line x1="50" :y1="150 - (constraints.targetGSNR - 10) * 6" x2="680" :y2="150 - (constraints.targetGSNR - 10) * 6" stroke="#f97316" stroke-width="1" stroke-dasharray="6,3" />
-                          <text x="685" :y="150 - (constraints.targetGSNR - 10) * 6 + 4" class="text-[10px] fill-orange-500">目标</text>
+                          <line x1="50" :y1="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 10) * 6" x2="680" :y2="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 10) * 6" stroke="#f97316" stroke-width="1" stroke-dasharray="6,3" />
+                          <text x="685" :y="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 10) * 6 + 4" class="text-[10px] fill-orange-500">目标</text>
                           <!-- GSNR 曲线 -->
                           <polyline 
                             :points="gsnrSpectrumPath"
@@ -3731,7 +3913,7 @@ watch(() => props.visible, async (visible) => {
                             <line v-for="y in [30, 60, 90, 120, 150]" :key="'ey'+y" x1="50" :y1="y" x2="680" :y2="y" stroke-dasharray="4,4" />
                           </g>
                           <!-- 目标门限线 -->
-                          <line x1="50" :y1="150 - (constraints.targetGSNR - 5) * 4" x2="680" :y2="150 - (constraints.targetGSNR - 5) * 4" stroke="#f97316" stroke-width="1" stroke-dasharray="6,3" />
+                          <line x1="50" :y1="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 5) * 4" x2="680" :y2="150 - ((optimizationConfig.targetGsnrDb ?? 0) - 5) * 4" stroke="#f97316" stroke-width="1" stroke-dasharray="6,3" />
                           <!-- OSNR 曲线 -->
                           <polyline 
                             v-if="performanceChartOptions.showOsnr"
@@ -4025,8 +4207,8 @@ watch(() => props.visible, async (visible) => {
                           <g stroke="#e5e7eb" stroke-width="1">
                             <line v-for="y in [30, 60, 90, 120, 150, 180]" :key="'sg'+y" x1="50" :y1="y" x2="660" :y2="y" stroke-dasharray="4,4" />
                           </g>
-                          <line x1="50" :y1="spanChartY(constraints.targetGSNR)" x2="660" :y2="spanChartY(constraints.targetGSNR)" stroke="#f97316" stroke-width="1.5" stroke-dasharray="6,3" />
-                          <text x="665" :y="spanChartY(constraints.targetGSNR) + 4" class="text-[10px] fill-orange-500">GSNR目标</text>
+                          <line x1="50" :y1="spanChartY(optimizationConfig.targetGsnrDb ?? 0)" x2="660" :y2="spanChartY(optimizationConfig.targetGsnrDb ?? 0)" stroke="#f97316" stroke-width="1.5" stroke-dasharray="6,3" />
+                          <text x="665" :y="spanChartY(optimizationConfig.targetGsnrDb ?? 0) + 4" class="text-[10px] fill-orange-500">GSNR目标</text>
                           <rect v-if="spanFeasibleRange" :x="spanChartX(spanFeasibleRange.min)" y="20" :width="spanChartX(spanFeasibleRange.max) - spanChartX(spanFeasibleRange.min)" height="175" fill="#dcfce7" opacity="0.5" />
                           <polyline :points="spanOsnrPath" fill="none" stroke="#22c55e" stroke-width="2" />
                           <polyline :points="spanGsnrPath" fill="none" stroke="#3b82f6" stroke-width="2" />
@@ -4133,8 +4315,8 @@ watch(() => props.visible, async (visible) => {
                               <td class="px-3 py-1.5 text-right font-mono">{{ spanGsnrArray[i]?.toFixed(2) }}</td>
                               <td class="px-3 py-1.5 text-right font-mono">{{ spanOsnrArray[i]?.toFixed(2) }}</td>
                               <td class="px-3 py-1.5 text-center">
-                                <span class="text-xs px-2 py-0.5 rounded" :class="spanGsnrArray[i] >= constraints.targetGSNR ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
-                                  {{ spanGsnrArray[i] >= constraints.targetGSNR ? '✅ 可行' : '❌ 不满足' }}
+                                <span class="text-xs px-2 py-0.5 rounded" :class="spanGsnrArray[i] >= (optimizationConfig.targetGsnrDb ?? 0) ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+                                  {{ spanGsnrArray[i] >= (optimizationConfig.targetGsnrDb ?? 0) ? '✅ 可行' : '❌ 不满足' }}
                                 </span>
                               </td>
                             </tr>
@@ -4182,11 +4364,11 @@ watch(() => props.visible, async (visible) => {
               <!-- BU 配置页：显示开始计算按钮 -->
               <div v-else-if="activeStep === 'bu'" class="flex gap-2">
                 <Button 
-                  :disabled="!canStartCalculation || isCalculating"
+                  :disabled="!canStartCalculation || isCalculating || platformConfigLoading || platformConfigSaving"
                   @click="startCalculation"
                 >
                   <PlayCircle class="w-4 h-4 mr-1" /> 
-                  {{ isCalculating ? '计算中...' : '开始计算' }}
+                  {{ platformConfigSaving ? '保存中...' : (isCalculating ? '计算中...' : '开始计算') }}
                 </Button>
               </div>
               
@@ -4194,7 +4376,7 @@ watch(() => props.visible, async (visible) => {
               <div v-else-if="activeStep === 'result'" class="flex gap-2">
                 <Button 
                   variant="outline"
-                  :disabled="isCalculating"
+                  :disabled="isCalculating || platformConfigLoading || platformConfigSaving"
                   @click="recalculate"
                 >
                   <RefreshCw class="w-4 h-4 mr-1" /> 重新计算

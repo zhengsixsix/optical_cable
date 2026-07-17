@@ -1,7 +1,7 @@
 import { platformPlanConfigApi, platformPlanLayerApi, platformPointApi, platformProjectApi, platformUploadApi } from './api'
 import { uploadFileWithUppyTus } from './uppyUpload'
 import type { UppyTusUploadResult, UppyUploadProgress } from './uppyUpload'
-import type { Id, PlanLayerTypeDic, PlanPoint, PlanProject } from './types'
+import type { Id, PlanConfigScope, PlanLayerTypeDic, PlanPoint, PlanProject } from './types'
 
 type WizardPoint = Pick<PlanPoint, 'name' | 'longitude' | 'latitude' | 'sortNum'>
 
@@ -53,16 +53,10 @@ export interface ProjectWizardStepPayload {
     longitude: number
     latitude: number
   }>
-  gisConfig?: {
-    rangeMode: 'auto' | 'manual'
-    planningRange?: {
-      northwest: { lon: number; lat: number }
-      southeast: { lon: number; lat: number }
-    } | null
-    gridResolution: number
-  }
-  redundancyConfig?: {
-    enabled: boolean
+  planConfig?: {
+    scope?: Omit<PlanConfigScope, 'projectId'> | null
+    gridResolution?: number | null
+    enableRedundancy?: boolean | null
   }
   layers?: ProjectWizardLayerUpload[]
 }
@@ -137,26 +131,23 @@ export async function saveProjectWizardStep(
       await platformPointApi.saveList(projectId, pointList)
     }
 
-    if (payload.gisConfig?.rangeMode === 'manual' && payload.gisConfig.planningRange) {
+    if (payload.planConfig?.scope) {
       await platformPlanConfigApi.saveScope({
         projectId,
-        topLeftLng: payload.gisConfig.planningRange.northwest.lon,
-        topLeftLat: payload.gisConfig.planningRange.northwest.lat,
-        bottomRightLng: payload.gisConfig.planningRange.southeast.lon,
-        bottomRightLat: payload.gisConfig.planningRange.southeast.lat,
+        ...payload.planConfig.scope,
       })
     }
 
-    if (payload.gisConfig?.gridResolution != null) {
+    if (payload.planConfig?.gridResolution != null) {
       await platformPlanConfigApi.saveGridResolution({
         projectId,
-        gridResolution: payload.gisConfig.gridResolution,
+        gridResolution: payload.planConfig.gridResolution,
       })
     }
 
     await platformPlanConfigApi.saveEnableRedundancy({
       projectId,
-      enableRedundancy: payload.redundancyConfig?.enabled ?? false,
+      enableRedundancy: payload.planConfig?.enableRedundancy ?? false,
     })
   }
 

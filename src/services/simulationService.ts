@@ -157,26 +157,28 @@ export async function buildSimulationInput(
   
   // 3. 整合 WDM 参数
   const wdmConfig = {
-    channelCount: config.wdmParams.channelCount,
-    channelSpacing: config.wdmParams.channelSpacing,
-    centerWavelength: frequencyToWavelength(config.wdmParams.centerFreq),
-    symbolRate: config.wdmParams.baudRate,
-    modulationFormat: config.wdmParams.modulation as import('@/types/simulation').ModulationFormat,
-    launchPowerPerChannel: config.wdmParams.launchPower,
+    channelCount: config.channelConfig.channelCount,
+    channelSpacing: config.channelConfig.channelSpacingGhz,
+    centerWavelength: frequencyToWavelength(config.channelConfig.centerFrequencyThz),
+    symbolRate: config.channelConfig.baudRateGbaud,
+    modulationFormat: config.channelConfig.modulationFormat as import('@/types/simulation').ModulationFormat,
+    launchPowerPerChannel: config.channelConfig.launchPowerDbm[0] ?? -1.5,
     fecType: 'SD-FEC' as const,
     fecOverhead: 15,
-    launchPowerMode: config.wdmParams.launchPowerMode,
-    launchPowerVector: config.wdmParams.launchPowerVector,
-    initialAseMode: config.wdmParams.initialAseMode,
-    initialAseValue: config.wdmParams.initialAseValue,
-    initialNliMode: config.wdmParams.initialNliMode,
-    initialNliValue: config.wdmParams.initialNliValue
+    launchPowerMode: config.channelConfig.launchPowerDbm.every(value => value === config.channelConfig.launchPowerDbm[0])
+      ? 'uniform' as const
+      : 'per_channel' as const,
+    launchPowerVector: config.channelConfig.launchPowerDbm,
+    initialAseMode: config.channelConfig.initialAseNoiseDbm === -90 ? 'default' as const : 'custom' as const,
+    initialAseValue: config.channelConfig.initialAseNoiseDbm,
+    initialNliMode: config.channelConfig.initialNliNoiseDbm === -90 ? 'default' as const : 'custom' as const,
+    initialNliValue: config.channelConfig.initialNliNoiseDbm
   }
   
   // 4. 整合 Span 策略
   const spanStrategy = {
     mode: config.spanStrategy as 'fixed' | 'scan',
-    fixedLength: config.fixedSpanLength,
+    fixedLength: config.spanKm,
     scanRange: config.spanStrategy === 'auto' ? {
       min: config.constraints.minSpanLength || 40,
       max: config.constraints.maxSpanLength || 100,
@@ -186,8 +188,8 @@ export async function buildSimulationInput(
   
   // 5. 整合约束条件
   const constraints = {
-    minOsnrDb: config.constraints.targetOSNR || 18,
-    minGsnrDb: config.constraints.targetGSNR || 15,
+    minOsnrDb: config.optimizationConfig.targetOsnrDb || 18,
+    minGsnrDb: config.optimizationConfig.targetGsnrDb || 15,
     maxSpanLossDb: 20,
     targetBer: 1e-3
   }
