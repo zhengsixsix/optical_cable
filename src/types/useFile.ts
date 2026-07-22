@@ -7,6 +7,8 @@
  * - cache/: 缓存目录（可选，存放风险成本热力图、仿真图表数据等）
  */
 
+import type { PlanConfigSnapshot, PlatformPlanningResults } from '@/services/platform/types'
+
 // ==================== 1. 元数据模块 (metadata) ====================
 
 /** 显示设置 */
@@ -527,6 +529,9 @@ export interface SimulationMetricsMatrix {
   osnr_matrix_db: number[][]     // 光信噪比矩阵
   snr_ase_matrix_db: number[][]  // 线性信噪比矩阵
   snr_nli_matrix_db: number[][]  // 非线性信噪比矩阵
+  signal_power_matrix_dbm?: number[][]  // 可选：信号功率矩阵
+  ase_noise_power_matrix_dbm?: number[][]  // 可选：ASE 噪声功率矩阵
+  nli_noise_power_matrix_dbm?: number[][]  // 可选：NLI 噪声功率矩阵
 }
 
 /** 终端 GSNR 统计 */
@@ -803,6 +808,8 @@ export interface DesignCacheExtension {
       costItems: Array<{ category: string; model: string; quantity: number | string; unit: string; unitPrice: number; subtotal: number }>
     }
   } | null
+  platformPlanningResults?: PlatformPlanningResults | null
+  platformPlanConfigSnapshot?: PlanConfigSnapshot | null
 }
 
 /** 应用扩展数据包 (非规范模块，统一归集) */

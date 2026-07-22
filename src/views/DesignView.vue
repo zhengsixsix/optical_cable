@@ -36,6 +36,16 @@ import { calculateDistance as geoCalcDistance } from '@/utils/geo'
 import { enrichOrderedRoutePointsWithDepth, getRoutePositionAtKP } from '@/utils/routePosition'
 import { calculateRouteTrunkLengthKm } from '@/utils/routeLength'
 import {
+  isGenericRouteStationName,
+  preferSpecificRouteStationName,
+  resolveRouteStationNames,
+} from '@/utils/routeStationNames'
+import {
+  resolveLayoutAmplifiers,
+  selectPlanningLayoutResult,
+  type PlanningLayoutResult,
+} from '@/utils/systemPlanningLayout'
+import {
   getDeviceLibrariesByCategory,
   type RuntimeAmplifierLibrary,
   type RuntimeEqualizerLibrary,
@@ -153,6 +163,8 @@ onMounted(async () => {
     await settingsStore.loadPlatformDeviceLibraries()
   }
 
+  routeStore.syncConfiguredStationNames()
+
   if (!routeStore.selectedRoute) {
     appStore.addLog('INFO', '系统设计未检测到真实路由规划结果，未自动生成调试路线')
   }
@@ -162,12 +174,15 @@ onMounted(async () => {
   
   // 从路由规划初始化登陆站和分支器到 monitorStore
   initLandingStationsFromRoute()
+  const restoredLayout = restorePersistedPlanningDevices()
   
   // 从 settingsStore 恢复链路计算结果摘要（导入 USE 文件后自动显示）
   if (!linkCalcSummary.value && settingsStore.linkCalcSummaryCache) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     linkCalcSummary.value = settingsStore.linkCalcSummaryCache as any
     currentLinkName.value = settingsStore.linkCalcSummaryCache.linkName || routeStore.selectedRoute?.name || '链路'
+  } else if (!linkCalcSummary.value && restoredLayout) {
+    restorePersistedPlanningSummary(restoredLayout)
   }
   
   // 如果 connectorStore 中已有放大器，启用拖拽（USE 导入后）
@@ -221,12 +236,74 @@ const ensureRPLData = () => {
 }
 
 // 上次初始化使用的路由 ID（用于检测路由是否变更）
-let lastInitRouteId: string | null = null
+let lastInitRouteId: string | null = connectorStore.currentTable?.routeId || null
+
+const syncConfiguredStationNamesToConnector = (): { startName: string; endName: string } | null => {
+  const selectedRoute = routeStore.selectedRoute
+  if (!selectedRoute) return null
+  const resolved = resolveRouteStationNames(selectedRoute, settingsStore.routePlanningConfig)
+  if (!resolved.startPoint || !resolved.endPoint) return null
+
+  const table = connectorStore.getTableByRoute(selectedRoute.id)
+    || (connectorStore.tables.length === 1 && !connectorStore.currentTable?.routeId
+      ? connectorStore.currentTable
+      : null)
+  if (!table) return null
+  const stationElements = table.elements.filter(element => element.type === 'landing' || element.type === 'underwater')
+  if (stationElements.length === 0) return null
+
+  const findClosestStation = (coordinates: [number, number], excludedId?: string) => {
+    let closest = stationElements.find(element => element.id !== excludedId) || null
+    let closestDistance = Number.POSITIVE_INFINITY
+    for (const element of stationElements) {
+      if (element.id === excludedId) continue
+      const dx = element.longitude - coordinates[0]
+      const dy = element.latitude - coordinates[1]
+      const distance = dx * dx + dy * dy
+      if (distance < closestDistance) {
+        closest = element
+        closestDistance = distance
+      }
+    }
+    return closest
+  }
+
+  const startElement = findClosestStation(resolved.startPoint.coordinates)
+  const endElement = findClosestStation(resolved.endPoint.coordinates, startElement?.id)
+  const startName = preferSpecificRouteStationName(resolved.startName, startElement?.name)
+  const endName = preferSpecificRouteStationName(resolved.endName, endElement?.name)
+  let changed = false
+  if (startElement && startElement.name !== startName) {
+    startElement.name = startName
+    changed = true
+  }
+  if (endElement && endElement.name !== endName) {
+    endElement.name = endName
+    changed = true
+  }
+  if (changed) table.updatedAt = new Date().toISOString()
+
+  if (!isGenericRouteStationName(startName) && settingsStore.routePlanningConfig.startPoint.name !== startName) {
+    settingsStore.updateRoutePlanningConfig({
+      startPoint: { ...settingsStore.routePlanningConfig.startPoint, name: startName },
+    })
+  }
+  if (!isGenericRouteStationName(endName) && settingsStore.routePlanningConfig.endPoint.name !== endName) {
+    settingsStore.updateRoutePlanningConfig({
+      endPoint: { ...settingsStore.routePlanningConfig.endPoint, name: endName },
+    })
+  }
+  return { startName, endName }
+}
 
 // 从路由规划初始化登陆站和分支器数据
 const initLandingStationsFromRoute = () => {
   const selectedRoute = routeStore.selectedRoute
   if (!selectedRoute || selectedRoute.points.length === 0) return
+  const resolvedStations = resolveRouteStationNames(selectedRoute, settingsStore.routePlanningConfig)
+  const syncedStationNames = syncConfiguredStationNamesToConnector()
+  const startStationName = preferSpecificRouteStationName(resolvedStations.startName, syncedStationNames?.startName)
+  const endStationName = preferSpecificRouteStationName(resolvedStations.endName, syncedStationNames?.endName)
   
   // ★ 检测路由是否变更：如果当前路由与上次初始化的路由不同，清除旧数据
   const hasLandingStations = connectorStore.elements.some(e => e.type === 'landing' || e.type === 'underwater')
@@ -333,10 +410,10 @@ const initLandingStationsFromRoute = () => {
       deviceType = isUnderwater ? 'underwater' : 'landing'
       const stationType = isUnderwater ? '水下站点' : '岸上站点'
       if (!isBranchStation && trunkLandings.length > 0) {
-        if (point === trunkLandings[0]) {
-          deviceName = point.name || `${stationType}-起点`
-        } else if (point === trunkLandings[trunkLandings.length - 1]) {
-          deviceName = point.name || `${stationType}-终点`
+        if (point.id === resolvedStations.startPoint?.id) {
+          deviceName = startStationName
+        } else if (point.id === resolvedStations.endPoint?.id) {
+          deviceName = endStationName
         } else {
           deviceName = point.name || stationType
         }
@@ -370,8 +447,20 @@ const initLandingStationsFromRoute = () => {
       const { isBranch, ...elementData } = device
       connectorStore.addElement(elementData as any, false)
     })
+    syncConfiguredStationNamesToConnector()
   }
 }
+
+watch(
+  () => [
+    settingsStore.routePlanningConfig.startPoint.name,
+    settingsStore.routePlanningConfig.endPoint.name,
+  ],
+  () => {
+    routeStore.syncConfiguredStationNames()
+    syncConfiguredStationNamesToConnector()
+  },
+)
 
 // 监听 elements 变化 — 检测 OLA 添加后自动更新性能面板
 let prevOlaCount = 0
@@ -700,6 +789,7 @@ const placementRoutePoints = ref<any[]>([])
 
 // 链路计算结果摘要（来自系统规划链路配置对话框）
 const linkCalcSummary = ref<{
+  layoutOnly?: boolean
   linkName: string
   metrics: {
     osnr: { min: number; max: number; avg: number }
@@ -733,6 +823,133 @@ const linkCalcSummary = ref<{
     costItems: Array<{ category: string; model: string; quantity: number | string; unit: string; unitPrice: number; subtotal: number }>
   }
 } | null>(null)
+
+const getPersistedPlanningLayout = (): PlanningLayoutResult | null => {
+  const results = settingsStore.platformPlanningResults
+  if (!results) return null
+  const preferFixed = settingsStore.platformPlanConfigSnapshot?.form?.spanStrategy === 'fixed'
+  return selectPlanningLayoutResult(results, preferFixed ? 'fixed' : 'optimized')
+}
+
+const restorePersistedPlanningDevices = (): PlanningLayoutResult | null => {
+  const layout = getPersistedPlanningLayout()
+  const route = routeStore.selectedRoute
+  if (!layout || !route) return layout
+
+  const rpl = rplStore.tables.find(item => item.routeId === route.id) || rplStore.currentTable
+  const totalLength = layout.totalLengthKm
+    || rpl?.metadata?.totalLength
+    || calculateRouteTrunkLengthKm(route)
+    || route.totalLength
+  const placements = resolveLayoutAmplifiers(layout, totalLength)
+  if (placements.length === 0) return layout
+
+  let table = connectorStore.getTableByRoute(route.id)
+  if (!table) {
+    connectorStore.createTable(`${route.name || '链路'}_接线元`, route.id)
+    table = connectorStore.currentTable
+  } else {
+    connectorStore.selectTable(table.id)
+  }
+  if (!table) return layout
+
+  const existingAmplifiers = table.elements.filter(element =>
+    element.type === 'ola' || element.type === 'amplifier_e' || element.type === 'amplifier_w'
+  )
+
+  const amplifierTypeId = settingsStore.platformPlanConfigSnapshot?.form?.amplifierTypeId
+    || settingsStore.systemPlanningCache?.device_selection.edfa_spec_id
+    || ''
+  const amplifierType = platformAmplifierLibraries.value.find(item => item.id === amplifierTypeId)
+  const matchedAmplifierIds = new Set<string>()
+  const missingPlacements: Array<{
+    amplifier: (typeof placements)[number]
+    longitude: number
+    latitude: number
+    depth: number
+  }> = []
+
+  placements.forEach(amplifier => {
+    const routePosition = getRoutePositionAtKP(amplifier.positionKm, route, {
+      configuredTotalLength: totalLength,
+      rplRecords: rpl?.records || [],
+    })
+    const longitude = amplifier.longitude ?? routePosition.longitude
+    const latitude = amplifier.latitude ?? routePosition.latitude
+    const matched = existingAmplifiers.find(element => {
+      if (matchedAmplifierIds.has(element.id)) return false
+      const sameKp = Math.abs(element.kp - amplifier.positionKm) < 0.1
+      const sameCoordinate = Math.abs(element.longitude - longitude) < 0.01
+        && Math.abs(element.latitude - latitude) < 0.01
+      return sameKp || sameCoordinate
+    })
+
+    if (matched) {
+      matchedAmplifierIds.add(matched.id)
+      connectorStore.updateElement(matched.id, {
+        kp: amplifier.positionKm,
+        longitude,
+        latitude,
+        depth: routePosition.depth,
+        specifications: matched.specifications || amplifierType?.name || '系统规划放大器',
+        componentRefId: matched.componentRefId || amplifierTypeId || undefined,
+      }, false)
+      return
+    }
+
+    missingPlacements.push({ amplifier, longitude, latitude, depth: routePosition.depth })
+  })
+
+  connectorStore.addElements(missingPlacements.map(({ amplifier, longitude, latitude, depth }, index) => ({
+      type: 'ola' as const,
+      name: amplifier.nodeName || `AMP-${String(index + 1).padStart(2, '0')}`,
+      kp: amplifier.positionKm,
+      longitude,
+      latitude,
+      depth,
+      status: 'planned' as const,
+      specifications: amplifierType?.name || '系统规划放大器',
+      componentRefId: amplifierTypeId || undefined,
+      remarks: '从已保存的系统规划结果恢复',
+    })), false)
+
+  return layout
+}
+
+const restorePersistedPlanningSummary = (layout: PlanningLayoutResult) => {
+  const route = routeStore.selectedRoute
+  const stations = resolveRouteStationNames(route, settingsStore.routePlanningConfig)
+  const amplifierCount = resolveLayoutAmplifiers(layout).length
+  const totalLength = layout.totalLengthKm || calculateRouteTrunkLengthKm(route) || route?.totalLength || 0
+  const avgSpanLength = layout.spanKmUsed || (amplifierCount >= 0 ? totalLength / (amplifierCount + 1) : 0)
+  const channelConfig = settingsStore.platformPlanConfigSnapshot?.channelConfig
+  const summary = {
+    layoutOnly: true,
+    linkName: `${stations.startName} ⇄ ${stations.endName}`,
+    metrics: {
+      osnr: { min: 0, max: 0, avg: 0 },
+      gsnr: { min: 0, max: 0, avg: 0 },
+      power: { min: 0, max: 0, avg: 0 },
+      nli: { min: 0, max: 0, avg: 0 },
+      qFactor: { min: 0, max: 0, avg: 0 },
+    },
+    systemConfig: {
+      amplifierCount,
+      avgSpanLength,
+      buCount: route?.points.filter(point => point.type === 'branching').length || 0,
+      equalizerCount: connectorStore.elements.filter(element => element.type === 'equalizer').length,
+      totalBuLoss: 0,
+      totalEqualizerLoss: 0,
+      channelCount: Number(channelConfig?.channelCount ?? settingsStore.transmissionConfig.channelCount ?? 0),
+      modulation: channelConfig?.modulationFormat || '-',
+    },
+    margin: { targetOsnr: 0, worstMargin: 0, avgMargin: 0, meetsRequirement: false },
+    costData: { cableCost: 0, amplifierCost: 0, buCost: 0, equalizerCost: 0, totalCost: 0, costItems: [] },
+  }
+  linkCalcSummary.value = summary
+  currentLinkName.value = summary.linkName
+  settingsStore.updateLinkCalcSummaryCache(summary)
+}
 
 // 设备统计（优先使用计算结果，否则从接线元统计）
 const deviceStats = computed(() => {
@@ -1611,6 +1828,52 @@ const handleLinkConfigApplyResult = (result: Record<string, any>) => {
   setTimeout(() => {
     const avgSpan = result.avgSpanLength || 72.5
     const amplifierCount = result.amplifierCount || 0
+
+    if (result.layoutOnly) {
+      spanScanResult.value = null
+      recommendedSpan.value = avgSpan
+      userSelectedSpan.value = result.userSelectedSpan ?? null
+      currentLinkName.value = result.linkName || routeStore.selectedRoute?.name || '链路'
+
+      linkCalcSummary.value = {
+        layoutOnly: true,
+        linkName: result.linkName || '',
+        metrics: {
+          osnr: { min: 0, max: 0, avg: 0 },
+          gsnr: { min: 0, max: 0, avg: 0 },
+          power: { min: 0, max: 0, avg: 0 },
+          nli: { min: 0, max: 0, avg: 0 },
+          qFactor: { min: 0, max: 0, avg: 0 },
+        },
+        systemConfig: result.systemConfig || {
+          amplifierCount,
+          avgSpanLength: avgSpan,
+          buCount: 0,
+          equalizerCount: 0,
+          totalBuLoss: 0,
+          totalEqualizerLoss: 0,
+          channelCount: 0,
+          modulation: '-',
+        },
+        margin: { targetOsnr: 0, worstMargin: 0, avgMargin: 0, meetsRequirement: false },
+        costData: { cableCost: 0, amplifierCost: 0, buCost: 0, equalizerCost: 0, totalCost: 0, costItems: [] },
+      }
+      settingsStore.updateLinkCalcSummaryCache(linkCalcSummary.value)
+
+      autoPlacementResult.value = {
+        positions: connectorStore.elements
+          .filter(e => e.type === 'amplifier_e' || e.type === 'amplifier_w' || e.type === 'ola')
+          .map(e => ({ kp: e.kp, longitude: e.longitude, latitude: e.latitude })),
+        count: amplifierCount,
+      }
+
+      centerViewMode.value = 'map'
+      appStore.showNotification({
+        type: 'success',
+        message: `已应用布局结果，放大器数量: ${amplifierCount}，规划 Span: ${avgSpan.toFixed(1)}km`,
+      })
+      return
+    }
     
     // 优先使用对话框传递的完整 Span 扫描数据（多点）
     if (result.spanScanData && result.spanScanData.spanLengthsKm?.length > 1) {
@@ -1686,7 +1949,7 @@ const handleLinkConfigApplyResult = (result: Record<string, any>) => {
         costData: result.costData || { cableCost: 0, amplifierCost: 0, buCost: 0, equalizerCost: 0, totalCost: 0, costItems: [] },
       }
       // 同步到 settingsStore 以便导出时保存
-      settingsStore.linkCalcSummaryCache = linkCalcSummary.value
+      settingsStore.updateLinkCalcSummaryCache(linkCalcSummary.value)
     }
     
     // 更新自动放置结果
@@ -1950,7 +2213,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
           </span>
         </CardHeader>
         <CardContent class="pt-0">
-          <div v-if="linkCalcSummary?.costData" class="space-y-2">
+          <div v-if="linkCalcSummary?.costData && !linkCalcSummary.layoutOnly" class="space-y-2">
             <!-- 总成本 -->
             <div class="p-2.5 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
               <div class="text-[10px] text-green-600 mb-0.5">链路总成本</div>
@@ -2167,8 +2430,12 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
               <span>{{ deviceStats.modulation }}</span>
             </div>
 
+            <div v-if="linkCalcSummary.layoutOnly" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+              当前已应用平台布局结果；OSNR、GSNR、裕量和成本需要等待物理仿真指标返回后展示。
+            </div>
+
             <!-- OSNR 指标 -->
-            <div class="border rounded-lg overflow-hidden">
+            <div v-if="!linkCalcSummary.layoutOnly" class="border rounded-lg overflow-hidden">
               <div class="px-3 py-1.5 bg-orange-50 border-b flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full bg-orange-500" />
                 <span class="text-xs font-medium text-orange-700">OSNR</span>
@@ -2190,7 +2457,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
             </div>
 
             <!-- GSNR 指标 -->
-            <div class="border rounded-lg overflow-hidden">
+            <div v-if="!linkCalcSummary.layoutOnly" class="border rounded-lg overflow-hidden">
               <div class="px-3 py-1.5 bg-blue-50 border-b flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full bg-blue-500" />
                 <span class="text-xs font-medium text-blue-700">GSNR</span>
@@ -2212,7 +2479,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
             </div>
 
             <!-- 裕量评估 -->
-            <div class="border rounded-lg p-3 space-y-2"
+            <div v-if="!linkCalcSummary.layoutOnly" class="border rounded-lg p-3 space-y-2"
               :class="linkCalcSummary.margin.meetsRequirement ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
               <div class="flex items-center gap-1.5 text-xs font-medium"
                 :class="linkCalcSummary.margin.meetsRequirement ? 'text-green-700' : 'text-red-700'">

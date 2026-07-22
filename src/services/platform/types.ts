@@ -101,8 +101,28 @@ export interface PlanRouteResult {
   'segment_result_base_Risk.json'?: Record<string, unknown> | string | null
 }
 
-export interface PlanSystemResult {
-  'simulation_result.json'?: string | null
+/** Swagger: PlanAPIFixedParam */
+export interface PlanFixedParam {
+  id: Id
+}
+
+/** Swagger: PlanAPIOptimizedParam / PlanAPISimulationParam */
+export interface PlanRouteSelectionParam {
+  id: Id
+  fmmPathResultIndex: number
+}
+
+/**
+ * Swagger 将 fixed / optimized / simulation 的 data 声明为 Object，
+ * 没有公开内部字段。保留 unknown，等真实响应确认后再收紧类型。
+ */
+export type PlanCalculationResult = unknown
+
+export interface PlatformPlanningResults {
+  fixed: PlanCalculationResult | null
+  optimized: PlanCalculationResult | null
+  simulation: PlanCalculationResult | null
+  errors: string[]
 }
 
 export interface PlanPoint {
@@ -170,6 +190,43 @@ export interface PlanConfigSpanKm {
   spanKm?: number | null
 }
 
+/** 系统规划向导的本地表单快照；平台接口不接收这些扩展字段。 */
+export interface SystemPlanningFormSnapshot {
+  routeId: string
+  rplId: string
+  fiberModel: 'GN' | 'EGN' | 'SSFM'
+  amplifierModel: 'EDFA_Simple' | 'EDFA_Full' | 'EDFA_Raman'
+  fiberTypeId: string
+  amplifierTypeId: string
+  fiberParams: Record<string, number>
+  amplifierParams: Record<string, number>
+  ssfmParams: {
+    stepSize: number
+    samplePoints: number
+    maxIterations: number
+  }
+  spanStrategy: 'auto' | 'fixed'
+  spanKm: number
+  spanScanConfig: {
+    min: number
+    max: number
+    step: number
+  }
+  optimizationTarget: 'min_amplifiers' | 'max_gsnr'
+  constraints: {
+    maxSpanLength: number
+    minSpanLength: number
+    osnrMargin: number
+  }
+  launchPowerMode: 'uniform' | 'grouped' | 'per_channel' | 'import'
+  launchPowerGroups: {
+    lower: number
+    center: number
+    upper: number
+  }
+  savedAt: string
+}
+
 export interface PlanConfigSnapshot {
   scope: Omit<PlanConfigScope, 'projectId'> | null
   gridResolution: number | null
@@ -178,6 +235,7 @@ export interface PlanConfigSnapshot {
   optimization: Omit<PlanConfigOptimization, 'projectId'> | null
   spanKm: number | null
   errors: string[]
+  form?: SystemPlanningFormSnapshot | null
 }
 
 export type PlanLayerTypeDic =

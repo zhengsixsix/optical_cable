@@ -2,7 +2,7 @@
 import { useConnectorStore } from '@/stores/connector'
 import { useRouteStore } from '@/stores/route'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { Button } from '@/shared/components/base'
 import { BarChart2, X, RefreshCw, Filter, Cpu, ChevronDown, ChevronUp, Target, Info, FileText, AlertTriangle, Download } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
@@ -84,6 +84,7 @@ function classifyError(err: Error): SimulationError {
 
 // 仿真结果
 const cache = ref<SimulationCache | null>(null)
+const restoringCachedResult = ref(false)
 
 // 模型配置——从工程设置读取初始值，若未配置则为空强制选择
 const fiberModel = ref<string>(settingsStore.fiberSimulationConfig?.model || '')
@@ -1152,34 +1153,35 @@ const doGenerateReport = () => {
 // 模型变更自动重算
 watch([fiberModel, edfaModel], () => {
   // 只在已有结果且模型确实变更时自动重新计算
-  if (cache.value && configChanged.value && !isSimulating.value) {
+  if (cache.value && configChanged.value && !isSimulating.value && !restoringCachedResult.value) {
     runSimulation()
   }
 })
 
 // 打开时加载缓存 + 同步工程设置中的模型配置
-watch(() => props.visible, (visible) => {
+watch(() => props.visible, async (visible) => {
   if (visible) {
-    // 从工程设置同步模型选择（传输与仿真配置）
-    const settingsFiber = settingsStore.fiberSimulationConfig?.model
-    const settingsEdfa = settingsStore.simulationModelConfig?.edfaModel
-    if (settingsFiber && fiberModelOptions.some(o => o.value === settingsFiber)) {
-      fiberModel.value = settingsFiber
-    }
-    if (settingsEdfa && edfaModelOptions.some(o => o.value === settingsEdfa)) {
-      edfaModel.value = settingsEdfa
-    }
-
-    // 加载缓存（若缓存模型与当前选择一致则直接显示，否则等用户重新计算）
+    restoringCachedResult.value = true
     if (settingsStore.simulationCache?.is_valid) {
       const cachedFiber = settingsStore.simulationCache.model_selection.fiber_model_id
       const cachedEdfa = settingsStore.simulationCache.model_selection.edfa_model_id
-      if (cachedFiber === fiberModel.value && cachedEdfa === edfaModel.value) {
-        cache.value = settingsStore.simulationCache
-        simState.value = 'SUCCESS'
+      if (fiberModelOptions.some(option => option.value === cachedFiber)) fiberModel.value = cachedFiber
+      if (edfaModelOptions.some(option => option.value === cachedEdfa)) edfaModel.value = cachedEdfa
+      buModel.value = settingsStore.simulationCache.model_selection.bu_model_id
+      cache.value = settingsStore.simulationCache
+      simState.value = 'SUCCESS'
+    } else {
+      const settingsFiber = settingsStore.fiberSimulationConfig?.model
+      const settingsEdfa = settingsStore.simulationModelConfig?.edfaModel
+      if (settingsFiber && fiberModelOptions.some(option => option.value === settingsFiber)) {
+        fiberModel.value = settingsFiber
       }
-      // 模型不匹配时不加载旧缓存，提示用户重新计算
+      if (settingsEdfa && edfaModelOptions.some(option => option.value === settingsEdfa)) {
+        edfaModel.value = settingsEdfa
+      }
     }
+    await nextTick()
+    restoringCachedResult.value = false
   }
 })
 </script>

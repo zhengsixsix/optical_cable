@@ -16,13 +16,18 @@ import { useRPLStore } from '@/stores/rpl'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
-import { platformPlanConfigApi, platformProjectApi } from '@/services/platform/api'
-import { connectorElementToDeviceEntity } from '@/services/platform/deviceLibraryMapping'
+import { platformDeviceEntityApi, platformPlanConfigApi, platformProjectApi } from '@/services/platform/api'
+import {
+  connectorElementToDeviceEntity,
+  platformDeviceEntityToConnectorElement,
+} from '@/services/platform/deviceLibraryMapping'
 import { isPublicFlag, normalizePlanProject } from '@/services/platform/normalizers'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
 import { queryRoutePlanningByProjectId } from '@/services/RoutePlanningApiService'
-import type { Id, PlanConfigScope, PlanSystemResult } from '@/services/platform/types'
+import { normalizePlatformSimulationCache } from '@/services/SimulationApiService'
+import type { Id, PlanConfigScope } from '@/services/platform/types'
 import { generateUUID } from '@/types/useFile'
+import { preferSpecificRouteStationName } from '@/utils/routeStationNames'
 import { useRouter } from 'vue-router'
 
 // 新建项目参数
@@ -108,12 +113,6 @@ export type SavePromptChoice = 'save' | 'discard' | 'cancel'
 interface OpenProjectState {
   pendingFile: File | null
   showSavePrompt: boolean
-}
-
-function parsePlatformSystemResult(result: PlanSystemResult | null): unknown | null {
-  const text = result?.['simulation_result.json']
-  if (!text?.trim()) return null
-  return JSON.parse(text)
 }
 
 export function useProjectManager() {
@@ -264,20 +263,23 @@ export function useProjectManager() {
     )
 
     try {
-      const [project, routeQuery, systemQuery, planConfigQuery] = await Promise.all([
+      const [project, routeQuery, planningResultsQuery, planConfigQuery, deviceEntitiesQuery] = await Promise.all([
         platformProjectApi.detail(projectId),
         queryRoutePlanningByProjectId(projectId)
           .then(data => ({ data, error: null as Error | null }))
           .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
-        platformProjectApi.querySystem(projectId)
-          .then(parsePlatformSystemResult)
+        platformProjectApi.queryPlanningResults(projectId)
           .then(data => ({ data, error: null as Error | null }))
           .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
         platformPlanConfigApi.searchAll(projectId)
           .then(data => ({ data, error: null as Error | null }))
           .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
+        platformDeviceEntityApi.search({ projectId, pageNumber: 1, pageSize: 1000 })
+          .then(response => ({ data: response.data ?? [], error: null as Error | null }))
+          .catch(error => ({ data: [], error: error instanceof Error ? error : new Error(String(error)) })),
       ])
       const normalizedProject = normalizePlanProject(project)
+      projectDataStore.clearProjectData()
       const metadata: ProjectMetadata = {
         name: normalizedProject.name || `平台项目 ${projectId}`,
         path: `platform://${projectId}`,
@@ -291,16 +293,69 @@ export function useProjectManager() {
 
       const points = [...normalizedProject.pointList]
         .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
+      const firstRoute = routeQuery.data?.routes[0] ?? null
+      const routeLandingPoints = firstRoute?.points.filter(point => point.type === 'landing') ?? []
+      const restoredConnectorElements = deviceEntitiesQuery.data
+        .map(platformDeviceEntityToConnectorElement)
+        .filter(element => element.type !== 'cable_segment')
+      const platformLandingElements = restoredConnectorElements.filter(element =>
+        element.type === 'landing' || element.type === 'underwater'
+      )
+
+      const nearestName = (
+        longitude: number | undefined,
+        latitude: number | undefined,
+        candidates: Array<{ name?: string | null; longitude: number; latitude: number }>,
+      ) => {
+        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return ''
+        return candidates
+          .map(candidate => ({
+            name: candidate.name,
+            distance: (candidate.longitude - Number(longitude)) ** 2
+              + (candidate.latitude - Number(latitude)) ** 2,
+          }))
+          .sort((left, right) => left.distance - right.distance)[0]?.name || ''
+      }
+
+      const projectStartPoint = points[0]
+      const projectEndPoint = points[points.length - 1]
+      const routeStartPoint = routeLandingPoints[0] ?? firstRoute?.points[0]
+      const routeEndPoint = routeLandingPoints[routeLandingPoints.length - 1]
+        ?? firstRoute?.points[firstRoute.points.length - 1]
+      const startLongitude = projectStartPoint?.longitude ?? routeStartPoint?.coordinates[0]
+      const startLatitude = projectStartPoint?.latitude ?? routeStartPoint?.coordinates[1]
+      const endLongitude = projectEndPoint?.longitude ?? routeEndPoint?.coordinates[0]
+      const endLatitude = projectEndPoint?.latitude ?? routeEndPoint?.coordinates[1]
+      const routeStationCandidates = routeLandingPoints.map(point => ({
+        name: point.name,
+        longitude: point.coordinates[0],
+        latitude: point.coordinates[1],
+      }))
+      const startStationName = preferSpecificRouteStationName(
+        projectStartPoint?.name,
+        nearestName(startLongitude, startLatitude, routeStationCandidates),
+        nearestName(startLongitude, startLatitude, platformLandingElements),
+        routeStartPoint?.name,
+        '起点',
+      )
+      const endStationName = preferSpecificRouteStationName(
+        projectEndPoint?.name,
+        nearestName(endLongitude, endLatitude, routeStationCandidates),
+        nearestName(endLongitude, endLatitude, platformLandingElements),
+        routeEndPoint?.name,
+        '终点',
+      )
 
       const settingsStore = useSettingsStore()
       settingsStore.resetProjectSettings()
+      settingsStore.platformDeviceEntities = deviceEntitiesQuery.data
       settingsStore.updateRoutePlanningConfig({
         mode: points.length > 2 ? 'multi-point' : 'point-to-point',
-        startPoint: points[0]
-          ? { name: points[0].name, lon: points[0].longitude!, lat: points[0].latitude! }
+        startPoint: Number.isFinite(startLongitude) && Number.isFinite(startLatitude)
+          ? { name: startStationName, lon: Number(startLongitude), lat: Number(startLatitude) }
           : { lon: 0, lat: 0 },
-        endPoint: points[points.length - 1]
-          ? { name: points[points.length - 1].name, lon: points[points.length - 1].longitude!, lat: points[points.length - 1].latitude! }
+        endPoint: Number.isFinite(endLongitude) && Number.isFinite(endLatitude)
+          ? { name: endStationName, lon: Number(endLongitude), lat: Number(endLatitude) }
           : { lon: 0, lat: 0 },
         waypoints: points.map(point => ({
           id: String(point.id ?? `${projectId}-${point.sortNum ?? point.name}`),
@@ -324,10 +379,31 @@ export function useProjectManager() {
         ...(planConfigQuery.data?.gridResolution != null
           ? { gridResolution: Number(planConfigQuery.data.gridResolution) }
           : {}),
-        isConfigured: points.length > 0,
+        isConfigured: Number.isFinite(startLongitude)
+          && Number.isFinite(startLatitude)
+          && Number.isFinite(endLongitude)
+          && Number.isFinite(endLatitude),
       })
       settingsStore.updatePlatformPlanConfigSnapshot(planConfigQuery.data)
-      settingsStore.updatePlatformSystemResult(systemQuery.data)
+      settingsStore.updatePlatformPlanningResults(planningResultsQuery.data)
+      const restoredSimulationCache = normalizePlatformSimulationCache(
+        planningResultsQuery.data?.simulation,
+      )
+      if (restoredSimulationCache) {
+        settingsStore.updateSimulationCache(restoredSimulationCache)
+        const fiberModel = restoredSimulationCache.model_selection.fiber_model_id
+        const amplifierModel = restoredSimulationCache.model_selection.edfa_model_id
+        if (['GN', 'EGN', 'SSFM'].includes(fiberModel)) {
+          settingsStore.updateSimulationModelConfig({
+            fiberModel: fiberModel as 'GN' | 'EGN' | 'SSFM',
+          })
+        }
+        if (['EDFA_Simple', 'EDFA_Full', 'EDFA_Raman'].includes(amplifierModel)) {
+          settingsStore.updateSimulationModelConfig({
+            edfaModel: amplifierModel as 'EDFA_Simple' | 'EDFA_Full' | 'EDFA_Raman',
+          })
+        }
+      }
       if (planConfigQuery.error) {
         appStore.addLog('WARN', `查询项目配置失败: ${planConfigQuery.error.message}`)
       } else if (planConfigQuery.data?.errors.length) {
@@ -339,13 +415,19 @@ export function useProjectManager() {
       const routeStore = useRouteStore()
       const cableSegmentStore = useCableSegmentStore()
       routeStore.setAlgorithmRouteResult(routeQuery.data)
-      const firstRoute = routeQuery.data?.routes[0] ?? null
       if (firstRoute) {
         routeStore.selectRoute(firstRoute.id)
         cableSegmentStore.setCurrentRoute(firstRoute.id)
         cableSegmentStore.setSegments(routeQuery.data?.segmentsByRouteId[firstRoute.id] ?? [])
       } else {
         cableSegmentStore.clearSegments()
+      }
+
+      const connectorStore = useConnectorStore()
+      connectorStore.createTable(`${metadata.name}_接线元`, firstRoute?.id)
+      if (connectorStore.currentTable) {
+        connectorStore.currentTable.elements = restoredConnectorElements
+        connectorStore.currentTable.updatedAt = new Date().toISOString()
       }
 
       appStore.setCurrentProject(metadata)
@@ -368,10 +450,17 @@ export function useProjectManager() {
       } else {
         appStore.addLog('INFO', `项目暂无路由规划结果，已显示 ${points.length} 个站点`)
       }
-      if (systemQuery.error) {
-        appStore.addLog('WARN', `查询系统规划结果失败: ${systemQuery.error.message}`)
-      } else if (systemQuery.data) {
-        appStore.addLog('INFO', '已恢复系统规划结果')
+      if (planningResultsQuery.error) {
+        appStore.addLog('WARN', `查询系统规划结果失败: ${planningResultsQuery.error.message}`)
+      } else if (planningResultsQuery.data?.errors.length) {
+        appStore.addLog('WARN', `部分系统规划结果查询失败: ${planningResultsQuery.data.errors.join('; ')}`)
+      } else if (planningResultsQuery.data) {
+        appStore.addLog('INFO', '已恢复固定布局、优化布局和物理仿真结果')
+      }
+      if (deviceEntitiesQuery.error) {
+        appStore.addLog('WARN', `查询项目器件实例失败: ${deviceEntitiesQuery.error.message}`)
+      } else {
+        appStore.addLog('INFO', `已恢复平台器件实例: ${deviceEntitiesQuery.data.length} 个`)
       }
       return true
     } catch (error) {

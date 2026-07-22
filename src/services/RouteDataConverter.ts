@@ -607,7 +607,7 @@ export function convertSegmentResultToRoute(
     id: `${routeId}-p${node[0]}`,
     coordinates: nodeMap.get(Number(node[0])) || [Number(node[1]), Number(node[2])],
     type: index === 0 || index === segmentResult.segment_nodes.length - 1 ? 'landing' : 'waypoint',
-    name: index === 0 ? '算法起点' : index === segmentResult.segment_nodes.length - 1 ? '算法终点' : `算法节点 ${node[0]}`,
+    name: index === 0 ? '起点' : index === segmentResult.segment_nodes.length - 1 ? '终点' : `算法节点 ${node[0]}`,
     depth: index === 0 || index === segmentResult.segment_nodes.length - 1 ? 0 : 1000,
   }))
 
@@ -680,7 +680,7 @@ export function convertPathResultToRoute(
     id: `${routeId}-p${index}`,
     coordinates: coord,
     type: index === 0 || index === routeCoordinates.length - 1 ? 'landing' : 'waypoint',
-    name: index === 0 ? '算法起点' : index === routeCoordinates.length - 1 ? '算法终点' : `路径点 ${index}`,
+    name: index === 0 ? '起点' : index === routeCoordinates.length - 1 ? '终点' : `路径点 ${index}`,
     depth: pathResult.trace[index]?.[2] || 0,
   }))
 

@@ -3,6 +3,7 @@ import { ref, shallowRef, computed } from 'vue'
 import type { Route, RoutePoint, RouteSegment } from '@/types'
 import { useSettingsStore } from './settings'
 import type { AlgorithmRouteBundleResult } from '@/services/RouteDataConverter'
+import { applyConfiguredStationNames } from '@/utils/routeStationNames'
 
 // 点对点模式
 export interface PlanningParams {
@@ -244,12 +245,18 @@ export const useRouteStore = defineStore('route', () => {
   /**
    * 设置 Pareto 路径数据（用于文件导入）
    */
+  const withConfiguredStationNames = (newRoutes: Route[]) => {
+    const config = useSettingsStore().routePlanningConfig
+    return newRoutes.map(route => applyConfiguredStationNames(route, config))
+  }
+
   function setParetoRoutes(newRoutes: Route[]) {
-    routes.value = [...newRoutes]
-    paretoRoutes.value = [...newRoutes]
-    if (newRoutes.length > 0) {
-      currentRouteId.value = newRoutes[0].id
-      selectedRouteIds.value = [newRoutes[0].id]
+    const normalizedRoutes = withConfiguredStationNames(newRoutes)
+    routes.value = [...normalizedRoutes]
+    paretoRoutes.value = [...normalizedRoutes]
+    if (normalizedRoutes.length > 0) {
+      currentRouteId.value = normalizedRoutes[0].id
+      selectedRouteIds.value = [normalizedRoutes[0].id]
     } else {
       currentRouteId.value = null
       selectedRouteIds.value = []
@@ -258,8 +265,27 @@ export const useRouteStore = defineStore('route', () => {
   }
 
   function setAlgorithmRouteResult(result: AlgorithmRouteBundleResult | null) {
-    algorithmRouteResult.value = result
-    setParetoRoutes(result?.routes ?? [])
+    if (!result) {
+      algorithmRouteResult.value = null
+      setParetoRoutes([])
+      return
+    }
+    const normalizedRoutes = withConfiguredStationNames(result.routes)
+    algorithmRouteResult.value = { ...result, routes: normalizedRoutes }
+    setParetoRoutes(normalizedRoutes)
+  }
+
+  function syncConfiguredStationNames() {
+    const selectedId = currentRouteId.value
+    routes.value = withConfiguredStationNames(routes.value)
+    paretoRoutes.value = withConfiguredStationNames(paretoRoutes.value)
+    if (algorithmRouteResult.value) {
+      algorithmRouteResult.value = {
+        ...algorithmRouteResult.value,
+        routes: withConfiguredStationNames(algorithmRouteResult.value.routes),
+      }
+    }
+    currentRouteId.value = selectedId
   }
 
   /**
@@ -735,6 +761,7 @@ export const useRouteStore = defineStore('route', () => {
     clearParetoRoutes,
     setParetoRoutes,
     setAlgorithmRouteResult,
+    syncConfiguredStationNames,
     setParetoRoutesFromApi,
     updateRoutePoint,
     addRoutePoint,

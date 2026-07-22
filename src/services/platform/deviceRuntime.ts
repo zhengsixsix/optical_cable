@@ -105,6 +105,29 @@ const valueAliases = {
   maxFiberPairs: ['maxFiberPairs', 'max_fiber_pairs', '最大光纤对数'],
 } satisfies Record<string, string[]>
 
+export type RuntimeDeviceValueKey = keyof typeof valueAliases
+
+export function withRuntimeDeviceValues(
+  library: PlanDeviceLibrary,
+  updates: Partial<Record<RuntimeDeviceValueKey, string | number>>,
+): PlanDeviceLibrary {
+  const deviceValueList = [...(library.deviceValueList ?? [])]
+  for (const [key, value] of Object.entries(updates) as Array<[RuntimeDeviceValueKey, string | number]>) {
+    const aliases = valueAliases[key].map(alias => alias.trim().toLowerCase())
+    const index = deviceValueList.findIndex(item => {
+      const candidates = [item.configCode, 'configName' in item ? item.configName : null, 'jsonField' in item ? item.jsonField : null]
+      return candidates.some(candidate => candidate && aliases.includes(String(candidate).trim().toLowerCase()))
+    })
+    const nextValue = String(value)
+    if (index >= 0) {
+      deviceValueList[index] = { ...deviceValueList[index], value: nextValue }
+    } else {
+      deviceValueList.push({ configCode: valueAliases[key][0], value: nextValue })
+    }
+  }
+  return { ...library, deviceValueList }
+}
+
 function normalizeKey(value: unknown): string {
   return String(value ?? '')
     .trim()

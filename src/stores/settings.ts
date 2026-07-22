@@ -13,6 +13,7 @@ import type {
   PlanDeviceLibrary,
   PlanDeviceLibrarySearch,
   PlanConfigSnapshot,
+  PlatformPlanningResults,
   PlatformDictionary,
 } from '@/services/platform/types'
 import type { 
@@ -284,8 +285,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const simulationCache = ref<SimulationCache | null>(null)
   // 系统规划缓存 (system_engineering.system_planning_cache)
   const systemPlanningCache = ref<SystemPlanningCache | null>(null)
-  // 平台 query/system 返回的 simulation_result.json 解析结果
-  const platformSystemResult = ref<unknown | null>(null)
+  // 平台 fixed / optimized / simulation 查询接口的原始结果。
+  // Swagger 未公开 data 内部结构，因此在真实契约明确前保持 unknown。
+  const platformPlanningResults = ref<PlatformPlanningResults | null>(null)
   const platformPlanConfigSnapshot = ref<PlanConfigSnapshot | null>(null)
   
   // 设计视图链路计算摘要缓存 (_app_extensions.designCache)
@@ -326,6 +328,16 @@ export const useSettingsStore = defineStore('settings', () => {
         if (Array.isArray(data.equalizerTypes)) equalizerTypes.value = data.equalizerTypes
         if (Array.isArray(data.jointBoxTypes)) jointBoxTypes.value = data.jointBoxTypes
         if (data.currentLibraryFile) currentLibraryFile.value = data.currentLibraryFile
+        if (Array.isArray(data.cableTypeDatabase)) cableTypeDatabase.value = data.cableTypeDatabase
+        if (data.systemPlanningConfig) systemPlanningConfig.value = data.systemPlanningConfig
+        if (data.simulationModelConfig) simulationModelConfig.value = data.simulationModelConfig
+        if (Array.isArray(data.savedSimulationTemplates)) savedSimulationTemplates.value = data.savedSimulationTemplates
+        if (Array.isArray(data.models)) models.value = data.models
+        if ('simulationCache' in data) simulationCache.value = data.simulationCache
+        if ('systemPlanningCache' in data) systemPlanningCache.value = data.systemPlanningCache
+        if ('platformPlanningResults' in data) platformPlanningResults.value = data.platformPlanningResults
+        if ('platformPlanConfigSnapshot' in data) platformPlanConfigSnapshot.value = data.platformPlanConfigSnapshot
+        if ('linkCalcSummaryCache' in data) linkCalcSummaryCache.value = data.linkCalcSummaryCache
       }
     } catch {
       // localStorage 加载失败时使用默认値
@@ -346,6 +358,16 @@ export const useSettingsStore = defineStore('settings', () => {
         equalizerTypes: equalizerTypes.value,
         jointBoxTypes: jointBoxTypes.value,
         currentLibraryFile: currentLibraryFile.value,
+        cableTypeDatabase: cableTypeDatabase.value,
+        systemPlanningConfig: systemPlanningConfig.value,
+        simulationModelConfig: simulationModelConfig.value,
+        savedSimulationTemplates: savedSimulationTemplates.value,
+        models: models.value,
+        simulationCache: simulationCache.value,
+        systemPlanningCache: systemPlanningCache.value,
+        platformPlanningResults: platformPlanningResults.value,
+        platformPlanConfigSnapshot: platformPlanConfigSnapshot.value,
+        linkCalcSummaryCache: linkCalcSummaryCache.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch {
@@ -755,8 +777,13 @@ export const useSettingsStore = defineStore('settings', () => {
     fiberSimulationConfig.value = { ...defaultFiberSimulationConfig }
     systemPlanningConfig.value = { ...defaultSystemPlanningParams }
     simulationModelConfig.value = { ...defaultSimulationModelConfig }
-    platformSystemResult.value = null
+    simulationCache.value = null
+    systemPlanningCache.value = null
+    platformDeviceEntities.value = []
+    platformPlanningResults.value = null
     platformPlanConfigSnapshot.value = null
+    linkCalcSummaryCache.value = null
+    saveToLocalStorage()
   }
 
   // 更新路径规划配置 (不保存到 localStorage，只存储在项目文件中)
@@ -878,12 +905,21 @@ export const useSettingsStore = defineStore('settings', () => {
     saveToLocalStorage()
   }
 
-  function updatePlatformSystemResult(result: unknown | null) {
-    platformSystemResult.value = result
+  function updatePlatformPlanningResults(result: PlatformPlanningResults | null) {
+    platformPlanningResults.value = result
+    saveToLocalStorage()
   }
 
   function updatePlatformPlanConfigSnapshot(snapshot: PlanConfigSnapshot | null) {
     platformPlanConfigSnapshot.value = snapshot
+    saveToLocalStorage()
+  }
+
+  // 更新设计视图链路计算摘要缓存
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function updateLinkCalcSummaryCache(cache: Record<string, any> | null) {
+    linkCalcSummaryCache.value = cache
+    saveToLocalStorage()
   }
 
   // 使仿真缓存失效
@@ -1013,7 +1049,7 @@ export const useSettingsStore = defineStore('settings', () => {
     models,
     simulationCache,
     systemPlanningCache,
-    platformSystemResult,
+    platformPlanningResults,
     platformPlanConfigSnapshot,
     linkCalcSummaryCache,
     addModel,
@@ -1022,8 +1058,9 @@ export const useSettingsStore = defineStore('settings', () => {
     getModelsByDomain,
     updateSimulationCache,
     updateSystemPlanningCache,
-    updatePlatformSystemResult,
+    updatePlatformPlanningResults,
     updatePlatformPlanConfigSnapshot,
+    updateLinkCalcSummaryCache,
     invalidateSimulationCache,
     invalidateSystemPlanningCache,
     setCurrentLibraryFile,

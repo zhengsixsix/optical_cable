@@ -4,11 +4,14 @@ import { useSettingsStore } from '@/stores/settings'
 import { computed, onMounted, ref, watch } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { useConnectorStore } from '@/stores/connector'
+import { useRouteStore } from '@/stores/route'
 import { Edit2, Link2, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { platformDeviceEntityToConnectorElement } from '@/services/platform/deviceLibraryMapping'
+import { mergePlatformConnectorElements } from '@/utils/platformDeviceEntityMerge'
 import type { Id, PlanDeviceEntity, PlatformDictionary } from '@/services/platform/types'
 
 const connectorStore = useConnectorStore()
+const routeStore = useRouteStore()
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const currentProjectId = computed(() => appStore.projectState.currentProject?.platformProjectId ?? null)
@@ -26,6 +29,24 @@ const normalizeCode = (value: unknown) =>
 const sameId = (left: unknown, right: unknown) => {
   if (left == null || right == null || left === '' || right === '') return false
   return String(left) === String(right)
+}
+
+interface PanelEntity extends PlanDeviceEntity {
+  localElementId: string
+  platformEntityId?: Id
+}
+
+const connectorTypePresentation: Record<string, { code: string; label: string }> = {
+  landing: { code: 'LANDING', label: '岸上站点' },
+  underwater: { code: 'UNDERWATER', label: '水下站点' },
+  amplifier_e: { code: 'AMP', label: '放大器' },
+  amplifier_w: { code: 'AMP', label: '放大器' },
+  ola: { code: 'AMP', label: '放大器' },
+  bu: { code: 'SPL', label: '分支器' },
+  equalizer: { code: 'EQL', label: '均衡器' },
+  joint: { code: 'SCL', label: '接头盒' },
+  fiber: { code: 'FIB', label: '光纤' },
+  cable_segment: { code: 'CABLE', label: '海缆段' },
 }
 
 const dictionaryByCode = computed(() => {
@@ -85,12 +106,35 @@ const dictionaryFilterOptions = computed(() =>
     })),
 )
 
+const panelEntities = computed<PanelEntity[]>(() => connectorStore.elements
+  .filter(element => element.type !== 'cable_segment')
+  .map(element => {
+  const platformEntity = settingsStore.platformDeviceEntities.find(entity =>
+    sameId(entity.id, element.platformEntityId)
+  )
+  const presentation = connectorTypePresentation[element.type]
+    || { code: String(element.type).toUpperCase(), label: String(element.type) }
+  return {
+    ...platformEntity,
+    id: platformEntity?.id ?? element.id,
+    localElementId: element.id,
+    platformEntityId: element.platformEntityId,
+    name: element.name || platformEntity?.name,
+    deviceTypeCd: platformEntity?.deviceTypeCd || presentation.code,
+    typeName: platformEntity?.typeName || presentation.label,
+    libraryId: platformEntity?.libraryId ?? element.componentRefId ?? element.fiberRefId,
+    libraryName: platformEntity?.libraryName || element.specifications,
+    longitude: element.longitude,
+    latitude: element.latitude,
+  }
+}))
+
 const entityCodeFilterOptions = computed(() => {
   const dictionaryCodes = new Set(dictionaryFilterOptions.value.map(option => normalizeCode(option.code)))
   const options: Array<{ key: string; code: string; label: string }> = []
   const used = new Set<string>()
 
-  for (const entity of settingsStore.platformDeviceEntities) {
+  for (const entity of panelEntities.value) {
     const code = entity.deviceTypeCd || ''
     const normalized = normalizeCode(code)
     if (!code || dictionaryCodes.has(normalized) || used.has(normalized)) continue
@@ -111,26 +155,36 @@ const filterOptions = computed(() => [
 ])
 
 const filteredEntities = computed(() => {
-  if (filterType.value === 'all') return settingsStore.platformDeviceEntities
+  if (filterType.value === 'all') return panelEntities.value
   const selectedCode = normalizeCode(filterType.value)
-  return settingsStore.platformDeviceEntities.filter(entity =>
+  return panelEntities.value.filter(entity =>
     normalizeCode(entity.deviceTypeCd) === selectedCode,
   )
 })
 
 const ensureConnectorTable = () => {
+  const routeId = routeStore.currentRouteId
+  if (routeId && connectorStore.selectTableByRoute(routeId)) return true
   if (connectorStore.currentTable) return true
   const projectName = appStore.currentProjectName || '默认接线元表'
-  connectorStore.createTable(projectName.endsWith('接线元表') ? projectName : `${projectName}_接线元表`)
+  connectorStore.createTable(
+    projectName.endsWith('接线元表') ? projectName : `${projectName}_接线元表`,
+    routeId || undefined,
+  )
   return Boolean(connectorStore.currentTable)
 }
 
-const syncConnectorStoreFromEntities = () => {
+const syncConnectorStoreFromEntities = (replacePlatformElements: boolean) => {
   ensureConnectorTable()
   if (!connectorStore.currentTable) return
-  connectorStore.currentTable.elements = settingsStore.platformDeviceEntities
+  const incomingElements = settingsStore.platformDeviceEntities
     .map(platformDeviceEntityToConnectorElement)
     .filter(element => element.type !== 'cable_segment')
+  connectorStore.currentTable.elements = mergePlatformConnectorElements(
+    connectorStore.currentTable.elements,
+    incomingElements,
+    { replacePlatformElements },
+  )
   connectorStore.currentTable.updatedAt = new Date().toISOString()
 }
 
@@ -141,13 +195,14 @@ const loadConnectorEntities = async (deviceTypeCd = filterType.value) => {
   loadingPlatformEntities.value = true
   try {
     await settingsStore.loadPlatformDeviceLibraries()
+    if (projectId == null) return
     await settingsStore.loadPlatformDeviceEntities({
-      ...(projectId ? { projectId } : {}),
+      projectId,
       ...(selectedDeviceTypeCd ? { deviceTypeCd: selectedDeviceTypeCd } : {}),
       pageNumber: 1,
       pageSize: 1000,
     })
-    syncConnectorStoreFromEntities()
+    syncConnectorStoreFromEntities(!selectedDeviceTypeCd)
   } catch (error) {
     appStore.showNotification({
       type: 'error',
@@ -179,10 +234,10 @@ const refreshPanelData = async () => {
 
 const handleFilterChange = (deviceTypeCd: string) => {
   filterType.value = deviceTypeCd
-  void loadConnectorEntities(deviceTypeCd)
 }
 
-const localElementIdForEntity = (entity: PlanDeviceEntity) => {
+const localElementIdForEntity = (entity: PanelEntity) => {
+  if (entity.localElementId) return entity.localElementId
   const existing = connectorStore.elements.find(element => sameId(element.platformEntityId, entity.id))
   if (existing) return existing.id
 
@@ -191,19 +246,18 @@ const localElementIdForEntity = (entity: PlanDeviceEntity) => {
   return connectorStore.addElement(localData) ?? null
 }
 
-const handleEdit = (entity: PlanDeviceEntity) => {
+const handleEdit = (entity: PanelEntity) => {
   const localId = localElementIdForEntity(entity)
   if (!localId) return
   emit('edit', localId)
 }
 
-const deleteConnector = async (entity: PlanDeviceEntity) => {
-  if (!entity.id) return
-
+const deleteConnector = async (entity: PanelEntity) => {
   try {
-    await settingsStore.removePlatformDeviceEntity(entity.id)
-    const localElement = connectorStore.elements.find(element => sameId(element.platformEntityId, entity.id))
-    if (localElement) connectorStore.deleteElement(localElement.id)
+    if (entity.platformEntityId != null) {
+      await settingsStore.removePlatformDeviceEntity(entity.platformEntityId)
+    }
+    connectorStore.deleteElement(entity.localElementId)
     appStore.showNotification({ type: 'success', message: '器件实例已删除' })
   } catch (error) {
     appStore.showNotification({
@@ -288,7 +342,7 @@ watch(currentProjectId, () => {
         <div v-else class="space-y-2">
           <div
             v-for="entity in filteredEntities"
-            :key="entity.id ?? `${entity.name}-${entity.deviceTypeCd}-${entity.libraryId}`"
+            :key="entity.localElementId"
             class="p-2.5 border border-gray-200 rounded-md hover:border-blue-300 transition-colors bg-white group"
           >
             <div class="flex items-start justify-between gap-2">

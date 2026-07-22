@@ -15,9 +15,10 @@ import { createBaseTileSource } from '@/utils/mapTileSource'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
-import { Style, Stroke, Icon, Text, Fill, Circle as CircleStyle } from 'ol/style'
+import { Style, Stroke, Icon, Text, Fill } from 'ol/style'
 import { DragPan, Translate } from 'ol/interaction'
 import 'ol/ol.css'
+import { getSystemDeviceIcon, systemDeviceLegendItems } from '@/utils/systemDesignIcons'
 
 // 站点高程缓存（用于判断岸上/水下）
 const elevationCache = ref<Record<string, number>>({})
@@ -240,39 +241,6 @@ watch(() => monitorStore.devices.length, () => {
     setTimeout(() => setupTranslateInteraction(), 300)
   }
 })
-
-// 根据点类型、选中状态和高程获取图标路径
-// elevation < 0 表示在海平面以下（水下）
-const getPointIcon = (type: string, isSelected: boolean, elevation?: number) => {
-  const suffix = isSelected ? '-select' : ''
-  
-  // 如果是 landing 类型，根据高程判断是岸上还是水下
-  // elevation < 0 表示在海平面以下（水下站点）
-  if (type === 'landing') {
-    if (elevation !== undefined && elevation < 0) {
-      return `/image/underwater${suffix}.png`
-    }
-    return `/image/landing${suffix}.png`
-  }
-  
-  switch (type) {
-    case 'ola':
-    case 'amplifier_e':
-      return `/image/amplifier-e${suffix}.png`
-    case 'amplifier_w':
-      return `/image/amplifier-w${suffix}.png`
-    case 'bu':
-      return `/image/bu${suffix}.png`
-    case 'equalizer':
-      return `/image/equalizer${suffix}.svg`
-    case 'joint':
-      return `/image/joint${suffix}.svg`
-    case 'underwater':
-      return `/image/underwater${suffix}.png`
-    default:
-      return `/image/underwater${suffix}.png`
-  }
-}
 
 const getPointIconScale = (type: string) => {
   if (type === 'equalizer' || type === 'joint') return 0.24
@@ -867,34 +835,24 @@ const drawPoints = () => {
       pointType: point.type
     })
 
-    if (useCompactPoints) {
-      feature.setStyle(new Style({
-        image: new CircleStyle({
-          radius: 4,
-          fill: new Fill({ color: '#dc2626' }),
-          stroke: new Stroke({ color: '#fff', width: 1.5 }),
-        }),
-      }))
-    } else {
-      // 使用缓存的高程数据来判断岸上/水下站点
-      const elevation = elevationCache.value[point.id]
-      const iconUrl = getPointIcon(point.type, false, elevation)
-      
-      feature.setStyle(new Style({
-        image: new Icon({
-          src: iconUrl,
-          scale: getPointIconScale(point.type),
-          anchor: [0.5, 0.5]
-        }),
-        text: new Text({
-          text: point.name,
-          offsetY: 16,
-          font: '9px sans-serif',
-          fill: new Fill({ color: '#374151' }),
-          stroke: new Stroke({ color: '#fff', width: 3 })
-        })
-      }))
-    }
+    const elevation = elevationCache.value[point.id]
+    const iconUrl = getSystemDeviceIcon(point.type, point.id === props.selectedPointId, elevation)
+    feature.setStyle(new Style({
+      image: new Icon({
+        src: iconUrl,
+        scale: getPointIconScale(point.type),
+        anchor: [0.5, 0.5]
+      }),
+      text: useCompactPoints
+        ? undefined
+        : new Text({
+            text: point.name,
+            offsetY: 16,
+            font: '9px sans-serif',
+            fill: new Fill({ color: '#374151' }),
+            stroke: new Stroke({ color: '#fff', width: 3 })
+          })
+    }))
     
     source.addFeature(feature)
   })
@@ -1380,33 +1338,9 @@ onUnmounted(() => {
     <div class="absolute bottom-3 right-3 bg-white/95 p-3 rounded-lg shadow z-10">
       <div class="text-xs font-semibold text-gray-700 mb-2">设备图例</div>
       <div class="space-y-1.5 text-xs">
-        <div class="flex items-center gap-2">
-          <img src="/image/landing.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">岸上站点</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <img src="/image/amplifier-e.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">放大器东</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <img src="/image/amplifier-w.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">放大器西</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <img src="/image/bu.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">分支器</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <img src="/image/equalizer.svg" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">均衡器</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <img src="/image/joint.svg" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">接头盒</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <img src="/image/underwater.png" class="w-4 h-4 object-contain" />
-          <span class="text-gray-600">水下站点</span>
+        <div v-for="item in systemDeviceLegendItems" :key="item.type" class="flex items-center gap-2">
+          <img :src="getSystemDeviceIcon(item.type)" :alt="item.label" class="w-4 h-4 object-contain" />
+          <span class="text-gray-600">{{ item.label }}</span>
         </div>
         <div class="flex items-center gap-2">
           <span class="w-4 h-0.5 bg-amber-400 rounded"></span>

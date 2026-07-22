@@ -112,6 +112,26 @@ function cloneBindFuncList(bindFuncList?: PlatformBindFunc[] | null): PlatformBi
     }))
 }
 
+function withLocalParams(
+  bindFuncList: PlatformBindFunc[],
+  name: string,
+  params: Record<string, unknown>,
+): PlatformBindFunc[] {
+  const serialized = Object.fromEntries(
+    Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, String(value)]),
+  )
+  return [
+    ...bindFuncList.filter(bindFunc => bindFunc.name !== name),
+    {
+      name,
+      isDefault: 0,
+      defaultInputParams: serialized,
+    },
+  ]
+}
+
 function getLocalParams(
   bindFuncList?: PlatformBindFunc[] | null,
   name = LOCAL_DEVICE_LIBRARY_PARAMS,
@@ -369,6 +389,44 @@ export function connectorElementToDeviceEntity(
     : null
   const deviceTypeCd = library?.deviceTypeCd || connectorTypeToPlatformCode[element.type] || String(element.type).toUpperCase()
   const libraryValues = deviceValueListToMap(library?.deviceValueList)
+  const bindFuncList = withLocalParams(
+    cloneBindFuncList(library?.bindFuncList),
+    LOCAL_DEVICE_ENTITY_PARAMS,
+    {
+      connectorId: element.id,
+      connectorType: element.type,
+      kp: element.kp,
+      endKp: element.endKp,
+      depth: element.depth,
+      status: element.status,
+      specifications: element.specifications,
+      manufacturer: element.manufacturer,
+      installDate: element.installDate,
+      remarks: element.remarks,
+      componentRefId: element.componentRefId,
+      fiberRefId: element.fiberRefId,
+      buPortCount: element.buPortCount,
+      buTrunkLoss: element.buTrunkLoss,
+      buBranchLoss: element.buBranchLoss,
+      buBranchTarget: element.buBranchTarget,
+      buNextHopUpstream: element.buNextHopUpstream,
+      buNextHopDownstream: element.buNextHopDownstream,
+      equalizerRole: element.equalizerRole,
+      attenuationMode: element.attenuationMode,
+      attenuationDb: element.attenuationDb,
+      jointSubType: element.jointSubType,
+      buSubType: element.buSubType,
+      fromDeviceId: element.fromDeviceId,
+      toDeviceId: element.toDeviceId,
+      length: element.length,
+      cableTypeId: element.cableTypeId,
+      cableTypeName: element.cableTypeName,
+      armorType: element.armorType,
+      slack: element.slack,
+      burialDepth: element.burialDepth,
+      riskLevel: element.riskLevel,
+    },
+  )
 
   return {
     id: element.platformEntityId,
@@ -377,7 +435,7 @@ export function connectorElementToDeviceEntity(
     iconId: library?.iconId ?? null,
     iconSize: library?.iconSize ?? defaultIconSize,
     dialogWindowId: library?.dialogWindowId ?? null,
-    bindFuncList: cloneBindFuncList(library?.bindFuncList),
+    bindFuncList,
     libraryId: Number.isFinite(libraryId) ? libraryId : undefined,
     longitude: element.longitude,
     latitude: element.latitude,

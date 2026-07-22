@@ -328,10 +328,22 @@ class ProjectFileService {
       projectData._app_extensions.cableSegments = cableSegmentStore.exportData()
     }
 
-    // 6.6 保存设计视图缓存（链路成本 + 性能指标）
-    if (settingsStore.linkCalcSummaryCache) {
+    // 6.6 保存设计视图缓存（链路摘要 + 平台规划原始结果 + 表单快照）
+    if (
+      settingsStore.linkCalcSummaryCache
+      || settingsStore.platformPlanningResults
+      || settingsStore.platformPlanConfigSnapshot
+    ) {
       projectData._app_extensions.designCache = {
-        linkCalcSummary: JSON.parse(JSON.stringify(settingsStore.linkCalcSummaryCache))
+        linkCalcSummary: settingsStore.linkCalcSummaryCache
+          ? JSON.parse(JSON.stringify(settingsStore.linkCalcSummaryCache))
+          : null,
+        platformPlanningResults: settingsStore.platformPlanningResults
+          ? JSON.parse(JSON.stringify(settingsStore.platformPlanningResults))
+          : null,
+        platformPlanConfigSnapshot: settingsStore.platformPlanConfigSnapshot
+          ? JSON.parse(JSON.stringify(settingsStore.platformPlanConfigSnapshot))
+          : null,
       }
     }
 
@@ -1786,12 +1798,12 @@ class ProjectFileService {
 
     // 9. 恢复仿真缓存 (simulation_cache)
     if (projectData.system_engineering.simulation_cache) {
-      settingsStore.simulationCache = projectData.system_engineering.simulation_cache
+      settingsStore.updateSimulationCache(projectData.system_engineering.simulation_cache)
     }
 
     // 10. 恢复系统规划缓存 (system_planning_cache)
     if (projectData.system_engineering.system_planning_cache) {
-      settingsStore.systemPlanningCache = projectData.system_engineering.system_planning_cache
+      settingsStore.updateSystemPlanningCache(projectData.system_engineering.system_planning_cache)
     }
 
     // 11. 恢复监控配置 (health_monitoring)
@@ -1917,7 +1929,15 @@ class ProjectFileService {
     // 14.6 恢复设计视图缓存
     if (ext.designCache?.linkCalcSummary) {
       const settingsStore = useSettingsStore()
-      settingsStore.linkCalcSummaryCache = ext.designCache.linkCalcSummary
+      settingsStore.updateLinkCalcSummaryCache(ext.designCache.linkCalcSummary)
+    }
+    if (ext.designCache && 'platformPlanningResults' in ext.designCache) {
+      const settingsStore = useSettingsStore()
+      settingsStore.updatePlatformPlanningResults(ext.designCache.platformPlanningResults ?? null)
+    }
+    if (ext.designCache && 'platformPlanConfigSnapshot' in ext.designCache) {
+      const settingsStore = useSettingsStore()
+      settingsStore.updatePlatformPlanConfigSnapshot(ext.designCache.platformPlanConfigSnapshot ?? null)
     }
 
     // 14.7 恢复均衡器型号和接头盒型号

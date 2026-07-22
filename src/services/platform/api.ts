@@ -28,9 +28,10 @@ import type {
   PlanLayerUploadCompletePayload,
   PlanPoint,
   PlanPointSaveListPayload,
+  PlanCalculationResult,
   PlanProject,
   PlanRouteResult,
-  PlanSystemResult,
+  PlatformPlanningResults,
   PagedSearch,
   Id,
 } from './types'
@@ -134,7 +135,38 @@ export const platformProjectApi = {
   save: (payload: PlanProject) => platformClient.post<Id>('/plan/project/save', payload),
   detail: (id: Id) => platformClient.post<PlanProject>('/plan/project/detail', { id }),
   queryRoute: (id: Id) => platformClient.post<PlanRouteResult | null>('/plan/project/query/route', { id }),
-  querySystem: (id: Id) => platformClient.post<PlanSystemResult | null>('/plan/project/query/system', { id }),
+  fixedPlan: (id: Id) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/plan/fixed', { id }),
+  optimizedPlan: (id: Id, fmmPathResultIndex: number) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/plan/optimized', { id, fmmPathResultIndex }),
+  simulationPlan: (id: Id, fmmPathResultIndex: number) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/plan/simulation', { id, fmmPathResultIndex }),
+  queryFixed: (id: Id) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/query/fixed', { id }),
+  queryOptimized: (id: Id) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/query/optimized', { id }),
+  querySimulation: (id: Id) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/query/simulation', { id }),
+  async queryPlanningResults(id: Id): Promise<PlatformPlanningResults> {
+    const results = await Promise.allSettled([
+      this.queryFixed(id),
+      this.queryOptimized(id),
+      this.querySimulation(id),
+    ])
+    const names = ['fixed', 'optimized', 'simulation'] as const
+    const valueAt = (index: number): PlanCalculationResult | null => {
+      const result = results[index]
+      return result?.status === 'fulfilled' ? result.value ?? null : null
+    }
+    return {
+      fixed: valueAt(0),
+      optimized: valueAt(1),
+      simulation: valueAt(2),
+      errors: results.flatMap((result, index) => result.status === 'rejected'
+        ? [`${names[index]}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+        : []),
+    }
+  },
   remove: (id: Id) => platformClient.post<boolean>('/plan/project/remove', { id }),
   routePlan: (id: string | number, rectRange?: RoutePlanningRectRange) => {
     const payload: { id: string; rectRange?: RoutePlanningRectRange } = { id: String(id) }
@@ -281,6 +313,14 @@ export const platformEndpointDefinitions: EndpointDefinition[] = [
   { key: 'projectRemove', group: '2.1 Project Management', name: 'Delete project', path: '/plan/project/remove', defaultPayload: { id: null } },
   { key: 'projectDetail', group: '2.1 Project Management', name: 'Project detail', path: '/plan/project/detail', defaultPayload: { id: null } },
   { key: 'projectSearch', group: '2.1 Project Management', name: 'Search projects', path: '/plan/project/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', remarks: null, isPublic: null } },
+  { key: 'projectRoutePlan', group: '2.1 Project Management', name: 'Generate route plan', path: '/plan/project/plan/route', defaultPayload: { id: null, rectRange: [] } },
+  { key: 'projectQueryRoute', group: '2.1 Project Management', name: 'Query route plan', path: '/plan/project/query/route', defaultPayload: { id: null } },
+  { key: 'projectFixedPlan', group: '2.1 Project Management', name: 'Generate fixed layout', path: '/plan/project/plan/fixed', defaultPayload: { id: null } },
+  { key: 'projectOptimizedPlan', group: '2.1 Project Management', name: 'Generate optimized layout', path: '/plan/project/plan/optimized', defaultPayload: { id: null, fmmPathResultIndex: 1 } },
+  { key: 'projectSimulationPlan', group: '2.1 Project Management', name: 'Run physical simulation', path: '/plan/project/plan/simulation', defaultPayload: { id: null, fmmPathResultIndex: 1 } },
+  { key: 'projectQueryFixed', group: '2.1 Project Management', name: 'Query fixed layout', path: '/plan/project/query/fixed', defaultPayload: { id: null } },
+  { key: 'projectQueryOptimized', group: '2.1 Project Management', name: 'Query optimized layout', path: '/plan/project/query/optimized', defaultPayload: { id: null } },
+  { key: 'projectQuerySimulation', group: '2.1 Project Management', name: 'Query physical simulation', path: '/plan/project/query/simulation', defaultPayload: { id: null } },
   { key: 'pointSave', group: '2.2 Point Management', name: 'Save point', path: '/plan/point/save', defaultPayload: { id: null, projectId: null, name: '', longitude: null, latitude: null, sortNum: 999 } },
   { key: 'pointSaveList', group: '2.2 Point Management', name: 'Save point list', path: '/plan/point/saveList', defaultPayload: { projectId: null, pointList: [{ name: '', longitude: null, latitude: null, sortNum: 1 }] } },
   { key: 'pointRemove', group: '2.2 Point Management', name: 'Delete point', path: '/plan/point/remove', defaultPayload: { id: null } },
