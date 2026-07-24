@@ -2,6 +2,7 @@ export interface PlanningLayoutNode {
   nodeId: string
   nodeType: string
   positionKm: number | null
+  precedingSpanKm: number | null
   latitude: number | null
   longitude: number | null
   nodeName: string
@@ -32,7 +33,7 @@ export interface ResolvedLayoutAmplifier {
   positionKm: number
   latitude: number | null
   longitude: number | null
-  precedingSpanKm: number
+  precedingSpanKm: number | null
 }
 
 export interface PlanningLayoutCandidates {
@@ -80,12 +81,18 @@ const parseLayoutNode = (value: unknown): PlanningLayoutNode | null => {
   if (!isRecord(record)) return null
   const nodeType = readString(readFirst(record, ['node_type', 'nodeType', 'type']))
   const nodeName = readString(readFirst(record, ['node_name', 'nodeName', 'name']))
-  const nodeId = readString(readFirst(record, ['node_id', 'nodeId', 'event_id', 'eventId', 'id']), nodeName)
+  const nodeId = readString(readFirst(record, ['node_id', 'nodeId', 'event_id', 'eventId', 'id']))
   if (!nodeId && !nodeName && !nodeType) return null
   return {
     nodeId,
     nodeType,
     positionKm: readNumber(readFirst(record, ['position_km', 'positionKm', 'kp_km', 'kpKm', 'position'])),
+    precedingSpanKm: readNumber(readFirst(record, [
+      'preceding_span_km',
+      'precedingSpanKm',
+      'span_length_km',
+      'spanLengthKm',
+    ])),
     latitude: readNumber(readFirst(record, ['latitude', 'lat'])),
     longitude: readNumber(readFirst(record, ['longitude', 'lng', 'lon'])),
     nodeName: nodeName || nodeId || nodeType || '节点',
@@ -134,9 +141,7 @@ export function parsePlanningLayoutResult(
   const explicitAmplifiers = Array.isArray(amplifierItemsSource)
     ? amplifierItemsSource.map(parseLayoutNode).filter((node): node is PlanningLayoutNode => Boolean(node))
     : []
-  const amplifiers = explicitAmplifiers.length > 0
-    ? explicitAmplifiers
-    : nodes.filter(node => /amplifier|edfa|ola|放大器/i.test(node.nodeType || node.nodeName))
+  const amplifiers = explicitAmplifiers
 
   const totalLengthKm = readNumber(readFirst(payload, ['total_length_km', 'totalLengthKm', 'totalLength']))
   const spanKmUsed = readNumber(readFirst(payload, ['span_km_used', 'spanKmUsed', 'spanKm']))
@@ -166,9 +171,10 @@ export function parsePlanningLayoutResult(
     nodes,
     spans,
     amplifiers,
-    status: readString(readFirst(metaRecord, ['status']), 'success'),
-    nodeCount: Math.max(declaredNodeCount ?? 0, nodes.length),
-    amplifierCount: Math.max(declaredAmplifierCount ?? 0, amplifiers.length),
+    status: readString(readFirst(metaRecord, ['status']))
+      || readString(readFirst(payload, ['status'])),
+    nodeCount: declaredNodeCount ?? nodes.length,
+    amplifierCount: declaredAmplifierCount ?? amplifiers.length,
   }
 }
 
@@ -191,68 +197,31 @@ export function selectPlanningLayoutResult(
 const finiteOrNull = (value: number | null | undefined): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null
 
-const inferNodePositions = (layout: PlanningLayoutResult): Map<string, number> => {
-  const positions = new Map<string, number>()
-  for (const node of [...layout.nodes, ...layout.amplifiers]) {
-    const position = finiteOrNull(node.positionKm)
-    if (node.nodeId && position != null) positions.set(node.nodeId, position)
-  }
-
-  let cursor = 0
-  for (const span of layout.spans) {
-    const startPosition = positions.get(span.startNodeId) ?? cursor
-    const spanLength = Math.max(0, finiteOrNull(span.lengthKm) ?? finiteOrNull(layout.spanKmUsed) ?? 0)
-    if (span.startNodeId && !positions.has(span.startNodeId)) {
-      positions.set(span.startNodeId, startPosition)
-    }
-    const endPosition = startPosition + spanLength
-    if (span.endNodeId && !positions.has(span.endNodeId)) {
-      positions.set(span.endNodeId, endPosition)
-    }
-    cursor = positions.get(span.endNodeId) ?? endPosition
-  }
-  return positions
-}
-
 export function resolveLayoutAmplifiers(
   layout: PlanningLayoutResult,
-  fallbackTotalLengthKm?: number | null,
 ): ResolvedLayoutAmplifier[] {
-  const declaredCount = Math.max(0, Math.trunc(finiteOrNull(layout.amplifierCount) ?? 0))
-  const count = Math.max(declaredCount, layout.amplifiers.length)
-  if (count === 0) return []
-
-  const inferredPositions = inferNodePositions(layout)
-  const spanTotal = layout.spans.reduce((sum, span) => sum + Math.max(0, finiteOrNull(span.lengthKm) ?? 0), 0)
-  const totalLength = Math.max(
-    0,
-    finiteOrNull(layout.totalLengthKm)
-      ?? (spanTotal > 0 ? spanTotal : finiteOrNull(fallbackTotalLengthKm))
-      ?? 0,
+  const layoutNodesById = new Map(
+    layout.nodes
+      .filter(node => node.nodeId)
+      .map(node => [node.nodeId, node]),
   )
-  let previousPosition = 0
+  const resolved = layout.amplifiers
+    .map(source => {
+      if (!source.nodeId) return null
+      const matchingNode = layoutNodesById.get(source.nodeId)
+      const positionKm = finiteOrNull(source.positionKm) ?? finiteOrNull(matchingNode?.positionKm)
+      if (positionKm == null) return null
+      return {
+        nodeId: source.nodeId,
+        nodeName: source.nodeName || matchingNode?.nodeName || source.nodeId,
+        positionKm,
+        precedingSpanKm: finiteOrNull(source.precedingSpanKm)
+          ?? finiteOrNull(matchingNode?.precedingSpanKm),
+        latitude: finiteOrNull(source.latitude) ?? finiteOrNull(matchingNode?.latitude),
+        longitude: finiteOrNull(source.longitude) ?? finiteOrNull(matchingNode?.longitude),
+      }
+    })
+    .filter((item): item is ResolvedLayoutAmplifier => item != null)
 
-  return Array.from({ length: count }, (_, index) => {
-    const source = layout.amplifiers[index]
-    const fallbackPosition = totalLength > 0
-      ? totalLength * (index + 1) / (count + 1)
-      : Math.max(0, finiteOrNull(layout.spanKmUsed) ?? 0) * (index + 1)
-    const rawPosition = finiteOrNull(source?.positionKm)
-      ?? (source?.nodeId ? inferredPositions.get(source.nodeId) : undefined)
-      ?? fallbackPosition
-    const positionKm = totalLength > 0
-      ? Math.min(totalLength, Math.max(0, rawPosition))
-      : Math.max(0, rawPosition)
-    const precedingSpanKm = Math.max(0, positionKm - previousPosition)
-    previousPosition = positionKm
-
-    return {
-      nodeId: source?.nodeId || `layout-amp-${index + 1}`,
-      nodeName: source?.nodeName || `AMP-${String(index + 1).padStart(2, '0')}`,
-      positionKm,
-      latitude: finiteOrNull(source?.latitude),
-      longitude: finiteOrNull(source?.longitude),
-      precedingSpanKm: precedingSpanKm || Math.max(0, finiteOrNull(layout.spanKmUsed) ?? 0),
-    }
-  })
+  return resolved
 }

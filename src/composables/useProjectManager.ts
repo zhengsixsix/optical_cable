@@ -5,30 +5,35 @@
 
 import { useConnectorStore } from '@/stores/connector'
 import { useLayerStore } from '@/stores/layer'
-import { useMonitorStore } from '@/stores/monitor'
 import { useProjectDataStore } from '@/stores/projectData'
 import { useRouteStore } from '@/stores/route'
-import { useSettingsStore } from '@/stores/settings'
+import { useSettingsStore, type ArmorTypeMapping } from '@/stores/settings'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { useUserStore } from '@/stores/user'
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useRPLStore } from '@/stores/rpl'
-import { useCableSegmentStore } from '@/stores/cableSegment'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
-import { platformDeviceEntityApi, platformPlanConfigApi, platformProjectApi } from '@/services/platform/api'
+import { platformDeviceEntityApi, platformProjectApi } from '@/services/platform/api'
 import {
   connectorElementToDeviceEntity,
   platformDeviceEntityToConnectorElement,
+  type DeviceTypeCodeMap,
 } from '@/services/platform/deviceLibraryMapping'
-import { isPublicFlag, normalizePlanProject } from '@/services/platform/normalizers'
+import {
+  getDeviceTypeCodeForCategory,
+  type DeviceLibraryCategory,
+} from '@/services/platform/deviceTypeAdapter'
+import { isPublicFlag, normalizePlanProject, normalizePlanProjectDetail } from '@/services/platform/normalizers'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
 import { queryRoutePlanningByProjectId } from '@/services/RoutePlanningApiService'
 import { normalizePlatformSimulationCache } from '@/services/SimulationApiService'
 import type { Id, PlanConfigScope } from '@/services/platform/types'
 import { generateUUID } from '@/types/useFile'
-import { preferSpecificRouteStationName } from '@/utils/routeStationNames'
 import { useRouter } from 'vue-router'
+
+const DEVICE_LIBRARY_CATEGORIES: DeviceLibraryCategory[] = ['fiber', 'amplifier', 'branching', 'equalizer', 'joint']
 
 // 新建项目参数
 export interface CreateProjectParams {
@@ -71,6 +76,7 @@ export interface CreateProjectParams {
     cableTypeName: string
     unitPrice: number
   }>
+  armorTypeMappings?: ArmorTypeMapping[]
   /** 冗余策略配置（多点规划） */
   /** GIS 与路由算法设置 */
   planConfig?: {
@@ -117,6 +123,7 @@ interface OpenProjectState {
 
 export function useProjectManager() {
   const appStore = useAppStore()
+  const dictionaryStore = useDictionaryStore()
   const userStore = useUserStore()
   const projectDataStore = useProjectDataStore()
   const router = useRouter()
@@ -194,9 +201,6 @@ export function useProjectManager() {
     isProcessing.value = true
     
     try {
-      // 项目切换前先清除上一项目的规划结果，避免新文件无路线时继续显示旧路径。
-      useRouteStore().clearParetoRoutes()
-      useCableSegmentStore().clearSegments()
       const result = await projectFileService.importProject(file)
       
       if (!result.success) {
@@ -227,7 +231,6 @@ export function useProjectManager() {
       }
       
       // 设置数据联动并标记已加载（文件数据已由 ProjectFileService.importProject 加载）
-      projectDataStore.setupDataLinks()
       projectDataStore.markDataLoaded()
       appStore.setProjectPhase('route-planning')
       await router.push('/planning')
@@ -258,27 +261,25 @@ export function useProjectManager() {
     isProcessing.value = true
     appStore.showGlobalLoading(
       '正在打开项目...',
-      '正在加载项目详情、路由规划和系统规划结果',
+      '正在加载项目详情、路由规划和器件数据',
       loadingKey,
     )
 
     try {
-      const [project, routeQuery, planningResultsQuery, planConfigQuery, deviceEntitiesQuery] = await Promise.all([
+      const [project, routeQuery, deviceEntitiesQuery] = await Promise.all([
         platformProjectApi.detail(projectId),
         queryRoutePlanningByProjectId(projectId)
-          .then(data => ({ data, error: null as Error | null }))
-          .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
-        platformProjectApi.queryPlanningResults(projectId)
-          .then(data => ({ data, error: null as Error | null }))
-          .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
-        platformPlanConfigApi.searchAll(projectId)
           .then(data => ({ data, error: null as Error | null }))
           .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
         platformDeviceEntityApi.search({ projectId, pageNumber: 1, pageSize: 1000 })
           .then(response => ({ data: response.data ?? [], error: null as Error | null }))
           .catch(error => ({ data: [], error: error instanceof Error ? error : new Error(String(error)) })),
       ])
-      const normalizedProject = normalizePlanProject(project)
+      const {
+        project: normalizedProject,
+        planConfig,
+        planningResults,
+      } = normalizePlanProjectDetail(project)
       projectDataStore.clearProjectData()
       const metadata: ProjectMetadata = {
         name: normalizedProject.name || `平台项目 ${projectId}`,
@@ -302,21 +303,6 @@ export function useProjectManager() {
         element.type === 'landing' || element.type === 'underwater'
       )
 
-      const nearestName = (
-        longitude: number | undefined,
-        latitude: number | undefined,
-        candidates: Array<{ name?: string | null; longitude: number; latitude: number }>,
-      ) => {
-        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return ''
-        return candidates
-          .map(candidate => ({
-            name: candidate.name,
-            distance: (candidate.longitude - Number(longitude)) ** 2
-              + (candidate.latitude - Number(latitude)) ** 2,
-          }))
-          .sort((left, right) => left.distance - right.distance)[0]?.name || ''
-      }
-
       const projectStartPoint = points[0]
       const projectEndPoint = points[points.length - 1]
       const routeStartPoint = routeLandingPoints[0] ?? firstRoute?.points[0]
@@ -326,29 +312,18 @@ export function useProjectManager() {
       const startLatitude = projectStartPoint?.latitude ?? routeStartPoint?.coordinates[1]
       const endLongitude = projectEndPoint?.longitude ?? routeEndPoint?.coordinates[0]
       const endLatitude = projectEndPoint?.latitude ?? routeEndPoint?.coordinates[1]
-      const routeStationCandidates = routeLandingPoints.map(point => ({
-        name: point.name,
-        longitude: point.coordinates[0],
-        latitude: point.coordinates[1],
-      }))
-      const startStationName = preferSpecificRouteStationName(
-        projectStartPoint?.name,
-        nearestName(startLongitude, startLatitude, routeStationCandidates),
-        nearestName(startLongitude, startLatitude, platformLandingElements),
-        routeStartPoint?.name,
-        '起点',
-      )
-      const endStationName = preferSpecificRouteStationName(
-        projectEndPoint?.name,
-        nearestName(endLongitude, endLatitude, routeStationCandidates),
-        nearestName(endLongitude, endLatitude, platformLandingElements),
-        routeEndPoint?.name,
-        '终点',
-      )
+      const startStationName = projectStartPoint?.name
+        || routeStartPoint?.name
+        || platformLandingElements[0]?.name
+        || '起点'
+      const endStationName = projectEndPoint?.name
+        || routeEndPoint?.name
+        || platformLandingElements[platformLandingElements.length - 1]?.name
+        || '终点'
 
       const settingsStore = useSettingsStore()
       settingsStore.resetProjectSettings()
-      settingsStore.platformDeviceEntities = deviceEntitiesQuery.data
+      settingsStore.replacePlatformDeviceEntities(deviceEntitiesQuery.data)
       settingsStore.updateRoutePlanningConfig({
         mode: points.length > 2 ? 'multi-point' : 'point-to-point',
         startPoint: Number.isFinite(startLongitude) && Number.isFinite(startLatitude)
@@ -363,31 +338,40 @@ export function useProjectManager() {
           lon: point.longitude!,
           lat: point.latitude!,
         })),
-        ...(planConfigQuery.data?.scope ? {
+        ...(planConfig.scope ? {
           rangeMode: 'manual' as const,
           planningRange: {
             northwest: {
-              lon: Number(planConfigQuery.data.scope.topLeftLng ?? 0),
-              lat: Number(planConfigQuery.data.scope.topLeftLat ?? 0),
+              lon: Number(planConfig.scope.topLeftLng ?? 0),
+              lat: Number(planConfig.scope.topLeftLat ?? 0),
             },
             southeast: {
-              lon: Number(planConfigQuery.data.scope.bottomRightLng ?? 0),
-              lat: Number(planConfigQuery.data.scope.bottomRightLat ?? 0),
+              lon: Number(planConfig.scope.bottomRightLng ?? 0),
+              lat: Number(planConfig.scope.bottomRightLat ?? 0),
             },
           },
         } : {}),
-        ...(planConfigQuery.data?.gridResolution != null
-          ? { gridResolution: Number(planConfigQuery.data.gridResolution) }
+        ...(planConfig.gridResolution != null
+          ? { gridResolution: planConfig.gridResolution }
           : {}),
+        ...(planConfig.enableRedundancy != null ? {
+          redundancyConfig: {
+            ...(settingsStore.routePlanningConfig.redundancyConfig ?? {
+              costLimitType: 'relative' as const,
+              relativeCostPercent: 30,
+            }),
+            enabled: planConfig.enableRedundancy,
+          },
+        } : {}),
         isConfigured: Number.isFinite(startLongitude)
           && Number.isFinite(startLatitude)
           && Number.isFinite(endLongitude)
           && Number.isFinite(endLatitude),
       })
-      settingsStore.updatePlatformPlanConfigSnapshot(planConfigQuery.data)
-      settingsStore.updatePlatformPlanningResults(planningResultsQuery.data)
+      settingsStore.updatePlatformPlanConfigSnapshot(planConfig)
+      settingsStore.updatePlatformPlanningResults(planningResults)
       const restoredSimulationCache = normalizePlatformSimulationCache(
-        planningResultsQuery.data?.simulation,
+        planningResults?.simulation,
       )
       if (restoredSimulationCache) {
         settingsStore.updateSimulationCache(restoredSimulationCache)
@@ -404,35 +388,22 @@ export function useProjectManager() {
           })
         }
       }
-      if (planConfigQuery.error) {
-        appStore.addLog('WARN', `查询项目配置失败: ${planConfigQuery.error.message}`)
-      } else if (planConfigQuery.data?.errors.length) {
-        appStore.addLog('WARN', `部分项目配置查询失败: ${planConfigQuery.data.errors.join('; ')}`)
-      } else if (planConfigQuery.data) {
-        appStore.addLog('INFO', '已恢复项目规划配置')
-      }
+      appStore.addLog('INFO', '已从项目详情恢复项目规划配置')
 
       const routeStore = useRouteStore()
-      const cableSegmentStore = useCableSegmentStore()
       routeStore.setAlgorithmRouteResult(routeQuery.data)
       if (firstRoute) {
         routeStore.selectRoute(firstRoute.id)
-        cableSegmentStore.setCurrentRoute(firstRoute.id)
-        cableSegmentStore.setSegments(routeQuery.data?.segmentsByRouteId[firstRoute.id] ?? [])
-      } else {
-        cableSegmentStore.clearSegments()
       }
 
       const connectorStore = useConnectorStore()
       connectorStore.createTable(`${metadata.name}_接线元`, firstRoute?.id)
       if (connectorStore.currentTable) {
-        connectorStore.currentTable.elements = restoredConnectorElements
-        connectorStore.currentTable.updatedAt = new Date().toISOString()
+        connectorStore.replaceTableElements(restoredConnectorElements)
       }
 
       appStore.setCurrentProject(metadata)
       projectFileService.setCurrentProject(metadata)
-      projectDataStore.setupDataLinks()
       projectDataStore.markDataLoaded()
       appStore.setProjectPhase('route-planning')
       appStore.showGlobalLoading('正在恢复项目...', metadata.name, loadingKey)
@@ -450,12 +421,8 @@ export function useProjectManager() {
       } else {
         appStore.addLog('INFO', `项目暂无路由规划结果，已显示 ${points.length} 个站点`)
       }
-      if (planningResultsQuery.error) {
-        appStore.addLog('WARN', `查询系统规划结果失败: ${planningResultsQuery.error.message}`)
-      } else if (planningResultsQuery.data?.errors.length) {
-        appStore.addLog('WARN', `部分系统规划结果查询失败: ${planningResultsQuery.data.errors.join('; ')}`)
-      } else if (planningResultsQuery.data) {
-        appStore.addLog('INFO', '已恢复固定布局、优化布局和物理仿真结果')
+      if (planningResults) {
+        appStore.addLog('INFO', '已从项目详情恢复固定布局、优化布局和物理仿真结果')
       }
       if (deviceEntitiesQuery.error) {
         appStore.addLog('WARN', `查询项目器件实例失败: ${deviceEntitiesQuery.error.message}`)
@@ -479,16 +446,25 @@ export function useProjectManager() {
   async function syncCurrentDeviceEntitiesToPlatform(projectId: Id) {
     const connectorStore = useConnectorStore()
     const settingsStore = useSettingsStore()
-    if (settingsStore.platformDeviceLibraries.length === 0) {
-      await settingsStore.loadPlatformDeviceLibraries()
-    }
+    await Promise.all([
+      dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType),
+      settingsStore.ensurePlatformDeviceLibrariesLoaded(),
+    ])
+    const libraries = settingsStore.platformDeviceLibraries.map(library => {
+      if (library.deviceTypeCd) return library
+      const category = DEVICE_LIBRARY_CATEGORIES.find(item => item === library.dialogWindowId)
+      if (!category) return library
+      const runtimeCode = getDeviceTypeCodeForCategory(category)
+      const dictionaryItem = dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, runtimeCode)
+      return dictionaryItem?.code ? { ...library, deviceTypeCd: dictionaryItem.code } : library
+    })
     const deviceEntities = connectorStore.elements
       .filter(element => element.type !== 'fiber' && element.type !== 'cable_segment')
       .map((element, index) => connectorElementToDeviceEntity(
         element,
         projectId,
         index + 1,
-        settingsStore.platformDeviceLibraries,
+        libraries,
       ))
       .filter((entity): entity is NonNullable<typeof entity> => entity !== null)
 
@@ -538,19 +514,10 @@ export function useProjectManager() {
           }
         }
         
-        // 显示校验警告（如果有）
-        if (result.warnings && result.warnings.length > 0) {
-          appStore.showNotification({
-            type: 'warning',
-            message: `项目已保存，但数据不完整：${result.warnings[0]}`,
-            duration: 5000,
-          })
-        } else {
-          appStore.showNotification({
-            type: 'success',
-            message: `项目已保存：${currentProjectName.value}`,
-          })
-        }
+        appStore.showNotification({
+          type: 'success',
+          message: `项目已保存：${currentProjectName.value}`,
+        })
       } else {
         appStore.showNotification({
           type: 'error',
@@ -639,7 +606,7 @@ export function useProjectManager() {
    * 新建项目
    */
   async function createProject(params: CreateProjectParams): Promise<boolean> {
-    const { projectType, projectName, allowOtherUsers, platformProjectId, layers, rplFileData, startStation, endStation, waypoints, planningMode, planConfig, buConfigs, armorMappings } = params
+    const { projectType, projectName, allowOtherUsers, platformProjectId, layers, rplFileData, startStation, endStation, waypoints, planningMode, planConfig, buConfigs, armorMappings, armorTypeMappings } = params
     
     // 检查当前是否有未保存的项目
     if (hasOpenProject.value && isDirty.value) {
@@ -762,7 +729,7 @@ export function useProjectManager() {
         isConfigured: true,
       }
 
-      // Fix 1: 铠装映射写入 settingsStore
+      // 铠装映射写入 settingsStore
       if (armorMappings && armorMappings.length > 0) {
         routeConfigUpdates.armorMappings = armorMappings.map(m => ({
           riskLevel: m.riskLevel as 'high' | 'medium' | 'low',
@@ -772,6 +739,9 @@ export function useProjectManager() {
           unitPrice: m.unitPrice,
         }))
       }
+      if (armorTypeMappings) {
+        routeConfigUpdates.armorTypeMappings = armorTypeMappings.map(mapping => ({ ...mapping }))
+      }
 
       // Fix 1b: 冗余策略写入 settingsStore
       // Fix 2: GIS 配置写入 settingsStore（rangeMode + planningRange + gridResolution）
@@ -779,6 +749,12 @@ export function useProjectManager() {
       
       // 处理器件库文件
       if (params.devices && params.devices.length > 0) {
+        await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType)
+        const deviceTypeCodes = Object.fromEntries(DEVICE_LIBRARY_CATEGORIES.map(category => {
+          const runtimeCode = getDeviceTypeCodeForCategory(category)
+          const dictionaryItem = dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, runtimeCode)
+          return [category, dictionaryItem?.code ?? '']
+        })) as DeviceTypeCodeMap
         const deviceFiles: string[] = []
         let importSummary = ''
         
@@ -806,7 +782,7 @@ export function useProjectManager() {
               }
             }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            importSummary = await applyImportResultToStore(fakeResult as any, settingsStore)
+            importSummary = await applyImportResultToStore(fakeResult as any, settingsStore, deviceTypeCodes)
           }
         }
         
@@ -814,22 +790,9 @@ export function useProjectManager() {
         appStore.addLog('INFO', importSummary || `导入器件库文件: ${deviceFiles.join(', ')}`)
       }
 
-      // 如果是 USE 项目，初始化接线元表格
-      if (projectType === 'use') {
-        const connectorStore = useConnectorStore()
-        // 无论是否有 RPL 文件，都创建空的接线元表格
-        if (connectorStore.tables.length === 0) {
-          connectorStore.createTable(projectName, 'route-main')
-        }
-      }
-      
       // 如果是 USE 项目并且有 RPL 文件，导入 RPL 数据
       if (projectType === 'use' && rplFileData) {
         const rplStore = useRPLStore()
-        const settingsStore = useSettingsStore()
-        const routeStore = useRouteStore()
-        const connectorStore = useConnectorStore()
-        const monitorStore = useMonitorStore()
         
         try {
           const fileContent = await rplFileData.text()
@@ -838,178 +801,7 @@ export function useProjectManager() {
           
           if (success && rplStore.currentTable) {
             const records = rplStore.currentTable.records
-            
-            // 1. 从 RPL 数据中提取起点/终点坐标更新到工程设置
-            const landingStations = records.filter(r => r.pointType === 'landing')
-            if (landingStations.length >= 2) {
-              settingsStore.updateRoutePlanningConfig({
-                startPoint: { lon: landingStations[0].longitude, lat: landingStations[0].latitude },
-                endPoint: { lon: landingStations[landingStations.length - 1].longitude, lat: landingStations[landingStations.length - 1].latitude },
-                isConfigured: true,
-              })
-            } else if (records.length >= 2) {
-              settingsStore.updateRoutePlanningConfig({
-                startPoint: { lon: records[0].longitude, lat: records[0].latitude },
-                endPoint: { lon: records[records.length - 1].longitude, lat: records[records.length - 1].latitude },
-                isConfigured: true,
-              })
-            }
-            
-            // 2. 同步到 routeStore 以便地图显示
-            const totalLength = records.length > 0 ? records[records.length - 1].cumulativeLength : 0
-            const displayPoints = records.map(r => ({
-              id: r.id,
-              coordinates: [r.longitude, r.latitude] as [number, number],
-              type: r.pointType as 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint',
-              name: r.pointType === 'waypoint' ? undefined : (r.remarks || undefined),
-              depth: r.depth,
-            }))
-            
-            const routeSegments = displayPoints.slice(0, -1).map((point, i) => {
-              const currentRecord = records[i]
-              const nextRecord = records[i + 1]
-              const startKp = Number(currentRecord?.kp ?? currentRecord?.cumulativeLength ?? 0)
-              const endKp = Number(nextRecord?.kp ?? nextRecord?.cumulativeLength ?? startKp)
-              const segmentDepth = Number.isFinite(nextRecord?.depth)
-                ? Number(nextRecord.depth)
-                : (Number.isFinite(currentRecord?.depth) ? Number(currentRecord.depth) : 0)
-
-              return {
-                id: `seg-${i}`,
-                startPointId: point.id,
-                endPointId: displayPoints[i + 1].id,
-                length: Math.max(0, endKp - startKp),
-                depth: segmentDepth,
-                cableType: nextRecord?.cableType || currentRecord?.cableType || 'LW',
-                riskLevel: 'low' as const,
-                cost: 0,
-              }
-            })
-            
-            const mainRoute = {
-              id: 'route-main',
-              name: projectName,
-              points: displayPoints,
-              segments: routeSegments,
-              totalLength,
-              totalCost: 0,
-              riskScore: 0,
-              cost: { cable: 0, installation: 0, equipment: 0, total: 0 },
-              risk: { seismic: 0, volcanic: 0, depth: 0, overall: 0 },
-              distance: totalLength,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            }
-            routeStore.setParetoRoutes([mainRoute as any])
-            
-            // 3. 同步到 connectorStore 以便系统设计视图显示
-            if (connectorStore.tables.length === 0) {
-              connectorStore.createTable(projectName, 'route-main')
-            } else {
-              connectorStore.currentTableId = connectorStore.tables[0].id
-            }
-            
-            if (connectorStore.currentTable) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const newElements: Record<string, any>[] = []
-              let deviceIndex = 0
-              
-              records.forEach((record) => {
-                if (record.pointType !== 'waypoint') {
-                  const connectorType = mapPointTypeToConnectorType(record.pointType)
-                  newElements.push({
-                    id: `device-${deviceIndex}`,
-                    name: record.remarks || `${getDeviceTypeChinese(connectorType)}-${deviceIndex + 1}`,
-                    type: connectorType,
-                    longitude: record.longitude,
-                    latitude: record.latitude,
-                    depth: record.depth,
-                    kp: record.kp || record.cumulativeLength,
-                    status: 'active',
-                    specifications: '',
-                    remarks: record.remarks || '',
-                  })
-                  deviceIndex++
-                }
-              })
-              
-              // 生成光纤段
-              for (let i = 0; i < newElements.length - 1; i++) {
-                const fromElem = newElements[i]
-                const toElem = newElements[i + 1]
-                newElements.push({
-                  id: `fiber-${i}`,
-                  name: `光纤段 F${i + 1}`,
-                  type: 'fiber',
-                  kp: fromElem.kp,
-                  endKp: toElem.kp,
-                  longitude: 0,
-                  latitude: 0,
-                  depth: (Number(fromElem.depth) + Number(toElem.depth)) / 2,
-                  status: 'active',
-                  specifications: '',
-                  remarks: `${fromElem.name} → ${toElem.name}`,
-                  fromDeviceId: fromElem.id,
-                  toDeviceId: toElem.id,
-                  length: Math.abs(toElem.kp - fromElem.kp),
-                })
-              }
-              
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              connectorStore.currentTable.elements = newElements as any
-            }
-            
-            // 4. 同步到 monitorStore 以便实时监控视图显示
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const newDevices: Record<string, any>[] = []
-            let deviceIdx = 0
-            
-            records.forEach((record) => {
-              if (record.pointType !== 'waypoint') {
-                const deviceType = mapPointTypeToConnectorType(record.pointType)
-                newDevices.push({
-                  id: `monitor-${deviceIdx}`,
-                  name: record.remarks || `${getDeviceTypeChinese(deviceType)}-${deviceIdx + 1}`,
-                  type: deviceType,
-                  neType: deviceType,
-                  status: 'normal',
-                  location: `KP ${(record.kp || record.cumulativeLength).toFixed(1)}`,
-                  kp: record.kp || record.cumulativeLength,
-                  sldEquipmentName: record.remarks || `${getDeviceTypeChinese(deviceType)}-${deviceIdx + 1}`,
-                  longitude: record.longitude,
-                  latitude: record.latitude,
-                  depth: record.depth,
-                  inputPower: 0,
-                  outputPower: 0,
-                  pumpCurrent: 0,
-                  pfeVoltage: 48,
-                  pfeCurrent: 0,
-                  temperature: 0,
-                })
-                deviceIdx++
-              }
-            })
-            
-            // 设备数据通过 connectorStore 管理，monitorStore.devices 是 computed 属性
-            if (connectorStore.currentTable) {
-              // 将设备数据转换为 connectorStore 格式
-              const connectorElements = newDevices.map((d) => ({
-                id: d.id as string,
-                name: d.name,
-                type: d.type,
-                longitude: d.longitude,
-                latitude: d.latitude,
-                depth: d.depth,
-                kp: d.kp,
-                status: 'active' as const,
-                specifications: '',
-                remarks: d.name,
-              }))
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              connectorStore.currentTable.elements = connectorElements as any
-            }
-            
-            appStore.addLog('INFO', `导入 RPL 文件: ${rplFileData.name}, ${records.length} 条记录, ${newDevices.length} 个设备`)
+            appStore.addLog('INFO', `导入 RPL 文件: ${rplFileData.name}, ${records.length} 条记录`)
           }
       } catch {
           appStore.showNotification({
@@ -1019,31 +811,7 @@ export function useProjectManager() {
         }
       }
       
-      // 辅助函数: 映射点位类型到接线元类型
-      function mapPointTypeToConnectorType(pointType: string): string {
-        const map: Record<string, string> = {
-          'landing': 'landing',
-          'repeater': 'amplifier_e',
-          'branching': 'bu',
-          'joint': 'joint',
-        }
-        return map[pointType] || 'underwater'
-      }
-      
-      // 辅助函数: 获取器件类型中文名称
-      function getDeviceTypeChinese(deviceType: string): string {
-        const map: Record<string, string> = {
-          'landing': '岸上站点',
-          'amplifier_e': '放大器',
-          'bu': '水下分支器',
-          'joint': '接头盒',
-          'underwater': '水下站点',
-        }
-        return map[deviceType] || deviceType
-      }
-
       // 初始化项目数据
-      projectDataStore.setupDataLinks()
       projectDataStore.markDataLoaded()
       appStore.setProjectPhase('route-planning')
       await router.push('/planning')

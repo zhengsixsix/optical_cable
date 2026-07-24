@@ -24,6 +24,16 @@ const emit = defineEmits<{
 const routeStore = useRouteStore()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
+type ParetoRoute = Route & {
+  cost: Route['cost'] & { total: number }
+  risk: Route['risk'] & { overall: number }
+}
+
+const hasParetoMetrics = (route: Route): route is ParetoRoute =>
+  Number.isFinite(route.cost.total) && Number.isFinite(route.risk.overall)
+
+const chartRoutes = computed(() => routeStore.paretoRoutes.filter(hasParetoMetrics))
+
 // 图表边距
 const margin = { top: 20, right: 20, bottom: 40, left: 50 }
 
@@ -31,19 +41,35 @@ const margin = { top: 20, right: 20, bottom: 40, left: 50 }
 const chartWidth = computed(() => props.width - margin.left - margin.right)
 const chartHeight = computed(() => props.height - margin.top - margin.bottom)
 
+const compactFormatter = new Intl.NumberFormat('zh-CN', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+})
+
+const paddedRange = (values: number[]) => {
+  if (values.length === 0) return { min: 0, max: 1 }
+  const rawMin = Math.min(...values)
+  const rawMax = Math.max(...values)
+  const span = rawMax - rawMin
+  const padding = span > 0 ? span * 0.1 : Math.max(Math.abs(rawMin) * 0.05, 1)
+  return { min: rawMin - padding, max: rawMax + padding }
+}
+
 // 数据范围
 const dataRange = computed(() => {
-  const routes = routeStore.paretoRoutes
+  const routes = chartRoutes.value
   if (routes.length === 0) return { minCost: 0, maxCost: 100, minRisk: 0, maxRisk: 1 }
-  
-  const costs = routes.map(r => r.cost.total / 1000000) // 转换为百万
+
+  const costs = routes.map(r => r.cost.total)
   const risks = routes.map(r => r.risk.overall)
-  
+  const costRange = paddedRange(costs)
+  const riskRange = paddedRange(risks)
+
   return {
-    minCost: Math.min(...costs) * 0.9,
-    maxCost: Math.max(...costs) * 1.1,
-    minRisk: 0,
-    maxRisk: Math.min(1, Math.max(...risks) * 1.2)
+    minCost: costRange.min,
+    maxCost: costRange.max,
+    minRisk: riskRange.min,
+    maxRisk: riskRange.max,
   }
 })
 
@@ -66,7 +92,7 @@ const drawChart = () => {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   
-  const routes = routeStore.paretoRoutes
+  const routes = chartRoutes.value
   const selectedId = routeStore.selectedRoute?.id
   
   // 清空画布
@@ -116,13 +142,13 @@ const drawChart = () => {
   ctx.textAlign = 'center'
   
   // X 轴标签
-  ctx.fillText('成本 ($M)', props.width / 2, props.height - 5)
+  ctx.fillText('算法总成本', props.width / 2, props.height - 5)
   
   // Y 轴标签
   ctx.save()
   ctx.translate(12, props.height / 2)
   ctx.rotate(-Math.PI / 2)
-  ctx.fillText('风险', 0, 0)
+  ctx.fillText('算法总风险', 0, 0)
   ctx.restore()
   
   // 绘制刻度
@@ -134,7 +160,7 @@ const drawChart = () => {
   for (let i = 0; i <= 4; i++) {
     const cost = minCost + ((maxCost - minCost) / 4) * i
     const x = toCanvasX(cost)
-    ctx.fillText(cost.toFixed(0), x, props.height - margin.bottom + 15)
+    ctx.fillText(compactFormatter.format(cost), x, props.height - margin.bottom + 15)
   }
   
   // Y 轴刻度
@@ -142,12 +168,12 @@ const drawChart = () => {
   for (let i = 0; i <= 4; i++) {
     const risk = minRisk + ((maxRisk - minRisk) / 4) * i
     const y = toCanvasY(risk)
-    ctx.fillText((risk * 100).toFixed(0) + '%', margin.left - 5, y + 3)
+    ctx.fillText(compactFormatter.format(risk), margin.left - 5, y + 3)
   }
   
   // 绘制数据点
   routes.forEach((route, index) => {
-    const cost = route.cost.total / 1000000
+    const cost = route.cost.total
     const risk = route.risk.overall
     const x = toCanvasX(cost)
     const y = toCanvasY(risk)
@@ -155,7 +181,8 @@ const drawChart = () => {
     
     // 点的样式
     const radius = isSelected ? 8 : 6
-    const colors = ['#3b82f6', '#10b981', '#f59e0b'] // 蓝、绿、橙
+    // 颜色只用于区分路径，不表示后端未定义的成本或风险类别。
+    const colors = ['#3b82f6', '#10b981', '#f59e0b']
     const color = colors[index % colors.length]
     
     // 绘制点
@@ -190,7 +217,7 @@ const drawChart = () => {
     ctx.setLineDash([5, 3])
     
     sortedRoutes.forEach((route, i) => {
-      const x = toCanvasX(route.cost.total / 1000000)
+      const x = toCanvasX(route.cost.total)
       const y = toCanvasY(route.risk.overall)
       
       if (i === 0) {
@@ -215,9 +242,9 @@ const handleClick = (e: MouseEvent) => {
   const y = e.clientY - rect.top
   
   // 检查是否点击了某个数据点
-  const routes = routeStore.paretoRoutes
+  const routes = chartRoutes.value
   for (const route of routes) {
-    const pointX = toCanvasX(route.cost.total / 1000000)
+    const pointX = toCanvasX(route.cost.total)
     const pointY = toCanvasY(route.risk.overall)
     const distance = Math.sqrt((x - pointX) ** 2 + (y - pointY) ** 2)
     
@@ -251,17 +278,6 @@ onMounted(() => {
       class="cursor-pointer"
       @click="handleClick"
     />
-    <div class="flex justify-center gap-3 mt-2 text-xs text-gray-500">
-      <span class="flex items-center gap-1">
-        <span class="w-2 h-2 bg-blue-500 rounded-full"></span> 低成本
-      </span>
-      <span class="flex items-center gap-1">
-        <span class="w-2 h-2 bg-green-500 rounded-full"></span> 均衡
-      </span>
-      <span class="flex items-center gap-1">
-        <span class="w-2 h-2 bg-orange-500 rounded-full"></span> 低风险
-      </span>
-    </div>
   </div>
 </template>
 

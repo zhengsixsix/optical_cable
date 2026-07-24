@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { FilePlus, FolderOpen, Save, X, Loader2, RefreshCw, Trash2, HardDrive, ArrowRight, CheckCircle2, Clock3, PencilLine, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { Button, Select, Input } from '@/shared/components/base'
 import { platformProjectApi } from '@/services/platform/api'
 import type { PageModel } from '@/services/platform/client'
@@ -43,6 +44,7 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const dictionaryStore = useDictionaryStore()
 const projectType = ref<ProjectType>('use')
 const projectName = ref('')
 const savePath = ref('')
@@ -59,14 +61,16 @@ const platformProjectPageSize = ref(10)
 const platformProjectTotal = ref(0)
 
 // 预加载图层设置
-const layerList = ref<LayerItem[]>([
-  { key: 'elevation', label: '海洋高程图', checked: false, value: '' },
-  { key: 'volcano', label: '海洋火山分布', checked: false, value: '' },
-  { key: 'fishery', label: '海洋渔区分布', checked: true, value: '' },
-  { key: 'slope', label: '海洋坡度图', checked: false, value: '' },
-  { key: 'earthquake', label: '海洋地震分布', checked: false, value: '' },
-  { key: 'shipping', label: '海洋航道图', checked: true, value: '' },
-])
+const layerList = ref<LayerItem[]>([])
+
+const syncLayerListFromDictionary = () => {
+  layerList.value = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType).map(item => ({
+    key: String(item.code),
+    label: item.name || String(item.code),
+    checked: false,
+    value: '',
+  }))
+}
 
 const resetForm = () => {
   projectType.value = 'use'
@@ -74,28 +78,37 @@ const resetForm = () => {
   savePath.value = ''
   allowOtherUsers.value = false
   layerList.value.forEach(item => {
-    item.checked = item.key === 'fishery' || item.key === 'shipping'
+    item.checked = false
     item.value = ''
   })
 }
 
-watch(() => props.visible, (val) => {
-  if (val) {
-    if (props.mode === 'new') {
-      resetForm()
-    } else {
-      projectName.value = ''
-    }
-    fileName.value = ''
-    selectedPlatformProjectId.value = null
-    platformProjectPage.value = null
-    platformProjectPageNumber.value = 1
-    platformProjectTotal.value = 0
-    if (props.mode === 'open') {
-      loadPlatformProjects()
-    }
+watch([() => props.visible, () => props.mode], async ([visible, mode]) => {
+  if (!visible) return
+
+  if (mode === 'new') {
+    resetForm()
+  } else {
+    projectName.value = ''
   }
-})
+  fileName.value = ''
+  platformProjects.value = []
+  selectedPlatformProjectId.value = null
+  platformProjectPage.value = null
+  platformProjectPageNumber.value = 1
+  platformProjectTotal.value = 0
+
+  if (mode === 'open') {
+    void loadPlatformProjects()
+  }
+
+  try {
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType)
+    syncLayerListFromDictionary()
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `图层类型字典加载失败：${(error as Error).message}` })
+  }
+}, { immediate: true })
 
 const title = computed(() => {
   switch (props.mode) {

@@ -19,7 +19,6 @@ export interface DisplaySettings {
     depth: string                // 深度单位，如 "m"
   }
 }
-
 /** 元数据模块 */
 export interface USEMetadata {
   file_format_version: string    // 文件协议版本，如 "2.0"
@@ -32,7 +31,6 @@ export interface USEMetadata {
   updated_at: string             // 更新时间 (ISO 8601)
   display_settings: DisplaySettings
 }
-
 // ==================== 1.5 工程设置模块 (project_settings) ====================
 
 /** 规划模式 */
@@ -77,7 +75,7 @@ export interface CostSettings {
 
 /** 仿真模型配置 */
 export interface SimulationSettings {
-  fiber_model: 'GN' | 'EGN'      // 光纤仿真模型
+  fiber_model: string             // 光纤仿真模型 ID
   edfa_model: string             // EDFA 模型
   calculation_models: string[]   // 启用的计算模型
 }
@@ -194,7 +192,7 @@ export interface AlgorithmConfig {
 
 /** 路由规划参数设置 - 甲方规范 */
 export interface USERoutePlanningSettings {
-  cable_armor_mapping: CableArmorMapping  // 风险等级与缆型的映射规则
+  cable_armor_mapping?: CableArmorMapping // 风险等级与缆型的映射规则
   algorithm_config: AlgorithmConfig       // 路由算法配置参数
 }
 
@@ -319,7 +317,7 @@ export interface CableCommercialParams {
 export interface CableTypeSpec {
   id: string                     // 唯一索引
   name: string                   // 海缆名称
-  type: string                   // 海缆类型，如 "SA", "LW", "DA"
+  type: string                   // 平台 ARMORING_TYPE 字典编码
   commercial_params: CableCommercialParams
 }
 
@@ -431,28 +429,18 @@ export type RiskLevel = 'HIGH' | 'MEDIUM' | 'LOW'
 /** 风险信息 - 甲方规范 */
 export interface SegmentRiskInfo {
   risk_level: RiskLevel          // 风险等级
-  average_risk_value: number     // 该段平均风险值
+  average_risk_value?: number    // 该段平均风险值（仅数据源明确提供时存在）
 }
 
 /** 海缆分段（工程级设计对象）- 甲方规范完整版 */
 export interface RouteSegment {
   segment_id: string             // 分段唯一标识
   geometry_range: SegmentGeometryRange  // 几何范围信息 (对象格式)
-  risk_info: SegmentRiskInfo     // 风险信息
+  risk_info?: SegmentRiskInfo    // 风险信息（仅规划结果或文件明确提供时存在）
   cable_type_ref: string         // 引用 libraries.cable_types 中的 ID
   slack_percent: number          // 敷设余量百分比（如 2.5 代表增加 2.5%）
   burial_depth_m: number         // 设计埋深（米）
   is_locked: boolean             // 锁定标记，若为 true 自动规划算法不可覆盖
-}
-
-/** 海缆分段 - 兼容旧格式 (数组形式的 geometry_range) */
-export interface RouteSegmentLegacy {
-  segment_id: string
-  geometry_range: [number, number]  // 旧格式: [start_index, end_index]
-  cable_struct_ref: string       // 旧字段名
-  slack_percent: number
-  burial_depth_m: number
-  is_locked: boolean
 }
 
 /** Span 光学性能指标 */
@@ -536,30 +524,30 @@ export interface SimulationMetricsMatrix {
 
 /** 终端 GSNR 统计 */
 export interface FinalGsnrStats {
-  avg_db: number                 // 平均 GSNR (dB)
-  min_db: number                 // 最差 GSNR (dB)
-  max_db: number                 // 最佳 GSNR (dB)
-  worst_channel: string          // 最差信道编号
-  best_channel: string           // 最佳信道编号
+  avg_db?: number                // 平均 GSNR (dB)，仅后端明确返回时存在
+  min_db?: number                // 最差 GSNR (dB)，仅后端明确返回时存在
+  max_db?: number                // 最佳 GSNR (dB)，仅后端明确返回时存在
+  worst_channel?: string         // 最差信道编号，仅后端明确返回时存在
+  best_channel?: string          // 最佳信道编号，仅后端明确返回时存在
 }
 
 /** 终端 OSNR 统计 */
 export interface FinalOsnrStats {
-  avg_db: number                 // 平均 OSNR (dB)
-  min_db: number                 // 最差 OSNR (dB)
+  avg_db?: number                // 平均 OSNR (dB)，仅后端明确返回时存在
+  min_db?: number                // 最差 OSNR (dB)，仅后端明确返回时存在
 }
 
 /** 链路性能汇总 */
 export interface SimulationSummary {
-  total_length_km: number        // 链路总长度 (km)
-  total_span_count: number       // Span 总数
-  final_gsnr: FinalGsnrStats     // 终端 GSNR 统计
-  final_osnr: FinalOsnrStats     // 终端 OSNR 统计
-  system_capacity_tbps: number   // 系统总容量 (Tbps)
+  total_length_km?: number       // 链路总长度 (km)，仅后端明确返回时存在
+  total_span_count?: number      // Span 总数，仅后端明确返回时存在
+  final_gsnr?: FinalGsnrStats    // 终端 GSNR 统计，仅后端明确返回时存在
+  final_osnr?: FinalOsnrStats    // 终端 OSNR 统计，仅后端明确返回时存在
+  system_capacity_tbps?: number | null   // 系统总容量 (Tbps)，仅使用后端明确返回值
   // 兼容旧字段
-  final_gsnr_avg_db: number
-  final_gsnr_min_db: number
-  final_osnr_avg_db: number
+  final_gsnr_avg_db?: number
+  final_gsnr_min_db?: number
+  final_osnr_avg_db?: number
 }
 
 /** 仿真位置维度 */
@@ -614,8 +602,8 @@ export interface SweepResults {
   span_lengths_km: number[]      // Span 长度序列 (km)
   gsnr_per_span_db: number[][]   // 各 Span 配置下的 GSNR 值（按信道）
   osnr_per_span_db: number[][]   // 各 Span 配置下的 OSNR 值（按信道）
-  feasible_range_km: [number, number]  // 满足目标 GSNR 的可行 Span 区间
-  recommended_span_km: number    // 系统推荐的最优 Span 长度 (km)
+  feasible_range_km: [number, number] | null  // 满足目标 GSNR 的可行 Span 区间
+  recommended_span_km: number | null    // 系统推荐的最优 Span 长度 (km)
 }
 
 /** 用户决策记录 */
@@ -746,6 +734,8 @@ export interface USEHealthMonitoring {
 export interface RouteplanningExtension {
   rplTables: Record<string, unknown>[]  // 原始 RPL 表格数据
   routes?: Record<string, unknown>[]    // 路由数据
+  algorithmResult?: Record<string, unknown> | null // 查询接口返回并转换后的完整路由结果
+  selectedRouteId?: string | null
   planningConfig?: Record<string, unknown>
   cableTypeDatabase?: Record<string, unknown>[]  // 缆型数据库（包含用户新建的缆型）
 }
@@ -852,16 +842,6 @@ export interface LinkElementParams {
   params: Record<string, unknown>    // 参数键值对
 }
 
-/** 链路参数组装结果 */
-export interface LinkParamsResult {
-  model_selection: {
-    SPAN: string                 // Span 使用的模型 ID
-    EDFA: string                 // EDFA 使用的模型 ID
-    BU: string | null            // BU 使用的模型 ID
-  }
-  link_params: LinkElementParams[]  // 有序的链路参数列表
-}
-
 // ==================== 工具函数 ====================
 
 /** 生成 UUID */
@@ -873,19 +853,8 @@ export function generateUUID(): string {
   })
 }
 
-/** 生成哈希值 */
-export function generateHash(data: string): string {
-  let hash = 0
-  for (let i = 0; i < data.length; i++) {
-    const char = data.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash = hash & hash
-  }
-  return Math.abs(hash).toString(16).padStart(8, '0')
-}
-
 /** 创建默认的 WDM 配置 */
-export function createDefaultWDMConfig(channelCount: number = 96): WDMConfig {
+function createDefaultWDMConfig(channelCount: number = 96): WDMConfig {
   return {
     channel_count: channelCount,
     center_freq_thz: 193.1,
@@ -930,11 +899,6 @@ export function createDefaultUSEProjectData(
       imported_landing_points: [],
       imported_bu_nodes: [],
       route_planning_settings: {
-        cable_armor_mapping: {
-          high_risk: { threshold: 3.0, cable_type_ref: 'struct_da_01' },
-          medium_risk: { threshold: 2.0, cable_type_ref: 'struct_sa_01' },
-          low_risk: { threshold: 0, cable_type_ref: 'struct_lw_01' }
-        },
         algorithm_config: {
           planning_bounds: { mode: 'AUTO' },
           grid_resolution_m: 500
@@ -983,243 +947,4 @@ export function createDefaultUSEProjectData(
       }
     }
   }
-}
-
-/** 创建默认的光纤规格 */
-export function createDefaultFiberSpec(id: string, name: string): FiberSpec {
-  return {
-    id,
-    fiber_type_id: name,
-    attributes: {
-      attenuation: 0.16,
-      A_eff: 80,
-      dispersion: 2.1e-5,
-      dispersion_slope: 60.0,
-      n2: 2.6
-    },
-    supported_models: ['fiber_gn_model', 'fiber_egn_model'],
-    model_params: {
-      fiber_gn_model: {
-        is_configured: true,
-        params: {
-          coherence_factor: 1.0,
-          noise_bandwidth_ghz: 12.5
-        }
-      },
-      fiber_egn_model: {
-        is_configured: false,
-        params: {}
-      }
-    }
-  }
-}
-
-/** 创建默认的 EDFA 规格 */
-export function createDefaultEDFASpec(id: string, name: string): ComponentSpec {
-  return {
-    id,
-    name,
-    type: 'EDFA',
-    specs: {
-      gain_db: 20.0,
-      bandwidth_nm: 35.0,
-      noise_figure_db: 5.0,
-      max_output_power_dbm: 20.0,
-      gain_flatness_db: 0.5
-    },
-    supported_models: ['edfa_gain_model'],
-    model_params: {
-      edfa_gain_model: {
-        is_configured: true,
-        params: {
-          gain_tilt_db_per_nm: 0.01
-        }
-      }
-    },
-    commercial_params: {
-      unit_price: 250000,
-      currency: 'USD'
-    }
-  }
-}
-
-/** 创建默认的 BU 规格 */
-export function createDefaultBUSpec(id: string, name: string, portCount: 3 | 4 = 3): ComponentSpec {
-  const matrix = portCount === 3
-    ? [[0, 1, 1], [1, 0, 1], [1, 1, 0]]
-    : [[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 0, 1], [1, 1, 1, 0]]
-
-  return {
-    id,
-    name,
-    type: 'BU',
-    specs: {
-      port_count: portCount,
-      matrix,
-      thru_pair: [1, 2],
-      loss_vals: {
-        thru: 0.8,
-        branch: 3.5
-      }
-    },
-    supported_models: ['bu_loss_model'],
-    model_params: {
-      bu_loss_model: {
-        is_configured: true,
-        params: {}
-      }
-    },
-    commercial_params: {
-      unit_price: portCount === 3 ? 180000 : 220000,
-      currency: 'USD'
-    }
-  }
-}
-
-/** 创建默认的计算模型定义 */
-export function createDefaultModels(): ModelDefinition[] {
-  return [
-    // 光纤线性损耗模型
-    {
-      model_id: 'fiber_linear_loss',
-      version: '1.0.0',
-      domain: 'FIBER',
-      role: 'propagation',
-      display_name: 'Fiber Linear Loss Model',
-      description: 'Calculate linear attenuation loss for optical fiber span',
-      entry_point: 'fiber_loss.py:calculate_linear_loss',
-      language: 'python',
-      inputs: [
-        { param_id: 'attenuation', label: 'Attenuation Coefficient', unit: 'dB/km', type: 'float', required: true, source_hint: 'fiber.attributes.attenuation' },
-        { param_id: 'length', label: 'Fiber Length', unit: 'km', type: 'float', required: true, source_hint: 'span.length_km' }
-      ],
-      outputs: [
-        { param_id: 'total_loss_db', label: 'Total Loss', unit: 'dB', type: 'float' }
-      ],
-      constraints: [
-        { param_id: 'length', min: 0, max: 500 }
-      ],
-      interface_contract: {
-        state_inputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入纤光功率谱 (dBm)' }
-        ],
-        state_outputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '出纤光功率谱 (dBm)' }
-        ]
-      },
-      compatibility: {
-        requires: [],
-        provides: ['fiber_loss'],
-        incompatible_with: []
-      }
-    },
-    // GN 模型
-    {
-      model_id: 'fiber_gn_model',
-      version: '1.0.0',
-      domain: 'FIBER',
-      role: 'propagation',
-      display_name: 'GN Model',
-      description: 'Gaussian Noise model for fiber nonlinear interference calculation',
-      entry_point: 'gn_model.py:calculate_gn',
-      language: 'python',
-      inputs: [
-        { param_id: 'attenuation', label: 'Attenuation', unit: 'dB/km', type: 'float', required: true, source_hint: 'fiber.attributes.attenuation' },
-        { param_id: 'length', label: 'Length', unit: 'km', type: 'float', required: true, source_hint: 'span.length_km' },
-        { param_id: 'A_eff', label: 'Effective Area', unit: 'μm²', type: 'float', required: true, source_hint: 'fiber.attributes.A_eff' },
-        { param_id: 'n2', label: 'Nonlinear Index', unit: '1e-20 m²/W', type: 'float', required: true, source_hint: 'fiber.attributes.n2' },
-        { param_id: 'dispersion', label: 'Dispersion', unit: 's/m²', type: 'float', required: true, source_hint: 'fiber.attributes.dispersion' }
-      ],
-      outputs: [
-        { param_id: 'nli_power', label: 'NLI Power', unit: 'dBm', type: 'float' },
-        { param_id: 'gsnr', label: 'GSNR', unit: 'dB', type: 'float' }
-      ],
-      interface_contract: {
-        state_inputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入纤光功率谱 (dBm)' },
-          { param_id: 'ase_spectrum_dbm', data_type: 'array', description: 'ASE 噪声谱 (dBm)' },
-          { param_id: 'nli_spectrum_dbm', data_type: 'array', description: 'NLI 噪声谱 (dBm)' }
-        ],
-        state_outputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '出纤光功率谱 (dBm)' },
-          { param_id: 'nli_spectrum_dbm', data_type: 'array', description: '累积 NLI 噪声谱 (dBm)' },
-          { param_id: 'gsnr_spectrum_db', data_type: 'array', description: 'GSNR 频谱 (dB)' }
-        ]
-      },
-      compatibility: {
-        requires: [],
-        provides: ['fiber_nli', 'fiber_loss'],
-        incompatible_with: ['fiber_egn_model']
-      }
-    },
-    // EDFA 增益模型
-    {
-      model_id: 'edfa_gain_model',
-      version: '1.0.0',
-      domain: 'EDFA',
-      role: 'propagation',
-      display_name: 'EDFA Gain Model',
-      description: 'Calculate EDFA output power considering saturation',
-      entry_point: 'edfa_model.py:calculate_gain',
-      language: 'python',
-      inputs: [
-        { param_id: 'input_power_dbm', label: 'Input Power', unit: 'dBm', type: 'float', required: true, source_hint: 'link.input_power_dbm' },
-        { param_id: 'gain_db', label: 'Nominal Gain', unit: 'dB', type: 'float', required: true, source_hint: 'component.specs.gain_db' },
-        { param_id: 'max_output_power_dbm', label: 'Saturation Power', unit: 'dBm', type: 'float', required: true, source_hint: 'component.specs.max_output_power_dbm' }
-      ],
-      outputs: [
-        { param_id: 'output_power_dbm', label: 'Output Power', unit: 'dBm', type: 'float' },
-        { param_id: 'actual_gain_db', label: 'Actual Gain', unit: 'dB', type: 'float' }
-      ],
-      interface_contract: {
-        state_inputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入纤光功率谱 (dBm)' },
-          { param_id: 'ase_spectrum_dbm', data_type: 'array', description: 'ASE 噪声谱 (dBm)' }
-        ],
-        state_outputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '放大后光功率谱 (dBm)' },
-          { param_id: 'ase_spectrum_dbm', data_type: 'array', description: '累积 ASE 噪声谱 (dBm)' }
-        ]
-      },
-      compatibility: {
-        requires: [],
-        provides: ['edfa_gain', 'edfa_ase'],
-        incompatible_with: []
-      }
-    },
-    // BU 损耗模型
-    {
-      model_id: 'bu_loss_model',
-      version: '1.0.0',
-      domain: 'BU',
-      role: 'propagation',
-      display_name: 'BU Loss Model',
-      description: 'Calculate BU insertion loss based on port configuration',
-      entry_point: 'bu_model.py:calculate_loss',
-      language: 'python',
-      inputs: [
-        { param_id: 'input_port', label: 'Input Port', unit: '', type: 'int', required: true },
-        { param_id: 'output_port', label: 'Output Port', unit: '', type: 'int', required: true },
-        { param_id: 'thru_loss', label: 'Thru Loss', unit: 'dB', type: 'float', required: true, source_hint: 'component.specs.loss_vals.thru' },
-        { param_id: 'branch_loss', label: 'Branch Loss', unit: 'dB', type: 'float', required: true, source_hint: 'component.specs.loss_vals.branch' }
-      ],
-      outputs: [
-        { param_id: 'loss_db', label: 'Insertion Loss', unit: 'dB', type: 'float' },
-        { param_id: 'mode', label: 'Mode', unit: '', type: 'string' }
-      ],
-      interface_contract: {
-        state_inputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '入端光功率谱 (dBm)' }
-        ],
-        state_outputs: [
-          { param_id: 'power_spectrum_dbm', data_type: 'array', description: '出端光功率谱 (dBm)' }
-        ]
-      },
-      compatibility: {
-        requires: [],
-        provides: ['bu_loss'],
-        incompatible_with: []
-      }
-    }
-  ]
 }

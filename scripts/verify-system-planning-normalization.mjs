@@ -39,6 +39,7 @@ const apiState = {
 }
 let simulationQueryCalls = 0
 let fixedQueryCalls = 0
+let fixedPlanCalls = 0
 const planningCallOrder = []
 let savedChannelConfig = null
 
@@ -50,7 +51,10 @@ const service = loadTsModule('src/services/SimulationApiService.ts', {
   '@/utils/systemPlanningConstraints': constraintUtils,
   '@/services/platform/api': {
     platformProjectApi: {
-      fixedPlan: async () => apiState.layout,
+      fixedPlan: async () => {
+        fixedPlanCalls += 1
+        return apiState.layout
+      },
       optimizedPlan: async () => {
         planningCallOrder.push('optimizedPlan')
         return { status: 'accepted' }
@@ -149,8 +153,14 @@ const direct = service.normalizePlatformSimulationCache({
   },
   positions: { names: ['Tx', 'Rx'], distances_km: [0, 160], span_ids: ['span_01'] },
   channels: { ids: ['Ch1', 'Ch2'], frequencies_thz: [193.075, 193.125] },
+  summary: {
+    final_gsnr: { min_db: 15, avg_db: 16.5, max_db: 18 },
+    final_osnr: { min_db: 22, avg_db: 23.5 },
+    total_length_km: 160,
+    total_span_count: 1,
+  },
 }, request)
-expect(direct?.summary.final_gsnr.min_db === 15, 'direct metric matrix was not normalized')
+expect(direct?.summary.final_gsnr?.min_db === 15, 'explicit backend summary was not preserved')
 expect(direct?.positions.distances_km[1] === 160, 'direct positions were not preserved')
 
 const snakeWrapped = service.normalizePlatformSimulationCache({
@@ -159,16 +169,24 @@ const snakeWrapped = service.normalizePlatformSimulationCache({
       performance_matrices: {
         gsnr_matrix_db: [[19, 18], [17, 16]],
         osnr_matrix_db: [[26, 25], [24, 23]],
+        snr_ase_matrix_db: [[26, 25], [24, 23]],
+        snr_nli_matrix_db: [[22, 21], [20, 19]],
       },
+      positions: { span_ids: ['span_01'] },
+      channels: { ids: ['Ch1', 'Ch2'], frequencies_thz: [193.075, 193.125] },
       node_metadata: [
-        { node_name: 'Tx', position_km: 0 },
-        { node_name: 'Rx', position_km: 160 },
+        { node_id: 'tx', node_name: 'Tx', position_km: 0 },
+        { node_id: 'rx', node_name: 'Rx', position_km: 160 },
       ],
     },
   }),
 }, request)
 expect(snakeWrapped?.metrics.gsnr_matrix_db[1][1] === 16, 'nested snake_case result was not unwrapped')
-expect(snakeWrapped?.positions.names[1] === 'Rx', 'snake_case node metadata was not normalized')
+expect(snakeWrapped?.positions.names[1] === 'rx', 'snake_case node metadata was not normalized')
+expect(
+  snakeWrapped?.summary.final_gsnr === undefined && snakeWrapped?.summary.final_osnr === undefined,
+  'summary values were derived from metric matrices instead of explicit backend fields',
+)
 
 const fromPower = service.normalizePlatformSimulationCache({
   power_matrices: {
@@ -177,11 +195,7 @@ const fromPower = service.normalizePlatformSimulationCache({
     nli_noise_power_dbm: [[-25, -26], [-23, -24]],
   },
 }, request)
-expect(fromPower?.metrics.osnr_matrix_db[1][0] === 18, 'OSNR was not derived from power matrices')
-expect(
-  Math.abs((fromPower?.metrics.gsnr_matrix_db[1][0] ?? 0) - 16.8067) < 0.01,
-  'GSNR was not derived from combined ASE and NLI power',
-)
+expect(fromPower === null, 'power matrices were still converted into frontend-derived GSNR/OSNR metrics')
 
 apiState.layout = {
   total_length_km: '160.0',
@@ -203,13 +217,44 @@ apiState.layout = {
 apiState.simulation = {
   span_scan_result: {
     target_gsnr_db: 14,
+    span_lengths_km: [70, 80, 90],
+    recommended_span_km: 80,
+    feasible_range_km: [70, 80],
     scan_points: [
-      { span_length_km: 70, avg_gsnr_db: 15, avg_osnr_db: 20, meet_target: true },
-      { span_length_km: 80, avg_gsnr_db: 17, avg_osnr_db: 21, meet_target: true },
-      { span_length_km: 90, avg_gsnr_db: 13, avg_osnr_db: 19, meet_target: false },
+      {
+        span_length_km: 70,
+        gsnr_per_channel_db: [15, 14.5],
+        osnr_per_channel_db: [20, 19.5],
+        avg_gsnr_db: 14.75,
+        min_gsnr_db: 14.5,
+        avg_osnr_db: 19.75,
+        meet_target: true,
+        gsnr_margin_db: 0.5,
+      },
+      {
+        span_length_km: 80,
+        gsnr_per_channel_db: [17, 16.5],
+        osnr_per_channel_db: [21, 20.5],
+        avg_gsnr_db: 16.75,
+        min_gsnr_db: 16.5,
+        avg_osnr_db: 20.75,
+        meet_target: true,
+        gsnr_margin_db: 2.5,
+      },
+      {
+        span_length_km: 90,
+        gsnr_per_channel_db: [13, 12.5],
+        osnr_per_channel_db: [19, 18.5],
+        avg_gsnr_db: 12.75,
+        min_gsnr_db: 12.5,
+        avg_osnr_db: 18.75,
+        meet_target: false,
+        gsnr_margin_db: -1.5,
+      },
     ],
   },
 }
+const fixedPlansBeforeOptimized = fixedPlanCalls
 const response = await service.runSimulation({
   ...request,
   spanStrategy: { mode: 'scan', scanRange: { min: 70, max: 90, step: 10 } },
@@ -221,12 +266,14 @@ expect(
     && planningCallOrder.indexOf('saveChannelConfig') < planningCallOrder.indexOf('optimizedPlan'),
   'optimized layout started before WDM channel config was saved and verified',
 )
-expect(response.spanScanResult?.recommendedSpanKm === 80, 'best Span was not selected from scan points')
+expect(response.spanScanResult?.recommendedSpanKm === 80, 'backend recommended Span was not preserved')
 expect(
   JSON.stringify(response.spanScanResult?.feasibleRange) === JSON.stringify([70, 80]),
-  'feasible Span range was not derived from scan points',
+  'backend feasible Span range was not preserved',
 )
 expect(simulationQueryCalls === 0, 'direct simulation result should not trigger a query')
+expect(fixedPlanCalls === fixedPlansBeforeOptimized, 'optimized layout unexpectedly triggered a frontend fixed-plan retry')
+expect(response.constraintAdjusted === false, 'frontend reported a locally adjusted optimized layout')
 
 apiState.simulation = null
 const withoutSimulation = await service.runSimulation({
@@ -237,5 +284,22 @@ expect(withoutSimulation.success === true, 'layout should succeed when simulatio
 expect(withoutSimulation.detailedResult == null, 'null simulation data should remain unavailable')
 expect(simulationQueryCalls === 1, 'null simulation data should trigger only one fallback query')
 expect(fixedQueryCalls === 0, 'direct fixed layout result should not trigger a query')
+
+const analysisSource = fs.readFileSync(
+  path.join(root, 'src/modules/design/dialogs/SimulationAnalysisDialog.vue'),
+  'utf8',
+)
+expect(!analysisSource.includes('simulationDataBuilder'), 'simulation analysis still imports the frontend simulator')
+expect(!analysisSource.includes('const runSimulation'), 'simulation analysis still exposes a frontend recalculation path')
+expect(!analysisSource.includes('updateSimulationCache'), 'simulation analysis still mutates the backend simulation cache')
+expect(
+  analysisSource.includes('const value = settingsStore.simulationCache')
+    && analysisSource.includes('return value?.is_valid ? value : null'),
+  'simulation analysis is not reading the authoritative backend cache',
+)
+expect(
+  !fs.existsSync(path.join(root, 'src/services/simulationDataBuilder.ts')),
+  'frontend simulationDataBuilder algorithm file still exists',
+)
 
 console.log('system planning result normalization verification passed')

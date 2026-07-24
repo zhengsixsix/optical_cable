@@ -1,11 +1,10 @@
 ﻿<script setup lang="ts">
-import { useRouteStore } from '@/stores/route'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useSLDStore } from '@/stores/sld'
-import { exportSLDFile, exportSLDFileFromRoute } from '@/services/SLDExportService'
-import { exportSLDToExcel } from '@/services/SLDExcelExportService'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
+import { exportSLDFile } from '@/services/SLDExportService'
 import {
   DEFAULT_SLD_EXPORT_TEMPLATE_VERSION,
   SLD_EXPORT_TEMPLATE_OPTIONS,
@@ -24,6 +23,7 @@ import {
 } from 'lucide-vue-next'
 import type { SLDEquipmentType, SLDExportTemplateVersion } from '@/types'
 import { getDeviceLibraryNameById } from '@/services/platform/deviceRuntime'
+import { getDeviceTypeCodeForSldEquipmentType } from '@/services/platform/deviceTypeAdapter'
 
 const props = defineProps<{
   visible?: boolean
@@ -37,8 +37,8 @@ const emit = defineEmits<{
 
 const sldStore = useSLDStore()
 const appStore = useAppStore()
-const routeStore = useRouteStore()
 const settingsStore = useSettingsStore()
+const dictionaryStore = useDictionaryStore()
 
 const activeTab = ref<'equipments' | 'segments' | 'params'>('equipments')
 
@@ -55,15 +55,13 @@ const exportTemplateVersion = computed<SLDExportTemplateVersion>(() =>
   currentTable.value?.metadata?.exportTemplateVersion || DEFAULT_SLD_EXPORT_TEMPLATE_VERSION,
 )
 
-const equipmentTypeLabels: Record<SLDEquipmentType, string> = {
-  TE: '终端设备',
-  PFE: '供电设备',
-  REP: '放大器',
-  BU: '分支器',
-  EQ: '均衡器',
-  JOINT: '接头盒',
-  OADM: '光分插复用器',
+const getEquipmentTypeLabel = (equipment: { type: SLDEquipmentType; deviceTypeCd?: string }) => {
+  const code = equipment.deviceTypeCd || getDeviceTypeCodeForSldEquipmentType(equipment.type)
+  return dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, code)?.name || code || equipment.type
 }
+
+const getCableTypeLabel = (code?: string) =>
+  dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.armoringType, code)?.name || code || '-'
 
 const getEquipmentTypeClass = (type: SLDEquipmentType) => {
   const classes: Record<SLDEquipmentType, string> = {
@@ -102,6 +100,13 @@ const handleDeleteEquipment = (id: string) => {
   appStore.showNotification({ type: 'success', message: '设备已删除' })
 }
 
+onMounted(() => {
+  void Promise.all([
+    dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType),
+    dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.armoringType),
+  ]).catch(() => undefined)
+})
+
 const handleDeleteSegment = (id: string) => {
   sldStore.deleteFiberSegment(id)
   appStore.showNotification({ type: 'success', message: '光纤段已删除' })
@@ -122,6 +127,7 @@ const handleValidate = () => {
 const handleExportEquipments = async () => {
   if (!currentTable.value) return
   try {
+    const { exportSLDToExcel } = await import('@/services/SLDExcelExportService')
     await exportSLDToExcel(currentTable.value)
     appStore.showNotification({ type: 'success', message: '导出设备表成功' })
   } catch (e) {
@@ -130,23 +136,14 @@ const handleExportEquipments = async () => {
 }
 
 const handleExportXML = () => {
-  // 优先导出当前 SLD 表格，避免丢失同步进来的均衡器/接头盒等设备
   if (currentTable.value && currentTable.value.equipments.length > 0) {
     exportSLDFile(currentTable.value)
     appStore.showNotification({ type: 'success', message: '导出 SLD XML 成功' })
     return
   }
 
-  // 当 SLD 表格为空时，回退到当前路由的基础导出
-  const currentRoute = routeStore.currentRoute
-  if (currentRoute && currentRoute.points.length > 0) {
-    exportSLDFileFromRoute(currentRoute, currentRoute.name, 2)
-    appStore.showNotification({ type: 'success', message: '从路由导出 SLD XML 成功' })
-    return
-  }
-
   if (!currentTable.value) {
-    appStore.showNotification({ type: 'warning', message: '请先选择路由或 SLD 表格' })
+    appStore.showNotification({ type: 'warning', message: '请先加载后端生成或已导入的 SLD 表格' })
     return
   }
   appStore.showNotification({ type: 'warning', message: '当前 SLD 表格没有设备可导出' })
@@ -175,7 +172,7 @@ const handleTemplateVersionChange = (event: Event) => {
     <CardContent class="flex-1 flex flex-col overflow-hidden p-0">
       <!-- 统计信息 -->
       <div v-if="metadata" class="px-4 py-3 bg-gray-50 border-b">
-        <div class="grid grid-cols-4 xl:grid-cols-8 gap-4 text-sm">
+        <div class="grid grid-cols-4 xl:grid-cols-7 gap-4 text-sm">
           <div class="text-center">
             <div class="font-semibold text-blue-600">{{ metadata.totalLength?.toFixed(1) ?? '-' }}</div>
             <div class="text-xs text-gray-500">总长度(km)</div>
@@ -203,10 +200,6 @@ const handleTemplateVersionChange = (event: Event) => {
           <div class="text-center">
             <div class="font-semibold text-cyan-600">{{ metadata.totalFiberPairs }}</div>
             <div class="text-xs text-gray-500">光纤对</div>
-          </div>
-          <div class="text-center">
-            <div class="font-semibold text-indigo-600">{{ metadata.estimatedCapacity }}</div>
-            <div class="text-xs text-gray-500">容量(Tbps)</div>
           </div>
         </div>
       </div>
@@ -295,7 +288,7 @@ const handleTemplateVersionChange = (event: Event) => {
                 <td class="px-2 py-1.5 border-b font-medium">{{ eq.name }}</td>
                 <td class="px-2 py-1.5 text-center border-b">
                   <span :class="['text-xs px-1.5 py-0.5 rounded', getEquipmentTypeClass(eq.type)]">
-                    {{ equipmentTypeLabels[eq.type] }}
+                    {{ getEquipmentTypeLabel(eq) }}
                   </span>
                 </td>
                 <td class="px-2 py-1.5 text-right border-b font-mono">{{ eq.kp?.toFixed(1) ?? '-' }}</td>
@@ -356,7 +349,7 @@ const handleTemplateVersionChange = (event: Event) => {
                 <td class="px-2 py-1.5 border-b">{{ seg.toName }}</td>
                 <td class="px-2 py-1.5 text-right border-b font-mono">{{ seg.length?.toFixed(1) ?? '-' }}</td>
                 <td class="px-2 py-1.5 text-center border-b">{{ seg.fiberPairs ?? '-' }}</td>
-                <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ seg.cableType ?? '-' }}</td>
+                <td class="px-2 py-1.5 text-center border-b text-xs">{{ getCableTypeLabel(seg.cableType) }}</td>
                 <td class="px-2 py-1.5 text-right border-b">{{ seg.totalLoss?.toFixed(1) ?? '-' }}</td>
                 <td class="px-2 py-1.5 text-center border-b">
                   <div class="flex items-center justify-center gap-1">

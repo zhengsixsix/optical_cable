@@ -7,36 +7,6 @@ export type Extent = [number, number, number, number]
 // 投影类型
 export type Projection = 'EPSG:4326' | 'EPSG:3857'
 
-// 地图状态
-export interface MapState {
-  center: Coordinate
-  zoom: number
-  projection: Projection
-  extent: Extent | null
-  selectedExtent: Extent | null
-}
-
-// 地图工具模式
-export type ToolMode = 'select' | 'pan' | 'draw'
-
-// GeoTIFF 数据
-export interface GeoTiffData {
-  rasters: ArrayBuffer[]
-  width: number
-  height: number
-  bbox: Extent
-  noDataValue?: number
-}
-
-// 高程数据
-export interface ElevationData {
-  values: Float32Array | Int16Array
-  width: number
-  height: number
-  minValue: number
-  maxValue: number
-}
-
 // GeoJSON 类型定义
 export namespace GeoJSON {
   export interface Feature {

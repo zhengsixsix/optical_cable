@@ -2,8 +2,8 @@
 import { useAppStore } from '@/stores/app'
 import { ref, reactive, computed, watch } from 'vue'
 import {useRouter, useRoute} from 'vue-router'
-import { useProjectManager } from '@/composables'
-import { useSettingsStore } from '@/stores/settings'
+import { armorRiskLevelOptions, useSettingsStore } from '@/stores/settings'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { useRouteStore } from '@/stores/route'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { platformPlanConfigApi, platformPointApi } from '@/services/platform/api'
@@ -12,12 +12,10 @@ import {Card, CardContent, Button, Select, Input} from '@/shared/components/base
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapRange } from '@/modules/planning/dialogs/MapSelectDialog.vue'
-import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
 import {
   MapPin,
   Radio,
   Database,
-  Cable,
   Zap,
   GitBranch,
   Waves,
@@ -34,37 +32,30 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-vue-next'
-import type {BUConfig, ArmorMapping, RedundancyConfig} from '@/stores/settings'
+import type {ArmorRiskLevel, ArmorTypeMapping, BUConfig, RedundancyConfig} from '@/stores/settings'
 import {
   fiberModelOptions,
-  planningModeOptions,
-  dataSourceOptions,
   calculationModelOptions
-} from '@/data/mockData'
+} from '@/config/uiOptions'
 
 const settingsStore = useSettingsStore()
+const dictionaryStore = useDictionaryStore()
 const appStore = useAppStore()
 const routeStore = useRouteStore()
 const cableSegmentStore = useCableSegmentStore()
-const projectManager = useProjectManager()
 const router = useRouter()
 const route = useRoute()
-const activeTab = ref('route')
+const validTabs = ['route', 'transmission', 'monitoring'] as const
+type SettingsTab = typeof validTabs[number]
 
-const validTabs = ['route', 'monitoring'] as const
+const activeTab = ref<SettingsTab>('route')
 
-const syncActiveTabFromQuery = async () => {
+const syncActiveTabFromQuery = () => {
   const tabQuery = route.query.tab as string
   if (!tabQuery) return
 
-  if (tabQuery === 'transmission') {
-    activeTab.value = 'route'
-    await router.replace({ query: { ...route.query, tab: 'route' } })
-    return
-  }
-
-  if (validTabs.includes(tabQuery as typeof validTabs[number])) {
-    activeTab.value = tabQuery
+  if (validTabs.includes(tabQuery as SettingsTab)) {
+    activeTab.value = tabQuery as SettingsTab
   }
 }
 
@@ -102,13 +93,17 @@ const handleOpenProject = async () => {
 }
 const tabs = [
   {id: 'route', label: '路径规划管理'},
+  {id: 'transmission', label: '传输与仿真管理'},
   {id: 'monitoring', label: '监控系统管理'},
-]
+] as const
+
+const selectTab = (tab: SettingsTab) => {
+  activeTab.value = tab
+  void router.replace({ query: { ...route.query, tab } })
+}
 
 // 弹窗状态
 const showMapSelectDialog = ref(false)
-const showCableTypeCreateDialog = ref(false)
-const cableTypePresetArmor = ref('')  // 预设的铠装类型
 const mapSelectType = ref<'start' | 'end' | 'range'>('start')
 const mapSelectTitle = ref('地图选点')
 
@@ -118,12 +113,6 @@ const currencyOptions = [
   { value: 'CNY', label: 'CNY' },
   { value: 'EUR', label: 'EUR' },
 ]
-const optionalNumber = (value: unknown): number | undefined => {
-  if (value === '' || value == null) return undefined
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : undefined
-}
-
 // 将坐标对象转换为字符串格式
 const formatCoord = (point: { lon: number; lat: number }): string => {
   if (point.lon === 0 && point.lat === 0) return ''
@@ -264,12 +253,6 @@ const handleBuMapSelect = (id: string) => {
   showMapSelectDialog.value = true
 }
 
-// 端口上限选项
-const portLimitOptions = [
-  {value: '3', label: '3端口'},
-  {value: '4', label: '4端口'}
-]
-
 // ========== 点对点模式配置 ==========
 const startPointConfig = reactive({
   name: '',
@@ -346,16 +329,6 @@ const handleMapSelectPoint = (type: 'start' | 'end') => {
   showMapSelectDialog.value = true
 }
 
-// 登陆站地图定位（跳转到地图并高亮）
-const handleWaypointMapLocate = (id: string) => {
-  const wp = waypoints.value.find(w => w.id === id)
-  if (wp && wp.coord) {
-    appStore.showNotification({type: 'info', message: `定位到登陆站: ${wp.name} (${wp.coord})`})
-  } else {
-    appStore.showNotification({type: 'warning', message: '该登陆站尚未设置坐标'})
-  }
-}
-
 // 地图框选
 const handleMapBoxSelect = () => {
   mapSelectType.value = 'range'
@@ -406,41 +379,68 @@ const saveBuEdit = () => {
   editingBu.value = null
 }
 
-// ========== 铠装映射配置 ==========
-const armorMappings = ref<Array<{
-  riskLevel: string;
-  riskThreshold: string;
-  cableTypeName: string;
+// ========== 字典铠装风险与成本配置 ==========
+interface ArmorTypeMappingFormItem {
+  armorTypeCode: string
+  armorTypeName: string
+  riskLevel: ArmorRiskLevel | ''
   unitPrice: string
-}>>([])
+}
 
-// 初始化铠装映射
-const initArmorMappings = () => {
-  const stored = settingsStore.routePlanningConfig.armorMappings || []
-  if (stored.length > 0) {
-    armorMappings.value = stored.map(m => ({
-      riskLevel: m.riskLevel,
-      riskThreshold: String(m.riskThreshold),
-      cableTypeName: m.cableTypeName,
-      unitPrice: String(m.unitPrice)
-    }))
-  } else {
-    // 默认值
-    armorMappings.value = [
-      {riskLevel: 'high', riskThreshold: '3', cableTypeName: 'DA (双铠装)', unitPrice: '24.0'},
-      {riskLevel: 'medium', riskThreshold: '2', cableTypeName: 'SA (单铠装)', unitPrice: '19.5'},
-      {riskLevel: 'low', riskThreshold: '0', cableTypeName: 'LW (轻型)', unitPrice: '15.0'},
-    ]
+const armorTypeMappings = ref<ArmorTypeMappingFormItem[]>([])
+const armorTypeLoading = computed(() => dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.armoringType))
+const armorTypeError = computed(() => dictionaryStore.getError(PLATFORM_DICTIONARY_TYPES.armoringType))
+
+const syncArmorTypeMappings = (
+  stored = settingsStore.routePlanningConfig.armorTypeMappings || [],
+) => {
+  const storedByCode = new Map(stored.map(mapping => [mapping.armorTypeCode, mapping]))
+  armorTypeMappings.value = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.armoringType).map(item => {
+    const armorTypeCode = String(item.code)
+    const current = storedByCode.get(armorTypeCode)
+    return {
+      armorTypeCode,
+      armorTypeName: item.name || armorTypeCode,
+      riskLevel: current?.riskLevel || '',
+      unitPrice: current ? String(current.unitPrice) : '',
+    }
+  })
+}
+
+const collectArmorTypeMappings = (): { mappings: ArmorTypeMapping[]; error: string | null } => {
+  const mappings: ArmorTypeMapping[] = []
+
+  for (const row of armorTypeMappings.value) {
+    const priceText = row.unitPrice.trim()
+    if (!row.riskLevel && priceText === '') continue
+    if (!row.riskLevel) return { mappings: [], error: `请为 ${row.armorTypeName} 选择风险等级` }
+    if (priceText === '') return { mappings: [], error: `请填写 ${row.armorTypeName} 的成本` }
+
+    const unitPrice = Number(priceText)
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      return { mappings: [], error: `${row.armorTypeName} 的成本必须是非负数` }
+    }
+    mappings.push({
+      armorTypeCode: row.armorTypeCode,
+      riskLevel: row.riskLevel,
+      unitPrice,
+    })
+  }
+
+  return { mappings, error: null }
+}
+
+const loadArmorTypes = async () => {
+  try {
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.armoringType)
+    syncArmorTypeMappings()
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `铠装类型字典加载失败：${(error as Error).message}` })
   }
 }
-initArmorMappings()
 
-// 风险等级映射
-const riskLevelLabels: Record<string, string> = {
-  high: '高风险',
-  medium: '中风险',
-  low: '低风险'
-}
+syncArmorTypeMappings()
+void loadArmorTypes()
 
 // ========== 冗余策略配置 ==========
 const redundancyConfig = reactive({
@@ -461,12 +461,6 @@ const initRedundancyConfig = () => {
   }
 }
 initRedundancyConfig()
-
-// 成本限制类型选项
-const costLimitTypeOptions = [
-  {value: 'relative', label: '相对成本（%）'},
-  {value: 'absolute', label: '绝对成本（万元）'}
-]
 
 const routeConfig = reactive({
   mode: settingsStore.routePlanningConfig.mode,
@@ -512,15 +506,7 @@ watch(
           max_ports: String(bu.portLimit)
         }))
       }
-      // 同步铠装映射配置
-      if (newConfig.armorMappings && newConfig.armorMappings.length > 0) {
-        armorMappings.value = newConfig.armorMappings.map(m => ({
-          riskLevel: m.riskLevel,
-          riskThreshold: String(m.riskThreshold),
-          cableTypeName: m.cableTypeName,
-          unitPrice: String(m.unitPrice)
-        }))
-      }
+      syncArmorTypeMappings(newConfig.armorTypeMappings || [])
       // 同步冗余策略配置
       if (newConfig.redundancyConfig) {
         redundancyConfig.enabled = newConfig.redundancyConfig.enabled
@@ -531,21 +517,6 @@ watch(
     },
     {deep: true, immediate: true}
 )
-
-// 地图选点功能
-const handleMapSelect = (type: string) => {
-  if (type === '起点') {
-    mapSelectType.value = 'start'
-    mapSelectTitle.value = '选择起点坐标'
-  } else if (type === '终点') {
-    mapSelectType.value = 'end'
-    mapSelectTitle.value = '选择终点坐标'
-  } else if (type === '规划范围') {
-    mapSelectType.value = 'range'
-    mapSelectTitle.value = '选择规划范围'
-  }
-  showMapSelectDialog.value = true
-}
 
 // 地图选点确认
 const handleMapSelectConfirm = async (coord: string) => {
@@ -904,6 +875,12 @@ const persistSelectedStartAndEnd = async (): Promise<boolean> => {
 }
 
 const handleSave = async (): Promise<boolean> => {
+  const armorResult = collectArmorTypeMappings()
+  if (armorResult.error) {
+    appStore.showNotification({ type: 'warning', message: armorResult.error })
+    return false
+  }
+
   // 点对点模式：从 startPointConfig 和 endPointConfig 获取
   const startPoint = {
     name: startPointConfig.name || '',
@@ -946,15 +923,6 @@ const handleSave = async (): Promise<boolean> => {
       portLimit: Math.max(2, Math.min(8, portNum)) as 3 | 4  // 限制在2-8范围
     }
   }).filter(bu => bu.lon !== 0 || bu.lat !== 0) // 过滤无效坐标
-
-  // 解析铠装映射配置
-  const parsedArmorMappings: ArmorMapping[] = armorMappings.value.map(m => ({
-    riskLevel: m.riskLevel as 'high' | 'medium' | 'low',
-    riskThreshold: parseFloat(m.riskThreshold) || 0,
-    cableTypeId: m.riskLevel,  // 使用风险等级作为 ID
-    cableTypeName: m.cableTypeName,
-    unitPrice: parseFloat(m.unitPrice) || 0
-  }))
 
   // 解析冗余策略配置
   const parsedRedundancyConfig: RedundancyConfig = {
@@ -1038,7 +1006,7 @@ const handleSave = async (): Promise<boolean> => {
     gridResolution: parseInt(gisConfig.gridResolution) || 500,  // 栅格分辨率
     waypoints: finalWaypoints,
     buList: parsedBuList,
-    armorMappings: parsedArmorMappings,
+    armorTypeMappings: armorResult.mappings,
     redundancyConfig: parsedRedundancyConfig,
     isConfigured,
   })
@@ -1075,7 +1043,7 @@ const handleSave = async (): Promise<boolean> => {
   })
 
   settingsStore.updateFiberSimulationConfig({
-    model: fiberConfig.model as 'GN' | 'EGN' | 'SSFM',
+    model: fiberConfig.model,
   })
 
   settingsStore.saveToLocalStorage()
@@ -1112,88 +1080,6 @@ const handleReset = () => {
   appStore.showNotification({type: 'info', message: '已重置为默认设置'})
 }
 
-// 开始路由规划 - 保存配置并跳转到规划页面
-const handleStartRoutePlanning = async () => {
-  if (await handleSave()) {
-    await router.push('/planning')
-    appStore.showNotification({type: 'info', message: '已跳转到路由规划页面'})
-  }
-}
-
-// 根据风险等级获取铠装类型映射
-const riskToArmorType: Record<string, string[]> = {
-  high: ['DA', 'RA'],     // 高风险 -> 双铠装/岩石铠装
-  medium: ['SA'],         // 中风险 -> 单铠装
-  low: ['LW', 'LWP']      // 低风险 -> 轻型/轻型保护
-}
-
-// 缆型选项数据库 - 使用 store 中的数据以实现跨页面同步
-// settingsStore.cableTypeDatabase 是共享的缆型数据库
-
-// 根据风险等级获取过滤后的缆型选项
-const getFilteredCableOptions = (riskLevel: string) => {
-  const armorTypes = riskToArmorType[riskLevel] || ['SA']
-  const filteredCables = settingsStore.getCableTypesByArmor(armorTypes)
-  return filteredCables.map(c => ({
-    value: c.name,
-    label: `${c.name} - ¥${c.unitPrice}千元/km`
-  }))
-}
-
-// 处理缆型选择
-const handleCableTypeSelect = (mapping: {
-  riskLevel: string;
-  cableTypeName: string;
-  unitPrice: string
-}, value: string) => {
-  if (value === '__create_new__') {
-    // 打开新建缆型弹窗，预设铠装类型
-    const armorTypes = riskToArmorType[mapping.riskLevel]
-    const presetArmor = armorTypes?.[0] || 'SA'
-    handleOpenCableTypeCreate(presetArmor)
-    // 不更新 cableTypeName，保持原来的值
-    return
-  }
-  // 更新缆型名称
-  mapping.cableTypeName = value
-  // 更新单价 - 使用 store 中的数据
-  const cable = settingsStore.cableTypeDatabase.find(c => c.name === value)
-  if (cable) {
-    mapping.unitPrice = String(cable.unitPrice)
-  }
-}
-
-// 打开新建缆型弹窗
-const handleOpenCableTypeCreate = (presetArmor?: string) => {
-  cableTypePresetArmor.value = presetArmor || ''
-  showCableTypeCreateDialog.value = true
-}
-
-// 处理缆型创建完成
-const handleCableTypeCreated = (cableType: { id: string; name: string; armorType: string; unitPrice: number }) => {
-  // 添加到 store 的缆型数据库 - 这样其他页面也能访问新建的缆型
-  settingsStore.addCableTypeSpec({
-    id: cableType.id,
-    name: cableType.name,
-    armorType: cableType.armorType,
-    unitPrice: cableType.unitPrice
-  })
-
-  // 根据铠装类型找到对应的映射行并更新
-  const armorToRisk: Record<string, string> = {
-    'DA': 'high',
-    'RA': 'high',
-    'SA': 'medium',
-    'LW': 'low',
-    'LWP': 'low'
-  }
-  const targetRisk = armorToRisk[cableType.armorType] || 'medium'
-  const mapping = armorMappings.value.find(m => m.riskLevel === targetRisk)
-  if (mapping) {
-    mapping.cableTypeName = cableType.name
-    mapping.unitPrice = String(cableType.unitPrice)
-  }
-}
 </script>
 
 <template>
@@ -1247,7 +1133,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
               ? 'text-white shadow-md'
               : 'hover:bg-white dark:hover:bg-white/5 hover:shadow-sm text-gray-700 dark:text-gray-300'
           ]" :style="activeTab === tab.id ? { backgroundColor: 'var(--app-primary-color)' } : {}"
-                  @click="activeTab = tab.id">
+                  @click="selectTab(tab.id)">
             <span class="font-medium">{{ tab.label }}</span>
           </button>
         </div>
@@ -1430,7 +1316,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                         </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100 bg-white">
-                        <tr v-for="(wp, index) in waypoints" :key="wp.id" class="hover:bg-gray-50 transition-colors">
+                        <tr v-for="wp in waypoints" :key="wp.id" class="hover:bg-gray-50 transition-colors">
                           <td class="px-4 py-2">
                             <Input v-model="wp.name" placeholder="站点名称" size="sm"
                                    class="h-8 border-transparent focus:border-primary bg-transparent focus:bg-white hover:bg-gray-50"/>
@@ -1531,7 +1417,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                         </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100 bg-white">
-                        <tr v-for="(bu, index) in buConfigs" :key="bu.id"
+                        <tr v-for="bu in buConfigs" :key="bu.id"
                             class="hover:bg-purple-50/10 transition-colors">
                           <td class="px-4 py-2">
                             <Input v-model="bu.name" placeholder="BU名称" size="sm"
@@ -1610,7 +1496,7 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
             </CardContent>
           </Card>
 
-          <!-- 海缆铠装预选 -->
+          <!-- 海缆铠装类型 -->
           <Card>
             <CardContent class="p-5">
               <div
@@ -1618,72 +1504,51 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
                   @click="togglePanel('armorMapping')"
               >
                 <h3 class="font-bold text-gray-800 text-lg group-hover:text-primary transition-colors">▼
-                  海缆铠装预选</h3>
+                  海缆铠装类型</h3>
                 <component :is="expandedPanels.armorMapping ? ChevronDown : ChevronRight"
                            class="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"/>
               </div>
               <div v-show="expandedPanels.armorMapping" class="space-y-4">
                 <div class="flex items-center justify-between">
-                  <label class="text-sm font-semibold text-gray-700">风险等级与缆型映射规则</label>
-                  <span class="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">自动匹配</span>
+                  <label class="text-sm font-semibold text-gray-700">风险等级与成本</label>
+                  <span class="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">平台字典</span>
                 </div>
 
                 <!-- 铠装映射列表 -->
                 <div class="space-y-3">
-                  <div v-for="mapping in armorMappings" :key="mapping.riskLevel"
-                       class="flex items-center gap-4 p-4 bg-white border rounded-lg hover:shadow-sm hover:border-gray-300 transition-all group"
-                  >
-                    <!-- 风险等级标签 -->
-                    <div class="w-24 shrink-0 flex flex-col items-center gap-1">
-                      <span :class="[
-                        'text-xs font-bold px-3 py-1 rounded-full w-full text-center',
-                        mapping.riskLevel === 'high' ? 'bg-red-50 text-red-700' :
-                        mapping.riskLevel === 'medium' ? 'bg-yellow-50 text-yellow-700' :
-                        'bg-green-50 text-green-700'
-                      ]">{{ riskLevelLabels[mapping.riskLevel] }}</span>
-                      <span class="text-[10px] text-gray-400">
-                        {{
-                          mapping.riskLevel === 'high' ? '风险值 ≥ 3' : mapping.riskLevel === 'medium' ? '2 ≤ 风险 < 3' : '风险值 < 2'
-                        }}
-                      </span>
-                    </div>
-
-                    <!-- 阈值设置 (隐藏，因为是固定的逻辑) -->
-                    <input type="hidden" v-model="mapping.riskThreshold"/>
-
-                    <!-- 缆型选择 -->
-                    <div class="flex-1 flex flex-col gap-1">
-                      <label class="text-[10px] uppercase text-gray-400 font-semibold tracking-wider">选择缆型</label>
-                      <div class="flex items-center gap-2">
-                        <Cable class="w-4 h-4 text-gray-400 group-hover:text-gray-600 shrink-0"/>
-                        <Select
-                            :model-value="mapping.cableTypeName"
-                            @update:model-value="(val) => handleCableTypeSelect(mapping, val)"
-                            :options="[...getFilteredCableOptions(mapping.riskLevel), { value: '__create_new__', label: '➕ 新建缆型...' }]"
-                            placeholder="请选择缆型"
-                            class="flex-1 h-9"
-                        />
-                      </div>
-                    </div>
-
-                    <!-- 单价设置 -->
-                    <div class="w-40 flex flex-col gap-1">
-                      <label class="text-[10px] uppercase text-gray-400 font-semibold tracking-wider">预估单价</label>
-                      <div class="flex items-center gap-1">
-                        <Input v-model="mapping.unitPrice" type="number"
-                               class="flex-1 h-9 border-gray-200 focus:border-primary text-right"/>
-                        <span class="text-xs text-gray-500 shrink-0 w-12">千元/km</span>
-                      </div>
-                    </div>
+                  <div v-if="armorTypeLoading" class="h-20 flex items-center justify-center text-sm text-gray-500">
+                    正在加载铠装类型
                   </div>
-                </div>
-                <!-- 提示 -->
-                <div
-                    class="flex items-start gap-3 text-xs text-gray-500 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
-                  <span class="text-blue-500 mt-0.5">💡</span>
-                  <div class="leading-relaxed">
-                    <span class="font-medium text-blue-700">自动匹配逻辑说明：</span>
-                    系统将分析路由经过区域的风险图层，高风险区域（如断裂带、抛锚区）将自动匹配高防护等级缆型（双铠装），一般区域匹配标准铠装，深海安全区域匹配轻型缆。
+                  <div v-else-if="armorTypeError" class="h-20 flex items-center justify-center text-sm text-red-600">
+                    铠装类型加载失败：{{ armorTypeError }}
+                  </div>
+                  <div v-else-if="armorTypeMappings.length === 0" class="h-20 flex items-center justify-center text-sm text-gray-500">
+                    ARMORING_TYPE 字典暂无可用项
+                  </div>
+                  <div v-else class="space-y-3">
+                    <div v-for="mapping in armorTypeMappings" :key="mapping.armorTypeCode"
+                         class="grid grid-cols-1 gap-3 rounded-lg border bg-white px-4 py-3 sm:grid-cols-[minmax(0,1fr)_160px_190px] sm:items-center">
+                      <div class="min-w-0">
+                        <div class="truncate text-sm font-semibold text-gray-800">{{ mapping.armorTypeName }}</div>
+                        <div class="text-xs font-mono text-gray-400">{{ mapping.armorTypeCode }}</div>
+                      </div>
+                      <Select
+                        v-model="mapping.riskLevel"
+                        :options="armorRiskLevelOptions"
+                        placeholder="选择风险等级"
+                      />
+                      <div class="flex min-w-0 items-center gap-2">
+                        <Input
+                          v-model="mapping.unitPrice"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="填写成本"
+                          class="min-w-0 flex-1 text-right"
+                        />
+                        <span class="shrink-0 text-xs text-gray-500">千元/km</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2159,14 +2024,6 @@ const handleCableTypeCreated = (cableType: { id: string; name: string; armorType
     :required-markers="requiredRangeMarkers"
     :initial-range="initialPlanningRange"
     @confirm="handleMapSelectConfirm"
-  />
-
-  <!-- 新建缆型弹窗 -->
-  <CableTypeCreateDialog
-      :visible="showCableTypeCreateDialog"
-      :preset-armor-type="cableTypePresetArmor"
-      @close="showCableTypeCreateDialog = false"
-      @created="handleCableTypeCreated"
   />
 
   <!-- 编辑登陆站弹窗 -->

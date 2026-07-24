@@ -37,7 +37,7 @@ const current = [
 ]
 
 const preserved = merge.mergePlatformConnectorElements(current, [], { replacePlatformElements: true })
-expect(preserved.length === 2, 'empty platform response cleared restored planning devices')
+expect(preserved.length === 2, 'empty platform response cleared local non-platform devices')
 
 const incoming = [
   {
@@ -50,25 +50,30 @@ const incoming = [
   },
 ]
 const hydrated = merge.mergePlatformConnectorElements(current, incoming, { replacePlatformElements: true })
-expect(hydrated.length === 2, 'platform entities duplicated existing devices instead of merging')
-expect(hydrated[0].name === '上海岸站', 'specific platform station name was not restored')
+expect(hydrated.length === 2, 'platform entities duplicated matching devices instead of merging')
+expect(hydrated[0].name === '上海岸站', 'explicit platform station name was not restored')
 expect(hydrated[1].platformEntityId === 'entity-amp', 'platform amplifier identity was not attached')
-expect(hydrated[1].kp === 39.9, 'saved planning KP was overwritten by an empty platform KP')
+expect(hydrated[1].kp === 39.9, 'empty platform KP overwrote an existing explicit KP')
 
 const filtered = merge.mergePlatformConnectorElements(hydrated, [incoming[1]], { replacePlatformElements: false })
-expect(filtered.length === 2, 'filtered platform query removed other devices')
+expect(filtered.length === 2, 'filtered platform query removed unrelated devices')
 
 const managerSource = fs.readFileSync(path.join(root, 'src/composables/useProjectManager.ts'), 'utf8')
 expect(managerSource.includes('platformDeviceEntityApi.search'), 'platform project opening does not load device entities')
-expect(managerSource.includes('platformDeviceEntityToConnectorElement'), 'platform entities are not converted to connector elements')
-expect(managerSource.includes('projectDataStore.clearProjectData()'), 'opening a platform project does not clear the previous project state')
+expect(managerSource.includes('platformDeviceEntityToConnectorElement'), 'platform entities are not mapped to connector snapshots')
+expect(managerSource.includes('replaceTableElements(restoredConnectorElements)'), 'explicit platform devices are not restored')
+expect(managerSource.includes('settingsStore.updatePlatformPlanningResults(planningResults)'), 'project detail planning results are not cached')
+expect(managerSource.includes('projectDataStore.clearProjectData()'), 'opening a platform project does not clear previous state')
+for (const forbiddenMarker of [
+  'selectPlanningLayoutResult',
+  'resolveLayoutAmplifiers',
+  'applyPlatformAmplifierPlacements',
+]) {
+  expect(!managerSource.includes(forbiddenMarker), `platform opening still performs frontend placement via ${forbiddenMarker}`)
+}
 
 const panelSource = fs.readFileSync(path.join(root, 'src/modules/design/panels/ConnectorPanel.vue'), 'utf8')
 expect(panelSource.includes('mergePlatformConnectorElements'), 'connector panel still replaces the whole device table')
 expect(panelSource.includes('if (projectId == null) return'), 'local projects can still trigger an unscoped platform device query')
-
-const designSource = fs.readFileSync(path.join(root, 'src/views/DesignView.vue'), 'utf8')
-expect(designSource.includes('const sameCoordinate ='), 'legacy platform amplifiers are not matched by saved coordinates')
-expect(designSource.includes('connectorStore.updateElement(matched.id'), 'legacy amplifier KP is not corrected from the saved layout')
 
 console.log('platform project device restore verification passed')

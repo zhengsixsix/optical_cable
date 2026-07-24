@@ -133,6 +133,7 @@ export interface JointBoxType {
 export interface CableType {
   id: string
   name: string
+  armorType?: string
   costPerKm: number
   maxDepth: number
   fiberCount: number
@@ -194,27 +195,23 @@ export interface AppSettings {
 }
 
 // 默认光纤类型（空数组，由用户自行添加）
-export const defaultFiberTypes: FiberType[] = []
+const defaultFiberTypes: FiberType[] = []
 
 // 默认放大器类型（空数组，由用户自行添加）
-export const defaultAmplifierTypes: AmplifierType[] = []
+const defaultAmplifierTypes: AmplifierType[] = []
 
 // 默认分支器类型（空数组，由用户自行添加）
-export const defaultBranchingUnitTypes: BranchingUnitType[] = []
+const defaultBranchingUnitTypes: BranchingUnitType[] = []
 
 // 默认均衡器类型（空数组，由用户自行添加）
-export const defaultEqualizerTypes: EqualizerType[] = []
+const defaultEqualizerTypes: EqualizerType[] = []
 
 // 默认接头盒型号（空数组，由用户自行添加）
-export const defaultJointBoxTypes: JointBoxType[] = []
+const defaultJointBoxTypes: JointBoxType[] = []
 
 // 默认设置
 export const defaultSettings: AppSettings = {
-  cableTypes: [
-    { id: 'lw', name: 'LW (轻型)', costPerKm: 15000, maxDepth: 8000, fiberCount: 8 },
-    { id: 'sa', name: 'SA (单铠装)', costPerKm: 25000, maxDepth: 2000, fiberCount: 12 },
-    { id: 'da', name: 'DA (双铠装)', costPerKm: 35000, maxDepth: 200, fiberCount: 24 },
-  ],
+  cableTypes: [],
   repeaterTypes: [
     { id: 'std', name: '标准放大器', cost: 500000, maxSpan: 80, powerConsumption: 50 },
     { id: 'high', name: '高功率放大器', cost: 800000, maxSpan: 100, powerConsumption: 80 },

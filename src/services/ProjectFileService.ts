@@ -6,7 +6,7 @@
  * 底层为 ZIP 格式，包含 project_data.json
  */
 
-import JSZip from 'jszip'
+import type JSZip from 'jszip'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { useConnectorStore } from '@/stores/connector'
 import { useLayerStore } from '@/stores/layer'
@@ -16,54 +16,22 @@ import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
 import { useRPLStore } from '@/stores/rpl'
 import { useSLDStore } from '@/stores/sld'
-import { validateForExport } from './PhaseValidationService'
+import { useProjectDataStore } from '@/stores/projectData'
+import type { ConnectorTable } from '@/types'
 import type {
   USEProjectData,
-  USEEnvironmentContext,
-  USELibraries,
-  USERouteEngineering,
-  USESystemEngineering,
-  USEHealthMonitoring,
   USEProjectSettings,
   USEAppExtensions,
-  LayerRegistryItem,
-  ImportedLandingPoint,
-  ImportedBUNode,
-  FiberSpec,
-  CableTypeSpec,
-  ComponentSpec,
   EDFASpecs,
   BUSpecs,
-  GeometryPoint,
-  KeyEvent,
-  RouteSegment,
-  Span,
-  KeyEventType,
-  LayerContentType,
-  DeviceMapping,
-  ModelDefinition,
-  SystemPlanningCache,
-  SimulationCache,
-  RedundancyConfig as USERedundancyConfig,
 } from '@/types/useFile'
 import { 
   generateUUID, 
   createDefaultUSEProjectData,
-  createDefaultModels,
-  createDefaultFiberSpec,
-  createDefaultEDFASpec,
-  createDefaultBUSpec,
-  createDefaultWDMConfig,
 } from '@/types/useFile'
 import type { Id, PlanDeviceLibrary } from '@/services/platform/types'
 import { deviceLibraryItemToPlatform } from '@/services/platform/deviceLibraryMapping'
-import {
-  getDeviceLibrariesByCategory,
-  getDeviceLibraryParam,
-  toRuntimeAmplifierLibrary,
-  toRuntimeBranchingLibrary,
-  toRuntimeFiberLibrary,
-} from '@/services/platform/deviceRuntime'
+import type { AlgorithmRouteBundleResult } from '@/services/RouteDataConverter'
 
 // Store 类型别名
 type SettingsStore = ReturnType<typeof useSettingsStore>
@@ -73,6 +41,21 @@ type SLDStore = ReturnType<typeof useSLDStore>
 type MonitorStore = ReturnType<typeof useMonitorStore>
 type ConnectorStore = ReturnType<typeof useConnectorStore>
 type RouteStore = ReturnType<typeof useRouteStore>
+
+type JSZipConstructor = typeof JSZip
+
+/**
+ * Load JSZip only when a project file operation actually needs it.
+ * Vite exposes CommonJS dependencies through `default`, while other
+ * runtimes may return the constructor itself from the dynamic import.
+ */
+async function loadJSZip(): Promise<JSZipConstructor> {
+  const module = await import('jszip') as unknown as {
+    default?: JSZipConstructor
+  }
+
+  return module.default ?? (module as unknown as JSZipConstructor)
+}
 
 // 项目类型
 export type ProjectType = 'use'
@@ -215,7 +198,7 @@ class ProjectFileService {
    * @param projectData 项目数据
    * @param fileName 文件名
    */
-  private validateProjectFile(projectData: USEProjectData, fileName: string): { valid: boolean; error?: string } {
+  private validateProjectFile(projectData: USEProjectData): { valid: boolean; error?: string } {
     // 如果有 _app_extensions，说明是本应用保存的文件，允许部分完成的项目
     if (projectData._app_extensions) {
       // 只要求最基本的结构完整性
@@ -280,27 +263,16 @@ class ProjectFileService {
     // 0. 收集 project_settings (工程设置) -> 归入 _app_extensions
     projectData._app_extensions.project_settings = this.collectProjectSettings(settingsStore)
 
-    // 1. 收集 environment_context
-    projectData.environment_context = this.collectEnvironmentContext(layerStore, rplStore)
-
-    // 2. 收集 libraries
-    projectData.libraries = this.collectLibraries(settingsStore)
-
-    // 3. 收集 route_engineering
-    projectData.route_engineering = this.collectRouteEngineering(rplStore)
-
-    // 4. 收集 system_engineering
-    projectData.system_engineering = this.collectSystemEngineering(settingsStore, sldStore)
-
-    // 5. 收集 health_monitoring
-    projectData.health_monitoring = this.collectHealthMonitoring(settingsStore, monitorStore)
-
-    // ===== 6. 收集扩展字段 -> 统一归入 _app_extensions =====
+    // 规范六大模块由后端或导入文件拥有；前端只更新显式 Store 快照。
     
     // 6.1 保存 RPL 原始数据
     projectData._app_extensions.routePlanning = {
       rplTables: JSON.parse(JSON.stringify(rplStore.tables)),
       routes: JSON.parse(JSON.stringify(routeStore.paretoRoutes || [])),
+      algorithmResult: routeStore.algorithmRouteResult
+        ? JSON.parse(JSON.stringify(routeStore.algorithmRouteResult))
+        : null,
+      selectedRouteId: routeStore.currentRouteId,
       planningConfig: settingsStore.routePlanningConfig,
       cableTypeDatabase: JSON.parse(JSON.stringify(settingsStore.cableTypeDatabase || []))
     }
@@ -324,27 +296,19 @@ class ProjectFileService {
 
     // 6.5 保存海缆段数据
     const cableSegmentStore = useCableSegmentStore()
-    if (cableSegmentStore.segments.length > 0) {
-      projectData._app_extensions.cableSegments = cableSegmentStore.exportData()
-    }
+    projectData._app_extensions.cableSegments = cableSegmentStore.exportData()
 
     // 6.6 保存设计视图缓存（链路摘要 + 平台规划原始结果 + 表单快照）
-    if (
-      settingsStore.linkCalcSummaryCache
-      || settingsStore.platformPlanningResults
-      || settingsStore.platformPlanConfigSnapshot
-    ) {
-      projectData._app_extensions.designCache = {
-        linkCalcSummary: settingsStore.linkCalcSummaryCache
-          ? JSON.parse(JSON.stringify(settingsStore.linkCalcSummaryCache))
-          : null,
-        platformPlanningResults: settingsStore.platformPlanningResults
-          ? JSON.parse(JSON.stringify(settingsStore.platformPlanningResults))
-          : null,
-        platformPlanConfigSnapshot: settingsStore.platformPlanConfigSnapshot
-          ? JSON.parse(JSON.stringify(settingsStore.platformPlanConfigSnapshot))
-          : null,
-      }
+    projectData._app_extensions.designCache = {
+      linkCalcSummary: settingsStore.linkCalcSummaryCache
+        ? JSON.parse(JSON.stringify(settingsStore.linkCalcSummaryCache))
+        : null,
+      platformPlanningResults: settingsStore.platformPlanningResults
+        ? JSON.parse(JSON.stringify(settingsStore.platformPlanningResults))
+        : null,
+      platformPlanConfigSnapshot: settingsStore.platformPlanConfigSnapshot
+        ? JSON.parse(JSON.stringify(settingsStore.platformPlanConfigSnapshot))
+        : null,
     }
 
     // 6.7 保存器件库扩展数据（均衡器型号、接头盒型号）
@@ -353,15 +317,9 @@ class ProjectFileService {
       deviceEntities?: unknown[]
       deviceConfigs?: unknown[]
     }
-    if (settingsStore.platformDeviceLibraries.length > 0) {
-      deviceExtensions.deviceLibraries = JSON.parse(JSON.stringify(settingsStore.platformDeviceLibraries))
-    }
-    if (settingsStore.platformDeviceEntities.length > 0) {
-      deviceExtensions.deviceEntities = JSON.parse(JSON.stringify(settingsStore.platformDeviceEntities))
-    }
-    if (settingsStore.platformDeviceConfigs.length > 0) {
-      deviceExtensions.deviceConfigs = JSON.parse(JSON.stringify(settingsStore.platformDeviceConfigs))
-    }
+    deviceExtensions.deviceLibraries = JSON.parse(JSON.stringify(settingsStore.platformDeviceLibraries))
+    deviceExtensions.deviceEntities = JSON.parse(JSON.stringify(settingsStore.platformDeviceEntities))
+    deviceExtensions.deviceConfigs = JSON.parse(JSON.stringify(settingsStore.platformDeviceConfigs))
 
     // 6.8 保存图层设置
     projectData._app_extensions.layerSettings = {
@@ -421,591 +379,9 @@ class ProjectFileService {
         depth_threshold: costFactors.depthThreshold,
       },
       simulation_settings: {
-        fiber_model: (fiberConfig.model || 'GN') as 'GN' | 'EGN',
-        edfa_model: 'EDFA_Simple',
-        calculation_models: transConfig.calculationModels || ['power', 'ase', 'nli']
-      }
-    }
-  }
-
-  /**
-   * 收集环境上下文模块
-   * 符合 PDF 规范: layer_registry 必须包含 integrity
-   */
-  private collectEnvironmentContext(layerStore: LayerStore, rplStore: RPLStore): USEEnvironmentContext {
-    // 图层内容类型映射
-    const layerContentTypeMap: Record<string, LayerContentType> = {
-      'elevation': 'BATHYMETRY',
-      'volcano': 'VOLCANO',
-      'earthquake': 'EARTHQUAKE',
-      'fishing': 'FISHING',
-      'shipping': 'SHIPPING',
-      'slope': 'BATHYMETRY',
-    }
-
-    // 图层文件格式映射
-    const layerFileFormatMap: Record<string, string> = {
-      'elevation': 'GeoTIFF',
-      'volcano': 'GeoJSON',
-      'earthquake': 'GeoJSON',
-      'fishing': 'Shapefile',
-      'shipping': 'Shapefile',
-      'slope': 'GeoTIFF',
-    }
-
-    // 图层注册表 - 必须包含 integrity
-    const layer_registry: LayerRegistryItem[] = layerStore.layers.map((layer) => {
-      const fileFormat = layerFileFormatMap[layer.id] || 'GeoTIFF'
-      const ext = fileFormat === 'GeoTIFF' ? '.tif' : fileFormat === 'Shapefile' ? '.shp' : '.geojson'
-      return {
-        layer_id: layer.id,
-        name: layer.name,
-        file_format: fileFormat,
-        relative_path: `assets/${layer.id}${ext}`,
-        content_type: layerContentTypeMap[layer.id] || 'BATHYMETRY',
-        integrity: {
-          checksum: `sha256:${this.generateMockChecksum()}`,
-          size_bytes: 0
-        }
-      }
-    })
-
-    // 从 RPL 提取登陆站点
-    const imported_landing_points: ImportedLandingPoint[] = []
-    for (const table of rplStore.tables) {
-      for (const record of table.records || []) {
-        if (record.pointType === 'landing') {
-          imported_landing_points.push({
-            id: record.id,
-            name: record.remarks || `Landing-${record.id}`,
-            coords: [record.longitude, record.latitude],
-            properties: { country: '', owner: '' }
-          })
-        }
-      }
-    }
-
-    // 从 settingsStore 获取配置
-    const settingsStore = useSettingsStore()
-    const routeConfig = settingsStore.routePlanningConfig
-
-    // 规划模式转换 - 甲方规范要求大写
-    const planning_mode: 'POINT_TO_POINT' | 'MULTI_NODE_NETWORK' = 
-      routeConfig.mode === 'multi-point' ? 'MULTI_NODE_NETWORK' : 'POINT_TO_POINT'
-
-    // 冗余配置
-    const redundancyConfig = routeConfig.redundancyConfig
-    const redundancy_config: USERedundancyConfig = {
-      enabled: redundancyConfig?.enabled || false
-    }
-    if (redundancyConfig?.enabled) {
-      if (redundancyConfig.costLimitType === 'absolute') {
-        redundancy_config.cost_constraint_mode = 'ABSOLUTE'
-        redundancy_config.absolute_cost_limit = {
-          value: redundancyConfig.absoluteCostLimit || 0,
-          unit: '万元'
-        }
-      } else {
-        redundancy_config.cost_constraint_mode = 'PREMIUM_RATIO'
-        redundancy_config.premium_ratio = {
-          ratio: (redundancyConfig.relativeCostPercent || 30) / 100
-        }
-      }
-    }
-
-    // BU 节点列表 - 甲方规范
-    const imported_bu_nodes: ImportedBUNode[] = (routeConfig.buList || []).map((bu) => ({
-      id: bu.id,
-      name: bu.name,
-      coords: [bu.lon, bu.lat] as [number, number],
-      max_ports: bu.portLimit || 3
-    }))
-
-    // 铠装映射规则 - 甲方规范
-    const armorMappings = routeConfig.armorMappings || []
-    const highRisk = armorMappings.find((m) => m.riskLevel === 'high')
-    const mediumRisk = armorMappings.find((m) => m.riskLevel === 'medium')
-    const lowRisk = armorMappings.find((m) => m.riskLevel === 'low')
-
-    const cable_armor_mapping = {
-      high_risk: {
-        threshold: highRisk?.riskThreshold || 3.0,
-        cable_type_ref: highRisk?.cableTypeId || 'struct_da_01'
-      },
-      medium_risk: {
-        threshold: mediumRisk?.riskThreshold || 2.0,
-        cable_type_ref: mediumRisk?.cableTypeId || 'struct_sa_01'
-      },
-      low_risk: {
-        threshold: lowRisk?.riskThreshold || 0,
-        cable_type_ref: lowRisk?.cableTypeId || 'struct_lw_01'
-      }
-    }
-
-    // 算法配置 - 甲方规范
-    const planningRange = routeConfig.planningRange
-    const hasManualBounds = planningRange.northwest?.lon !== 0 || planningRange.northwest?.lat !== 0
-    const algorithm_config = {
-      planning_bounds: {
-        mode: hasManualBounds ? 'MANUAL' as const : 'AUTO' as const,
-        manual_bounds: hasManualBounds ? {
-          northwest: [planningRange.northwest?.lon || 0, planningRange.northwest?.lat || 0] as [number, number],
-          southeast: [planningRange.southeast?.lon || 0, planningRange.southeast?.lat || 0] as [number, number]
-        } : undefined
-      },
-      grid_resolution_m: 500
-    }
-
-    return {
-      layer_registry,
-      planning_mode,
-      redundancy_config,
-      imported_landing_points,
-      imported_bu_nodes,
-      route_planning_settings: {
-        cable_armor_mapping,
-        algorithm_config
-      }
-    }
-  }
-
-  /**
-   * 生成模拟的 checksum (实际应用中应计算文件哈希)
-   */
-  private generateMockChecksum(): string {
-    return 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-      .replace(/x/g, () => Math.floor(Math.random() * 16).toString(16))
-  }
-
-  private platformLibraryUSEId(library: PlanDeviceLibrary, prefix: string, index: number): string {
-    return library.id == null ? `${prefix}-${index + 1}` : String(library.id)
-  }
-
-  private platformFiberToUSESpec(library: PlanDeviceLibrary, index: number): FiberSpec | null {
-    const fiber = toRuntimeFiberLibrary(library)
-    if (!fiber) return null
-
-    return {
-      id: this.platformLibraryUSEId(library, 'fiber', index),
-      fiber_type_id: fiber.fiberCategory || fiber.name || 'fiber',
-      attributes: {
-        attenuation: fiber.attenuationCoeff,
-        dispersion: fiber.dispersion,
-        dispersion_slope: fiber.dispersionSlope,
-        A_eff: fiber.effectiveArea,
-        n2: fiber.nonlinearRefractiveIndex,
-      },
-      supported_models: ['fiber_gn_model', 'fiber_linear_loss'],
-      model_params: {
-        fiber_gn_model: {
-          is_configured: true,
-          params: { coherence_factor: 1.0, noise_bandwidth_ghz: 12.5 },
-        },
-        fiber_linear_loss: {
-          is_configured: true,
-          params: {},
-        },
-      },
-    }
-  }
-
-  private platformAmplifierToUSEComponent(library: PlanDeviceLibrary, index: number): ComponentSpec | null {
-    const amplifier = toRuntimeAmplifierLibrary(library)
-    if (!amplifier) return null
-
-    return {
-      id: this.platformLibraryUSEId(library, 'amp', index),
-      name: amplifier.name || 'EDFA',
-      type: 'EDFA',
-      specs: {
-        gain_db: amplifier.gain,
-        bandwidth_nm: amplifier.bandwidth,
-        noise_figure_db: amplifier.noiseFigure,
-        max_output_power_dbm: amplifier.outputPower,
-        gain_flatness_db: amplifier.gainFlatness,
-      },
-      supported_models: ['edfa_gain_model'],
-      model_params: {
-        edfa_gain_model: {
-          is_configured: true,
-          params: { gain_tilt_db_per_nm: 0.01 },
-        },
-      },
-      commercial_params: {
-        unit_price: amplifier.unitPrice ?? getDeviceLibraryParam(library, ['unit_price', 'unitPrice', 'price'], 250000),
-        currency: 'USD',
-      },
-    }
-  }
-
-  private createBUMatrix(portCount: number): number[][] {
-    const count = Math.max(2, Math.round(portCount))
-    return Array.from({ length: count }, (_, row) =>
-      Array.from({ length: count }, (_, col) => (row === col ? 0 : 1)),
-    )
-  }
-
-  private platformBranchingToUSEComponent(library: PlanDeviceLibrary, index: number): ComponentSpec | null {
-    const branching = toRuntimeBranchingLibrary(library)
-    if (!branching) return null
-    const portCount = Math.max(2, Math.round(branching.portCount))
-
-    return {
-      id: this.platformLibraryUSEId(library, 'bu', index),
-      name: branching.name || 'BU',
-      type: 'BU',
-      specs: {
-        port_count: portCount,
-        matrix: this.createBUMatrix(portCount),
-        thru_pair: [1, Math.min(2, portCount)],
-        loss_vals: {
-          thru: branching.trunkInsertionLoss,
-          branch: branching.branchInsertionLoss,
-        },
-      },
-      supported_models: ['bu_loss_model'],
-      model_params: {
-        bu_loss_model: {
-          is_configured: true,
-          params: {},
-        },
-      },
-      commercial_params: {
-        unit_price: getDeviceLibraryParam(library, ['unit_price', 'unitPrice', 'price'], 180000),
-        currency: 'USD',
-      },
-    }
-  }
-
-  /**
-   * 收集器件库模块
-   * 符合文档规范: fibers/components 包含 supported_models 和 model_params
-   */
-  private collectLibraries(settingsStore: SettingsStore): USELibraries {
-    // 计算模型库 - 从 store 获取或使用默认值
-    const models: ModelDefinition[] = settingsStore.models || createDefaultModels()
-
-    // 光纤规格 - 包含 supported_models 和 model_params
-    const platformLibraries = settingsStore.platformDeviceLibraries || []
-    const fibers: FiberSpec[] = getDeviceLibrariesByCategory(platformLibraries, 'fiber')
-      .map((library, index) => this.platformFiberToUSESpec(library, index))
-      .filter((fiber): fiber is FiberSpec => Boolean(fiber))
-    // 海缆类型
-    const cable_types: CableTypeSpec[] = (settingsStore.cableTypes || []).map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      type: c.type || 'LW',
-      commercial_params: {
-        price_per_km: c.pricePerKm || c.costPerKm || 35000,
-        currency: 'USD'
-      }
-    }))
-
-    // 器件规格 (放大器 + 分支器) - 包含 supported_models 和 model_params
-    const components: ComponentSpec[] = [
-      ...getDeviceLibrariesByCategory(platformLibraries, 'amplifier')
-        .map((library, index) => this.platformAmplifierToUSEComponent(library, index))
-        .filter((component): component is ComponentSpec => Boolean(component)),
-      ...getDeviceLibrariesByCategory(platformLibraries, 'branching')
-        .map((library, index) => this.platformBranchingToUSEComponent(library, index))
-        .filter((component): component is ComponentSpec => Boolean(component)),
-    ]
-    
-    // 放大器
-
-    // 分支器
-
-    return { fibers, cable_types, components, models }
-  }
-
-  /**
-   * 收集路由工程模块
-   * 符合甲方规范: 包含 route_status, segmentation_config, geometry_pool, key_events, segments, spans
-   */
-  private collectRouteEngineering(rplStore: RPLStore): USERouteEngineering {
-    const settingsStore = useSettingsStore()
-    const now = new Date().toISOString()
-    const geometry_pool: GeometryPoint[] = []
-    const key_events: KeyEvent[] = []
-    const segments: RouteSegment[] = []
-    const spans: Span[] = []
-
-    // 路由状态 - 甲方规范
-    const route_status = {
-      is_segmented: rplStore.tables.some((t) => t.records && t.records.length > 0),
-      is_adjusted: false,
-      last_modified: now
-    }
-
-    // 分段配置 - 甲方规范
-    const segmentation_config = {
-      method: 'RISK_BASED' as const,
-      fixed_length_km: 2.0,
-      risk_based: {
-        min_length_km: 1.0,
-        max_length_km: 5.0
-      }
-    }
-
-    // 检查 RPL 表是否为空，如果为空则使用 routePlanningConfig 中的起点/终点配置
-    const hasRPLData = rplStore.tables.some((table) => table.records && table.records.length > 0)
-    
-    if (!hasRPLData && settingsStore.routePlanningConfig.isConfigured) {
-      // 从工程设置中获取起点/终点坐标
-      const startPoint = settingsStore.routePlanningConfig.startPoint
-      const endPoint = settingsStore.routePlanningConfig.endPoint
-      
-      // 创建起点
-      geometry_pool.push([startPoint.lon, startPoint.lat, 0, 0])
-      key_events.push({
-        event_id: 'evt_start',
-        type: 'LandStation',
-        geo_index: 0,
-        name: '起点登陆站',
-      })
-      
-      // 创建终点
-      geometry_pool.push([endPoint.lon, endPoint.lat, 0, 100])
-      key_events.push({
-        event_id: 'evt_end',
-        type: 'LandStation',
-        geo_index: 1,
-        name: '终点登陆站',
-      })
-      
-      // 创建分段 - 甲方规范格式
-      segments.push({
-        segment_id: 'seg_0_1',
-        geometry_range: {
-          start_index: 0,
-          end_index: 1,
-          start_km: 0,
-          end_km: 100,
-          length_km: 100
-        },
-        risk_info: {
-          risk_level: 'LOW',
-          average_risk_value: 1.0
-        },
-        cable_type_ref: 'struct_lw_01',
-        slack_percent: 2.5,
-        burial_depth_m: 1.5,
-        is_locked: false,
-      })
-      
-      // 创建 Span
-      spans.push({
-        span_id: 'span_01',
-        from_event_id: 'evt_start',
-        from_port_index: 1,
-        to_event_id: 'evt_end',
-        to_port_index: 1,
-        geometry_range: [0, 1],
-        fiber_spec_ref: 'fiber_g654',
-        optical_metrics: null,
-        is_locked: false,
-      })
-      
-      return { route_status, segmentation_config, geometry_pool, key_events, segments, spans }
-    }
-
-    // 遍历所有 RPL 表
-    for (const table of rplStore.tables) {
-      const records = table.records || []
-      let lastEventId: string | null = null
-      let lastEventGeoIndex: number = 0
-      let segmentStartIndex = 0
-      let spanIndex = 0
-
-      for (let i = 0; i < records.length; i++) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const record = records[i] as any
-        const geoIndex = geometry_pool.length
-
-        // 添加到几何池
-        geometry_pool.push([
-          record.longitude || 0,
-          record.latitude || 0,
-          -(record.depth || 0),  // 水深为负值
-          record.kp || record.cumulativeLength || 0
-        ])
-
-        // 检查是否是关键事件点
-        const eventType = this.mapPointTypeToEventType(record.pointType)
-        if (eventType) {
-          const eventId = `evt_${record.id}`
-          key_events.push({
-            event_id: eventId,
-            type: eventType,
-            geo_index: geoIndex,
-            component_ref_id: record.componentRefId,
-            name: record.remarks || record.pointType,
-          })
-
-          // 创建分段 (Segment - 工程对象) - 甲方规范格式
-          if (lastEventId) {
-            const startKm = geometry_pool[segmentStartIndex]?.[3] || 0
-            const endKm = record.kp || record.cumulativeLength || 0
-            const riskLevel = this.mapRiskLevel(record.riskLevel || 'low')
-            segments.push({
-              segment_id: `seg_${segmentStartIndex}_${geoIndex}`,
-              geometry_range: {
-                start_index: segmentStartIndex,
-                end_index: geoIndex,
-                start_km: startKm,
-                end_km: endKm,
-                length_km: endKm - startKm
-              },
-              risk_info: {
-                risk_level: riskLevel,
-                average_risk_value: record.avgRiskValue || (riskLevel === 'HIGH' ? 3.5 : riskLevel === 'MEDIUM' ? 2.5 : 1.5)
-              },
-              cable_type_ref: record.cableType || 'struct_lw_01',
-              slack_percent: record.slack || 2.5,
-              burial_depth_m: record.burialDepth || 1.5,
-              is_locked: false,
-            })
-
-            // 创建 Span (光学传输跨段 - 系统对象)
-            const spanLength = (record.kp || 0) - (geometry_pool[lastEventGeoIndex]?.[3] || 0)
-            spans.push({
-              span_id: `span_${String(spanIndex + 1).padStart(2, '0')}`,
-              from_event_id: lastEventId,
-              from_port_index: 1,
-              to_event_id: eventId,
-              to_port_index: 1,
-              geometry_range: [lastEventGeoIndex, geoIndex],
-              fiber_spec_ref: record.fiberType || 'fiber_g654',
-              optical_metrics: spanLength > 0 ? {
-                span_length_km: spanLength * (1 + (record.slack || 2.5) / 100),
-                total_loss_db: spanLength * 0.16,  // 假设 0.16 dB/km
-                osnr_db: 0,
-                q_factor: 0,
-              } : null,
-              is_locked: false,
-            })
-            spanIndex++
-          }
-
-          lastEventId = eventId
-          lastEventGeoIndex = geoIndex
-          segmentStartIndex = geoIndex
-        }
-      }
-    }
-
-    return { route_status, segmentation_config, geometry_pool, key_events, segments, spans }
-  }
-
-  /**
-   * 映射点位类型到事件类型
-   */
-  private mapPointTypeToEventType(pointType: string): KeyEventType | null {
-    const map: Record<string, KeyEventType> = {
-      'landing': 'LandStation',
-      'repeater': 'EDFA',
-      'branching': 'BU',
-    }
-    return map[pointType] || null
-  }
-
-  /**
-   * 映射风险等级到甲方规范格式
-   */
-  private mapRiskLevel(level: string): 'HIGH' | 'MEDIUM' | 'LOW' {
-    const map: Record<string, 'HIGH' | 'MEDIUM' | 'LOW'> = {
-      'high': 'HIGH',
-      'medium': 'MEDIUM',
-      'low': 'LOW',
-    }
-    return map[level?.toLowerCase()] || 'LOW'
-  }
-
-  /**
-   * 收集系统工程模块
-   * 符合文档规范: 包含 wdm_config, simulation_cache, system_planning_cache
-   */
-  private collectSystemEngineering(settingsStore: SettingsStore, sldStore: SLDStore): USESystemEngineering {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tc = settingsStore.transmissionConfig as any || {}
-    const sldTable = sldStore.currentTable
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tp = (sldTable?.transmissionParams || {}) as any
-    const channelCount = tc.channelCount || tp.wavelengths || 96
-
-    // 从 store 获取缓存数据
-    const simulationCache: SimulationCache | null = settingsStore.simulationCache || null
-    const systemPlanningCache: SystemPlanningCache | null = settingsStore.systemPlanningCache || null
-
-    return {
-      wdm_config: {
-        channel_count: channelCount,
-        center_freq_thz: tc.centerFreqThz || 193.1,
-        channel_spacing_ghz: tc.channelBandwidth || tp.channelSpacing || 50,
-        baud_rate_gbaud: tc.baudRate || 64.0,
-        launch_power_vector: tc.launchPowerVector || new Array(channelCount).fill(-20.0),
-        initial_ase_vector: tc.initialAseVector || new Array(channelCount).fill(-60.0),
-        initial_nli_vector: tc.initialNliVector || new Array(channelCount).fill(-200.0),
-        modulation: tp.modulationFormat || tc.modulation || '16QAM',
-        shaping_moments: tc.shapingMoments || { moment4: 1.32, moment6: 1.90 }
-      },
-      simulation_cache: simulationCache,
-      system_planning_cache: systemPlanningCache
-    }
-  }
-
-  /**
-   * 收集健康监控模块
-   * 符合 PDF 规范: collector_config, device_mapping, view_settings
-   */
-  private collectHealthMonitoring(settingsStore: SettingsStore, monitorStore: MonitorStore): USEHealthMonitoring {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mc = settingsStore.monitoringConfig as any || {}
-
-    // 从 monitorStore 收集设备映射
-    const device_mapping: DeviceMapping[] = []
-    if (monitorStore.devices) {
-      for (const device of monitorStore.devices) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const d = device as any
-        if (d.eventId && d.externalId) {
-          device_mapping.push({
-            event_id: d.eventId,
-            external_index: d.externalId
-          })
-        }
-      }
-    }
-
-    // 收集节点位置
-    const node_positions: Record<string, [number, number]> = {}
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if ((monitorStore as any).nodePositions) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const [nodeId, pos] of Object.entries((monitorStore as any).nodePositions as Record<string, any>)) {
-        node_positions[nodeId] = [pos.x || 0, pos.y || 0]
-      }
-    }
-
-    return {
-      collector_config: mc.connectionAddress ? {
-        gateway_name: mc.gatewayName || 'default',
-        driver_id: 'http_rest_client_v1',
-        polling_interval: mc.pollingInterval || 30,
-        connection_params: {
-          base_url: mc.connectionAddress,
-          method: 'GET',
-          response_format: 'json',
-          ssl_verify: 'false'
-        }
-      } : null,
-      device_mapping,
-      view_settings: {
-        node_positions,
-        filters: {
-          visible_types: mc.visibleTypes || ['EDFA', 'BU', 'LandStation'],
-          min_alarm_severity: mc.minAlarmSeverity || 'ALL'
-        }
+        fiber_model: fiberConfig.model,
+        edfa_model: settingsStore.simulationModelConfig.edfaModel,
+        calculation_models: transConfig.calculationModels ?? []
       }
     }
   }
@@ -1016,19 +392,14 @@ class ProjectFileService {
    * @param allowOtherUsers 是否允许其他用户打开
    * @description 统一使用 .use 格式
    */
-  async exportProject(name: string, allowOtherUsers: boolean = false): Promise<{ warnings: string[] }> {
-    // 导出前校验数据完整性
-    const validation = validateForExport()
-    if (!validation.canExport) {
-      throw new Error(validation.errors.join('; '))
-    }
-
+  async exportProject(name: string, allowOtherUsers: boolean = false): Promise<void> {
     const projectData = this.createUSEProjectData(name, allowOtherUsers)
     
     // 更新时间戳
     projectData.metadata.updated_at = new Date().toISOString()
     
     // 创建 ZIP 文件
+    const JSZip = await loadJSZip()
     const zip = new JSZip()
     
     // 添加 project_data.json
@@ -1041,14 +412,12 @@ class ProjectFileService {
     // 统一使用 .use 扩展名
     const blob = await zip.generateAsync({ type: 'blob' })
     this.downloadBlob(blob, `${name}.use`)
-
-    return { warnings: validation.warnings }
   }
 
   /**
    * 导出 USE 文件 (ZIP 格式) - 向后兼容
    */
-  async exportUSE(name: string, allowOtherUsers: boolean = false): Promise<{ warnings: string[] }> {
+  async exportUSE(name: string, allowOtherUsers: boolean = false): Promise<void> {
     return this.exportProject(name, allowOtherUsers)
   }
 
@@ -1056,15 +425,11 @@ class ProjectFileService {
    * 保存项目 (ZIP 格式)
    * @description 统一使用 .use 格式保存所有模块
    */
-  async saveProject(): Promise<{ success: boolean; error?: string; warnings?: string[] }> {
+  async saveProject(): Promise<{ success: boolean; error?: string }> {
     if (!this.currentProject) {
       return { success: false, error: '当前没有打开的项目，请先新建或打开项目' }
     }
 
-    // 保存前校验
-    const validation = validateForExport()
-    // 保存不阻止（即使有 error 也允许），但记录警告
-    
     // 如果 currentProjectData 为空，从 stores 收集数据创建
     if (!this.currentProjectData) {
       this.currentProjectData = this.createUSEProjectData(
@@ -1081,6 +446,7 @@ class ProjectFileService {
     this.currentProjectData.metadata.updated_at = new Date().toISOString()
     
     // 创建 ZIP
+    const JSZip = await loadJSZip()
     const zip = new JSZip()
     zip.file('project_data.json', JSON.stringify(this.currentProjectData, null, 2))
     zip.folder('cache')
@@ -1093,7 +459,7 @@ class ProjectFileService {
     this.currentProject.type = 'use'
     
     this.isDirty = false
-    return { success: true, warnings: validation.warnings }
+    return { success: true }
   }
 
   /**
@@ -1105,6 +471,7 @@ class ProjectFileService {
       const arrayBuffer = await file.arrayBuffer()
       
       try {
+        const JSZip = await loadJSZip()
         const zip = await JSZip.loadAsync(arrayBuffer)
         const projectDataFile = zip.file('project_data.json')
         
@@ -1123,7 +490,7 @@ class ProjectFileService {
           }
           
           // 验证项目数据完整性（USE 需要 RPL + SLD）
-          const validationResult = this.validateProjectFile(projectData, file.name)
+          const validationResult = this.validateProjectFile(projectData)
           if (!validationResult.valid) {
             return {
               success: false,
@@ -1139,6 +506,7 @@ class ProjectFileService {
           }
           
           // 加载项目数据到 stores
+          this.prepareStoresForProjectImport()
           this.loadUSEProjectDataToStores(projectData)
           
           // 项目类型统一为 use
@@ -1196,7 +564,7 @@ class ProjectFileService {
    */
   private handleNewFormatProject(projectData: USEProjectData, file: File): OpenProjectResult {
     // 验证项目数据完整性（USE 需要 RPL + SLD）
-    const validationResult = this.validateProjectFile(projectData, file.name)
+    const validationResult = this.validateProjectFile(projectData)
     if (!validationResult.valid) {
       return {
         success: false,
@@ -1210,6 +578,7 @@ class ProjectFileService {
       return permissionResult
     }
     
+    this.prepareStoresForProjectImport()
     this.loadUSEProjectDataToStores(projectData)
     
     // 项目类型统一为 use
@@ -1236,6 +605,7 @@ class ProjectFileService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private handleLegacyProject(project: any, file: File): OpenProjectResult {
     // 加载旧版项目数据到 stores
+    this.prepareStoresForProjectImport()
     this.loadLegacyProjectToStores(project)
     
     // 项目类型统一为 use
@@ -1260,6 +630,27 @@ class ProjectFileService {
     return id == null || id === '' ? library : { ...library, id: String(id) }
   }
 
+  /** 仅在文件完成解析、格式校验和权限校验后切换项目级状态。 */
+  private prepareStoresForProjectImport(): void {
+    useProjectDataStore().clearProjectData()
+    useSettingsStore().resetProjectSettings()
+  }
+
+  /** 过滤损坏的接线元快照；合法的空 elements 仍是权威快照。 */
+  private getValidConnectorSnapshot(value: unknown): ConnectorTable[] {
+    if (!Array.isArray(value)) return []
+
+    return value.filter((table): table is ConnectorTable => {
+      if (!table || typeof table !== 'object') return false
+      const candidate = table as Record<string, unknown>
+      return typeof candidate.id === 'string'
+        && candidate.id.trim().length > 0
+        && typeof candidate.name === 'string'
+        && candidate.name.trim().length > 0
+        && Array.isArray(candidate.elements)
+    })
+  }
+
   private restorePlatformLibrariesFromUSE(projectData: USEProjectData): PlanDeviceLibrary[] {
     const extensions = projectData._app_extensions as USEAppExtensions & {
       deviceLibraries?: PlanDeviceLibrary[]
@@ -1275,13 +666,12 @@ class ProjectFileService {
       libraries.push(this.platformLibraryWithUSEId(deviceLibraryItemToPlatform('fiber', {
         id: fiber.id,
         name: fiber.fiber_type_id,
-        nonlinearCoeff: 0,
+        nonlinearCoeff: undefined,
         effectiveArea: fiber.attributes.A_eff,
         dispersion: fiber.attributes.dispersion,
         nonlinearRefractiveIndex: fiber.attributes.n2,
         attenuationCoeff: fiber.attributes.attenuation,
         secondOrderDispersion: fiber.attributes.dispersion_slope,
-        simulationModel: 'GN',
       } as any), fiber.id))
     }
 
@@ -1295,11 +685,11 @@ class ProjectFileService {
           bandwidth: specs.bandwidth_nm,
           gainFlatness: specs.gain_flatness_db,
           noiseFigure: specs.noise_figure_db,
-          pumpPower: 100,
+          pumpPower: undefined,
           outputPower: specs.max_output_power_dbm,
-          saturationPower: specs.max_output_power_dbm,
-          gainRangePower: 0,
-          operatingMode: 'fixed_gain',
+          saturationPower: undefined,
+          gainRangePower: undefined,
+          operatingMode: undefined,
           unitPrice: component.commercial_params.unit_price,
           currency: component.commercial_params.currency,
         } as any), component.id))
@@ -1314,8 +704,8 @@ class ProjectFileService {
           portCount: specs.port_count,
           trunkInsertionLoss: specs.loss_vals.thru,
           branchInsertionLoss: specs.loss_vals.branch,
-          insertionLoss: specs.loss_vals.thru,
-          wavelengthRange: 1550,
+          insertionLoss: undefined,
+          wavelengthRange: undefined,
           unitPrice: component.commercial_params.unit_price,
           currency: component.commercial_params.currency,
         } as any), component.id))
@@ -1357,432 +747,43 @@ class ProjectFileService {
     }
 
     // 2. 恢复计算模型库 (libraries.models)
-    if (projectData.libraries.models && projectData.libraries.models.length > 0) {
-      settingsStore.models = projectData.libraries.models
-    }
+    settingsStore.replaceModels(projectData.libraries.models ?? [])
 
-    // 3. 恢复光纤规格 - 包含 supported_models 和 model_params
-    void projectData.libraries.fibers.map(f => ({
-      id: f.id,
-      name: f.fiber_type_id,
-      nonlinearCoeff: 1.4,
-      effectiveArea: f.attributes.A_eff,
-      dispersion: f.attributes.dispersion,
-      nonlinearRefractiveIndex: f.attributes.n2,
-      attenuationCoeff: f.attributes.attenuation,
-      secondOrderDispersion: f.attributes.dispersion_slope,
-      // 保留新字段供后续使用
-      supported_models: f.supported_models,
-      model_params: f.model_params,
-    }))
-
-    // 4. 恢复海缆类型
-    settingsStore.cableTypes = projectData.libraries.cable_types.map(c => ({
+    // 3. 恢复海缆类型
+    settingsStore.replaceCableTypes(projectData.libraries.cable_types.map(c => ({
       id: c.id,
       name: c.name,
-      type: c.type,
+      armorType: c.type,
       costPerKm: c.commercial_params.price_per_km,
       maxDepth: 8000,
       fiberCount: 8,
-    }))
-
-    // 5. 恢复放大器规格 - 包含 supported_models 和 model_params
-    void projectData.libraries.components.filter(c => c.type === 'EDFA')
-
-    // 6. 恢复分支器规格 - 包含 supported_models 和 model_params
-    void projectData.libraries.components.filter(c => c.type === 'BU')
+    })))
 
     const restoredDeviceLibraries = this.restorePlatformLibrariesFromUSE(projectData)
-    if (restoredDeviceLibraries.length > 0) {
-      settingsStore.platformDeviceLibraries = restoredDeviceLibraries
-    }
+    settingsStore.replacePlatformDeviceLibraries(restoredDeviceLibraries)
 
     const deviceExtensions = projectData._app_extensions as USEAppExtensions & {
       deviceEntities?: typeof settingsStore.platformDeviceEntities
       deviceConfigs?: typeof settingsStore.platformDeviceConfigs
     } | undefined
     if (Array.isArray(deviceExtensions?.deviceEntities)) {
-      settingsStore.platformDeviceEntities = JSON.parse(JSON.stringify(deviceExtensions.deviceEntities))
+      settingsStore.replacePlatformDeviceEntities(JSON.parse(JSON.stringify(deviceExtensions.deviceEntities)))
     }
     if (Array.isArray(deviceExtensions?.deviceConfigs)) {
-      settingsStore.platformDeviceConfigs = JSON.parse(JSON.stringify(deviceExtensions.deviceConfigs))
-    }
-
-    // 3. 恢复路由工程数据到 RPL store
-    // 加载所有 geometry_pool 点，并标记 key_events
-    const geometryPool = projectData.route_engineering?.geometry_pool || []
-    const keyEvents = projectData.route_engineering?.key_events || []
-    const segments = projectData.route_engineering?.segments || []
-    const spans = projectData.route_engineering?.spans || []
-    
-    if (geometryPool.length > 0) {
-      // 创建 key_events 的 geo_index 到 event 的映射
-      const eventMap = new Map<number, KeyEvent>()
-      for (const event of keyEvents) {
-        eventMap.set(event.geo_index, event)
-      }
-      
-      // 辅助函数：从 segment 获取 geometry_range 的起止索引（兼容新旧格式）
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const getGeometryRange = (seg: Record<string, any>): { start: number; end: number } => {
-        if (Array.isArray(seg.geometry_range)) {
-          // 旧格式: [start_index, end_index]
-          return { start: seg.geometry_range[0], end: seg.geometry_range[1] }
-        } else if (seg.geometry_range && typeof seg.geometry_range === 'object') {
-          // 新格式: { start_index, end_index, ... }
-          return { start: seg.geometry_range.start_index, end: seg.geometry_range.end_index }
-        }
-        return { start: 0, end: 0 }
-      }
-      
-      // 创建 geometry_range 到 segment 的映射（兼容新旧格式）
-      const getSegmentForIndex = (geoIndex: number) => {
-        return segments.find((s) => {
-          const range = getGeometryRange(s)
-          return geoIndex >= range.start && geoIndex <= range.end
-        })
-      }
-      
-      // 创建 geometry_range 到 span 的映射（获取光纤类型）
-      const getSpanForIndex = (geoIndex: number) => {
-        return spans.find((s) => {
-          const range = getGeometryRange(s)
-          return geoIndex >= range.start && geoIndex <= range.end
-        })
-      }
-
-      // 为每个 geometry_pool 点创建 RPL 记录
-      const records = geometryPool.map((geo, index) => {
-        const event = eventMap.get(index)
-        const segment = getSegmentForIndex(index)
-        const span = getSpanForIndex(index)
-        
-        // 计算分段长度（到上一个点的距离）
-        let segmentLength = 0
-        if (index > 0) {
-          const prevGeo = geometryPool[index - 1]
-          segmentLength = geo[3] - prevGeo[3] // KP差值
-        }
-        
-        // 确定点类型
-        let pointType: 'landing' | 'repeater' | 'branching' | 'joint' | 'waypoint' = 'waypoint'
-        if (event) {
-          pointType = this.mapEventTypeToPointType(event.type) as typeof pointType
-        }
-        
-        // 获取电缆类型（兼容新旧字段名 cable_type_ref / cable_struct_ref）
-        let cableType: 'LW' | 'LWS' | 'SA' | 'DA' | 'SAS' = 'LW'
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const cableRef = segment?.cable_type_ref || (segment as any)?.cable_struct_ref
-        if (cableRef) {
-          const ref = cableRef.toUpperCase()
-          if (ref.includes('DA')) cableType = 'DA'
-          else if (ref.includes('SA')) cableType = 'SA'
-          else if (ref.includes('LWS')) cableType = 'LWS'
-          else if (ref.includes('LW')) cableType = 'LW'
-        }
-
-        return {
-          id: event?.event_id || `geo-${index}`,
-          sequence: index + 1,
-          pointType,
-          longitude: geo[0],
-          latitude: geo[1],
-          depth: Math.abs(geo[2]), // 水深取绝对值
-          kp: geo[3],
-          cumulativeLength: geo[3],
-          segmentLength,
-          cableType,
-          slack: segment?.slack_percent || 2.5,
-          burialDepth: segment?.burial_depth_m || 0,
-          remarks: event?.name || '',
-          componentRefId: event?.component_ref_id || '',
-          fiberRefId: span?.fiber_spec_ref || '',
-        }
-      })
-
-      // 计算元数据
-      const depths = records.map(r => r.depth)
-      const totalLength = records.length > 0 ? records[records.length - 1].kp : 0
-      
-      // 创建或更新 RPL 表
-      rplStore.tables = [{
-        id: `rpl-${Date.now()}`,
-        name: projectData.metadata.project_name,
-        routeId: 'route-main',
-        records,
-        metadata: {
-          totalLength,
-          totalCableLength: totalLength * 1.025, // 加上约2.5%余量
-          landingStations: records.filter((r) => (r.pointType as string) === 'landing').length,
-          repeaters: records.filter((r) => (r.pointType as string) === 'repeater').length,
-          branchingUnits: records.filter((r) => (r.pointType as string) === 'branching').length,
-          joints: records.filter((r) => (r.pointType as string) === 'joint').length,
-          averageDepth: depths.length > 0 ? depths.reduce((a, b) => a + b, 0) / depths.length : 0,
-          maxDepth: depths.length > 0 ? Math.max(...depths) : 0,
-          minDepth: depths.length > 0 ? Math.min(...depths) : 0,
-        },
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }]
-      rplStore.currentTableId = rplStore.tables[0].id
-
-      // 7. 同步路线数据到 routeStore 以便地图显示
-      const routeStore = useRouteStore()
-      
-      // 创建路由点 (仅包含关键点: 登陆站、放大器、分支器)
-      const routePoints = records
-        .filter(r => r.pointType !== 'waypoint')
-        .map(r => ({
-          id: r.id,
-          coordinates: [r.longitude, r.latitude] as [number, number],
-          type: r.pointType as 'landing' | 'branching' | 'repeater' | 'joint' | 'waypoint',
-          name: r.remarks || undefined,
-          depth: r.depth,
-        }))
-      
-      // 如果没有关键点，使用所有点（但每隔N个取一个以避免过多）
-      const displayPoints = routePoints.length > 0 
-        ? routePoints 
-        : records.filter((_, i) => i % Math.max(1, Math.floor(records.length / 20)) === 0 || i === records.length - 1)
-            .map(r => ({
-              id: r.id,
-              coordinates: [r.longitude, r.latitude] as [number, number],
-              type: 'waypoint' as const,
-              name: undefined,
-              depth: r.depth,
-            }))
-      
-      // 构建点 id -> KP 的映射，用于计算 segment 长度
-      const idToKp = new Map<string, number>()
-      records.forEach(r => idToKp.set(r.id, r.kp))
-      const idToRecord = new Map(records.map(record => [record.id, record]))
-
-      // 创建路由分段（length 基于 KP 计算）
-      const routeSegments = displayPoints.slice(0, -1).map((point, i) => {
-        const startKp = idToKp.get(point.id) || 0
-        const endKp = idToKp.get(displayPoints[i + 1].id) || 0
-        const spanStart = Math.min(startKp, endKp)
-        const spanEnd = Math.max(startKp, endKp)
-        const spanRecords = records.filter(record => record.kp >= spanStart - 1e-6 && record.kp <= spanEnd + 1e-6)
-        const depthValues = spanRecords
-          .map(record => record.depth)
-          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-        const startRecord = idToRecord.get(point.id)
-        const endRecord = idToRecord.get(displayPoints[i + 1].id)
-        const depth = depthValues.length > 0
-          ? depthValues.reduce((sum, value) => sum + value, 0) / depthValues.length
-          : (((startRecord?.depth || 0) + (endRecord?.depth || 0)) / 2)
-        const cableType = spanRecords.find(record => record.cableType)?.cableType || startRecord?.cableType || endRecord?.cableType || 'LW'
-        return {
-          id: `seg-${i}`,
-          startPointId: point.id,
-          endPointId: displayPoints[i + 1].id,
-          length: Math.abs(endKp - startKp),
-          depth,
-          cableType,
-          riskLevel: depth < 500 ? 'high' as const : depth < 1500 ? 'medium' as const : 'low' as const,
-          cost: 0,
-        }
-      })
-      
-      // 创建主路线
-      const mainRoute = {
-        id: 'route-main',
-        name: projectData.metadata.project_name,
-        points: displayPoints,
-        segments: routeSegments,
-        totalLength,
-        totalCost: 0,
-        riskScore: 0,
-        cost: { cable: 0, installation: 0, equipment: 0, total: 0 },
-        risk: { seismic: 0, volcanic: 0, depth: 0, overall: 0 },
-        distance: totalLength,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-      
-      // 使用setParetoRoutes方法确保响应式更新
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      routeStore.setParetoRoutes([mainRoute as any])
-      
-      // 8. 同步路线数据到 connectorStore 以便系统设计视图显示
-      const connectorStore = useConnectorStore()
-      
-      // 创建接线元表（如果不存在）
-      if (connectorStore.tables.length === 0) {
-        connectorStore.createTable(projectData.metadata.project_name, 'route-main')
-      } else {
-        // 确保选中第一个表
-        connectorStore.currentTableId = connectorStore.tables[0].id
-      }
-      
-      // 清空并重新添加接线元
-      if (connectorStore.currentTable) {
-        // 使用新数组替换以确保响应式
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const newElements: any[] = []
-        
-        // 只添加关键点作为接线元（登陆站、放大器、分支器）
-        // 使用 record.id (event_id) 作为 ID，保证与 span 的 from/to_event_id 一致
-        records.forEach((record, index) => {
-          if (record.pointType !== 'waypoint') {
-            const connectorType = this.mapPointTypeToConnectorType(record.pointType)
-            newElements.push({
-              id: record.id,
-              name: record.remarks || `${this.getDeviceTypeChinese(connectorType)}-${index + 1}`,
-              type: connectorType,
-              longitude: record.longitude,
-              latitude: record.latitude,
-              depth: record.depth,
-              kp: record.kp,
-              status: 'active',
-              specifications: '',
-              remarks: record.remarks || '',
-              componentRefId: record.componentRefId || '',
-            })
-          }
-        })
-        
-        // 根据 .use 文件中的 spans 数据生成光纤段
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const eventIdToElement = new Map<string, Record<string, any>>()
-        newElements.forEach(elem => {
-          eventIdToElement.set(elem.id, elem)
-        })
-        
-        spans.forEach((span, index) => {
-          const fromElement = eventIdToElement.get(span.from_event_id)
-          const toElement = eventIdToElement.get(span.to_event_id)
-          
-          const fromKp = fromElement?.kp || 0
-          const toKp = toElement?.kp || 0
-          const spanLength = span.optical_metrics?.span_length_km || Math.abs(toKp - fromKp)
-          
-          newElements.push({
-            id: span.span_id || `fiber-${index}`,
-            name: `光纤段 ${span.span_id || `F${index + 1}`}`,
-            type: 'fiber',
-            kp: Math.min(fromKp, toKp),
-            endKp: Math.max(fromKp, toKp),
-            longitude: 0,
-            latitude: 0,
-            depth: 0,
-            status: 'active',
-            specifications: '',
-            remarks: `${fromElement?.name || span.from_event_id} → ${toElement?.name || span.to_event_id}`,
-            fiberRefId: span.fiber_spec_ref || '',
-            fromDeviceId: span.from_event_id,
-            toDeviceId: span.to_event_id,
-            length: spanLength,
-          })
-        })
-        
-        connectorStore.currentTable.elements = newElements
-      }
-      
-      // 9. 同步设备数据到 monitorStore 以便实时监控视图显示
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const newDevices: any[] = []
-      
-      records.forEach((record, index) => {
-        if (record.pointType !== 'waypoint') {
-          const deviceType = this.mapPointTypeToConnectorType(record.pointType)
-          newDevices.push({
-            id: record.id,
-            name: record.remarks || `${this.getDeviceTypeChinese(deviceType)}-${index + 1}`,
-            type: deviceType,
-            neType: deviceType,
-            status: 'normal',
-            location: `KP ${record.kp.toFixed(1)}`,
-            kp: record.kp,
-            sldEquipmentName: record.remarks || `${this.getDeviceTypeChinese(deviceType)}-${index + 1}`,
-            longitude: record.longitude,
-            latitude: record.latitude,
-            depth: record.depth,
-            inputPower: 0,
-            outputPower: 0,
-            pumpCurrent: 0,
-            pfeVoltage: 48,
-            pfeCurrent: 0,
-            temperature: 0,
-            componentRefId: record.componentRefId || '',
-          })
-        }
-      })
-      
-      // 设备数据已通过 connectorStore 管理，monitorStore.devices 是 computed 属性
-      // 无需额外设置，connectorStore.currentTable.elements 已在上面设置
-      
+      settingsStore.replacePlatformDeviceConfigs(JSON.parse(JSON.stringify(deviceExtensions.deviceConfigs)))
     } else {
-      // geometryPool为空时，尝试从其他来源创建paretoRoutes
-      const routeStore = useRouteStore()
-      
-      // 如果monitorStore有设备数据，从中创建路线
-      if (monitorStore.devices.length > 0) {
-        const sortedDevices = [...monitorStore.devices].sort((a, b) => (a.kp || 0) - (b.kp || 0))
-        const displayPoints = sortedDevices.map(d => ({
-          id: d.id,
-          coordinates: [d.longitude, d.latitude] as [number, number],
-          type: d.type === 'LandingStation'
-            ? 'landing'
-            : d.type === 'Repeater'
-              ? 'repeater'
-              : d.type === 'BU'
-                ? 'branching'
-                : d.type === 'Joint' || d.type === 'joint'
-                  ? 'joint'
-                  : 'waypoint',
-          name: d.name,
-          depth: d.depth,
-        }))
-        
-        const routeSegments = displayPoints.slice(0, -1).map((point, index) => {
-          const nextPoint = displayPoints[index + 1]
-          const startKp = sortedDevices[index]?.kp || 0
-          const endKp = sortedDevices[index + 1]?.kp || 0
-          const avgDepth = (((sortedDevices[index]?.depth || 0) + (sortedDevices[index + 1]?.depth || 0)) / 2)
-          return {
-            id: `seg-${index}`,
-            startPointId: point.id,
-            endPointId: nextPoint.id,
-            length: Math.abs(endKp - startKp),
-            depth: avgDepth,
-            cableType: 'LW',
-            riskLevel: avgDepth < 500 ? 'high' as const : avgDepth < 1500 ? 'medium' as const : 'low' as const,
-            cost: 0,
-          }
-        })
-
-        const mainRoute = {
-          id: 'route-main',
-          name: projectData.metadata?.project_name || '导入路线',
-          points: displayPoints,
-          segments: routeSegments,
-          totalLength: sortedDevices[sortedDevices.length - 1]?.kp || 0,
-          totalCost: 0,
-          riskScore: 0,
-          cost: { cable: 0, installation: 0, equipment: 0, total: 0 },
-          risk: { seismic: 0, volcanic: 0, depth: 0, overall: 0 },
-          distance: sortedDevices[sortedDevices.length - 1]?.kp || 0,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }
-        
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        routeStore.setParetoRoutes([mainRoute as any])
-      }
+      settingsStore.clearPlatformDeviceConfigs()
     }
 
     // 8. 恢复传输配置 (wdm_config)
     if (projectData.system_engineering.wdm_config) {
       const wdm = projectData.system_engineering.wdm_config
-      settingsStore.transmissionConfig = {
+      settingsStore.setTransmissionConfig({
         channelCount: wdm.channel_count,
         centerWavelength: 1550,
         channelBandwidth: wdm.channel_spacing_ghz,
-        calculationModels: ['GN'],
-      }
+        calculationModels: projectData._app_extensions?.project_settings?.simulation_settings.calculation_models ?? [],
+      })
       // 存储完整 WDM 配置到扩展字段
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(settingsStore as any).wdmExtendedConfig = {
@@ -1808,7 +809,7 @@ class ProjectFileService {
 
     // 11. 恢复监控配置 (health_monitoring)
     if (projectData.health_monitoring.collector_config) {
-      settingsStore.monitoringConfig = {
+      settingsStore.setMonitoringConfig({
         dataSourceType: 'realtime',
         connectionAddress: projectData.health_monitoring.collector_config.connection_params.base_url,
         authToken: '',
@@ -1820,7 +821,7 @@ class ProjectFileService {
         temperatureThreshold: 45,
         berThreshold: '1e-6',
         fieldMappings: [],
-      }
+      })
       // 存储扩展监控配置
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(settingsStore as any).monitoringExtendedConfig = {
@@ -1841,9 +842,6 @@ class ProjectFileService {
 
     // 13. 从项目数据中提取起点/终点坐标并更新路径规划配置
     this.extractRoutePlanningConfig(projectData, settingsStore)
-
-    // 13.5 恢复海缆段数据到 cableSegmentStore
-    this.restoreCableSegments(projectData, settingsStore)
 
     // ===== 14. 从扩展字段恢复原始 Store 数据 (优先级最高) =====
     this.restoreExtensionData(projectData, rplStore, sldStore, connectorStore, monitorStore, routeStore, layerStore)
@@ -1866,22 +864,31 @@ class ProjectFileService {
     if (!ext) return
 
     // 14.1 恢复 RPL 原始数据
-    if (ext.routePlanning?.rplTables && ext.routePlanning.rplTables.length > 0) {
+    if (Array.isArray(ext.routePlanning?.rplTables)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rplStore.tables = ext.routePlanning.rplTables as any
-      if (rplStore.tables.length > 0) {
-        rplStore.currentTableId = rplStore.tables[0].id
-      }
+      rplStore.replaceTables(ext.routePlanning.rplTables as any)
+      rplStore.setCurrentTableId(rplStore.tables[0]?.id ?? null)
     }
 
-    // 14.2 恢复路由数据
-    if (ext.routePlanning?.routes && ext.routePlanning.routes.length > 0) {
+    // 14.2 恢复完整算法结果；旧项目仍从 routes 快照兼容恢复。
+    const savedAlgorithmResult = ext.routePlanning?.algorithmResult
+    if (savedAlgorithmResult
+      && typeof savedAlgorithmResult === 'object'
+      && Array.isArray((savedAlgorithmResult as { routes?: unknown }).routes)) {
+      routeStore.setAlgorithmRouteResult(
+        JSON.parse(JSON.stringify(savedAlgorithmResult)) as AlgorithmRouteBundleResult,
+      )
+    } else if (Array.isArray(ext.routePlanning?.routes)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      routeStore.setParetoRoutes(ext.routePlanning.routes as any)
+      routeStore.setParetoRoutes(ext.routePlanning!.routes as any)
+    }
+    const selectedRouteId = ext.routePlanning?.selectedRouteId
+    if (selectedRouteId && routeStore.paretoRoutes.some(route => route.id === selectedRouteId)) {
+      routeStore.selectRoute(selectedRouteId)
     }
     
     // 14.2.1 恢复缆型数据库
-    if (ext.routePlanning?.cableTypeDatabase && ext.routePlanning.cableTypeDatabase.length > 0) {
+    if (Array.isArray(ext.routePlanning?.cableTypeDatabase)) {
       const settingsStore = useSettingsStore()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       settingsStore.cableTypeDatabase.splice(0, settingsStore.cableTypeDatabase.length, ...(ext.routePlanning.cableTypeDatabase as any))
@@ -1894,30 +901,24 @@ class ProjectFileService {
     }
 
     // 14.3 恢复 SLD 原始数据
-    if (ext.transmissionPlanning?.sldTables && ext.transmissionPlanning.sldTables.length > 0) {
+    if (Array.isArray(ext.transmissionPlanning?.sldTables)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      sldStore.tables = ext.transmissionPlanning.sldTables as any
-      if (sldStore.tables.length > 0) {
-        sldStore.currentTableId = sldStore.tables[0].id
-      }
+      sldStore.replaceTables(ext.transmissionPlanning.sldTables as any)
+      sldStore.setCurrentTableId(sldStore.tables[0]?.id ?? null)
     }
 
     // 14.4 恢复接线元数据
-    if (ext.connectorTables && ext.connectorTables.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      connectorStore.tables = ext.connectorTables as any
-      if (connectorStore.tables.length > 0) {
-        connectorStore.currentTableId = connectorStore.tables[0].id
-      }
+    if (Array.isArray(ext.connectorTables)) {
+      const connectorSnapshot = this.getValidConnectorSnapshot(ext.connectorTables)
+      connectorStore.replaceTables(connectorSnapshot)
+      connectorStore.setCurrentTableId(connectorSnapshot[0]?.id ?? null)
     }
 
-    // 14.5 恢复监控数据
-    if (ext.monitorData?.devices && ext.monitorData.devices.length > 0) {
+    // 14.5 设备身份来自 Connector 快照；运行时遥测与告警按显式监控快照恢复。
+    if (ext.monitorData) {
+      monitorStore.replaceRuntimeData(ext.monitorData.devices || [])
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(monitorStore as any).$patch({
-        devices: ext.monitorData.devices,
-        alarmHistory: ext.monitorData.alarmHistory || []
-      })
+      monitorStore.replaceAlarmHistory((ext.monitorData.alarmHistory || []) as any)
     }
 
     // 14.5.5 恢复海缆段数据 (如果 _app_extensions 中有更完整的版本)
@@ -1958,82 +959,6 @@ class ProjectFileService {
       layerStore.setLayerVisible('earthquake', ls.earthquakeDistribution ?? false)
       layerStore.setLayerVisible('shipping', ls.shippingLanes ?? false)
     }
-  }
-
-  /**
-   * 从 route_engineering.segments 恢复海缆段数据到 cableSegmentStore
-   */
-  private restoreCableSegments(projectData: USEProjectData, settingsStore: SettingsStore): void {
-    const segments = projectData.route_engineering?.segments || []
-    const segConfig = projectData.route_engineering?.segmentation_config
-    if (segments.length === 0) return
-
-    const cableSegmentStore = useCableSegmentStore()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cableTypes = (settingsStore.cableTypes || []) as any[]
-
-    // 辅助：根据 cable_type_ref 查找缆型名称和铠装类型
-    const getCableInfo = (ref: string) => {
-      const ct = cableTypes.find((c: any) => c.id === ref)
-      if (ct) return { name: ct.name, armor: ct.type || 'LW' }
-      // fallback: 从 ref 字符串推断
-      const upper = ref.toUpperCase()
-      if (upper.includes('DA')) return { name: 'DA (双铠装)', armor: '双铠' }
-      if (upper.includes('SA')) return { name: 'SA (单铠装)', armor: '单铠' }
-      return { name: 'LW (轻型)', armor: '轻铠' }
-    }
-
-    // 辅助：映射风险等级 USE -> store
-    const mapRisk = (level: string): 'high' | 'medium' | 'low' => {
-      const map: Record<string, 'high' | 'medium' | 'low'> = {
-        'HIGH': 'high', 'MEDIUM': 'medium', 'LOW': 'low'
-      }
-      return map[level?.toUpperCase()] || 'low'
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const converted = segments.map((seg: any) => {
-      const range = seg.geometry_range || {}
-      const startKm = range.start_km ?? range.startKm ?? 0
-      const endKm = range.end_km ?? range.endKm ?? 0
-      const lengthKm = range.length_km ?? range.lengthKm ?? (endKm - startKm)
-      const riskLevel = mapRisk(seg.risk_info?.risk_level || 'LOW')
-      const cableRef = seg.cable_type_ref || seg.cable_struct_ref || 'struct_lw_01'
-      const cableInfo = getCableInfo(cableRef)
-
-      return {
-        id: seg.segment_id,
-        routeId: 'route-main',
-        startKp: startKm,
-        endKp: endKm,
-        length: lengthKm,
-        riskLevel,
-        cableTypeId: cableRef,
-        cableTypeName: cableInfo.name,
-        armorType: cableInfo.armor,
-        slack: seg.slack_percent ?? 2.5,
-        burialDepth: seg.burial_depth_m ?? 0,
-        isLocked: seg.is_locked ?? false,
-        geometryStartIndex: range.start_index,
-        geometryEndIndex: range.end_index,
-      }
-    })
-
-    // 构建导入数据
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const importPayload: any = { segments: converted }
-
-    // 转换分段配置
-    if (segConfig) {
-      importPayload.config = {
-        method: segConfig.method === 'FIXED_LENGTH' ? 'fixed-length' : 'risk-based',
-        targetLength: segConfig.fixed_length_km,
-        minLength: segConfig.risk_based?.min_length_km,
-        maxLength: segConfig.risk_based?.max_length_km,
-      }
-    }
-
-    cableSegmentStore.importData(importPayload)
   }
 
   /**
@@ -2246,57 +1171,6 @@ class ProjectFileService {
   }
 
   /**
-   * 映射事件类型到点位类型
-   */
-  private mapEventTypeToPointType(eventType: string): string {
-    const map: Record<string, string> = {
-      'LandStation': 'landing',
-      'LandingStation': 'landing',
-      'Landing Station': 'landing',
-      'EDFA': 'repeater',
-      'EDFA_E': 'repeater_e',
-      'EDFA_W': 'repeater_w',
-      'BU': 'branching',
-      'Joint': 'joint',
-      'JOINT': 'joint',
-      'JointBox': 'joint',
-      'Joint Box': 'joint',
-      'JB': 'joint',
-    }
-    return map[eventType] || 'waypoint'
-  }
-
-  /**
-   * 映射点位类型到接线元类型
-   */
-  private mapPointTypeToConnectorType(pointType: string): string {
-    const map: Record<string, string> = {
-      'landing': 'landing',
-      'repeater': 'amplifier_e',
-      'repeater_e': 'amplifier_e',
-      'repeater_w': 'amplifier_w',
-      'branching': 'bu',
-      'joint': 'joint',
-    }
-    return map[pointType] || 'underwater'
-  }
-
-  /**
-   * 获取器件类型的中文名称
-   */
-  private getDeviceTypeChinese(deviceType: string): string {
-    const map: Record<string, string> = {
-      'landing': '岸上站点',
-      'amplifier_e': '放大器东',
-      'amplifier_w': '放大器西',
-      'bu': '水下分支器',
-      'joint': '接头盒',
-      'underwater': '水下站点',
-    }
-    return map[deviceType] || deviceType
-  }
-
-  /**
    * 加载旧版项目数据到 stores (向后兼容)
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2311,96 +1185,37 @@ class ProjectFileService {
     
     // 恢复路由数据
     if (project.routePlanning?.routes && project.routePlanning.routes.length > 0) {
-      routeStore.routes = project.routePlanning.routes
       // 同时设置 paretoRoutes 以便 ParetoPanel 显示
       routeStore.setParetoRoutes(project.routePlanning.routes)
-    } else {
-      // 如果没有路由数据，尝试从 monitorStore 创建
-      // 延迟执行，确保 monitorStore 已初始化
-      setTimeout(() => {
-        if (monitorStore.devices.length > 0 && routeStore.paretoRoutes.length === 0) {
-          const sortedDevices = [...monitorStore.devices].sort((a, b) => (a.kp || 0) - (b.kp || 0))
-          const displayPoints = sortedDevices.map(d => ({
-            id: d.id,
-            coordinates: [d.longitude, d.latitude] as [number, number],
-            type: d.type === 'LandingStation'
-              ? 'landing'
-              : d.type === 'Repeater'
-                ? 'repeater'
-                : d.type === 'BU'
-                  ? 'branching'
-                  : d.type === 'Joint' || d.type === 'joint'
-                    ? 'joint'
-                    : 'waypoint',
-            name: d.name,
-          }))
-          
-          const mainRoute = {
-            id: 'route-main',
-            name: project.name || '导入路线',
-            points: displayPoints,
-            segments: [],
-            totalLength: 0,
-            totalCost: 0,
-            riskScore: 0,
-            cost: { cable: 0, installation: 0, equipment: 0, total: 0 },
-            risk: { seismic: 0, volcanic: 0, depth: 0, overall: 0 },
-            distance: 0,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }
-          
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          routeStore.setParetoRoutes([mainRoute as any])
-        }
-      }, 100)
     }
     
     // 恢复 RPL 数据
     if (project.routePlanning?.rplTables) {
-      rplStore.tables = project.routePlanning.rplTables
+      rplStore.replaceTables(project.routePlanning.rplTables)
       if (rplStore.tables.length > 0) {
-        rplStore.currentTableId = rplStore.tables[0].id
+        rplStore.setCurrentTableId(rplStore.tables[0].id)
       }
     }
     
     // 恢复 SLD 数据
     if (project.transmissionPlanning?.sldTables) {
-      sldStore.tables = project.transmissionPlanning.sldTables
-    }
-    
-    // 恢复 Connector 数据
-    if (project.connectorTables) {
-      connectorStore.tables = project.connectorTables
-      if (connectorStore.tables.length > 0) {
-        connectorStore.currentTableId = connectorStore.tables[0].id
+      sldStore.replaceTables(project.transmissionPlanning.sldTables)
+      if (sldStore.tables.length > 0) {
+        sldStore.setCurrentTableId(sldStore.tables[0].id)
       }
     }
     
-    // 恢复 Monitor 数据
+    // 恢复显式 Connector 快照。
+    const connectorSnapshot = this.getValidConnectorSnapshot(project.connectorTables)
+    if (connectorSnapshot.length > 0) {
+      connectorStore.replaceTables(connectorSnapshot)
+      connectorStore.setCurrentTableId(connectorSnapshot[0].id)
+    }
+    
+    // 设备身份来自 Connector 快照；运行时遥测与告警按显式监控快照恢复。
     if (project.monitorData) {
-      // devices 是 computed 属性，通过 connectorStore 管理
-      if (project.monitorData.devices && project.monitorData.devices.length > 0) {
-        if (connectorStore.tables.length === 0) {
-          connectorStore.createTable(project.name || '导入项目', 'route-main')
-        }
-        if (connectorStore.currentTable) {
-          const connectorElements = project.monitorData.devices.map((d: any) => ({
-            id: d.id,
-            name: d.name,
-            type: d.type,
-            longitude: d.longitude,
-            latitude: d.latitude,
-            depth: d.depth || 0,
-            kp: d.kp || 0,
-            status: 'active',
-            specifications: '',
-            remarks: d.name,
-          }))
-          connectorStore.currentTable.elements = connectorElements
-        }
-      }
-      monitorStore.alarmHistory = project.monitorData.alarmHistory || []
+      monitorStore.replaceRuntimeData(project.monitorData.devices || [])
+      monitorStore.replaceAlarmHistory(project.monitorData.alarmHistory || [])
     }
     
     // 恢复图层设置
@@ -2416,7 +1231,7 @@ class ProjectFileService {
     
     // 恢复设置
     if (project.settings?.cableTypes) {
-      settingsStore.cableTypes = project.settings.cableTypes
+      settingsStore.replaceCableTypes(project.settings.cableTypes)
     }
   }
 
@@ -2479,22 +1294,3 @@ class ProjectFileService {
 
 // 单例导出
 export const projectFileService = new ProjectFileService()
-
-// Composable
-export function useProjectFile() {
-  return {
-    getCurrentProject: () => projectFileService.getCurrentProject(),
-    getCurrentProjectData: () => projectFileService.getCurrentProjectData(),
-    setCurrentProject: (project: ProjectMetadata | null) => projectFileService.setCurrentProject(project),
-    getIsDirty: () => projectFileService.getIsDirty(),
-    setIsDirty: (dirty: boolean) => projectFileService.setIsDirty(dirty),
-    checkOpenPermission: (projectData: USEProjectData) => projectFileService.checkOpenPermission(projectData),
-    createUSEProjectData: (name: string, allowOtherUsers?: boolean) => projectFileService.createUSEProjectData(name, allowOtherUsers),
-    saveProject: () => projectFileService.saveProject(),
-    exportUSE: (name: string, allowOtherUsers?: boolean) => projectFileService.exportUSE(name, allowOtherUsers),
-    importProject: (file: File) => projectFileService.importProject(file),
-    openProjectFile: () => projectFileService.openProjectFile(),
-    openFileDialog: (accept: string) => projectFileService.openFileDialog(accept),
-    closeProject: () => projectFileService.closeProject(),
-  }
-}

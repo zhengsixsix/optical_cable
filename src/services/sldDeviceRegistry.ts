@@ -13,8 +13,8 @@ import type {
 } from '@/types'
 
 export const DEFAULT_SLD_EXPORT_TEMPLATE_VERSION: SLDExportTemplateVersion = 'standard-v2026.04'
-export const SLD_DEVICE_DICTIONARY_VERSION = '2026.04'
-export const SLD_ALGORITHM_PROFILE_VERSION = '2026.04'
+const SLD_DEVICE_DICTIONARY_VERSION = '2026.04'
+const SLD_ALGORITHM_PROFILE_VERSION = '2026.04'
 
 export const SLD_EXPORT_TEMPLATE_OPTIONS: Array<{
   value: SLDExportTemplateVersion
@@ -33,7 +33,7 @@ export const SLD_EXPORT_TEMPLATE_OPTIONS: Array<{
   },
 ]
 
-export interface SLDDeviceAlgorithmProfile {
+interface SLDDeviceAlgorithmProfile {
   functionCode: SLDDeviceFunctionCode
   opticalRole: 'terminal' | 'gain' | 'joint' | 'branch' | 'attenuation'
   breaksCable: boolean
@@ -43,19 +43,10 @@ export interface SLDDeviceAlgorithmProfile {
   description: string
 }
 
-export interface SLDDeviceDefinition {
+interface SLDDeviceDefinition {
   symbolCode: SLDDeviceSymbolCode
   label: string
   algorithm: SLDDeviceAlgorithmProfile
-}
-
-export interface SLDJointInferenceContext {
-  kp: number
-  totalLength?: number
-  depth?: number
-  cableType?: string
-  nearBranchingUnit?: boolean
-  preferExpandable?: boolean
 }
 
 const DEVICE_DEFINITIONS: Record<SLDDeviceSymbolCode, SLDDeviceDefinition> = {
@@ -215,57 +206,7 @@ function normalizeTypeCode(value: string | undefined): string | undefined {
   return normalized || undefined
 }
 
-export function normalizeCableTypeCode(value?: string): string | undefined {
-  const normalized = normalizeTypeCode(value)
-  if (!normalized) return undefined
-  if (normalized.startsWith('DA')) return 'DA'
-  if (normalized.startsWith('RA')) return 'RA'
-  if (normalized.startsWith('SAS')) return 'SAS'
-  if (normalized.startsWith('SA')) return 'SA'
-  if (normalized.startsWith('LWS')) return 'LWS'
-  if (normalized.startsWith('LWP')) return 'LWP'
-  if (normalized.startsWith('LW')) return 'LW'
-  return normalized
-}
-
-export function inferJointSubTypeByContext(context: SLDJointInferenceContext): JointBoxSubType {
-  if (context.nearBranchingUnit) return 'BUJB'
-
-  const cableType = normalizeCableTypeCode(context.cableType)
-  const depth = typeof context.depth === 'number' && Number.isFinite(context.depth) && Math.abs(context.depth) > 0
-    ? Math.abs(context.depth)
-    : undefined
-  const totalLength = typeof context.totalLength === 'number' && Number.isFinite(context.totalLength)
-    ? context.totalLength
-    : undefined
-  const landingWindow = totalLength && totalLength > 0
-    ? Math.min(35, Math.max(12, totalLength * 0.06))
-    : 20
-
-  if (context.preferExpandable) {
-    return 'SEJB'
-  }
-
-  if (totalLength && (context.kp <= landingWindow || (totalLength - context.kp) <= landingWindow)) {
-    return 'BJB'
-  }
-
-  if (cableType === 'DA' || cableType === 'RA') {
-    return 'BJB'
-  }
-
-  if (cableType === 'SA' || cableType === 'SAS' || cableType === 'LWP' || (depth !== undefined && depth <= 1500)) {
-    return 'SJB'
-  }
-
-  if (cableType === 'LW' || cableType === 'LWS' || (depth !== undefined && depth > 1500)) {
-    return 'FJB'
-  }
-
-  return 'BJB'
-}
-
-export function resolveJointSubTypeFromValue(value?: string): JointBoxSubType | undefined {
+function resolveJointSubTypeFromValue(value?: string): JointBoxSubType | undefined {
   const normalized = normalizeTypeCode(value)
   if (!normalized) return undefined
   const supported = ['BJB', 'SEJB', 'BUJB', 'SJB', 'FJB', 'LIJB'] as const
@@ -274,7 +215,7 @@ export function resolveJointSubTypeFromValue(value?: string): JointBoxSubType | 
   return supported.find(code => normalized.includes(code))
 }
 
-export function resolveBranchingSubTypeFromValue(value?: string): BranchingUnitSubType | undefined {
+function resolveBranchingSubTypeFromValue(value?: string): BranchingUnitSubType | undefined {
   const normalized = normalizeTypeCode(value)
   if (!normalized) return undefined
   if (normalized.includes('ROADM')) return 'ROADM'
@@ -298,7 +239,7 @@ export function resolveJointSubType(
   )
 }
 
-export function resolveBranchingSubType(
+function resolveBranchingSubType(
   equipment: Pick<SLDEquipment, 'buSubType' | 'configParams'> | undefined,
 ): BranchingUnitSubType | undefined {
   return resolveBranchingSubTypeFromValue(
@@ -348,7 +289,7 @@ export function resolveSldSymbolCode(
   }
 }
 
-export function resolveSldDeviceDefinition(
+function resolveSldDeviceDefinition(
   equipment: Pick<
     SLDEquipment,
     'type' | 'jointSubType' | 'buSubType' | 'equalizerRole' | 'configParams'

@@ -1,41 +1,27 @@
 ﻿<script setup lang="ts">
 import { useMapStore } from '@/stores/map'
-import { useRouteStore } from '@/stores/route'
 import { useUserStore } from '@/stores/user'
-import { useCableSegmentStore } from '@/stores/cableSegment'
-import { useConnectorStore } from '@/stores/connector'
 import { ref, watch, computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useRPLStore } from '@/stores/rpl'
 import { useSLDStore } from '@/stores/sld'
-import { useProjectManager } from '@/composables'
-import { useRPLExport } from '@/services/RPLExportService'
-import { exportSLDFile } from '@/services/SLDExportService'
+import { useProjectManager } from '@/composables/useProjectManager'
 import { buildExportableRplTableSnapshot } from '@/services/RPLSyncService'
 import type { Projection } from '@/types'
 import {
   FileText, FolderOpen, Save, FilePlus, LogOut,
-  Download, Upload, ChevronRight, FileType,
-  Image as ImageIcon, MoreHorizontal, Settings,
+  Download, Upload, ChevronRight,
   Globe, FileSpreadsheet, KeyRound, User, UserCog
 } from 'lucide-vue-next'
 
 const router = useRouter()
-const route = useRoute()
 const appStore = useAppStore()
 const userStore = useUserStore()
 const mapStore = useMapStore()
 const rplStore = useRPLStore()
 const sldStore = useSLDStore()
-const routeStore = useRouteStore()
-const connectorStore = useConnectorStore()
-const cableSegmentStore = useCableSegmentStore()
 const projectManager = useProjectManager()
-const { exportRPLFile } = useRPLExport()
-
-// 暴露给 App.vue 使用
-defineExpose({ projectManager })
 
 // 坐标系选项
 const coordSystemOptions = [
@@ -109,24 +95,12 @@ const handleSaveAsProject = () => {
   projectManager.openSaveAsDialog()
 }
 
-const getRouteById = (routeId?: string | null) =>
-  routeStore.paretoRoutes.find(route => route.id === routeId) ||
-  routeStore.routes.find(route => route.id === routeId) ||
-  routeStore.selectedRoute ||
-  null
-
 const buildCurrentRplSnapshot = () => {
   const currentTable = rplStore.currentTable
   if (!currentTable) return null
 
-  const routeId = currentTable.routeId || routeStore.currentRouteId || null
   return buildExportableRplTableSnapshot({
     baseTable: currentTable,
-    route: getRouteById(routeId),
-    connectorElements: connectorStore.getElementsForRoute(routeId),
-    cableSegments: cableSegmentStore.segments.filter(segment =>
-      !routeId || !segment.routeId || segment.routeId === routeId,
-    ),
   })
 }
 
@@ -139,9 +113,11 @@ const handleExportRPL = async () => {
   }
   
   try {
+    const { useRPLExport } = await import('@/services/RPLExportService')
+    const { exportRPLFile } = useRPLExport()
     await exportRPLFile(snapshot, 'xlsx')
     appStore.showNotification({ type: 'success', message: 'RPL 文件导出成功' })
-    appStore.addLog('INFO', `导出 RPL 文件: ${snapshot.name}，已应用当前系统规划与海缆段配置`)
+    appStore.addLog('INFO', `导出 RPL 文件: ${snapshot.name}`)
   } catch (error) {
     appStore.showNotification({ type: 'error', message: 'RPL 文件导出失败' })
   }
@@ -156,6 +132,7 @@ const handleExportSLD = async () => {
   }
   
   try {
+    const { exportSLDFile } = await import('@/services/SLDExportService')
     const projectName = projectManager.currentProjectName.value || 'SubmarineCable'
     exportSLDFile(currentTable, { systemName: projectName })
     appStore.showNotification({ type: 'success', message: 'SLD 文件导出成功' })
@@ -198,8 +175,8 @@ const showModal = (key: string) => {
 
   const map: Record<string, string> = {
     '新建工程': 'new-project',
-    'import': 'import',
-    'importGis': 'import',
+    'import': 'import-gis',
+    'importGis': 'import-gis',
     'export': 'export',
     'export_pdf': 'export',
     'export_png': 'export',
@@ -320,7 +297,7 @@ const togglePanel = (panel: string) => {
                     <a href="#" @click.prevent="showModal('import-gis')"
                       class="group/item flex items-center gap-3 px-4 py-2.5 hover:bg-primary/10 text-gray-700 hover:text-primary transition-colors">
                       <Globe class="w-4 h-4 text-gray-400 group-hover/item:text-primary" />
-                      <span class="text-sm">导入 GIS 数据 (.tif, .tiff, .shp, .geojson, .json)</span>
+                      <span class="text-sm">导入 GIS 数据 (GeoTIFF / Shapefile ZIP / GeoJSON)</span>
                     </a>
                   </div>
                 </div>
@@ -460,16 +437,12 @@ const togglePanel = (panel: string) => {
         <!-- Monitoring Menu - 无项目或 USE 项目时显示 -->
         <div v-if="showTransmissionMenu" class="relative group h-full flex items-center px-4 cursor-pointer hover:bg-white/10 transition-colors">
           <span
-            :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/monitoring') || $route.path.includes('/monitor-center') || $route.path.includes('/performance') }">监控</span>
+            :class="{ 'text-[#ffd04b] font-medium': $route.path.includes('/monitoring') }">监控</span>
           <div
             class="absolute top-full left-0 bg-white text-gray-800 shadow-lg rounded-b-md py-1 min-w-[150px] hidden group-hover:block border border-gray-200 z-50">
-            <RouterLink to="/monitor-center"
-              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
-              active-class="bg-primary/10 text-primary font-medium">监控中心
-            </RouterLink>
             <RouterLink to="/monitoring"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
-              active-class="bg-primary/10 text-primary font-medium">设备健康度管理
+              active-class="bg-primary/10 text-primary font-medium">设备监控
             </RouterLink>
           </div>
         </div>
@@ -492,6 +465,9 @@ const togglePanel = (panel: string) => {
             <RouterLink :to="{ path: '/settings', query: { tab: 'route' } }"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
               :class="{ 'bg-primary/10 text-primary font-medium': $route.path === '/settings' && ($route.query.tab === 'route' || !$route.query.tab) }">路径规划管理</RouterLink>
+            <RouterLink :to="{ path: '/settings', query: { tab: 'transmission' } }"
+              class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
+              :class="{ 'bg-primary/10 text-primary font-medium': $route.path === '/settings' && $route.query.tab === 'transmission' }">传输与仿真管理</RouterLink>
             <RouterLink :to="{ path: '/settings', query: { tab: 'monitoring' } }"
               class="block px-4 py-2 hover:bg-primary/10 hover:text-primary text-sm no-underline text-gray-700"
               :class="{ 'bg-primary/10 text-primary font-medium': $route.path === '/settings' && $route.query.tab === 'monitoring' }">监控系统管理</RouterLink>

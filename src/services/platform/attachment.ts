@@ -30,7 +30,3 @@ export async function fetchPlatformAttachmentBlob(attachmentIdOrUrl: Id | string
 
   return response.blob()
 }
-
-export async function fetchPlatformAttachmentArrayBuffer(attachmentIdOrUrl: Id | string): Promise<ArrayBuffer> {
-  return (await fetchPlatformAttachmentBlob(attachmentIdOrUrl)).arrayBuffer()
-}

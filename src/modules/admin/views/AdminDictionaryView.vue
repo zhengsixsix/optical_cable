@@ -4,30 +4,34 @@ import { BookOpen, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-vue-n
 import { Button, Input, Select } from '@/shared/components/base'
 import AdminPagination from '../components/AdminPagination.vue'
 import { useAppStore } from '@/stores/app'
-import { platformDictionaryApi } from '@/services/platform/api'
+import { useDictionaryStore } from '@/stores/dictionary'
 import type { PlatformDictionary } from '@/services/platform/types'
 
 const DICTIONARY_TYPE_SOURCE = 'DIC_TYPE'
 
 const appStore = useAppStore()
+const dictionaryStore = useDictionaryStore()
 const isTypeLoading = ref(false)
 const isLoading = ref(false)
+const isDeleting = ref(false)
 const isSaving = ref(false)
 const isFormDialogOpen = ref(false)
 const dictionaryType = ref('')
-const dictionaryTypes = ref<PlatformDictionary[]>([])
+const dictionaryTypes = computed(() => dictionaryStore.getItems(DICTIONARY_TYPE_SOURCE, true))
 const dictionaries = ref<PlatformDictionary[]>([])
 const pageNumber = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const form = reactive({ id: '', type: '', code: '', name: '', detail: '', sortNum: 999, isValidCd: '1' })
+let dictionaryTypeRequestSequence = 0
+let dictionaryDataRequestSequence = 0
 
 const statusOptions = [
   { value: '1', label: '启用' },
   { value: '0', label: '停用' },
 ]
 
-const isBusy = computed(() => isTypeLoading.value || isLoading.value || isSaving.value)
+const isBusy = computed(() => isTypeLoading.value || isLoading.value || isDeleting.value || isSaving.value)
 const activeType = computed(() => dictionaryTypes.value.find(item => item.code === dictionaryType.value) ?? null)
 const activeTypeLabel = computed(() => activeType.value?.name || dictionaryType.value || '未选择')
 const activeTypeOptions = computed(() =>
@@ -37,21 +41,6 @@ const activeTypeOptions = computed(() =>
 )
 const hasDictionaryTypes = computed(() => dictionaryTypes.value.length > 0)
 const dialogTitle = computed(() => form.id ? '编辑字典项' : '新增字典项')
-
-function normalizeTypeItems(items: PlatformDictionary[] = []) {
-  const seen = new Set<string>()
-  return items.reduce<PlatformDictionary[]>((result, item) => {
-    const code = item.code?.trim()
-    if (!code || seen.has(code)) return result
-    seen.add(code)
-    result.push({
-      ...item,
-      code,
-      name: item.name?.trim() || code,
-    })
-    return result
-  }, [])
-}
 
 function resetForm() {
   Object.assign(form, { id: '', type: dictionaryType.value, code: '', name: '', detail: '', sortNum: 999, isValidCd: '1' })
@@ -90,49 +79,74 @@ function clearListData() {
   pageNumber.value = 1
 }
 
-async function loadDictionaryTypes() {
+async function loadDictionaryTypes(force = false) {
+  const requestSequence = ++dictionaryTypeRequestSequence
   isTypeLoading.value = true
   try {
-    const types = await platformDictionaryApi.listItemByType(DICTIONARY_TYPE_SOURCE)
-    dictionaryTypes.value = normalizeTypeItems(types ?? [])
+    await dictionaryStore.loadDictionary(DICTIONARY_TYPE_SOURCE, force)
+    if (requestSequence !== dictionaryTypeRequestSequence) return
     dictionaryType.value = dictionaryTypes.value.some(item => item.code === dictionaryType.value)
       ? dictionaryType.value
       : dictionaryTypes.value[0]?.code ?? ''
     resetForm()
     await loadData(true)
   } catch (error) {
-    dictionaryTypes.value = []
+    if (requestSequence !== dictionaryTypeRequestSequence) return
     dictionaryType.value = ''
     clearListData()
     resetForm()
     appStore.showNotification({ type: 'error', message: `字典类型加载失败：${(error as Error).message}` })
   } finally {
-    isTypeLoading.value = false
+    if (requestSequence === dictionaryTypeRequestSequence) {
+      isTypeLoading.value = false
+    }
   }
 }
 
 async function loadData(resetPage = false) {
   if (resetPage) pageNumber.value = 1
-  if (!dictionaryType.value) {
+  const requestedType = dictionaryType.value
+  const requestSequence = ++dictionaryDataRequestSequence
+  if (!requestedType) {
     clearListData()
+    isLoading.value = false
     return
   }
 
+  const requestedPage = pageNumber.value
+  const requestedPageSize = pageSize.value
   isLoading.value = true
   try {
-    const response = await platformDictionaryApi.search({
-      pageNumber: pageNumber.value,
-      pageSize: pageSize.value,
-      type: dictionaryType.value,
+    const response = await dictionaryStore.searchDictionary({
+      pageNumber: requestedPage,
+      pageSize: requestedPageSize,
+      type: requestedType,
     })
-    dictionaries.value = response.data ?? []
-    total.value = Number(response.page?.dataTotal ?? dictionaries.value.length)
-    if (response.page?.pageNumber) pageNumber.value = Number(response.page.pageNumber)
-    if (response.page?.pageSize) pageSize.value = Number(response.page.pageSize)
+    if (requestSequence !== dictionaryDataRequestSequence || dictionaryType.value !== requestedType) return
+
+    const responseItems = response.data ?? []
+    const responseTotal = Math.max(0, Number(response.page?.dataTotal ?? responseItems.length) || 0)
+    const responsePageSize = Math.max(1, Number(response.page?.pageSize ?? requestedPageSize) || requestedPageSize)
+    const responsePage = Math.max(1, Number(response.page?.pageNumber ?? requestedPage) || requestedPage)
+    const maxPage = Math.max(1, Math.ceil(responseTotal / responsePageSize))
+    if (responsePage > maxPage) {
+      pageNumber.value = maxPage
+      await loadData()
+      return
+    }
+
+    dictionaries.value = responseItems
+    total.value = responseTotal
+    pageNumber.value = responsePage
+    pageSize.value = responsePageSize
   } catch (error) {
-    appStore.showNotification({ type: 'error', message: `字典内容加载失败：${(error as Error).message}` })
+    if (requestSequence === dictionaryDataRequestSequence && dictionaryType.value === requestedType) {
+      appStore.showNotification({ type: 'error', message: `字典内容加载失败：${(error as Error).message}` })
+    }
   } finally {
-    isLoading.value = false
+    if (requestSequence === dictionaryDataRequestSequence) {
+      isLoading.value = false
+    }
   }
 }
 
@@ -166,7 +180,7 @@ async function saveItem() {
 
   isSaving.value = true
   try {
-    await platformDictionaryApi.save({
+    await dictionaryStore.saveDictionary({
       ...form,
       id: form.id || null,
       type: payloadType,
@@ -180,7 +194,7 @@ async function saveItem() {
     if (payloadType !== dictionaryType.value) dictionaryType.value = payloadType
     resetForm()
     if (payloadType === DICTIONARY_TYPE_SOURCE) {
-      await loadDictionaryTypes()
+      await loadDictionaryTypes(true)
     } else {
       await loadData()
     }
@@ -193,23 +207,23 @@ async function saveItem() {
 
 async function removeItem(item: PlatformDictionary) {
   if (!item.id || !item.type || !confirm(`确定删除「${item.name || item.code}」吗？`)) return
-  isLoading.value = true
+  isDeleting.value = true
   try {
-    await platformDictionaryApi.remove({ id: item.id, type: item.type })
+    await dictionaryStore.removeDictionary({ id: item.id, type: item.type })
     appStore.showNotification({ type: 'success', message: '字典项已删除' })
     if (form.id === item.id) {
       isFormDialogOpen.value = false
       resetForm()
     }
     if (item.type === DICTIONARY_TYPE_SOURCE) {
-      await loadDictionaryTypes()
+      await loadDictionaryTypes(true)
     } else {
       await loadData()
     }
   } catch (error) {
     appStore.showNotification({ type: 'error', message: `删除字典失败：${(error as Error).message}` })
   } finally {
-    isLoading.value = false
+    isDeleting.value = false
   }
 }
 
@@ -225,7 +239,7 @@ onMounted(() => {
         <h2 class="text-lg font-semibold text-slate-950">数据字典</h2>
         <p class="mt-1 text-sm text-slate-500">左侧选择字典类型，右侧维护当前类型下的字典内容。</p>
       </div>
-      <Button variant="outline" :disabled="isBusy" @click="loadDictionaryTypes()">
+      <Button variant="outline" :disabled="isBusy" @click="loadDictionaryTypes(true)">
         <RefreshCw class="mr-2 h-4 w-4" :class="{ 'animate-spin': isBusy }" />
         刷新
       </Button>
@@ -318,7 +332,7 @@ onMounted(() => {
                       <Pencil class="mr-1 h-4 w-4" />
                       编辑
                     </Button>
-                    <Button size="icon" variant="ghost" :disabled="isLoading" @click="removeItem(item)">
+                    <Button size="icon" variant="ghost" :disabled="isBusy" @click="removeItem(item)">
                       <Trash2 class="h-4 w-4 text-red-500" />
                     </Button>
                   </div>

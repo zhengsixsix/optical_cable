@@ -4,7 +4,7 @@ import { X } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
 import ParetoChart from '@/modules/planning/components/ParetoChart.vue'
 import { useRouteStore } from '@/stores/route'
-const props = defineProps<{
+defineProps<{
   visible: boolean
 }>()
 
@@ -14,6 +14,10 @@ const emit = defineEmits<{
 }>()
 
 const routeStore = useRouteStore()
+const compactFormatter = new Intl.NumberFormat('zh-CN', {
+  notation: 'compact',
+  maximumFractionDigits: 2,
+})
 
 const close = () => {
   emit('update:visible', false)
@@ -30,9 +34,9 @@ const selectedRouteInfo = computed(() => {
   return {
     id: route.id,
     name: route.name,
-    cost: (route.cost.total / 1000000).toFixed(2),
-    risk: (route.risk.overall * 100).toFixed(1),
-    length: route.totalLength?.toFixed(1) || '-'
+    cost: Number.isFinite(route.cost.total) ? compactFormatter.format(route.cost.total!) : '-',
+    risk: Number.isFinite(route.risk.overall) ? compactFormatter.format(route.risk.overall!) : '-',
+    length: Number.isFinite(route.totalLength) ? `${route.totalLength!.toFixed(1)} km` : '-'
   }
 })
 </script>
@@ -72,16 +76,16 @@ const selectedRouteInfo = computed(() => {
             <div class="text-sm font-medium text-blue-800 mb-2">当前选中: {{ selectedRouteInfo.name }}</div>
             <div class="grid grid-cols-3 gap-4 text-sm">
               <div>
-                <div class="text-gray-500">总成本</div>
-                <div class="font-semibold text-gray-800">${{ selectedRouteInfo.cost }}M</div>
+                <div class="text-gray-500">算法总成本</div>
+                <div class="font-semibold text-gray-800">{{ selectedRouteInfo.cost }}</div>
               </div>
               <div>
-                <div class="text-gray-500">风险指数</div>
-                <div class="font-semibold text-gray-800">{{ selectedRouteInfo.risk }}%</div>
+                <div class="text-gray-500">算法总风险</div>
+                <div class="font-semibold text-gray-800">{{ selectedRouteInfo.risk }}</div>
               </div>
               <div>
                 <div class="text-gray-500">路径长度</div>
-                <div class="font-semibold text-gray-800">{{ selectedRouteInfo.length }} km</div>
+                <div class="font-semibold text-gray-800">{{ selectedRouteInfo.length }}</div>
               </div>
             </div>
           </div>

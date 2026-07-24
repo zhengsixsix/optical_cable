@@ -8,8 +8,8 @@ if (!source.includes("const DICTIONARY_TYPE_SOURCE = 'DIC_TYPE'")) {
   failures.push('AdminDictionaryView must use DIC_TYPE as the dictionary type source.')
 }
 
-if (!source.includes('platformDictionaryApi.listItemByType(DICTIONARY_TYPE_SOURCE)')) {
-  failures.push('AdminDictionaryView must load left-side dictionary types via listItemByType(DIC_TYPE).')
+if (!source.includes('dictionaryStore.loadDictionary(DICTIONARY_TYPE_SOURCE')) {
+  failures.push('AdminDictionaryView must load left-side dictionary types through the unified dictionary store.')
 }
 
 if (/const\s+typeOptions\s*=\s*\[[\s\S]*?PLAN_TYPE[\s\S]*?\]/.test(source)) {

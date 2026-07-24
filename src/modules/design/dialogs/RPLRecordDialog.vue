@@ -2,10 +2,11 @@
 import { ref, computed, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useRPLStore } from '@/stores/rpl'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { X, Save, MapPin } from 'lucide-vue-next'
-import type { RPLRecord, RPLPointType, RPLCableCode } from '@/types'
-import { pointTypeOptions, cableTypeOptionsSimple as cableTypeOptions } from '@/data/mockData'
+import type { RPLPointType, RPLCableCode } from '@/types'
+import { pointTypeOptions } from '@/config/uiOptions'
 
 const props = defineProps<{
   visible: boolean
@@ -19,24 +20,43 @@ const emit = defineEmits<{
 
 const rplStore = useRPLStore()
 const appStore = useAppStore()
+const dictionaryStore = useDictionaryStore()
+const cableTypeOptions = computed(() => dictionaryStore.getOptions(PLATFORM_DICTIONARY_TYPES.armoringType))
 
 const isEdit = computed(() => !!props.recordId)
 const dialogTitle = computed(() => isEdit.value ? '编辑RPL记录' : '添加RPL记录')
 
-const form = ref({
+interface RPLRecordForm {
+  longitude: number
+  latitude: number
+  depth: number
+  pointType: RPLPointType | ''
+  cableType: RPLCableCode | ''
+  segmentLength: number
+  slack: number
+  burialDepth: number
+  remarks: string
+}
+
+const form = ref<RPLRecordForm>({
   longitude: 0,
   latitude: 0,
   depth: 0,
-  pointType: 'waypoint' as RPLPointType,
-  cableType: 'LW' as RPLCableCode,
+  pointType: '',
+  cableType: '',
   segmentLength: 0,
   slack: 2.5,
   burialDepth: 0,
   remarks: '',
 })
 
-watch(() => props.visible, (val) => {
+watch(() => props.visible, async (val) => {
   if (val) {
+    try {
+      await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.armoringType)
+    } catch (error) {
+      appStore.showNotification({ type: 'error', message: `铠装类型字典加载失败：${(error as Error).message}` })
+    }
     if (props.recordId) {
       const record = rplStore.currentTable?.records.find(r => r.id === props.recordId)
       if (record) {
@@ -63,8 +83,8 @@ function resetForm() {
     longitude: 0,
     latitude: 0,
     depth: 0,
-    pointType: 'waypoint',
-    cableType: 'LW',
+    pointType: '',
+    cableType: '',
     segmentLength: 0,
     slack: 2.5,
     burialDepth: 0,
@@ -73,15 +93,16 @@ function resetForm() {
 }
 
 function handleSave() {
-  if (!validateForm()) return
+  const validatedTypes = validateForm()
+  if (!validatedTypes) return
 
   if (isEdit.value && props.recordId) {
     rplStore.updateRecord(props.recordId, {
       longitude: form.value.longitude,
       latitude: form.value.latitude,
       depth: form.value.depth,
-      pointType: form.value.pointType,
-      cableType: form.value.cableType,
+      pointType: validatedTypes.pointType,
+      cableType: validatedTypes.cableType,
       segmentLength: form.value.segmentLength,
       slack: form.value.slack,
       burialDepth: form.value.burialDepth,
@@ -94,8 +115,8 @@ function handleSave() {
       longitude: form.value.longitude,
       latitude: form.value.latitude,
       depth: form.value.depth,
-      pointType: form.value.pointType,
-      cableType: form.value.cableType,
+      pointType: validatedTypes.pointType,
+      cableType: validatedTypes.cableType,
       segmentLength: form.value.segmentLength,
       cumulativeLength: 0,
       slack: form.value.slack,
@@ -109,24 +130,39 @@ function handleSave() {
   emit('close')
 }
 
-function validateForm(): boolean {
+function validateForm(): { pointType: RPLPointType; cableType: RPLCableCode } | null {
+  if (!form.value.pointType) {
+    appStore.showNotification({ type: 'error', message: '当前没有可用的点类型，无法保存' })
+    return null
+  }
+  if (!form.value.cableType) {
+    appStore.showNotification({ type: 'error', message: '当前没有可用的电缆类型，无法保存' })
+    return null
+  }
+  if (!dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.armoringType, form.value.cableType)) {
+    appStore.showNotification({ type: 'error', message: `ARMORING_TYPE 字典中不存在铠装类型 ${form.value.cableType}` })
+    return null
+  }
   if (form.value.longitude < -180 || form.value.longitude > 180) {
     appStore.showNotification({ type: 'error', message: '经度必须在 -180 到 180 之间' })
-    return false
+    return null
   }
   if (form.value.latitude < -90 || form.value.latitude > 90) {
     appStore.showNotification({ type: 'error', message: '纬度必须在 -90 到 90 之间' })
-    return false
+    return null
   }
   if (form.value.depth < 0) {
     appStore.showNotification({ type: 'error', message: '水深不能为负数' })
-    return false
+    return null
   }
   if (form.value.segmentLength < 0) {
     appStore.showNotification({ type: 'error', message: '分段长度不能为负数' })
-    return false
+    return null
   }
-  return true
+  return {
+    pointType: form.value.pointType,
+    cableType: form.value.cableType,
+  }
 }
 
 function handleClose() {

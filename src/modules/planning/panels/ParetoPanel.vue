@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouteStore } from '@/stores/route'
 import { cn } from '@/shared/utils'
@@ -20,6 +20,9 @@ const { paretoRoutes } = storeToRefs(routeStore)
 
 // 当前选中的路径ID
 const selectedRouteId = computed(() => routeStore.selectedRoute?.id)
+const hasParetoMetrics = computed(() => paretoRoutes.value.some(route =>
+  Number.isFinite(route.cost.total) && Number.isFinite(route.risk.overall)
+))
 
 // 选择路径（单选）
 const handleSelectRoute = (routeId: string) => {
@@ -32,15 +35,13 @@ const handleViewParetoChart = () => {
   emit('view-pareto-chart')
 }
 
-// 格式化成本显示 (万元)
-const formatCost = (cost: number) => {
-  return (cost / 10000).toFixed(0)
-}
+const compactFormatter = new Intl.NumberFormat('zh-CN', {
+  notation: 'compact',
+  maximumFractionDigits: 2,
+})
 
-// 格式化风险显示
-const formatRisk = (risk: number) => {
-  return (risk * 10).toFixed(1)
-}
+const formatMetric = (value: number | undefined) =>
+  Number.isFinite(value) ? compactFormatter.format(value!) : '-'
 </script>
 
 <template>
@@ -82,15 +83,18 @@ const formatRisk = (risk: number) => {
             @click.stop
             @change="handleSelectRoute(route.id)"
           />
-          <span class="text-sm text-gray-700">
-            路径{{ index + 1 }}(成本{{ formatCost(route.cost.total) }}，风险{{ formatRisk(route.risk.overall) }})
+          <span class="min-w-0 text-gray-700">
+            <span class="block truncate text-sm">路径{{ index + 1 }}</span>
+            <span class="block truncate text-[11px] text-gray-500">
+              成本 {{ formatMetric(route.cost.total) }} · 风险 {{ formatMetric(route.risk.overall) }}
+            </span>
           </span>
         </div>
       </template>
     </div>
 
     <!-- 底部按钮 -->
-    <div v-if="paretoRoutes.length > 0" class="px-3 py-2 border-t bg-gray-50">
+    <div v-if="hasParetoMetrics" class="px-3 py-2 border-t bg-gray-50">
       <button
         class="w-full px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded transition-colors"
         @click="handleViewParetoChart"

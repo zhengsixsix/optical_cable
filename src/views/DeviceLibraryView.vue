@@ -7,12 +7,14 @@ import IconUploadField from '@/components/settings/IconUploadField.vue'
 import { Card, CardContent, CardHeader, Button, Input, Select } from '@/shared/components/base'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
-import { platformDeviceConfigApi, platformDictionaryApi, platformProjectApi } from '@/services/platform/api'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
+import { platformDeviceConfigApi, platformProjectApi } from '@/services/platform/api'
 import {
   buildDeviceValueList,
   deviceValueListToMap,
 } from '@/services/platform/deviceAttributes'
 import { bindFuncDraftsToList, bindFuncListToDrafts, type BindFuncDraft } from '@/services/platform/bindFuncForm'
+import { getDeviceLibraryCategory } from '@/services/platform/deviceTypeAdapter'
 import type {
   Id,
   PlanDeviceConfig,
@@ -36,14 +38,14 @@ import {
   X,
 } from 'lucide-vue-next'
 
-const DEVICE_TYPE_DICTIONARY_TYPE = 'DEVICE_TYPE'
 const COMMON_PROJECT_OPTION_VALUE = '__COMMON_DEVICE_LIBRARY__'
 
 const settingsStore = useSettingsStore()
 const appStore = useAppStore()
+const dictionaryStore = useDictionaryStore()
 
-const deviceTypes = ref<PlatformDictionary[]>([])
-const deviceTypesLoading = ref(false)
+const deviceTypes = computed(() => dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.deviceType))
+const deviceTypesLoading = computed(() => dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.deviceType))
 const projectOptions = ref<PlanProject[]>([])
 const projectOptionsLoading = ref(false)
 const activeDeviceTypeCd = ref('')
@@ -199,6 +201,9 @@ const defaultConfigValues = computed<Record<string, string>>(() => {
 })
 
 let bindFuncDraftSequence = 0
+let deviceDataRequestSequence = 0
+let selectedConfigRequestSequence = 0
+const deviceTypeConfigRequestSequences = new Map<string, number>()
 const nextBindFuncDraftId = (prefix: 'func' | 'param') => `${prefix}-${Date.now()}-${++bindFuncDraftSequence}`
 
 const libraryPageTotal = computed(() => Math.max(1, Math.ceil(libraryTotal.value / libraryPageSize.value)))
@@ -208,9 +213,11 @@ const libraryPageStart = computed(() =>
 const libraryPageEnd = computed(() => Math.min(libraryPageNumber.value * libraryPageSize.value, libraryTotal.value))
 
 const filteredLibraries = computed(() =>
-  settingsStore.platformDeviceLibraries.filter(library =>
-    !library.deviceTypeCd || String(library.deviceTypeCd) === activeDeviceTypeCd.value,
-  ),
+  settingsStore.platformDeviceLibraries.filter(library => {
+    if (library.deviceTypeCd) return String(library.deviceTypeCd) === activeDeviceTypeCd.value
+    const category = getDeviceLibraryCategory(activeDeviceTypeCd.value)
+    return Boolean(category && library.dialogWindowId === category)
+  }),
 )
 
 const selectedLibrary = computed(() =>
@@ -240,6 +247,8 @@ const setDeviceTypeConfigCache = (deviceTypeCd: string, configs: PlanDeviceConfi
 
 const loadDeviceTypeConfigs = async (deviceTypeCd: string) => {
   if (!deviceTypeCd) return []
+  const requestSequence = (deviceTypeConfigRequestSequences.get(deviceTypeCd) ?? 0) + 1
+  deviceTypeConfigRequestSequences.set(deviceTypeCd, requestSequence)
   deviceTypeConfigLoadingMap.value = {
     ...deviceTypeConfigLoadingMap.value,
     [deviceTypeCd]: true,
@@ -251,15 +260,21 @@ const loadDeviceTypeConfigs = async (deviceTypeCd: string) => {
       deviceTypeCd,
     })
     const configs = response.data ?? []
-    setDeviceTypeConfigCache(deviceTypeCd, configs)
+    if (deviceTypeConfigRequestSequences.get(deviceTypeCd) === requestSequence) {
+      setDeviceTypeConfigCache(deviceTypeCd, configs)
+    }
     return configs
   } catch (error) {
-    appStore.showNotification({ type: 'error', message: `属性配置加载失败：${(error as Error).message}` })
+    if (deviceTypeConfigRequestSequences.get(deviceTypeCd) === requestSequence) {
+      appStore.showNotification({ type: 'error', message: `属性配置加载失败：${(error as Error).message}` })
+    }
     throw error
   } finally {
-    deviceTypeConfigLoadingMap.value = {
-      ...deviceTypeConfigLoadingMap.value,
-      [deviceTypeCd]: false,
+    if (deviceTypeConfigRequestSequences.get(deviceTypeCd) === requestSequence) {
+      deviceTypeConfigLoadingMap.value = {
+        ...deviceTypeConfigLoadingMap.value,
+        [deviceTypeCd]: false,
+      }
     }
   }
 }
@@ -306,12 +321,6 @@ const toggleDeviceTypeAttrs = async (deviceType: PlatformDictionary) => {
   }
 }
 
-const statistics = computed(() => ({
-  deviceTypeCount: deviceTypes.value.length,
-  libraryCount: libraryTotal.value,
-  configCount: activeDeviceConfigs.value.length,
-}))
-
 const configPreview = (library: PlanDeviceLibrary | null = selectedLibrary.value) => {
   const valueMap = deviceValueListToMap(library?.deviceValueList)
   return activeDeviceConfigs.value
@@ -330,10 +339,10 @@ const configPreview = (library: PlanDeviceLibrary | null = selectedLibrary.value
 }
 
 const ensureSelectedLibrary = () => {
-  if (selectedLibraryId.value && settingsStore.platformDeviceLibraries.some(item => sameId(item.id, selectedLibraryId.value))) {
+  if (selectedLibraryId.value && filteredLibraries.value.some(item => sameId(item.id, selectedLibraryId.value))) {
     return
   }
-  selectedLibraryId.value = settingsStore.platformDeviceLibraries[0]?.id ?? ''
+  selectedLibraryId.value = filteredLibraries.value[0]?.id ?? ''
 }
 
 const buildLibrarySearch = (deviceTypeCd: string): PlanDeviceLibrarySearch => {
@@ -347,23 +356,22 @@ const buildLibrarySearch = (deviceTypeCd: string): PlanDeviceLibrarySearch => {
   return payload
 }
 
-const loadDeviceTypes = async () => {
-  deviceTypesLoading.value = true
+const loadDeviceTypes = async (force = false) => {
   try {
-    deviceTypes.value = (await platformDictionaryApi.listItem(DEVICE_TYPE_DICTIONARY_TYPE)) ?? []
-    activeDeviceTypeCd.value = deviceTypes.value[0]?.code ? String(deviceTypes.value[0].code) : ''
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType, force)
+    const currentExists = deviceTypes.value.some(item => item.code === activeDeviceTypeCd.value)
+    if (!currentExists) {
+      activeDeviceTypeCd.value = deviceTypes.value[0]?.code ? String(deviceTypes.value[0].code) : ''
+    }
     if (!activeDeviceTypeCd.value) {
       selectedLibraryId.value = ''
       libraryTotal.value = 0
     }
   } catch (error) {
-    deviceTypes.value = []
     activeDeviceTypeCd.value = ''
     selectedLibraryId.value = ''
     libraryTotal.value = 0
     appStore.showNotification({ type: 'error', message: `设备类型字典加载失败：${(error as Error).message}` })
-  } finally {
-    deviceTypesLoading.value = false
   }
 }
 
@@ -389,13 +397,18 @@ const ensureProjectOptions = async () => {
 }
 
 const loadDeviceData = async (deviceTypeCd: string) => {
+  const requestSequence = ++deviceDataRequestSequence
   if (!deviceTypeCd) {
+    selectedConfigRequestSequence += 1
+    settingsStore.clearPlatformDeviceConfigs()
     libraryTotal.value = 0
     return
   }
   try {
-    settingsStore.platformDeviceConfigs = []
+    selectedConfigRequestSequence += 1
+    settingsStore.clearPlatformDeviceConfigs()
     const response = await settingsStore.loadPlatformDeviceLibraries(buildLibrarySearch(deviceTypeCd))
+    if (requestSequence !== deviceDataRequestSequence || deviceTypeCd !== activeDeviceTypeCd.value) return
     const page = response.page
     libraryTotal.value = Number(page?.dataTotal ?? response.data?.length ?? 0)
     if (page?.pageNumber) libraryPageNumber.value = Number(page.pageNumber)
@@ -411,28 +424,42 @@ const loadDeviceData = async (deviceTypeCd: string) => {
     ensureSelectedLibrary()
     await loadSelectedLibraryConfigs()
   } catch (error) {
-    appStore.showNotification({ type: 'error', message: `器件数据加载失败：${(error as Error).message}` })
+    if (requestSequence === deviceDataRequestSequence && deviceTypeCd === activeDeviceTypeCd.value) {
+      appStore.showNotification({ type: 'error', message: `器件数据加载失败：${(error as Error).message}` })
+    }
   }
 }
 
 const loadSelectedLibraryConfigs = async () => {
+  const requestSequence = ++selectedConfigRequestSequence
   const deviceTypeCd = selectedLibraryDeviceTypeCd.value || activeDeviceTypeCd.value
   if (!deviceTypeCd) {
-    settingsStore.platformDeviceConfigs = []
+    settingsStore.clearPlatformDeviceConfigs()
     return
   }
-  const response = await settingsStore.loadPlatformDeviceConfigs({
-    deviceTypeCd,
-  })
-  setDeviceTypeConfigCache(deviceTypeCd, response.data ?? [])
+  try {
+    const response = await settingsStore.loadPlatformDeviceConfigs({
+      deviceTypeCd,
+    })
+    if (
+      requestSequence === selectedConfigRequestSequence &&
+      deviceTypeCd === (selectedLibraryDeviceTypeCd.value || activeDeviceTypeCd.value)
+    ) {
+      setDeviceTypeConfigCache(deviceTypeCd, response.data ?? [])
+    }
+  } catch (error) {
+    if (
+      requestSequence === selectedConfigRequestSequence &&
+      deviceTypeCd === (selectedLibraryDeviceTypeCd.value || activeDeviceTypeCd.value)
+    ) {
+      appStore.showNotification({ type: 'error', message: `器件配置加载失败：${(error as Error).message}` })
+    }
+  }
 }
 
 const refreshCurrent = async () => {
-  if (!activeDeviceTypeCd.value) {
-    await loadDeviceTypes()
-    return
-  }
-  await loadDeviceData(activeDeviceTypeCd.value)
+  await loadDeviceTypes(true)
+  if (activeDeviceTypeCd.value) await loadDeviceData(activeDeviceTypeCd.value)
 }
 
 const changeLibraryPage = async (page: number) => {
@@ -540,6 +567,10 @@ const saveLibrary = async () => {
     appStore.showNotification({ type: 'warning', message: '请选择设备类型' })
     return
   }
+  if (!dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, libraryForm.deviceTypeCd)) {
+    appStore.showNotification({ type: 'warning', message: `DEVICE_TYPE 字典中不存在器件类型 ${libraryForm.deviceTypeCd}` })
+    return
+  }
   if (!libraryForm.name.trim()) {
     appStore.showNotification({ type: 'warning', message: '请输入器件库名称' })
     return
@@ -559,6 +590,9 @@ const saveLibrary = async () => {
 const ensureLibraryBizId = async (): Promise<Id | null> => {
   if (!libraryForm.deviceTypeCd) {
     throw new Error('请选择设备类型')
+  }
+  if (!dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, libraryForm.deviceTypeCd)) {
+    throw new Error(`DEVICE_TYPE 字典中不存在器件类型 ${libraryForm.deviceTypeCd}`)
   }
   if (!libraryForm.name.trim()) {
     throw new Error('请先填写器件型号名称')
@@ -658,13 +692,13 @@ const deleteDeviceType = async (deviceType: PlatformDictionary) => {
   if (!window.confirm(`确认删除设备类型「${deviceType.name || deviceType.code || deviceType.id}」？`)) return
 
   try {
-    await platformDictionaryApi.remove({
+    await dictionaryStore.removeDictionary({
       id: deviceType.id,
-      type: DEVICE_TYPE_DICTIONARY_TYPE,
+      type: PLATFORM_DICTIONARY_TYPES.deviceType,
     })
     if (deviceType.code && expandedDeviceTypeCd.value === String(deviceType.code)) expandedDeviceTypeCd.value = ''
     if (deviceType.code && configDialogDeviceTypeCd.value === String(deviceType.code)) configDialogDeviceTypeCd.value = ''
-    await loadDeviceTypes()
+    await loadDeviceTypes(true)
     appStore.showNotification({ type: 'success', message: '设备类型已删除' })
   } catch (error) {
     appStore.showNotification({ type: 'error', message: `设备类型删除失败：${(error as Error).message}` })
@@ -689,9 +723,9 @@ const saveDeviceType = async () => {
   }
 
   try {
-    await platformDictionaryApi.save({
+    await dictionaryStore.saveDictionary({
       id: deviceTypeForm.id || null,
-      type: DEVICE_TYPE_DICTIONARY_TYPE,
+      type: PLATFORM_DICTIONARY_TYPES.deviceType,
       code,
       name,
       detail: deviceTypeForm.detail || null,
@@ -699,7 +733,7 @@ const saveDeviceType = async () => {
       isValidCd: '1',
     })
     showDeviceTypeDialog.value = false
-    await loadDeviceTypes()
+    await loadDeviceTypes(true)
     activeDeviceTypeCd.value = code
     appStore.showNotification({ type: 'success', message: deviceTypeForm.id ? '设备类型已更新' : '设备类型已保存' })
   } catch (error) {
@@ -735,21 +769,6 @@ const resetConfigForm = () => {
     jsonField: '',
     description: '',
   })
-}
-
-const openConfigManager = async () => {
-  if (!activeDeviceTypeCd.value) {
-    appStore.showNotification({ type: 'warning', message: '请先选择设备类型' })
-    return
-  }
-  configDialogDeviceTypeCd.value = activeDeviceTypeCd.value
-  try {
-    await loadDeviceTypeConfigs(configDialogDeviceTypeCd.value)
-  } catch {
-    return
-  }
-  resetConfigForm()
-  showConfigDialog.value = true
 }
 
 const openConfigManagerForType = async (deviceType: PlatformDictionary) => {

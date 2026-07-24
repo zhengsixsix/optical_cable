@@ -2,42 +2,16 @@
  * RPL 导出服务
  * 完全按照示例文件格式：35列(A~AI)，行1元数据，行2-5四级表头，行6常数，行7起每点2行
  *
- * 位置行 (奇数行): A=序号 B=事件 C=纬度度 D=纬度分 E=N/S F=经度度 G=经度分 H=E/W
- *                  I=十进制纬度 J=弧度纬度 K=sin纬度 L=子午线部分 M=距赤道nm N=经度十进制分
- *                  W=累计路由距离km  Z=累计电缆距离km  AB=按类型累计  AD=水深  AF=备注
- * 计算行 (偶数行): O=纬差(度) P=MP差 Q=E距差 R=经差(分) S=航向(弧度) T=距离(nm,6087ft)
- *                  U=方位角°T  V=距离km  X=余缆率%  Y=含余缆距离km  AA=电缆类型  AE=埋设目标
+ * 除经纬度显示格式外，所有导航、距离、余缆和累计字段均直接序列化 RPL 记录。
+ * 缺少后端或导入文件明确字段时，对应单元格保持为空。
  */
-import type { RPLRecord, RPLTable } from '@/types'
-import ExcelJS from 'exceljs'
+import type { RPLTable } from '@/types'
+import type * as ExcelJS from 'exceljs'
 
 // ── WGS84 椭球常数 ──────────────────────────────────────────
 const WGS84_A  = 6378137               // 半长轴 m
 const WGS84_E2 = 0.00669437999013      // 离心率²
-const WGS84_E  = Math.sqrt(WGS84_E2)
 const AH6_CONST = 3437.76019803833     // 半长轴海里数 (1nm = 6087 ft)
-const NM_METERS = 6087 * 0.3048       // 1海里(6087ft) = 1855.3576 m
-const NM_KM     = NM_METERS / 1000    // km/nm
-
-// Helmert 子午弧级数系数 (预计算，避免重复计算)
-const _b  = WGS84_A * Math.sqrt(1 - WGS84_E2)
-const _n  = (WGS84_A - _b) / (WGS84_A + _b)
-const _n2 = _n * _n
-const _n3 = _n * _n2
-const _n4 = _n2 * _n2
-const _HC0 = WGS84_A / (1 + _n) * (1 + _n2 / 4 + _n4 / 64)
-const _HC2 = WGS84_A / (1 + _n) * (3 * _n / 2 - 27 * _n3 / 32)
-const _HC4 = WGS84_A / (1 + _n) * (15 * _n2 / 16 - 55 * _n4 / 32)
-const _HC6 = WGS84_A / (1 + _n) * (35 * _n3 / 48)
-
-// 事件名称映射
-const EVENT_MAP: Record<string, string> = {
-  landing:   'BMH',
-  repeater:  'Repeater',
-  branching: 'Branching Unit',
-  joint:     'Joint',
-  waypoint:  'AC',
-}
 
 // ── 样式常量与辅助函数 ─────────────────────────────────────────
 
@@ -205,69 +179,34 @@ function _applyRPLStyles(ws: ExcelJS.Worksheet, numPositions: number): void {
   }
 }
 
-// ── 地测计算 ─────────────────────────────────────────────────
-
-/** L 列：子午线部分 (Meridional Parts = 等角纬度 × AH6) */
-function calcMeridionalParts(phiRad: number): number {
-  const sp = Math.sin(phiRad)
-  const psi =
-    Math.log(Math.tan(Math.PI / 4 + phiRad / 2)) -
-    (WGS84_E / 2) * Math.log((1 + WGS84_E * sp) / (1 - WGS84_E * sp))
-  return psi * AH6_CONST
+interface CoordinateParts {
+  degrees: number
+  minutes: number
+  direction: string
 }
 
-/** M 列：距赤道海里数 (Helmert 子午弧 / NM_METERS, 1nm=6087ft) */
-function calcDistFromEquator(phiRad: number): number {
-  const arc =
-    _HC0 * phiRad -
-    _HC2 * Math.sin(2 * phiRad) +
-    _HC4 * Math.sin(4 * phiRad) -
-    _HC6 * Math.sin(6 * phiRad)
-  return arc / NM_METERS
+function formatCoordinateParts(value: number, positive: string, negative: string): CoordinateParts {
+  const absolute = Math.abs(value)
+  const degrees = Math.floor(absolute)
+  return {
+    degrees,
+    minutes: (absolute - degrees) * 60,
+    direction: value >= 0 ? positive : negative,
+  }
 }
 
-/** 逐点预计算的地测数据结构 */
-interface GeoRow {
-  record:  RPLRecord
-  latDeg:  number   // C: 纬度度
-  latMin:  number   // D: 纬度分
-  latDir:  string   // E: N/S
-  lonDeg:  number   // F: 经度度
-  lonMin:  number   // G: 经度分
-  lonDir:  string   // H: E/W
-  I:       number   // I: 十进制纬度(度)
-  J:       number   // J: 弧度纬度
-  K:       number   // K: sin纬度
-  L:       number   // L: 子午线部分
-  M:       number   // M: 距赤道(nm)
-  N:       number   // N: 经度十进制分
-}
-
-function buildGeoRow(record: RPLRecord): GeoRow {
-  const latAbs = Math.abs(record.latitude)
-  const latDeg = Math.floor(latAbs)
-  const latMin = (latAbs - latDeg) * 60
-  const latDir = record.latitude >= 0 ? 'N' : 'S'
-
-  const lonAbs = Math.abs(record.longitude)
-  const lonDeg = Math.floor(lonAbs)
-  const lonMin = (lonAbs - lonDeg) * 60
-  const lonDir = record.longitude >= 0 ? 'E' : 'W'
-
-  const I = latDeg + latMin / 60      // 十进制度
-  const J = I * Math.PI / 180         // 弧度
-  const K = Math.sin(J)               // sin
-  const L = calcMeridionalParts(J)    // 子午线部分
-  const M = calcDistFromEquator(J)    // 距赤道nm
-  const N = lonDeg * 60 + lonMin      // 经度十进制分
-
-  return { record, latDeg, latMin, latDir, lonDeg, lonMin, lonDir, I, J, K, L, M, N }
+function writeOptionalNumber(cell: ExcelJS.Cell, value: number | undefined): void {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    cell.value = value
+  }
 }
 
 // ── 导出主函数 ────────────────────────────────────────────────
 
 export async function exportToExcel(table: RPLTable): Promise<Blob> {
-  const wb = new ExcelJS.Workbook()
+  const excelJsModule = await import('exceljs')
+  const ExcelJSConstructor = excelJsModule.default ?? excelJsModule
+  const wb = new ExcelJSConstructor.Workbook()
   const ws = wb.addWorksheet('RPL')
 
   // ─── 行 1: 元数据 ────────────────────────────────────────
@@ -327,120 +266,65 @@ export async function exportToExcel(table: RPLTable): Promise<Blob> {
   // ─── 行 5: 四级表头 ───────────────────────────────────────
   ws.getCell('AE5').value = '(m)'
 
-  // ─── 行 6: 椭球常数与默认值 ──────────────────────────────
-  ws.getCell('Y6').value  = 0.02           // 默认初始余缆(km)
-  ws.getCell('AA6').value = 'SA'           // 默认电缆类型
+  // ─── 行 6: 模板椭球常数 ──────────────────────────────────
   ws.getCell('AG6').value = WGS84_A        // 半长轴 m
   ws.getCell('AH6').value = AH6_CONST      // 半长轴 nm (6087ft)
   ws.getCell('AI6').value = WGS84_E2       // 离心率²
 
   // ─── 数据行 (第7行起，每点2行) ────────────────────────────
-  // 预计算所有点的地测数据
-  const geoRows: GeoRow[] = table.records?.map(buildGeoRow) ?? []
+  const records = table.records ?? []
 
-  // 累计值初始化
-  let cumDist  = 0     // W列: 路由累计距离 km
-  let cumCable = 0.02  // Z列: 电缆累计距离 km (初始0.02来自Y6)
-  const cumByType = new Map<string, number>()
-  // 第一个点的电缆类型初始累计=0.02
-  if (geoRows[0]) {
-    cumByType.set(geoRows[0].record.cableType, 0.02)
-  }
-
-  for (let i = 0; i < geoRows.length; i++) {
-    const curr = geoRows[i]
-    const r    = curr.record
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i]
     const posRow  = 7 + i * 2   // 位置行 (奇数)
     const calcRow = posRow + 1  // 计算行 (偶数)
-
-    // 确保当前电缆类型已在 map 中
-    if (!cumByType.has(r.cableType)) {
-      cumByType.set(r.cableType, 0)
-    }
+    const latitude = formatCoordinateParts(r.latitude, 'N', 'S')
+    const longitude = formatCoordinateParts(r.longitude, 'E', 'W')
 
     // ── 位置行 ──────────────────────────────────────────────
     ws.getCell(posRow, 1).value  = r.sequence                                          // A: Pos No.
-    ws.getCell(posRow, 2).value  = r.event ?? EVENT_MAP[r.pointType] ?? r.pointType   // B: Event
-    ws.getCell(posRow, 3).value  = curr.latDeg                                         // C: 纬度度
-    ws.getCell(posRow, 4).value  = curr.latMin                                         // D: 纬度分
-    ws.getCell(posRow, 5).value  = curr.latDir                                         // E: N/S
-    ws.getCell(posRow, 6).value  = curr.lonDeg                                         // F: 经度度
-    ws.getCell(posRow, 7).value  = curr.lonMin                                         // G: 经度分
-    ws.getCell(posRow, 8).value  = curr.lonDir                                         // H: E/W
-    ws.getCell(posRow, 9).value  = curr.I                                              // I: 十进制纬度
-    ws.getCell(posRow, 10).value = curr.J                                              // J: 弧度纬度
-    ws.getCell(posRow, 11).value = curr.K                                              // K: sin纬度
-    ws.getCell(posRow, 12).value = curr.L                                              // L: 子午线部分
-    ws.getCell(posRow, 13).value = curr.M                                              // M: 距赤道nm
-    ws.getCell(posRow, 14).value = curr.N                                              // N: 经度十进制分
-    ws.getCell(posRow, 23).value = cumDist                                             // W: 累计路由距离
-    ws.getCell(posRow, 26).value = cumCable                                            // Z: 累计电缆距离
-    ws.getCell(posRow, 28).value = cumByType.get(r.cableType) ?? 0                    // AB: 按类型累计
-    ws.getCell(posRow, 30).value = r.depth                                             // AD: 水深(m)
-    if (r.remarks) {
-      ws.getCell(posRow, 32).value = r.remarks                                         // AF: 备注
+    if (r.event) ws.getCell(posRow, 2).value = r.event                               // B: Event
+    ws.getCell(posRow, 3).value  = latitude.degrees                                    // C: 纬度度
+    ws.getCell(posRow, 4).value  = latitude.minutes                                    // D: 纬度分
+    ws.getCell(posRow, 5).value  = latitude.direction                                  // E: N/S
+    ws.getCell(posRow, 6).value  = longitude.degrees                                   // F: 经度度
+    ws.getCell(posRow, 7).value  = longitude.minutes                                   // G: 经度分
+    ws.getCell(posRow, 8).value  = longitude.direction                                 // H: E/W
+    writeOptionalNumber(ws.getCell(posRow, 9), r.decimalLatitudeDegrees)             // I: 十进制纬度
+    writeOptionalNumber(ws.getCell(posRow, 10), r.radiansLatitude)                     // J: 弧度纬度
+    writeOptionalNumber(ws.getCell(posRow, 11), r.sinLatitude)                         // K: sin纬度
+    writeOptionalNumber(ws.getCell(posRow, 12), r.meridionalParts)                     // L: 子午线部分
+    writeOptionalNumber(ws.getCell(posRow, 13), r.distanceFromEquator)                 // M: 距赤道nm
+    writeOptionalNumber(ws.getCell(posRow, 14), r.decimalLongitudeMinutes)             // N: 经度十进制分
+    writeOptionalNumber(ws.getCell(posRow, 23), r.routeDistanceCumulative)
+    writeOptionalNumber(ws.getCell(posRow, 26), r.cableDistanceCumulative)
+    writeOptionalNumber(ws.getCell(posRow, 28), r.cumulativeByType)
+    writeOptionalNumber(ws.getCell(posRow, 29), r.cableTotalsByType)
+    writeOptionalNumber(ws.getCell(posRow, 30), r.approxDepth)
+    if (r.additionalFeatures) {
+      ws.getCell(posRow, 32).value = r.additionalFeatures                             // AF: 备注
     }
 
-    // ── 计算行 (仅非末点) ────────────────────────────────────
-    if (i < geoRows.length - 1) {
-      const next = geoRows[i + 1]
-      const nr   = next.record
-
-      // O~R: 差值
-      const dLat = next.I - curr.I   // O: 纬差(度)
-      const dMP  = next.L - curr.L   // P: MP差
-      const dED  = next.M - curr.M   // Q: 距赤道差(nm)
-      const dLon = next.N - curr.N   // R: 经差(分)
-
-      // S: 航向(弧度) = atan(|经差| / |MP差|)，始终为第一象限角
-      const S = Math.atan(Math.abs(dLon) / Math.abs(dMP))
-
-      // U: 方位角°T (按象限转换)
-      const S_deg = S * 180 / Math.PI
-      let U: number
-      if      (dLat >= 0 && dLon >= 0) U = S_deg          // NE
-      else if (dLat >= 0 && dLon <  0) U = 360 - S_deg    // NW
-      else if (dLat <  0 && dLon >= 0) U = 180 - S_deg    // SE
-      else                              U = 180 + S_deg    // SW
-
-      // T: 航程(nm, 6087ft) = |距赤道差(nm)| / cos(航向)
-      const T = Math.abs(dED) / Math.cos(S)
-
-      // V: 距离(km) = T × NM_KM
-      const V = T * NM_KM
-
-      // X: 余缆率%(取自下一点)，Y: 含余缆电缆距离
-      const slack = nr.slack ?? 0.5
-      const Y     = V * (1 + slack / 100)
-
-      // 更新累计值 (供下一个位置行使用)
-      cumDist  += V
-      cumCable += Y
-      if (!cumByType.has(nr.cableType)) {
-        cumByType.set(nr.cableType, 0)
-      }
-      cumByType.set(nr.cableType, cumByType.get(nr.cableType)! + Y)
-
-      // 写入计算数据到 calcRow
-      ws.getCell(calcRow, 15).value = dLat           // O: 纬差(度)
-      ws.getCell(calcRow, 16).value = dMP            // P: MP差
-      ws.getCell(calcRow, 17).value = dED            // Q: 距赤道差
-      ws.getCell(calcRow, 18).value = dLon           // R: 经差(分)
-      ws.getCell(calcRow, 19).value = S              // S: 航向(弧度)
-      ws.getCell(calcRow, 20).value = T              // T: 距离(nm)
-      ws.getCell(calcRow, 21).value = U              // U: 方位角°T
-      ws.getCell(calcRow, 22).value = V              // V: 距离(km)
-      ws.getCell(calcRow, 24).value = slack          // X: 余缆率%
-      ws.getCell(calcRow, 25).value = Y              // Y: 含余缆距离(km)
-      ws.getCell(calcRow, 27).value = nr.cableType   // AA: 电缆类型
-      if (nr.burialDepth) {
-        ws.getCell(calcRow, 31).value = nr.burialDepth  // AE: 埋设目标(m)
-      }
+    // ── 区间行：仅写下一条记录明确携带的区间字段 ──────────────
+    if (i < records.length - 1) {
+      const next = records[i + 1]
+      writeOptionalNumber(ws.getCell(calcRow, 15), next.diffLatitude)
+      writeOptionalNumber(ws.getCell(calcRow, 16), next.diffMPs)
+      writeOptionalNumber(ws.getCell(calcRow, 17), next.diffEDist)
+      writeOptionalNumber(ws.getCell(calcRow, 18), next.diffLongitude)
+      writeOptionalNumber(ws.getCell(calcRow, 19), next.courseRadians)
+      writeOptionalNumber(ws.getCell(calcRow, 20), next.distanceNmiles)
+      writeOptionalNumber(ws.getCell(calcRow, 21), next.bearingT)
+      writeOptionalNumber(ws.getCell(calcRow, 22), next.routeDistanceBetween)
+      writeOptionalNumber(ws.getCell(calcRow, 24), next.slackPercent)
+      writeOptionalNumber(ws.getCell(calcRow, 25), next.cableDistanceBetween)
+      if (next.cableType) ws.getCell(calcRow, 27).value = next.cableType
+      writeOptionalNumber(ws.getCell(calcRow, 31), next.targetBurialDepth)
     }
   }
 
   // ─── 应用样式 ─────────────────────────────────────────────
-  _applyRPLStyles(ws, geoRows.length)
+  _applyRPLStyles(ws, records.length)
 
   const buffer = await wb.xlsx.writeBuffer()
   return new Blob([buffer], {
@@ -449,7 +333,7 @@ export async function exportToExcel(table: RPLTable): Promise<Blob> {
 }
 
 // 下载文件
-export function downloadBlob(blob: Blob, filename: string): void {
+function downloadBlob(blob: Blob, filename: string): void {
   const url  = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href     = url
@@ -473,65 +357,4 @@ export async function exportRPLFile(
 
 export function useRPLExport() {
   return { exportRPLFile, exportToExcel, downloadBlob }
-}
-
-// ── 公开工具函数 (供测试及外部调用) ──────────────────────────
-
-/** 十进制度 → "度° 分' 方向" 字符串 */
-export function decimalToDMS(decimal: number, isLat: boolean): string {
-  const abs = Math.abs(decimal)
-  const deg = Math.floor(abs)
-  const min = (abs - deg) * 60
-  const dir = isLat
-    ? (decimal >= 0 ? 'N' : 'S')
-    : (decimal >= 0 ? 'E' : 'W')
-  return `${deg}\u00b0 ${min.toFixed(3)}' ${dir}`
-}
-
-/** 子午线部分 (接受十进制度，内部转弧度) */
-export function calculateMeridionalParts(latDeg: number): number {
-  return calcMeridionalParts(latDeg * Math.PI / 180)
-}
-
-/** Haversine 球面距离 km (Earth radius ≈ 6371 km) */
-export function calculateDistanceKm(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number
-): number {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
-
-/** Haversine 球面距离 nm (1 nm = 1.852 km) */
-export function calculateDistanceNauticalMiles(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number
-): number {
-  return calculateDistanceKm(lat1, lon1, lat2, lon2) / 1.852
-}
-
-/**
- * 航向弧度 (atan2 标准约定，范围 -π ~ +π)
- * 可直接传给 calculateBearingTrue 转为 0~360°
- */
-export function calculateCourseRadians(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number
-): number {
-  const phi1 = lat1 * Math.PI / 180
-  const phi2 = lat2 * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const y = Math.sin(dLon) * Math.cos(phi2)
-  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon)
-  return Math.atan2(y, x)
-}
-
-/** 将 calculateCourseRadians 的结果转换为罗盘方位角 0~360° */
-export function calculateBearingTrue(courseRad: number): number {
-  return (courseRad * 180 / Math.PI + 360) % 360
 }

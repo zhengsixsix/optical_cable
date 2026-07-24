@@ -17,7 +17,7 @@ const normalizeName = (value: unknown): string =>
 
 const GENERIC_STATION_NAME_PATTERN = /^(?:算法)?(?:起点|终点)(?:站|登陆站)?$/
 
-export const isGenericRouteStationName = (value: unknown): boolean => {
+const isGenericRouteStationName = (value: unknown): boolean => {
   const name = normalizeName(value)
   return !name || GENERIC_STATION_NAME_PATTERN.test(name)
 }

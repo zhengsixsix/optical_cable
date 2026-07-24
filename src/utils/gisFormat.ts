@@ -217,7 +217,7 @@ const unknownFormat: GisFormatInfo = {
   supported: false,
 }
 
-export function extractGisFileName(...candidates: Array<string | null | undefined>): string {
+function extractGisFileName(...candidates: Array<string | null | undefined>): string {
   for (const candidate of candidates) {
     const value = candidate?.trim()
     if (!value) continue
@@ -241,7 +241,7 @@ export function getPlanLayerFileName(layer: PlanLayer | null | undefined): strin
   return extractGisFileName(layer.attachmentName, layer.filename, layer.remarks, layer.name)
 }
 
-export function getFileExtension(fileName: string | null | undefined): string {
+function getFileExtension(fileName: string | null | undefined): string {
   const cleanName = fileName?.split(/[?#]/)[0]?.trim() ?? ''
   const lastSegment = cleanName.split(/[\\/]/).pop() ?? ''
   const dotIndex = lastSegment.lastIndexOf('.')

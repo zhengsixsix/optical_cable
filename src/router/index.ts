@@ -2,6 +2,16 @@ import { useAppStore } from '@/stores/app'
 import { useRouteStore } from '@/stores/route'
 import { createRouter, createWebHashHistory, type RouteRecordRaw} from 'vue-router'
 import { useUserStore } from '@/stores/user'
+
+declare module 'vue-router' {
+    interface RouteMeta {
+        title?: string
+        requiresAuth?: boolean
+        requiresAdmin?: boolean
+        requiresRoute?: boolean
+    }
+}
+
 const routes: RouteRecordRaw[] = [
     {
         path: '/',
@@ -23,13 +33,7 @@ const routes: RouteRecordRaw[] = [
         path: '/monitoring',
         name: 'monitoring',
         component: () => import('@/views/MonitoringView.vue'),
-        meta: {title: '设备健康度管理', requiresAuth: true, requiresUSE: true},
-    },
-    {
-        path: '/monitor-center',
-        name: 'monitor-center',
-        component: () => import('@/modules/monitoring/dialogs/MonitoringCenterDialog.vue'),
-        meta: {title: '监控中心', requiresAuth: true},
+        meta: {title: '设备监控', requiresAuth: true, requiresRoute: true},
     },
     {
         path: '/settings',
@@ -101,7 +105,7 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to, _from, next) => {
     const title = to.meta.title as string
     if (title) {
         document.title = `${title} - 海底光缆智能规划软件`
@@ -130,7 +134,7 @@ router.beforeEach(async (to, from, next) => {
     }
 
 // 监控页面需要路由数据
-    if (to.name === 'monitoring') {
+    if (to.meta.requiresRoute) {
         const routeStore = useRouteStore()
         appStore.setProjectPhase('monitoring')
 

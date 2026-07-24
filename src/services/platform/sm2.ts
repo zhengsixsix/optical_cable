@@ -1,9 +1,9 @@
 import { sm2 } from 'sm-crypto'
 
-export const PLATFORM_SM2_PUBLIC_KEY =
+const PLATFORM_SM2_PUBLIC_KEY =
   '3059301306072a8648ce3d020106082a811ccf5501822d034200044cc7b802610aebc13332fa6b22868ae6d50c758402a00512dea0c79ecd9d8dca6cee42925ab9b3bd81a2e8658460938c0104562271579fd461cfb72b3398ca27'
 
-export function normalizeSm2PublicKey(publicKey = PLATFORM_SM2_PUBLIC_KEY): string {
+function normalizeSm2PublicKey(publicKey = PLATFORM_SM2_PUBLIC_KEY): string {
   const hex = publicKey.replace(/\s+/g, '').toLowerCase()
   if (/^04[0-9a-f]{128}$/.test(hex)) return hex
 

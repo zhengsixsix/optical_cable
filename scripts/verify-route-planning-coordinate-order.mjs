@@ -4,10 +4,8 @@ import vm from 'node:vm'
 import ts from 'typescript'
 
 const root = process.cwd()
-const defaultResponsePath = 'C:\\Users\\Administrator\\.codex\\attachments\\716b98bf-7a83-4803-868a-1e66aeca4c63\\pasted-text.txt'
-const responsePath = process.argv[2] || defaultResponsePath
 
-function loadTsModule(relativePath, modules = {}) {
+function loadTsModule(relativePath) {
   const filename = path.join(root, relativePath)
   const source = fs.readFileSync(filename, 'utf8')
   const output = ts.transpileModule(source, {
@@ -17,77 +15,54 @@ function loadTsModule(relativePath, modules = {}) {
       esModuleInterop: true,
     },
   }).outputText
-
   const module = { exports: {} }
-  const require = specifier => {
-    if (modules[specifier]) return modules[specifier]
-    throw new Error(`Unexpected runtime import ${specifier} in ${relativePath}`)
-  }
-  vm.runInNewContext(output, { module, exports: module.exports, require, console }, { filename })
+  vm.runInNewContext(output, { module, exports: module.exports, console }, { filename })
   return module.exports
 }
 
-function assertClose(actual, expected, label, tolerance = 1e-6) {
-  if (Math.abs(actual - expected) > tolerance) {
-    throw new Error(`${label}: expected ${expected}, got ${actual}`)
-  }
+const { convertPathResultToRoute } = loadTsModule('src/services/RouteDataConverter.ts')
+const route = convertPathResultToRoute({
+  trace: [[1, 8, 9], [2, 9, 10]],
+  real_trace: [
+    [1, 117.60520148672566, 36.66518811320755],
+    [117.7, 36.7],
+    [3, 117.8, 36.8],
+  ],
+}, 0, 'coordinate contract')
+
+if (!route) throw new Error('expected a route from valid real_trace coordinates')
+const expected = [
+  [117.60520148672566, 36.66518811320755],
+  [117.7, 36.7],
+  [117.8, 36.8],
+]
+if (JSON.stringify(route.rawTrunkCoordinates) !== JSON.stringify(expected)) {
+  throw new Error(`backend coordinate contract was not preserved: ${JSON.stringify(route.rawTrunkCoordinates)}`)
+}
+if (route.rawTrunkCoordinates.some(([longitude, latitude]) => (
+  longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90
+))) {
+  throw new Error('invalid longitude/latitude escaped contract validation')
+}
+if (Object.hasOwn(route, 'rawMatrixTraceCoordinates')) {
+  throw new Error('trace matrix coordinates must not be stored on the route')
 }
 
-function assertValidLonLat(coord, label) {
-  const [lon, lat] = coord
-  if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
-    throw new Error(`${label}: invalid longitude ${lon}`)
-  }
-  if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
-    throw new Error(`${label}: invalid latitude ${lat}`)
-  }
+const latitudeLongitudeRoute = convertPathResultToRoute({
+  real_trace: [
+    [1, 39.286033277777776, 121.52434945140389],
+    [2, 39.28185506597222, 121.52017730453564],
+  ],
+}, 1, 'backend latitude-longitude response')
+if (!latitudeLongitudeRoute) throw new Error('expected the current backend latitude-longitude route to be visible')
+if (JSON.stringify(latitudeLongitudeRoute.rawTrunkCoordinates) !== JSON.stringify([
+  [121.52434945140389, 39.286033277777776],
+  [121.52017730453564, 39.28185506597222],
+])) {
+  throw new Error(`latitude-longitude response was not normalized: ${JSON.stringify(latitudeLongitudeRoute.rawTrunkCoordinates)}`)
+}
+if (latitudeLongitudeRoute.algorithmSummary?.coordinateOrder !== 'latitude-longitude') {
+  throw new Error('detected coordinate order should remain visible in route analysis metadata')
 }
 
-const routeDataConverter = loadTsModule('src/services/RouteDataConverter.ts')
-const routePlanningResultService = loadTsModule('src/services/RoutePlanningResultService.ts', {
-  jszip: { default: {} },
-})
-const routePlanningApiService = loadTsModule('src/services/RoutePlanningApiService.ts', {
-  '@/services/platform/api': {
-    platformProjectApi: {
-      routePlan: async () => {
-        throw new Error('routePlan should not be called by this verification')
-      },
-    },
-  },
-  '@/services/RouteDataConverter': routeDataConverter,
-  '@/services/RoutePlanningResultService': routePlanningResultService,
-})
-
-const response = JSON.parse(fs.readFileSync(responsePath, 'utf8'))
-const result = routePlanningApiService.convertBackendRoutePlanningData(response.data, 'backend-coordinate-order-verification')
-const route = result.routes[0]
-
-if (!route) throw new Error('expected at least one visible route')
-if (route.rawTrunkCoordinates.length < 2) throw new Error('expected raw trunk coordinates')
-
-const firstCoord = route.rawTrunkCoordinates[0]
-assertClose(firstCoord[0], 117.60520148672566, 'first longitude')
-assertClose(firstCoord[1], 36.66518811320755, 'first latitude')
-
-const segmentRoute = routeDataConverter.convertSegmentResultToRoute(
-  response.data['segment_result_base_FixSpacing.json'],
-  0,
-  'coordinate order segment route',
-  response.data['FMM_path_result.json'][0],
-)
-const firstSegmentPoint = segmentRoute.points[0]?.coordinates
-if (!firstSegmentPoint) throw new Error('expected converted segment route points')
-assertClose(firstSegmentPoint[0], 117.60520148672566, 'first segment point longitude')
-assertClose(firstSegmentPoint[1], 36.66518811320755, 'first segment point latitude')
-
-result.routes.forEach((item, routeIndex) => {
-  item.rawTrunkCoordinates.forEach((coord, coordIndex) => {
-    assertValidLonLat(coord, `route ${routeIndex} rawTrunkCoordinates[${coordIndex}]`)
-  })
-  item.points.forEach((point, pointIndex) => {
-    assertValidLonLat(point.coordinates, `route ${routeIndex} points[${pointIndex}]`)
-  })
-})
-
-console.log('route planning coordinate order verification passed')
+console.log('route planning coordinate contract verification passed')

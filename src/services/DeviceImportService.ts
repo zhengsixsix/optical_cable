@@ -1,10 +1,14 @@
 /**
  * 器件导入解析服务
- * 支持 Excel/JSON/CSV 格式导入器件参数
+ * 支持 JSON/CSV 格式导入器件参数
  */
 
 import type { FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types/settings'
-import { deviceLibraryItemToPlatform } from '@/services/platform/deviceLibraryMapping'
+import {
+  deviceLibraryItemToPlatform,
+  type DeviceTypeCodeMap,
+  type LocalDeviceLibraryType,
+} from '@/services/platform/deviceLibraryMapping'
 
 // 导入结果
 export interface ImportResult {
@@ -20,7 +24,7 @@ export interface ImportResult {
 }
 
 // 导入错误
-export interface ImportError {
+interface ImportError {
   row?: number
   field?: string
   message: string
@@ -28,7 +32,7 @@ export interface ImportError {
 }
 
 // 导入摘要
-export interface ImportSummary {
+interface ImportSummary {
   totalRows: number
   successCount: number
   errorCount: number
@@ -40,12 +44,12 @@ export interface ImportSummary {
 }
 
 // 支持的文件类型
-export type ImportFileType = 'json' | 'csv' | 'xlsx'
+type ImportFileType = 'json' | 'csv'
 
 /**
  * 器件导入服务
  */
-export class DeviceImportService {
+class DeviceImportService {
   /**
    * 检测文件类型
    */
@@ -53,7 +57,6 @@ export class DeviceImportService {
     const ext = filename.split('.').pop()?.toLowerCase()
     if (ext === 'json') return 'json'
     if (ext === 'csv') return 'csv'
-    if (ext === 'xlsx' || ext === 'xls') return 'xlsx'
     return null
   }
 
@@ -68,7 +71,7 @@ export class DeviceImportService {
         success: false,
         fiberTypes: [], amplifierTypes: [], branchingUnitTypes: [],
         equalizerTypes: [], jointBoxTypes: [],
-        errors: [{ message: '不支持的文件格式，请使用 JSON、CSV 或 Excel 文件', type: 'error' }],
+        errors: [{ message: '不支持的文件格式，请使用 JSON 或 CSV 文件', type: 'error' }],
         warnings: [],
         summary: { totalRows: 0, successCount: 0, errorCount: 1, fiberCount: 0, amplifierCount: 0, branchingUnitCount: 0, equalizerCount: 0, jointCount: 0 }
       }
@@ -82,8 +85,6 @@ export class DeviceImportService {
           return this.parseJSON(text)
         case 'csv':
           return this.parseCSV(text)
-        case 'xlsx':
-          return this.parseExcel(file)
         default:
           throw new Error('未知文件类型')
       }
@@ -270,23 +271,6 @@ export class DeviceImportService {
   }
 
   /**
-   * 解析 Excel 格式
-   */
-  private async parseExcel(_file: File): Promise<ImportResult> {
-    return {
-      success: false,
-      fiberTypes: [], amplifierTypes: [], branchingUnitTypes: [],
-      equalizerTypes: [], jointBoxTypes: [],
-      errors: [{ 
-        message: 'Excel 导入请使用 JSON 或 CSV 格式', 
-        type: 'error' 
-      }],
-      warnings: [],
-      summary: { totalRows: 0, successCount: 0, errorCount: 1, fiberCount: 0, amplifierCount: 0, branchingUnitCount: 0, equalizerCount: 0, jointCount: 0 }
-    }
-  }
-
-  /**
    * 解析 CSV 行
    */
   private parseCSVLine(line: string): string[] {
@@ -320,16 +304,35 @@ export class DeviceImportService {
       return null
     }
 
+    const errorCount = errors.length
+    const nonlinearCoeff = this.parseRequiredNumber(data['nonlinearCoeff'], row, 'nonlinearCoeff', '非线性系数', errors)
+    const effectiveArea = this.parseRequiredNumber(data['effectiveArea'], row, 'effectiveArea', '有效面积', errors)
+    const dispersion = this.parseRequiredNumber(data['dispersion'], row, 'dispersion', '色散', errors)
+    const nonlinearRefractiveIndex = this.parseRequiredNumber(
+      data['nonlinearRefractiveIndex'], row, 'nonlinearRefractiveIndex', '非线性折射率', errors,
+    )
+    const attenuationCoeff = this.parseRequiredNumber(data['attenuationCoeff'], row, 'attenuationCoeff', '衰减系数', errors)
+    const secondOrderDispersion = this.parseRequiredNumber(
+      data['secondOrderDispersion'], row, 'secondOrderDispersion', '二阶色散', errors,
+    )
+    const dispersionSlope = this.parseOptionalNumber(data['dispersionSlope'], row, 'dispersionSlope', '色散斜率', errors)
+    const simulationModel = this.parseOptionalEnum(
+      data['simulationModel'], ['GN', 'EGN'] as const, row, 'simulationModel', '仿真模型', errors,
+    )
+    if (errors.length !== errorCount) return null
+
     return {
       id: String(data['id'] || `fiber-${Date.now()}-${row}`),
       name: String(data['name'] || data['id']),
-      nonlinearCoeff: this.parseNumber(data['nonlinearCoeff'], 1.4),
-      effectiveArea: this.parseNumber(data['effectiveArea'], 80),
-      dispersion: this.parseNumber(data['dispersion'], 17),
-      nonlinearRefractiveIndex: this.parseNumber(data['nonlinearRefractiveIndex'], 2.6),
-      attenuationCoeff: this.parseNumber(data['attenuationCoeff'], 0.2),
-      secondOrderDispersion: this.parseNumber(data['secondOrderDispersion'], -21),
-      simulationModel: (data['simulationModel'] as 'GN' | 'EGN') || 'GN'
+      fiberCategory: String(data['fiberCategory'] ?? '').trim() || undefined,
+      nonlinearCoeff: nonlinearCoeff!,
+      effectiveArea: effectiveArea!,
+      dispersion: dispersion!,
+      dispersionSlope,
+      nonlinearRefractiveIndex: nonlinearRefractiveIndex!,
+      attenuationCoeff: attenuationCoeff!,
+      secondOrderDispersion: secondOrderDispersion!,
+      simulationModel,
     }
   }
 
@@ -342,16 +345,38 @@ export class DeviceImportService {
       return null
     }
 
+    const errorCount = errors.length
+    const gain = this.parseRequiredNumber(data['gain'], row, 'gain', '增益', errors)
+    const bandwidth = this.parseRequiredNumber(data['bandwidth'], row, 'bandwidth', '带宽', errors)
+    const gainFlatness = this.parseRequiredNumber(data['gainFlatness'], row, 'gainFlatness', '增益平坦度', errors)
+    const noiseFigure = this.parseRequiredNumber(data['noiseFigure'], row, 'noiseFigure', '噪声系数', errors)
+    const pumpPower = this.parseRequiredNumber(data['pumpPower'], row, 'pumpPower', '泵浦功率', errors)
+    const outputPower = this.parseRequiredNumber(data['outputPower'], row, 'outputPower', '输出功率', errors)
+    const gainRangePower = this.parseRequiredNumber(data['gainRangePower'], row, 'gainRangePower', '增益范围功率', errors)
+    const saturationPower = this.parseOptionalNumber(data['saturationPower'], row, 'saturationPower', '饱和功率', errors)
+    const unitPrice = this.parseOptionalNumber(data['unitPrice'], row, 'unitPrice', '单价', errors)
+    const operatingMode = this.parseOptionalEnum(
+      data['operatingMode'], ['fixed_gain', 'fixed_output', 'apc'] as const, row, 'operatingMode', '工作模式', errors,
+    )
+    const currency = this.parseOptionalEnum(
+      data['currency'], ['USD', 'CNY', 'EUR'] as const, row, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
+
     return {
       id: String(data['id'] || `amp-${Date.now()}-${row}`),
       name: String(data['name'] || data['id']),
-      gain: this.parseNumber(data['gain'], 20),
-      bandwidth: this.parseNumber(data['bandwidth'], 1550),
-      gainFlatness: this.parseNumber(data['gainFlatness'], 0.5),
-      noiseFigure: this.parseNumber(data['noiseFigure'], 5),
-      pumpPower: this.parseNumber(data['pumpPower'], 100),
-      outputPower: this.parseNumber(data['outputPower'], 17),
-      gainRangePower: this.parseNumber(data['gainRangePower'], 0.1)
+      gain: gain!,
+      bandwidth: bandwidth!,
+      gainFlatness: gainFlatness!,
+      noiseFigure: noiseFigure!,
+      pumpPower: pumpPower!,
+      outputPower: outputPower!,
+      saturationPower,
+      gainRangePower: gainRangePower!,
+      operatingMode,
+      unitPrice,
+      currency,
     }
   }
 
@@ -363,14 +388,35 @@ export class DeviceImportService {
       errors.push({ row, message: '分支器类型缺少名称或ID', type: 'error' })
       return null
     }
+    const errorCount = errors.length
+    const portCount = this.parseRequiredNumber(data['portCount'], row, 'portCount', '端口数', errors)
+    const trunkInsertionLoss = this.parseRequiredNumber(
+      data['trunkInsertionLoss'], row, 'trunkInsertionLoss', '主干插损', errors,
+    )
+    const branchInsertionLoss = this.parseRequiredNumber(
+      data['branchInsertionLoss'], row, 'branchInsertionLoss', '分支插损', errors,
+    )
+    const insertionLoss = this.parseRequiredNumber(data['insertionLoss'], row, 'insertionLoss', '插损', errors)
+    const wavelengthRange = this.parseRequiredNumber(data['wavelengthRange'], row, 'wavelengthRange', '工作波长范围', errors)
+    const subType = this.parseOptionalEnum(
+      data['subType'], ['BU', 'ROADM', 'OADM'] as const, row, 'subType', '子类型', errors,
+    )
+    const unitPrice = this.parseOptionalNumber(data['unitPrice'], row, 'unitPrice', '单价', errors)
+    const currency = this.parseOptionalEnum(
+      data['currency'], ['USD', 'CNY', 'EUR'] as const, row, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
     return {
       id: String(data['id'] || `bu-${Date.now()}-${row}`),
       name: String(data['name'] || data['id']),
-      portCount: this.parseNumber(data['portCount'], 3),
-      trunkInsertionLoss: this.parseNumber(data['trunkInsertionLoss'], 0.5),
-      branchInsertionLoss: this.parseNumber(data['branchInsertionLoss'], 3.0),
-      insertionLoss: this.parseNumber(data['insertionLoss'], 0.5),
-      wavelengthRange: this.parseNumber(data['wavelengthRange'], 1550)
+      subType,
+      portCount: portCount!,
+      trunkInsertionLoss: trunkInsertionLoss!,
+      branchInsertionLoss: branchInsertionLoss!,
+      insertionLoss: insertionLoss!,
+      wavelengthRange: wavelengthRange!,
+      unitPrice,
+      currency,
     }
   }
 
@@ -382,13 +428,25 @@ export class DeviceImportService {
       errors.push({ row, message: '均衡器类型缺少名称', type: 'error' })
       return null
     }
+    const errorCount = errors.length
+    const attenuationMode = this.parseRequiredEnum(
+      data['attenuationMode'], ['adjustable', 'fixed'] as const, row, 'attenuationMode', '光衰模式', errors,
+    )
+    const defaultAttenuationDb = this.parseRequiredNumber(
+      data['defaultAttenuationDb'], row, 'defaultAttenuationDb', '默认光衰', errors,
+    )
+    const unitPrice = this.parseOptionalNumber(data['unitPrice'], row, 'unitPrice', '单价', errors)
+    const currency = this.parseOptionalEnum(
+      data['currency'], ['USD', 'CNY', 'EUR'] as const, row, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
     return {
       id: String(data['id'] || `eq-${Date.now()}-${row}`),
       name: String(data['name']),
-      attenuationMode: (data['attenuationMode'] as 'adjustable' | 'fixed') || 'adjustable',
-      defaultAttenuationDb: this.parseNumber(data['defaultAttenuationDb'], 0),
-      unitPrice: data['unitPrice'] !== undefined ? this.parseNumber(data['unitPrice'], 0) : undefined,
-      currency: (data['currency'] as 'USD' | 'CNY' | 'EUR') || 'USD',
+      attenuationMode: attenuationMode!,
+      defaultAttenuationDb: defaultAttenuationDb!,
+      unitPrice,
+      currency,
       remarks: String(data['remarks'] || '')
     }
   }
@@ -401,13 +459,25 @@ export class DeviceImportService {
       errors.push({ row, message: '接头盒类型缺少名称', type: 'error' })
       return null
     }
+    const errorCount = errors.length
+    const insertionLoss = this.parseRequiredNumber(data['insertionLoss'], row, 'insertionLoss', '插损', errors)
+    const maxFiberPairs = this.parseOptionalNumber(data['maxFiberPairs'], row, 'maxFiberPairs', '最大光纤对数', errors)
+    const unitPrice = this.parseOptionalNumber(data['unitPrice'], row, 'unitPrice', '单价', errors)
+    const subType = this.parseOptionalEnum(
+      data['subType'], ['BJB', 'SEJB', 'BUJB', 'SJB', 'FJB', 'LIJB'] as const, row, 'subType', '子类型', errors,
+    )
+    const currency = this.parseOptionalEnum(
+      data['currency'], ['USD', 'CNY', 'EUR'] as const, row, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
     return {
       id: String(data['id'] || `jb-${Date.now()}-${row}`),
       name: String(data['name']),
-      insertionLoss: this.parseNumber(data['insertionLoss'], 0),
-      maxFiberPairs: data['maxFiberPairs'] !== undefined ? this.parseNumber(data['maxFiberPairs'], 0) : undefined,
-      unitPrice: data['unitPrice'] !== undefined ? this.parseNumber(data['unitPrice'], 0) : undefined,
-      currency: (data['currency'] as 'USD' | 'CNY' | 'EUR') || 'USD',
+      subType,
+      insertionLoss: insertionLoss!,
+      maxFiberPairs,
+      unitPrice,
+      currency,
       remarks: String(data['remarks'] || '')
     }
   }
@@ -422,16 +492,48 @@ export class DeviceImportService {
       return null
     }
 
+    const errorCount = errors.length
+    const nonlinearCoeff = this.parseRequiredNumber(
+      this.rowValue(row, 'nonlinearCoeff', '非线性系数'), rowNum, 'nonlinearCoeff', '非线性系数', errors,
+    )
+    const effectiveArea = this.parseRequiredNumber(
+      this.rowValue(row, 'effectiveArea', '有效面积'), rowNum, 'effectiveArea', '有效面积', errors,
+    )
+    const dispersion = this.parseRequiredNumber(
+      this.rowValue(row, 'dispersion', '色散'), rowNum, 'dispersion', '色散', errors,
+    )
+    const nonlinearRefractiveIndex = this.parseRequiredNumber(
+      this.rowValue(row, 'nonlinearRefractiveIndex', '非线性折射率'),
+      rowNum, 'nonlinearRefractiveIndex', '非线性折射率', errors,
+    )
+    const attenuationCoeff = this.parseRequiredNumber(
+      this.rowValue(row, 'attenuationCoeff', '衰减系数'), rowNum, 'attenuationCoeff', '衰减系数', errors,
+    )
+    const secondOrderDispersion = this.parseRequiredNumber(
+      this.rowValue(row, 'secondOrderDispersion', '二阶色散'),
+      rowNum, 'secondOrderDispersion', '二阶色散', errors,
+    )
+    const dispersionSlope = this.parseOptionalNumber(
+      this.rowValue(row, 'dispersionSlope', '色散斜率'), rowNum, 'dispersionSlope', '色散斜率', errors,
+    )
+    const simulationModel = this.parseOptionalEnum(
+      this.rowValue(row, 'simulationModel', '仿真模型'),
+      ['GN', 'EGN'] as const, rowNum, 'simulationModel', '仿真模型', errors,
+    )
+    if (errors.length !== errorCount) return null
+
     return {
       id: row['id'] || `fiber-${Date.now()}-${rowNum}`,
       name,
-      nonlinearCoeff: this.parseNumber(row['nonlinearCoeff'] || row['非线性系数'], 1.4),
-      effectiveArea: this.parseNumber(row['effectiveArea'] || row['有效面积'], 80),
-      dispersion: this.parseNumber(row['dispersion'] || row['色散'], 17),
-      nonlinearRefractiveIndex: this.parseNumber(row['nonlinearRefractiveIndex'] || row['非线性折射率'], 2.6),
-      attenuationCoeff: this.parseNumber(row['attenuationCoeff'] || row['衰减系数'], 0.2),
-      secondOrderDispersion: this.parseNumber(row['secondOrderDispersion'] || row['二阶色散'], -21),
-      simulationModel: (row['simulationModel'] || row['仿真模型'] || 'GN') as 'GN' | 'EGN'
+      fiberCategory: this.rowValue(row, 'fiberCategory', '光纤类型'),
+      nonlinearCoeff: nonlinearCoeff!,
+      effectiveArea: effectiveArea!,
+      dispersion: dispersion!,
+      dispersionSlope,
+      nonlinearRefractiveIndex: nonlinearRefractiveIndex!,
+      attenuationCoeff: attenuationCoeff!,
+      secondOrderDispersion: secondOrderDispersion!,
+      simulationModel,
     }
   }
 
@@ -445,16 +547,53 @@ export class DeviceImportService {
       return null
     }
 
+    const errorCount = errors.length
+    const gain = this.parseRequiredNumber(this.rowValue(row, 'gain', '增益'), rowNum, 'gain', '增益', errors)
+    const bandwidth = this.parseRequiredNumber(this.rowValue(row, 'bandwidth', '带宽'), rowNum, 'bandwidth', '带宽', errors)
+    const gainFlatness = this.parseRequiredNumber(
+      this.rowValue(row, 'gainFlatness', '增益平坦度'), rowNum, 'gainFlatness', '增益平坦度', errors,
+    )
+    const noiseFigure = this.parseRequiredNumber(
+      this.rowValue(row, 'noiseFigure', '噪声系数'), rowNum, 'noiseFigure', '噪声系数', errors,
+    )
+    const pumpPower = this.parseRequiredNumber(
+      this.rowValue(row, 'pumpPower', '泵浦功率'), rowNum, 'pumpPower', '泵浦功率', errors,
+    )
+    const outputPower = this.parseRequiredNumber(
+      this.rowValue(row, 'outputPower', '输出功率'), rowNum, 'outputPower', '输出功率', errors,
+    )
+    const gainRangePower = this.parseRequiredNumber(
+      this.rowValue(row, 'gainRangePower', '增益范围功率'), rowNum, 'gainRangePower', '增益范围功率', errors,
+    )
+    const saturationPower = this.parseOptionalNumber(
+      this.rowValue(row, 'saturationPower', '饱和功率'), rowNum, 'saturationPower', '饱和功率', errors,
+    )
+    const unitPrice = this.parseOptionalNumber(
+      this.rowValue(row, 'unitPrice', '单价'), rowNum, 'unitPrice', '单价', errors,
+    )
+    const operatingMode = this.parseOptionalEnum(
+      this.rowValue(row, 'operatingMode', '工作模式'),
+      ['fixed_gain', 'fixed_output', 'apc'] as const, rowNum, 'operatingMode', '工作模式', errors,
+    )
+    const currency = this.parseOptionalEnum(
+      this.rowValue(row, 'currency', '币种'), ['USD', 'CNY', 'EUR'] as const, rowNum, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
+
     return {
       id: row['id'] || `amp-${Date.now()}-${rowNum}`,
       name,
-      gain: this.parseNumber(row['gain'] || row['增益'], 20),
-      bandwidth: this.parseNumber(row['bandwidth'] || row['带宽'], 1550),
-      gainFlatness: this.parseNumber(row['gainFlatness'] || row['增益平坦度'], 0.5),
-      noiseFigure: this.parseNumber(row['noiseFigure'] || row['噪声系数'], 5),
-      pumpPower: this.parseNumber(row['pumpPower'] || row['泵浦功率'], 100),
-      outputPower: this.parseNumber(row['outputPower'] || row['输出功率'], 17),
-      gainRangePower: this.parseNumber(row['gainRangePower'] || row['增益范围功率'], 0.1)
+      gain: gain!,
+      bandwidth: bandwidth!,
+      gainFlatness: gainFlatness!,
+      noiseFigure: noiseFigure!,
+      pumpPower: pumpPower!,
+      outputPower: outputPower!,
+      saturationPower,
+      gainRangePower: gainRangePower!,
+      operatingMode,
+      unitPrice,
+      currency,
     }
   }
   /**
@@ -466,17 +605,43 @@ export class DeviceImportService {
       errors.push({ row: rowNum, message: '分支器类型缺少名称', type: 'error' })
       return null
     }
-    const rawSubType = row['subType'] || row['子类型'] || ''
-    const validBuSubTypes = ['BU', 'ROADM', 'OADM']
+    const errorCount = errors.length
+    const portCount = this.parseRequiredNumber(
+      this.rowValue(row, 'portCount', '端口数'), rowNum, 'portCount', '端口数', errors,
+    )
+    const trunkInsertionLoss = this.parseRequiredNumber(
+      this.rowValue(row, 'trunkInsertionLoss', '主干插损'), rowNum, 'trunkInsertionLoss', '主干插损', errors,
+    )
+    const branchInsertionLoss = this.parseRequiredNumber(
+      this.rowValue(row, 'branchInsertionLoss', '分支插损'), rowNum, 'branchInsertionLoss', '分支插损', errors,
+    )
+    const insertionLoss = this.parseRequiredNumber(
+      this.rowValue(row, 'insertionLoss', '插损'), rowNum, 'insertionLoss', '插损', errors,
+    )
+    const wavelengthRange = this.parseRequiredNumber(
+      this.rowValue(row, 'wavelengthRange', '波长范围'), rowNum, 'wavelengthRange', '工作波长范围', errors,
+    )
+    const subType = this.parseOptionalEnum(
+      this.rowValue(row, 'subType', '子类型'), ['BU', 'ROADM', 'OADM'] as const, rowNum, 'subType', '子类型', errors,
+    )
+    const unitPrice = this.parseOptionalNumber(
+      this.rowValue(row, 'unitPrice', '单价'), rowNum, 'unitPrice', '单价', errors,
+    )
+    const currency = this.parseOptionalEnum(
+      this.rowValue(row, 'currency', '币种'), ['USD', 'CNY', 'EUR'] as const, rowNum, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
     return {
       id: row['id'] || `bu-${Date.now()}-${rowNum}`,
       name,
-      subType: validBuSubTypes.includes(rawSubType) ? rawSubType as 'BU' | 'ROADM' | 'OADM' : 'BU',
-      portCount: this.parseNumber(row['portCount'] || row['端口数'], 3),
-      trunkInsertionLoss: this.parseNumber(row['trunkInsertionLoss'] || row['主干插损'], 0.5),
-      branchInsertionLoss: this.parseNumber(row['branchInsertionLoss'] || row['分支插损'], 3.0),
-      insertionLoss: this.parseNumber(row['insertionLoss'] || row['插损'], 0.5),
-      wavelengthRange: this.parseNumber(row['wavelengthRange'] || row['波长范围'], 1550)
+      subType,
+      portCount: portCount!,
+      trunkInsertionLoss: trunkInsertionLoss!,
+      branchInsertionLoss: branchInsertionLoss!,
+      insertionLoss: insertionLoss!,
+      wavelengthRange: wavelengthRange!,
+      unitPrice,
+      currency,
     }
   }
 
@@ -489,14 +654,30 @@ export class DeviceImportService {
       errors.push({ row: rowNum, message: '均衡器缺少型号名称', type: 'error' })
       return null
     }
-    const mode = row['attenuationMode'] || row['光衰模式'] || 'adjustable'
+    const errorCount = errors.length
+    const rawMode = this.rowValue(row, 'attenuationMode', '光衰模式')
+    const normalizedMode = rawMode === '固定' ? 'fixed' : rawMode === '可调' ? 'adjustable' : rawMode
+    const attenuationMode = this.parseRequiredEnum(
+      normalizedMode, ['adjustable', 'fixed'] as const, rowNum, 'attenuationMode', '光衰模式', errors,
+    )
+    const defaultAttenuationDb = this.parseRequiredNumber(
+      this.rowValue(row, 'defaultAttenuationDb', '默认光衰值', '默认光衰値'),
+      rowNum, 'defaultAttenuationDb', '默认光衰', errors,
+    )
+    const unitPrice = this.parseOptionalNumber(
+      this.rowValue(row, 'unitPrice', '单价'), rowNum, 'unitPrice', '单价', errors,
+    )
+    const currency = this.parseOptionalEnum(
+      this.rowValue(row, 'currency', '币种'), ['USD', 'CNY', 'EUR'] as const, rowNum, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
     return {
       id: row['id'] || `eq-${Date.now()}-${rowNum}`,
       name,
-      attenuationMode: (mode === 'fixed' || mode === '固定') ? 'fixed' : 'adjustable',
-      defaultAttenuationDb: this.parseNumber(row['defaultAttenuationDb'] || row['默认光衰値'], 0),
-      unitPrice: row['unitPrice'] ? this.parseNumber(row['unitPrice'], 0) : undefined,
-      currency: (row['currency'] || 'USD') as 'USD' | 'CNY' | 'EUR',
+      attenuationMode: attenuationMode!,
+      defaultAttenuationDb: defaultAttenuationDb!,
+      unitPrice,
+      currency,
       remarks: row['remarks'] || row['备注'] || ''
     }
   }
@@ -510,29 +691,110 @@ export class DeviceImportService {
       errors.push({ row: rowNum, message: '接头盒缺少型号名称', type: 'error' })
       return null
     }
-    const rawSubType = row['subType'] || row['子类型'] || ''
-    const validJbSubTypes = ['BJB', 'SEJB', 'BUJB', 'SJB', 'FJB', 'LIJB']
+    const errorCount = errors.length
+    const insertionLoss = this.parseRequiredNumber(
+      this.rowValue(row, 'insertionLoss', '插损'), rowNum, 'insertionLoss', '插损', errors,
+    )
+    const maxFiberPairs = this.parseOptionalNumber(
+      this.rowValue(row, 'maxFiberPairs', '最大光纤对数'), rowNum, 'maxFiberPairs', '最大光纤对数', errors,
+    )
+    const unitPrice = this.parseOptionalNumber(
+      this.rowValue(row, 'unitPrice', '单价'), rowNum, 'unitPrice', '单价', errors,
+    )
+    const subType = this.parseOptionalEnum(
+      this.rowValue(row, 'subType', '子类型'),
+      ['BJB', 'SEJB', 'BUJB', 'SJB', 'FJB', 'LIJB'] as const, rowNum, 'subType', '子类型', errors,
+    )
+    const currency = this.parseOptionalEnum(
+      this.rowValue(row, 'currency', '币种'), ['USD', 'CNY', 'EUR'] as const, rowNum, 'currency', '币种', errors,
+    )
+    if (errors.length !== errorCount) return null
     return {
       id: row['id'] || `jb-${Date.now()}-${rowNum}`,
       name,
-      subType: validJbSubTypes.includes(rawSubType) ? rawSubType as 'BJB' | 'SEJB' | 'BUJB' | 'SJB' | 'FJB' | 'LIJB' : 'SJB',
-      insertionLoss: this.parseNumber(row['insertionLoss'] || row['插损'], 0),
-      maxFiberPairs: row['maxFiberPairs'] ? this.parseNumber(row['maxFiberPairs'], 0) : undefined,
-      unitPrice: row['unitPrice'] ? this.parseNumber(row['unitPrice'], 0) : undefined,
-      currency: (row['currency'] || 'USD') as 'USD' | 'CNY' | 'EUR',
+      subType,
+      insertionLoss: insertionLoss!,
+      maxFiberPairs,
+      unitPrice,
+      currency,
       remarks: row['remarks'] || row['备注'] || ''
     }
   }
 
-  /**
-   * 解析数字，带默认値
-   */
-  private parseNumber(value: unknown, defaultValue: number): number {
-    if (value === undefined || value === null || value === '') {
-      return defaultValue
+  private rowValue(row: Record<string, string>, ...keys: string[]): string | undefined {
+    for (const key of keys) {
+      const value = row[key]?.trim()
+      if (value) return value
     }
-    const num = parseFloat(String(value))
-    return isNaN(num) ? defaultValue : num
+    return undefined
+  }
+
+  private parseRequiredNumber(
+    value: unknown,
+    row: number,
+    field: string,
+    label: string,
+    errors: ImportError[],
+  ): number | null {
+    const rawValue = typeof value === 'string' ? value.trim() : value
+    if (rawValue === undefined || rawValue === null || rawValue === '') {
+      errors.push({ row, field, message: `${label}不能为空`, type: 'error' })
+      return null
+    }
+    const parsed = Number(rawValue)
+    if (!Number.isFinite(parsed)) {
+      errors.push({ row, field, message: `${label}必须是有效数字`, type: 'error' })
+      return null
+    }
+    return parsed
+  }
+
+  private parseOptionalNumber(
+    value: unknown,
+    row: number,
+    field: string,
+    label: string,
+    errors: ImportError[],
+  ): number | undefined {
+    const rawValue = typeof value === 'string' ? value.trim() : value
+    if (rawValue === undefined || rawValue === null || rawValue === '') return undefined
+    const parsed = Number(rawValue)
+    if (!Number.isFinite(parsed)) {
+      errors.push({ row, field, message: `${label}必须是有效数字`, type: 'error' })
+      return undefined
+    }
+    return parsed
+  }
+
+  private parseRequiredEnum<T extends string>(
+    value: unknown,
+    allowed: readonly T[],
+    row: number,
+    field: string,
+    label: string,
+    errors: ImportError[],
+  ): T | null {
+    const rawValue = String(value ?? '').trim()
+    const parsed = allowed.find(item => item.toLowerCase() === rawValue.toLowerCase())
+    if (parsed) return parsed
+    errors.push({ row, field, message: `${label}必须是 ${allowed.join('/')} 之一`, type: 'error' })
+    return null
+  }
+
+  private parseOptionalEnum<T extends string>(
+    value: unknown,
+    allowed: readonly T[],
+    row: number,
+    field: string,
+    label: string,
+    errors: ImportError[],
+  ): T | undefined {
+    const rawValue = String(value ?? '').trim()
+    if (!rawValue) return undefined
+    const parsed = allowed.find(item => item.toLowerCase() === rawValue.toLowerCase())
+    if (parsed) return parsed
+    errors.push({ row, field, message: `${label}必须是 ${allowed.join('/')} 之一`, type: 'error' })
+    return undefined
   }
 
   /**
@@ -586,8 +848,8 @@ export class DeviceImportService {
       'EDFA-C 标准型,18,35,0.5,5.5,200,17,20,15,fixed_gain,25000,USD',
       '',
       '[BranchingUnitTypes]',
-      'name,portCount,trunkInsertionLoss,branchInsertionLoss,wavelengthRange,unitPrice,currency',
-      'BU-3P 标准型,3,0.8,3.5,1550,15000,USD',
+      'name,subType,portCount,trunkInsertionLoss,branchInsertionLoss,insertionLoss,wavelengthRange,unitPrice,currency',
+      'BU-3P 标准型,BU,3,0.8,3.5,0.8,1550,15000,USD',
       '',
       '[EqualizerTypes]',
       'name,attenuationMode,defaultAttenuationDb,unitPrice,currency,remarks',
@@ -607,13 +869,28 @@ export class DeviceImportService {
  * @returns 各类型导入数量的摘要
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function applyImportResultToStore(result: ImportResult, settingsStore: any): Promise<string> {
+export async function applyImportResultToStore(
+  result: ImportResult,
+  settingsStore: any,
+  deviceTypeCodes: DeviceTypeCodeMap,
+): Promise<string> {
+  const requiredTypes: LocalDeviceLibraryType[] = []
+  if (result.fiberTypes.length) requiredTypes.push('fiber')
+  if (result.amplifierTypes.length) requiredTypes.push('amplifier')
+  if (result.branchingUnitTypes.length) requiredTypes.push('branching')
+  if (result.equalizerTypes.length) requiredTypes.push('equalizer')
+  if (result.jointBoxTypes.length) requiredTypes.push('joint')
+  const missingTypes = requiredTypes.filter(type => !deviceTypeCodes[type])
+  if (missingTypes.length) {
+    throw new Error(`DEVICE_TYPE 字典缺少器件导入所需编码: ${missingTypes.join(', ')}`)
+  }
+
   const syncTasks: Array<Promise<unknown> | undefined> = []
-  result.fiberTypes.forEach(f => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('fiber', f))))
-  result.amplifierTypes.forEach(a => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('amplifier', a))))
-  result.branchingUnitTypes.forEach(b => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('branching', b))))
-  result.equalizerTypes.forEach(e => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('equalizer', e))))
-  result.jointBoxTypes.forEach(j => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('joint', j))))
+  result.fiberTypes.forEach(f => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('fiber', f, deviceTypeCodes.fiber))))
+  result.amplifierTypes.forEach(a => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('amplifier', a, deviceTypeCodes.amplifier))))
+  result.branchingUnitTypes.forEach(b => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('branching', b, deviceTypeCodes.branching))))
+  result.equalizerTypes.forEach(e => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('equalizer', e, deviceTypeCodes.equalizer))))
+  result.jointBoxTypes.forEach(j => syncTasks.push(settingsStore.savePlatformDeviceLibrary(deviceLibraryItemToPlatform('joint', j, deviceTypeCodes.joint))))
   await Promise.all(syncTasks.filter(Boolean))
   const s = result.summary
   return `导入成功：光纤${s.fiberCount}、放大器${s.amplifierCount}、分支器${s.branchingUnitCount}、均衡器${s.equalizerCount}、接头盒${s.jointCount}`

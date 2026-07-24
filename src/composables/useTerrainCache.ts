@@ -94,7 +94,7 @@ export async function getTerrainData(
   return loadingPromise.value
 }
 
-export function clearTerrainCache() {
+function clearTerrainCache() {
   cachedExtent.value = null
   cachedData.value = null
   isLoading.value = false

@@ -1,18 +1,35 @@
 <script setup lang="ts">
 import { useAppStore } from '@/stores/app'
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, type WatchStopHandle } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
-import { useAlarmWebSocket } from '@/services/AlarmWebSocketService'
-import { AlertTriangle, XCircle, Info, X, Bell } from 'lucide-vue-next'
+import { useSettingsStore } from '@/stores/settings'
+import { useUserStore } from '@/stores/user'
+import {
+  isValidAlarmWebSocketUrl,
+  useAlarmWebSocket,
+} from '@/services/AlarmWebSocketService'
+import { AlertTriangle, XCircle, Info, X } from 'lucide-vue-next'
 import type { AlarmRecord } from '@/stores/monitor'
 
 const monitorStore = useMonitorStore()
 const appStore = useAppStore()
-const { onAlarm, isConnected } = useAlarmWebSocket()
+const settingsStore = useSettingsStore()
+const userStore = useUserStore()
+const { connect, disconnect, onAlarm } = useAlarmWebSocket()
 
 // 弹窗告警队列
 const popupAlarms = ref<AlarmRecord[]>([])
 const maxPopups = 5
+const popupCloseTimers = new Map<number, ReturnType<typeof setTimeout>>()
+
+const connectionTarget = computed(() => {
+  const config = settingsStore.monitoringConfig
+  if (!userStore.sessionChecked || !userStore.isLoggedIn) return null
+  if (config.dataSourceType !== 'realtime' || config.protocol !== 'JSON') return null
+
+  const url = typeof config.connectionAddress === 'string' ? config.connectionAddress.trim() : ''
+  return isValidAlarmWebSocketUrl(url) ? url : null
+})
 
 // 告警级别图标和样式
 const getAlarmIcon = (level: string) => {
@@ -41,14 +58,24 @@ const getAlarmBgClass = (level: string) => {
 
 // 关闭弹窗
 const closePopup = (alarmId: number) => {
+  const timer = popupCloseTimers.get(alarmId)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    popupCloseTimers.delete(alarmId)
+  }
   popupAlarms.value = popupAlarms.value.filter(a => a.id !== alarmId)
 }
 
 // 自动关闭定时器
 const autoClosePopup = (alarmId: number, delay: number = 8000) => {
-  setTimeout(() => {
+  const existingTimer = popupCloseTimers.get(alarmId)
+  if (existingTimer !== undefined) clearTimeout(existingTimer)
+
+  const timer = setTimeout(() => {
+    popupCloseTimers.delete(alarmId)
     closePopup(alarmId)
   }, delay)
+  popupCloseTimers.set(alarmId, timer)
 }
 
 // 处理新告警
@@ -58,7 +85,14 @@ const handleNewAlarm = (alarm: AlarmRecord) => {
   
   // 添加到弹窗队列
   if (popupAlarms.value.length >= maxPopups) {
-    popupAlarms.value.shift()
+    const removedAlarm = popupAlarms.value.shift()
+    if (removedAlarm) {
+      const removedTimer = popupCloseTimers.get(removedAlarm.id)
+      if (removedTimer !== undefined) {
+        clearTimeout(removedTimer)
+        popupCloseTimers.delete(removedAlarm.id)
+      }
+    }
   }
   popupAlarms.value.push(alarm)
   
@@ -88,15 +122,31 @@ const playAlarmSound = () => {
   }
 }
 
-// 订阅告警
-let unsubscribe: (() => void) | null = null
+let unsubscribeAlarm: (() => void) | null = null
+let stopConnectionWatch: WatchStopHandle | null = null
 
 onMounted(() => {
-  unsubscribe = onAlarm(handleNewAlarm)
+  unsubscribeAlarm = onAlarm(handleNewAlarm)
+  stopConnectionWatch = watch(
+    connectionTarget,
+    (url) => {
+      if (url) connect(url)
+      else disconnect()
+    },
+    { immediate: true },
+  )
 })
 
 onUnmounted(() => {
-  unsubscribe?.()
+  stopConnectionWatch?.()
+  stopConnectionWatch = null
+  unsubscribeAlarm?.()
+  unsubscribeAlarm = null
+  disconnect()
+
+  for (const timer of popupCloseTimers.values()) clearTimeout(timer)
+  popupCloseTimers.clear()
+  popupAlarms.value = []
 })
 </script>
 

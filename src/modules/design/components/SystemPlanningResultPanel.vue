@@ -11,7 +11,6 @@ import {
 } from 'lucide-vue-next'
 
 type ResultTab = 'overview' | 'performance' | 'amplifier' | 'cost'
-type AssessmentStatus = 'pass' | 'fail' | 'unknown'
 
 interface MetricSummary {
   min: number
@@ -44,11 +43,11 @@ interface ResultAmplifier {
   id: string
   name: string
   position: number
-  precedingSpan: number
-  gain: number
-  noiseFigure: number
-  outputPower: number
-  inputPower: number
+  precedingSpan: number | null
+  gain: number | null
+  noiseFigure: number | null
+  outputPower: number | null
+  inputPower: number | null
   deviceModel?: string
   gainFlatness?: number | null
 }
@@ -81,72 +80,56 @@ interface ResultCostData {
   costItems: CostItem[]
 }
 
-interface ConstraintAssessment {
-  key: string
-  label: string
-  value: string
-  detail: string
-  status: AssessmentStatus
+interface BackendMargin {
+  targetOsnr?: number
+  worstMargin?: number
+  avgMargin?: number
+  meetsRequirement?: boolean
 }
 
 const props = withDefaults(defineProps<{
   linkName: string
-  totalLength: number
+  totalLength: number | null
   calculatedAt: string
   calculationTime: number
-  status: 'success' | 'failed' | 'calculating'
+  status: 'success' | 'failed' | 'calculating' | 'unknown'
   metrics: ResultMetrics | null
   performanceData: ResultPerformanceData | null
   amplifiers: ResultAmplifier[]
   timeline: TimelineItem[]
-  costData: ResultCostData
-  assessments: ConstraintAssessment[]
-  targetGsnr: number
-  targetOsnr: number
-  osnrMargin: number
+  costData: ResultCostData | null
+  margin: BackendMargin | null
   spanUsed: number | null
   tailSpan: number | null
-  averageSpan: number
-  buCount: number
-  totalBuLoss: number
-  equalizerCount: number
-  totalEqualizerLoss: number
-  fiberAttenuation: number
-  channelCount: number
+  averageSpan: number | null
+  buCount: number | null
+  totalBuLoss: number | null
+  equalizerCount: number | null
+  totalEqualizerLoss: number | null
+  channelCount: number | null
   modulation: string
   optimizationTargetLabel: string
   hasPerformanceMetrics: boolean
 }>(), {
   linkName: '-',
-  totalLength: 0,
+  totalLength: null,
   calculatedAt: '',
   calculationTime: 0,
-  status: 'success',
+  status: 'unknown',
   metrics: null,
   performanceData: null,
   amplifiers: () => [],
   timeline: () => [],
-  costData: () => ({
-    cableCost: 0,
-    amplifierCost: 0,
-    buCost: 0,
-    equalizerCost: 0,
-    totalCost: 0,
-    costItems: [],
-  }),
-  assessments: () => [],
-  targetGsnr: 0,
-  targetOsnr: 0,
-  osnrMargin: 0,
+  costData: null,
+  margin: null,
   spanUsed: null,
   tailSpan: null,
-  averageSpan: 0,
-  buCount: 0,
-  totalBuLoss: 0,
-  equalizerCount: 0,
-  totalEqualizerLoss: 0,
-  fiberAttenuation: 0.165,
-  channelCount: 0,
+  averageSpan: null,
+  buCount: null,
+  totalBuLoss: null,
+  equalizerCount: null,
+  totalEqualizerLoss: null,
+  channelCount: null,
   modulation: '-',
   optimizationTargetLabel: '-',
   hasPerformanceMetrics: false,
@@ -180,24 +163,13 @@ const selectedAmplifier = computed(() => {
   return index == null ? null : amplifiers[index] ?? null
 })
 
-const overallStatus = computed<AssessmentStatus>(() => {
-  const assessments = Array.isArray(props.assessments) ? props.assessments : []
-  if (assessments.some(item => item.status === 'fail')) return 'fail'
-  if (assessments.some(item => item.status === 'unknown')) return 'unknown'
-  return 'pass'
+const backendStatus = computed(() => {
+  if (props.status === 'failed') return 'failed'
+  if (props.status === 'calculating') return 'calculating'
+  if (props.status === 'unknown') return 'unknown'
+  if (props.margin?.meetsRequirement === false) return 'failed'
+  return 'success'
 })
-
-const statusLabel = (status: AssessmentStatus): string => {
-  if (status === 'pass') return '满足'
-  if (status === 'fail') return '不满足'
-  return '无法判定'
-}
-
-const statusClass = (status: AssessmentStatus): string => {
-  if (status === 'pass') return 'border-green-200 bg-green-50 text-green-700'
-  if (status === 'fail') return 'border-red-200 bg-red-50 text-red-700'
-  return 'border-amber-200 bg-amber-50 text-amber-700'
-}
 
 const formatNumber = (value: number | null | undefined, digits = 1): string =>
   typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '-'
@@ -215,12 +187,14 @@ const formatCost = (value: number): string => {
 }
 
 const costPercent = (value: number): string => {
-  if (props.costData.totalCost <= 0) return '0.0'
-  return ((value / props.costData.totalCost) * 100).toFixed(1)
+  const total = props.costData?.totalCost
+  if (total == null || total < 0) return '-'
+  if (total === 0) return value === 0 ? '0.0' : '-'
+  return ((value / total) * 100).toFixed(1)
 }
 
 const timelinePosition = (item: TimelineItem): number => {
-  const total = Math.max(props.totalLength, 0)
+  const total = Math.max(props.totalLength ?? 0, 0)
   if (total > 0) {
     return Math.min(100, Math.max(0, item.positionKm / total * 100))
   }
@@ -282,11 +256,6 @@ const gsnrEvolutionPath = computed(() => {
   return chartPath(data.gsnrEvolution, evolutionBounds.value.min, evolutionBounds.value.max)
 })
 
-const targetY = (value: number): number => {
-  const { min, max } = evolutionBounds.value
-  return 170 - (value - min) / Math.max(max - min, 1) * 140
-}
-
 const exportCostReport = (): void => {
   const escapeCsv = (value: unknown): string => {
     const text = String(value ?? '')
@@ -294,7 +263,7 @@ const exportCostReport = (): void => {
   }
   const rows = [
     ['类别', '器件型号', '数量', '单位', '单价', '小计'],
-    ...props.costData.costItems.map(item => [
+    ...(props.costData?.costItems ?? []).map(item => [
       item.category,
       item.model,
       item.quantity,
@@ -302,7 +271,7 @@ const exportCostReport = (): void => {
       item.unitPrice,
       item.subtotal,
     ]),
-    ['', '', '', '', '合计', props.costData.totalCost],
+    ['', '', '', '', '合计', props.costData?.totalCost ?? ''],
   ]
   const csv = `${String.fromCharCode(0xfeff)}${rows.map(row => row.map(escapeCsv).join(',')).join('\r\n')}`
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
@@ -321,10 +290,10 @@ const exportCostReport = (): void => {
         <p class="text-xs font-medium uppercase text-slate-500">系统规划结果</p>
         <h3 class="mt-1 text-lg font-semibold text-slate-900">{{ linkName }}</h3>
       </div>
-      <div class="flex items-center gap-2 text-sm" :class="overallStatus === 'pass' ? 'text-green-700' : overallStatus === 'fail' ? 'text-red-700' : 'text-amber-700'">
-        <CheckCircle2 v-if="overallStatus === 'pass'" class="h-4 w-4" />
+      <div class="flex items-center gap-2 text-sm" :class="backendStatus === 'success' ? 'text-green-700' : backendStatus === 'failed' ? 'text-red-700' : 'text-amber-700'">
+        <CheckCircle2 v-if="backendStatus === 'success'" class="h-4 w-4" />
         <AlertCircle v-else class="h-4 w-4" />
-        <span>{{ overallStatus === 'pass' ? '约束满足' : overallStatus === 'fail' ? '存在不满足约束' : '性能无法判定' }}</span>
+        <span>{{ backendStatus === 'success' ? '后端计算成功' : backendStatus === 'failed' ? '后端返回失败或不满足' : backendStatus === 'calculating' ? '后端计算中' : '后端未返回状态' }}</span>
       </div>
     </div>
 
@@ -360,28 +329,16 @@ const exportCostReport = (): void => {
         </div>
         <div class="border border-slate-200 bg-white p-3">
           <div class="text-xs text-slate-500">BU 数量</div>
-          <div class="mt-1 font-mono text-lg font-semibold text-emerald-700">{{ buCount }}</div>
+          <div class="mt-1 font-mono text-lg font-semibold text-emerald-700">{{ buCount ?? '-' }}</div>
         </div>
       </div>
 
-      <div class="border border-slate-200 bg-white">
-        <div class="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">约束与性能目标判定</div>
-        <div class="grid gap-2 p-3 md:grid-cols-2">
-          <div
-            v-for="assessment in assessments"
-            :key="assessment.key"
-            class="flex items-start justify-between gap-3 border px-3 py-2 text-sm"
-            :class="statusClass(assessment.status)"
-          >
-            <div class="min-w-0">
-              <div class="font-medium">{{ assessment.label }}</div>
-              <div class="mt-0.5 text-xs opacity-80">{{ assessment.detail }}</div>
-            </div>
-            <div class="shrink-0 text-right font-mono text-xs">
-              <div>{{ assessment.value }}</div>
-              <div class="mt-0.5 font-sans font-medium">{{ statusLabel(assessment.status) }}</div>
-            </div>
-          </div>
+      <div v-if="margin" class="border border-slate-200 bg-white p-4 text-sm">
+        <div class="font-semibold text-slate-800">后端裕量判定</div>
+        <div class="mt-2 grid gap-2 md:grid-cols-3">
+          <div><span class="text-slate-500">目标 OSNR</span><div class="font-mono">{{ formatNumber(margin.targetOsnr) }} dB</div></div>
+          <div><span class="text-slate-500">最差裕量</span><div class="font-mono">{{ formatNumber(margin.worstMargin) }} dB</div></div>
+          <div><span class="text-slate-500">平均裕量</span><div class="font-mono">{{ formatNumber(margin.avgMargin) }} dB</div></div>
         </div>
       </div>
 
@@ -392,10 +349,10 @@ const exportCostReport = (): void => {
           <div><span class="text-slate-500">计算耗时</span><div class="mt-1 font-mono text-slate-800">{{ formatNumber(calculationTime, 1) }} s</div></div>
           <div><span class="text-slate-500">平均跨段</span><div class="mt-1 font-mono text-slate-800">{{ formatKm(averageSpan, 1) }}</div></div>
           <div><span class="text-slate-500">优化目标</span><div class="mt-1 text-slate-800">{{ optimizationTargetLabel }}</div></div>
-          <div><span class="text-slate-500">信道数量</span><div class="mt-1 font-mono text-slate-800">{{ channelCount }} ch</div></div>
+          <div><span class="text-slate-500">信道数量</span><div class="mt-1 font-mono text-slate-800">{{ channelCount == null ? '-' : `${channelCount} ch` }}</div></div>
           <div><span class="text-slate-500">调制格式</span><div class="mt-1 text-slate-800">{{ modulation || '-' }}</div></div>
           <div><span class="text-slate-500">BU 总插损</span><div class="mt-1 font-mono text-slate-800">{{ formatNumber(totalBuLoss, 1) }} dB</div></div>
-          <div><span class="text-slate-500">均衡器</span><div class="mt-1 font-mono text-slate-800">{{ equalizerCount }} 个 / {{ formatNumber(totalEqualizerLoss, 1) }} dB</div></div>
+          <div><span class="text-slate-500">均衡器</span><div class="mt-1 font-mono text-slate-800">{{ equalizerCount == null ? '-' : `${equalizerCount} 个` }} / {{ formatNumber(totalEqualizerLoss, 1) }} dB</div></div>
         </div>
       </div>
 
@@ -426,19 +383,14 @@ const exportCostReport = (): void => {
 
     <section v-else-if="activeTab === 'performance'" class="space-y-4">
       <div class="border border-slate-200 bg-white p-4">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div class="text-sm font-semibold text-slate-800">性能目标</div>
-          <div class="text-xs text-slate-500">GSNR >= {{ formatNumber(targetGsnr) }} dB · OSNR >= {{ formatNumber(targetOsnr + osnrMargin) }} dB（含 {{ formatNumber(osnrMargin) }} dB 裕量）</div>
-        </div>
+        <div class="mb-3 text-sm font-semibold text-slate-800">后端性能指标</div>
         <div v-if="!hasPerformanceMetrics || !metrics" class="border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          仿真指标未返回，无法判定性能目标是否满足。布局数据不会被当作性能计算结果。
+          后端未返回仿真指标，布局数据不会被当作性能计算结果。
         </div>
         <template v-else>
-          <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div class="grid grid-cols-2 gap-3">
             <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">最小 OSNR</div><div class="mt-1 font-mono text-lg">{{ formatNumber(metrics.osnr.min) }} dB</div></div>
             <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">最小 GSNR</div><div class="mt-1 font-mono text-lg">{{ formatNumber(metrics.gsnr.min) }} dB</div></div>
-            <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">OSNR 裕量</div><div class="mt-1 font-mono text-lg">{{ formatNumber(metrics.osnr.min - targetOsnr - osnrMargin) }} dB</div></div>
-            <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">GSNR 裕量</div><div class="mt-1 font-mono text-lg">{{ formatNumber(metrics.gsnr.min - targetGsnr) }} dB</div></div>
           </div>
         </template>
       </div>
@@ -449,8 +401,6 @@ const exportCostReport = (): void => {
           <svg viewBox="0 0 720 210" class="h-auto min-w-[680px]" role="img" aria-label="OSNR 和 GSNR 沿链路变化曲线">
             <line x1="48" y1="30" x2="48" y2="170" stroke="#cbd5e1" />
             <line x1="48" y1="170" x2="698" y2="170" stroke="#cbd5e1" />
-            <line x1="48" :y1="targetY(targetOsnr + osnrMargin)" x2="698" :y2="targetY(targetOsnr + osnrMargin)" stroke="#f59e0b" stroke-dasharray="5 4" />
-            <line x1="48" :y1="targetY(targetGsnr)" x2="698" :y2="targetY(targetGsnr)" stroke="#f97316" stroke-dasharray="5 4" />
             <polyline :points="osnrEvolutionPath" fill="none" stroke="#16a34a" stroke-width="2.5" />
             <polyline :points="gsnrEvolutionPath" fill="none" stroke="#2563eb" stroke-width="2.5" />
             <text x="54" y="22" class="fill-slate-500 text-[10px]">dB</text>
@@ -460,7 +410,6 @@ const exportCostReport = (): void => {
         <div class="mt-2 flex flex-wrap gap-4 text-xs text-slate-600">
           <span><i class="mr-1 inline-block h-2 w-4 bg-green-600" />OSNR</span>
           <span><i class="mr-1 inline-block h-2 w-4 bg-blue-600" />GSNR</span>
-          <span><i class="mr-1 inline-block h-0.5 w-4 border-t-2 border-dashed border-orange-500" />目标线</span>
         </div>
       </div>
       <div v-else class="border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
@@ -473,7 +422,7 @@ const exportCostReport = (): void => {
         <div class="mb-3 flex items-center justify-between gap-2">
           <div class="text-sm font-semibold text-slate-800">链路放大器布局</div>
           <div class="flex flex-wrap justify-end gap-x-3 gap-y-1 text-xs text-slate-500">
-            <span>{{ amplifiers.length }} 台放大器 · {{ buCount }} 个 BU</span>
+            <span>{{ amplifiers.length }} 台放大器<template v-if="buCount != null"> · {{ buCount }} 个 BU</template></span>
             <span>总长 {{ formatKm(totalLength, 1) }}<template v-if="tailSpan != null"> · 末段 {{ formatKm(tailSpan, 1) }}</template></span>
           </div>
         </div>
@@ -538,7 +487,6 @@ const exportCostReport = (): void => {
           <div class="flex justify-between gap-3"><span class="text-slate-600">位置</span><span class="font-mono">{{ formatKm(selectedAmplifier.position, 1) }}</span></div>
           <div class="flex justify-between gap-3"><span class="text-slate-600">器件型号</span><span class="text-right">{{ selectedAmplifier.deviceModel || '未指定' }}</span></div>
           <div class="flex justify-between gap-3"><span class="text-slate-600">前段光纤长度</span><span class="font-mono">{{ formatKm(selectedAmplifier.precedingSpan, 1) }}</span></div>
-          <div class="flex justify-between gap-3"><span class="text-slate-600">前段光纤损耗</span><span class="font-mono">{{ formatNumber(selectedAmplifier.precedingSpan * fiberAttenuation, 1) }} dB</span></div>
           <div class="flex justify-between gap-3"><span class="text-slate-600">增益</span><span class="font-mono">{{ formatNumber(selectedAmplifier.gain) }} dB</span></div>
           <div class="flex justify-between gap-3"><span class="text-slate-600">噪声系数</span><span class="font-mono">{{ formatNumber(selectedAmplifier.noiseFigure) }} dB</span></div>
           <div class="flex justify-between gap-3"><span class="text-slate-600">输入功率</span><span class="font-mono">{{ hasPerformanceMetrics ? `${formatNumber(selectedAmplifier.inputPower)} dBm` : '未返回' }}</span></div>
@@ -548,7 +496,7 @@ const exportCostReport = (): void => {
       </div>
     </section>
 
-    <section v-else class="space-y-4">
+    <section v-else-if="costData" class="space-y-4">
       <div class="grid grid-cols-2 gap-3 md:grid-cols-5">
         <div class="border border-blue-200 bg-blue-50 p-3 text-center"><div class="text-xs text-blue-700">海缆成本</div><div class="mt-1 text-lg font-bold text-blue-900">{{ formatCost(costData.cableCost) }}</div></div>
         <div class="border border-purple-200 bg-purple-50 p-3 text-center"><div class="text-xs text-purple-700">放大器成本</div><div class="mt-1 text-lg font-bold text-purple-900">{{ formatCost(costData.amplifierCost) }}</div></div>
@@ -583,6 +531,9 @@ const exportCostReport = (): void => {
           </div>
         </div>
       </div>
+    </section>
+    <section v-else class="border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+      后端未返回成本明细。
     </section>
   </div>
 </template>

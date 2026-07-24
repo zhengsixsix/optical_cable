@@ -5,11 +5,15 @@ import type {
   FiberType,
   JointBoxType,
 } from '@/types/settings'
-import type { ConnectorElement } from '@/types/connector'
+import { connectorTypeLabels, type ConnectorElement } from '@/types/connector'
 import type { Id, PlatformBindFunc, PlanDeviceEntity, PlanDeviceLibrary } from './types'
 import { buildDeviceValueList, deviceValueListToMap } from './deviceAttributes'
+import {
+  getConnectorTypeForDeviceTypeCode,
+} from './deviceTypeAdapter'
 
 export type LocalDeviceLibraryType = 'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'
+export type DeviceTypeCodeMap = Partial<Record<LocalDeviceLibraryType, string>>
 
 export type LocalDeviceLibraryItem =
   | FiberType
@@ -22,78 +26,8 @@ export interface PlatformBackedItem {
   platformId?: number
 }
 
-export const LOCAL_DEVICE_LIBRARY_PARAMS = 'LOCAL_DEVICE_LIBRARY_PARAMS'
-export const LOCAL_DEVICE_ENTITY_PARAMS = 'LOCAL_DEVICE_ENTITY_PARAMS'
-
-export const localDeviceTypeToPlatformCode: Record<LocalDeviceLibraryType, string> = {
-  fiber: 'FIB',
-  amplifier: 'AMP',
-  branching: 'SPL',
-  equalizer: 'EQL',
-  joint: 'SCL',
-}
-
-const platformCodeToLocalDeviceType: Record<string, LocalDeviceLibraryType> = {
-  FIB: 'fiber',
-  FIBER: 'fiber',
-  OPTICAL_FIBER: 'fiber',
-  AMP: 'amplifier',
-  AMPLIFIER: 'amplifier',
-  EDFA: 'amplifier',
-  OLA: 'amplifier',
-  SPL: 'branching',
-  SPLITTER: 'branching',
-  BU: 'branching',
-  BRANCHING: 'branching',
-  BRANCHING_UNIT: 'branching',
-  EQL: 'equalizer',
-  EQ: 'equalizer',
-  EQUALIZER: 'equalizer',
-  SCL: 'joint',
-  JB: 'joint',
-  JOINT: 'joint',
-  JOINT_BOX: 'joint',
-}
-
-const connectorTypeToPlatformCode: Record<string, string> = {
-  landing: 'LANDING',
-  underwater: 'UNDERWATER',
-  amplifier_e: 'AMP',
-  amplifier_w: 'AMP',
-  ola: 'AMP',
-  bu: 'SPL',
-  equalizer: 'EQL',
-  joint: 'SCL',
-  fiber: 'FIB',
-  cable_segment: 'CABLE',
-}
-
-const platformCodeToConnectorType: Record<string, ConnectorElement['type']> = {
-  LANDING: 'landing',
-  LANDING_STATION: 'landing',
-  UNDERWATER: 'underwater',
-  UNDERWATER_STATION: 'underwater',
-  AMP: 'amplifier_e',
-  AMPLIFIER: 'amplifier_e',
-  EDFA: 'amplifier_e',
-  OLA: 'ola',
-  SPL: 'bu',
-  SPLITTER: 'bu',
-  BU: 'bu',
-  BRANCHING: 'bu',
-  BRANCHING_UNIT: 'bu',
-  EQL: 'equalizer',
-  EQ: 'equalizer',
-  EQUALIZER: 'equalizer',
-  SCL: 'joint',
-  JB: 'joint',
-  JOINT: 'joint',
-  JOINT_BOX: 'joint',
-  FIB: 'fiber',
-  FIBER: 'fiber',
-  OPTICAL_FIBER: 'fiber',
-  CABLE: 'cable_segment',
-}
+const LOCAL_DEVICE_LIBRARY_PARAMS = 'LOCAL_DEVICE_LIBRARY_PARAMS'
+const LOCAL_DEVICE_ENTITY_PARAMS = 'LOCAL_DEVICE_ENTITY_PARAMS'
 
 const defaultIconSize = { width: 48, height: 48 }
 
@@ -140,24 +74,6 @@ function getLocalParams(
   return bindFunc?.defaultInputParams ?? {}
 }
 
-function normalizeType(
-  deviceTypeCd?: string | null,
-  params?: Record<string, unknown>,
-  dialogWindowId?: string | null,
-): LocalDeviceLibraryType | null {
-  const paramType = params?.localType
-  if (paramType === 'fiber' || paramType === 'amplifier' || paramType === 'branching' || paramType === 'equalizer' || paramType === 'joint') {
-    return paramType
-  }
-
-  const normalizedCode = String(deviceTypeCd || dialogWindowId || '').trim().toUpperCase()
-  return platformCodeToLocalDeviceType[normalizedCode] ?? null
-}
-
-function platformLocalId(platformId: number | string | undefined) {
-  return platformId == null ? `platform-device-library-${Date.now()}` : `platform-device-library-${platformId}`
-}
-
 function numeric(value: unknown, fallback = 0): number {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : fallback
@@ -175,12 +91,9 @@ function optionalNumber(value: unknown): number | undefined {
 }
 
 function normalizeConnectorType(value?: string | null): ConnectorElement['type'] {
-  const normalized = String(value || '').trim().toUpperCase()
-  return platformCodeToConnectorType[normalized] ?? 'landing'
-}
-
-function currency(value: unknown): 'USD' | 'CNY' | 'EUR' {
-  return value === 'CNY' || value === 'EUR' || value === 'USD' ? value : 'USD'
+  const normalized = String(value || '').trim()
+  if (normalized in connectorTypeLabels) return normalized as ConnectorElement['type']
+  return getConnectorTypeForDeviceTypeCode(normalized)
 }
 
 function localDeviceItemToValueMap(
@@ -254,124 +167,21 @@ function localDeviceItemToValueMap(
   }
 }
 
-function mergedDeviceParams(device: PlanDeviceLibrary): Record<string, string> {
-  return {
-    ...Object.fromEntries(Object.entries(getLocalParams(device.bindFuncList)).map(([key, value]) => [key, value == null ? '' : String(value)])),
-    ...deviceValueListToMap(device.deviceValueList),
-  }
-}
-
 export function deviceLibraryItemToPlatform(
   type: LocalDeviceLibraryType,
   item: LocalDeviceLibraryItem & PlatformBackedItem,
+  deviceTypeCd?: string | null,
 ): PlanDeviceLibrary {
   const platformId = typeof item.platformId === 'number' ? item.platformId : numeric(item.id, NaN)
 
   return {
     id: Number.isFinite(platformId) ? platformId : undefined,
     name: item.name,
-    deviceTypeCd: localDeviceTypeToPlatformCode[type],
+    deviceTypeCd: deviceTypeCd?.trim() || undefined,
     iconSize: defaultIconSize,
     dialogWindowId: type,
     bindFuncList: [],
     deviceValueList: buildDeviceValueList(localDeviceItemToValueMap(type, item)),
-  }
-}
-
-export function platformDeviceLibraryToLocal(device: PlanDeviceLibrary): {
-  type: LocalDeviceLibraryType
-  item: LocalDeviceLibraryItem & PlatformBackedItem
-} | null {
-  const params = mergedDeviceParams(device)
-  const type = normalizeType(device.deviceTypeCd, params, device.dialogWindowId)
-  if (!type) return null
-
-  const id = platformLocalId(device.id)
-  const name = String(device.name || params.name || id)
-  const common = {
-    ...params,
-    id,
-    name,
-    platformId: device.id,
-  }
-
-  if (type === 'fiber') {
-    return {
-      type,
-      item: {
-        ...common,
-        nonlinearCoeff: numeric(params.nonlinearCoeff, 1.4),
-        effectiveArea: numeric(params.effectiveArea, 80),
-        dispersion: numeric(params.dispersion, 17),
-        nonlinearRefractiveIndex: numeric(params.nonlinearRefractiveIndex, 2.6),
-        attenuationCoeff: numeric(params.attenuationCoeff, 0.2),
-        secondOrderDispersion: numeric(params.secondOrderDispersion, -21),
-        simulationModel: params.simulationModel === 'EGN' ? 'EGN' : 'GN',
-      } as FiberType & PlatformBackedItem,
-    }
-  }
-
-  if (type === 'amplifier') {
-    return {
-      type,
-      item: {
-        ...common,
-        gain: numeric(params.gain, 20),
-        bandwidth: numeric(params.bandwidth, 1550),
-        gainFlatness: numeric(params.gainFlatness, 0.5),
-        noiseFigure: numeric(params.noiseFigure, 5),
-        pumpPower: numeric(params.pumpPower, 100),
-        outputPower: numeric(params.outputPower, 17),
-        saturationPower: params.saturationPower == null ? undefined : numeric(params.saturationPower, 20),
-        gainRangePower: numeric(params.gainRangePower, 0.1),
-        operatingMode: params.operatingMode === 'fixed_output' || params.operatingMode === 'apc' ? params.operatingMode : 'fixed_gain',
-        unitPrice: params.unitPrice == null ? undefined : numeric(params.unitPrice),
-        currency: currency(params.currency),
-      } as AmplifierType & PlatformBackedItem,
-    }
-  }
-
-  if (type === 'branching') {
-    return {
-      type,
-      item: {
-        ...common,
-        subType: params.subType === 'ROADM' || params.subType === 'OADM' ? params.subType : 'BU',
-        portCount: numeric(params.portCount, 3),
-        trunkInsertionLoss: numeric(params.trunkInsertionLoss, 0.5),
-        branchInsertionLoss: numeric(params.branchInsertionLoss, 3),
-        insertionLoss: numeric(params.insertionLoss ?? params.trunkInsertionLoss, 0.5),
-        wavelengthRange: numeric(params.wavelengthRange, 1550),
-        unitPrice: params.unitPrice == null ? undefined : numeric(params.unitPrice),
-        currency: currency(params.currency),
-      } as BranchingUnitType & PlatformBackedItem,
-    }
-  }
-
-  if (type === 'equalizer') {
-    return {
-      type,
-      item: {
-        ...common,
-        attenuationMode: params.attenuationMode === 'fixed' ? 'fixed' : 'adjustable',
-        defaultAttenuationDb: numeric(params.defaultAttenuationDb),
-        unitPrice: params.unitPrice == null ? undefined : numeric(params.unitPrice),
-        currency: currency(params.currency),
-        remarks: String(params.remarks || ''),
-      } as EqualizerType & PlatformBackedItem,
-    }
-  }
-
-  return {
-    type,
-    item: {
-      ...common,
-      insertionLoss: numeric(params.insertionLoss),
-      maxFiberPairs: params.maxFiberPairs == null ? undefined : numeric(params.maxFiberPairs),
-      unitPrice: params.unitPrice == null ? undefined : numeric(params.unitPrice),
-      currency: currency(params.currency),
-      remarks: String(params.remarks || ''),
-    } as JointBoxType & PlatformBackedItem,
   }
 }
 
@@ -387,7 +197,9 @@ export function connectorElementToDeviceEntity(
   const library = Number.isFinite(libraryId)
     ? libraries.find(item => String(item.id) === String(libraryId))
     : null
-  const deviceTypeCd = library?.deviceTypeCd || connectorTypeToPlatformCode[element.type] || String(element.type).toUpperCase()
+  const deviceTypeCd = library?.deviceTypeCd
+    || element.deviceTypeCd
+  if (!deviceTypeCd) return null
   const libraryValues = deviceValueListToMap(library?.deviceValueList)
   const bindFuncList = withLocalParams(
     cloneBindFuncList(library?.bindFuncList),
@@ -459,6 +271,7 @@ export function platformDeviceEntityToConnectorElement(entity: PlanDeviceEntity)
   return {
     id: String(params.connectorId || entity.id || `platform-device-entity-${Date.now()}`),
     platformEntityId: entity.id,
+    deviceTypeCd: entity.deviceTypeCd || undefined,
     name: String(entity.name || entity.libraryName || entity.id || '接线元'),
     type: connectorType,
     kp: numeric(params.kp),

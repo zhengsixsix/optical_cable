@@ -3,12 +3,6 @@ import type { SpanScanResult, SpanScanPoint } from '@/types/simulation'
 import type { SimulationCache, SimulationMetricsMatrix } from '@/types/useFile'
 import { platformPlanConfigApi, platformProjectApi } from '@/services/platform/api'
 import { parsePlanningLayoutResult } from '@/utils/systemPlanningLayout'
-import {
-  isSpanWithinBounds,
-  resolvePlanningSpanBounds,
-  selectConstrainedSpanKm,
-  type PlanningOptimizationTarget,
-} from '@/utils/systemPlanningConstraints'
 import type {
   Id,
   PlanCalculationResult,
@@ -22,7 +16,7 @@ export type { SpanScanResult }
 // ========== 请求类型 ==========
 
 /** Span 策略 */
-export interface SpanStrategyPayload {
+interface SpanStrategyPayload {
   mode: 'fixed' | 'scan'
   scanRange?: {
     min: number
@@ -40,8 +34,8 @@ export interface SimulationRequest {
   linkId: string
   linkName: string
   totalLengthKm: number
-  fiberModel: 'GN' | 'EGN' | 'SSFM' | 'RAMAN' | 'HYBRID'
-  amplifierModel: 'EDFA_Simple' | 'EDFA_Full' | 'EDFA_Raman'
+  fiberModel: string
+  amplifierModel: string
   fiberParams: {
     attenuation: number
     effectiveArea: number
@@ -70,7 +64,6 @@ export interface SimulationRequest {
   optimizationConfig: Omit<PlanConfigOptimization, 'projectId'>
   spanKm: number
   spanStrategy: SpanStrategyPayload
-  optimizationTarget: PlanningOptimizationTarget
   constraints: {
     maxSpanLength: number
     minSpanLength: number
@@ -96,14 +89,14 @@ export interface SimulationRequest {
   onProgress?: (progress: SimulationProgressUpdate) => void
 }
 
-export type SimulationProgressStage =
+type SimulationProgressStage =
   | 'layout-start'
   | 'layout-poll'
   | 'simulation-start'
   | 'simulation-poll'
   | 'complete'
 
-export interface SimulationProgressUpdate {
+interface SimulationProgressUpdate {
   stage: SimulationProgressStage
   progress: number
   message: string
@@ -144,8 +137,6 @@ export function isPlatformChannelConfigComplete(
     && channelCount === requiredCount
     && Array.isArray(config?.launchPowerDbm)
     && config.launchPowerDbm.length === requiredCount
-    && Array.isArray(config?.channelFrequenciesThz)
-    && config.channelFrequenciesThz.length === requiredCount
 }
 
 export async function saveAndVerifyPlanningChannelConfig(
@@ -169,12 +160,9 @@ export async function saveAndVerifyPlanningChannelConfig(
   const powerState = Array.isArray(savedChannelConfig?.launchPowerDbm)
     ? `长度 ${savedChannelConfig.launchPowerDbm.length}`
     : 'null'
-  const frequencyState = Array.isArray(savedChannelConfig?.channelFrequenciesThz)
-    ? `长度 ${savedChannelConfig.channelFrequenciesThz.length}`
-    : 'null'
   throw new Error(
-    `后端未完整保存 WDM 信道向量：launchPowerDbm=${powerState}，`
-    + `channelFrequenciesThz=${frequencyState}。请检查后端 plan_config.value 字段容量及数组序列化逻辑`,
+    `后端未完整保存 WDM 入纤功率向量：launchPowerDbm=${powerState}。`
+    + '信道频率由后端依据中心频率与间隔生成；请检查后端 plan_config.value 字段容量及数组序列化逻辑',
   )
 }
 
@@ -214,19 +202,9 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
   let layoutResult: PlanCalculationResult
   let fixedLayoutResult: PlanCalculationResult | undefined
   let optimizedLayoutResult: PlanCalculationResult | undefined
-  let effectiveSpanKm = request.spanKm
-  let constraintAdjusted = false
-  const spanBounds = resolvePlanningSpanBounds({
-    mode: request.spanStrategy.mode,
-    scanRange: request.spanStrategy.scanRange,
-    minSpanLength: request.constraints.minSpanLength,
-    maxSpanLength: request.constraints.maxSpanLength,
-  })
+  let effectiveSpanKm: number | undefined
 
   if (request.spanStrategy.mode === 'fixed') {
-    if (!isSpanWithinBounds(request.spanKm, spanBounds)) {
-      throw new Error(`固定 Span ${request.spanKm} km 超出约束范围 ${spanBounds.minKm}-${spanBounds.maxKm} km`)
-    }
     const started = await platformProjectApi.fixedPlan(request.projectId)
     fixedLayoutResult = await pollPlanningResult(
       () => platformProjectApi.queryFixed(request.projectId),
@@ -238,6 +216,7 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
       }),
     )
     layoutResult = fixedLayoutResult
+    effectiveSpanKm = parsePlanningLayoutResult(fixedLayoutResult, 'fixed')?.spanKmUsed ?? undefined
   } else {
     const started = await platformProjectApi.optimizedPlan(request.projectId, request.fmmPathResultIndex)
     optimizedLayoutResult = await pollPlanningResult(
@@ -250,47 +229,7 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
       }),
     )
     layoutResult = optimizedLayoutResult
-
-    const parsedOptimizedLayout = parsePlanningLayoutResult(optimizedLayoutResult, 'optimized')
-    const returnedSpanKm = parsedOptimizedLayout?.spanKmUsed
-      ?? parsedOptimizedLayout?.spans
-        .map(span => span.lengthKm)
-        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-        .reduce((max, value) => Math.max(max, value), 0)
-      ?? request.spanKm
-    effectiveSpanKm = selectConstrainedSpanKm({
-      optimizedSpanKm: returnedSpanKm,
-      optimizationTarget: request.optimizationTarget,
-      bounds: spanBounds,
-    })
-    const requiresConstraintLayout = !isSpanWithinBounds(returnedSpanKm, spanBounds)
-      || (request.optimizationTarget === 'max_gsnr' && Math.abs(returnedSpanKm - effectiveSpanKm) > 1e-6)
-
-    if (requiresConstraintLayout) {
-      constraintAdjusted = true
-      request.onProgress?.({
-        stage: 'layout-poll',
-        progress: 44,
-        message: `优化结果超出目标约束，正在按 ${effectiveSpanKm} km 重新布局`,
-      })
-      await platformPlanConfigApi.saveSpanKm({
-        projectId: request.projectId,
-        spanKm: effectiveSpanKm,
-      })
-      const fixedStarted = await platformProjectApi.fixedPlan(request.projectId)
-      fixedLayoutResult = await pollPlanningResult(
-        () => platformProjectApi.queryFixed(request.projectId),
-        fixedStarted,
-        attempt => request.onProgress?.({
-          stage: 'layout-poll',
-          progress: Math.min(48, 44 + attempt),
-          message: '正在等待受约束布局结果',
-        }),
-      )
-      layoutResult = fixedLayoutResult
-    } else {
-      effectiveSpanKm = returnedSpanKm
-    }
+    effectiveSpanKm = parsePlanningLayoutResult(optimizedLayoutResult, 'optimized')?.spanKmUsed ?? undefined
   }
 
   request.onProgress?.({
@@ -332,7 +271,7 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
     fixedLayoutResult,
     optimizedLayoutResult,
     effectiveSpanKm,
-    constraintAdjusted,
+    constraintAdjusted: false,
     detailedResult,
     spanScanResult: extractSpanScanResult(detailedResult) ?? extractSpanScanResult(layoutResult),
     simulationCache: simulationCache ?? undefined,
@@ -469,87 +408,59 @@ function extractSpanScanResult(value: unknown): SimulationResponse['spanScanResu
   for (const rawCandidate of candidates) {
     const candidate = parseJsonValue(rawCandidate)
     if (!isRecord(candidate)) continue
-    let spanLengthsKm = numberArray(candidate.spanLengthsKm ?? candidate.span_lengths_km)
-    const gsnrRows = numberMatrix(candidate.gsnrPerSpanDb ?? candidate.gsnr_per_span_db)
-    const osnrRows = numberMatrix(candidate.osnrPerSpanDb ?? candidate.osnr_per_span_db)
+    const spanLengthsKm = numberArray(candidate.spanLengthsKm ?? candidate.span_lengths_km)
     const scanPointsValue = parseJsonValue(candidate.scanPoints ?? candidate.scan_points)
-
-    if (spanLengthsKm.length === 0 && Array.isArray(scanPointsValue)) {
-      spanLengthsKm = scanPointsValue
-        .map(rawPoint => {
-          const point = recordValue(rawPoint) ?? {}
-          return finiteNumber(point.spanLengthKm ?? point.span_length_km)
-        })
-        .filter((item): item is number => item != null)
-    }
-
-    if (spanLengthsKm.length === 0) continue
-
     const targetGsnrDb = finiteNumber(candidate.targetGsnrDb ?? candidate.target_gsnr_db)
-      ?? 14
-    const scanPoints = Array.isArray(scanPointsValue)
-      ? scanPointsValue.map((rawPoint, index) => {
-          const point = recordValue(rawPoint) ?? {}
-          const gsnrPerChannelDb = numberArray(point.gsnrPerChannelDb ?? point.gsnr_per_channel_db)
-          const osnrPerChannelDb = numberArray(point.osnrPerChannelDb ?? point.osnr_per_channel_db)
-          const spanLengthKm = finiteNumber(point.spanLengthKm ?? point.span_length_km)
-            ?? spanLengthsKm[index]
-            ?? 0
-          const avgGsnrDb = finiteNumber(point.avgGsnrDb ?? point.avg_gsnr_db)
-            ?? average(gsnrPerChannelDb)
-          const avgOsnrDb = finiteNumber(point.avgOsnrDb ?? point.avg_osnr_db)
-            ?? average(osnrPerChannelDb)
-          return {
-            spanLengthKm,
-            gsnrPerChannelDb,
-            osnrPerChannelDb,
-            avgGsnrDb,
-            minGsnrDb: finiteNumber(point.minGsnrDb ?? point.min_gsnr_db)
-              ?? (gsnrPerChannelDb.length ? Math.min(...gsnrPerChannelDb) : avgGsnrDb),
-            avgOsnrDb,
-            meetTarget: Boolean(point.meetTarget ?? point.meet_target ?? avgGsnrDb >= targetGsnrDb),
-            gsnrMarginDb: finiteNumber(point.gsnrMarginDb ?? point.gsnr_margin_db)
-              ?? avgGsnrDb - targetGsnrDb,
-            numAmplifiers: finiteNumber(point.numAmplifiers ?? point.num_amplifiers) ?? undefined,
-          }
-        })
-      : spanLengthsKm.map((spanLengthKm, index) => {
-          const gsnrPerChannelDb = gsnrRows[index] ?? []
-          const osnrPerChannelDb = osnrRows[index] ?? []
-          const avgGsnrDb = average(gsnrPerChannelDb)
-          const avgOsnrDb = average(osnrPerChannelDb)
-          return {
-            spanLengthKm,
-            gsnrPerChannelDb,
-            osnrPerChannelDb,
-            avgGsnrDb,
-            minGsnrDb: gsnrPerChannelDb.length ? Math.min(...gsnrPerChannelDb) : avgGsnrDb,
-            avgOsnrDb,
-            meetTarget: avgGsnrDb >= targetGsnrDb,
-            gsnrMarginDb: avgGsnrDb - targetGsnrDb,
-          }
-        })
+    const recommendedSpanKm = finiteNumber(candidate.recommendedSpanKm ?? candidate.recommended_span_km)
+    if (spanLengthsKm.length === 0 || !Array.isArray(scanPointsValue)
+      || targetGsnrDb == null || recommendedSpanKm == null) continue
 
-    if (scanPoints.length === 0) continue
-    const averages = scanPoints.map(point => point.avgGsnrDb)
-    const bestIndex = averages.reduce((best, current, index) => current > averages[best] ? index : best, 0)
-    const feasible = scanPoints
-      .filter(point => point.meetTarget || point.avgGsnrDb >= targetGsnrDb)
-      .map(point => point.spanLengthKm)
+    const scanPoints = scanPointsValue
+      .map(rawPoint => {
+        const point = recordValue(rawPoint)
+        if (!point) return null
+        const spanLengthKm = finiteNumber(point.spanLengthKm ?? point.span_length_km)
+        const avgGsnrDb = finiteNumber(point.avgGsnrDb ?? point.avg_gsnr_db)
+        const minGsnrDb = finiteNumber(point.minGsnrDb ?? point.min_gsnr_db)
+        const avgOsnrDb = finiteNumber(point.avgOsnrDb ?? point.avg_osnr_db)
+        const meetTarget = booleanValue(point.meetTarget ?? point.meet_target)
+        const gsnrMarginDb = finiteNumber(point.gsnrMarginDb ?? point.gsnr_margin_db)
+        const gsnrPerChannelDb = numberArray(point.gsnrPerChannelDb ?? point.gsnr_per_channel_db)
+        const osnrPerChannelDb = numberArray(point.osnrPerChannelDb ?? point.osnr_per_channel_db)
+        if (spanLengthKm == null || avgGsnrDb == null || minGsnrDb == null
+          || avgOsnrDb == null || meetTarget == null || gsnrMarginDb == null
+          || gsnrPerChannelDb.length === 0 || osnrPerChannelDb.length === 0
+          || gsnrPerChannelDb.length !== osnrPerChannelDb.length) return null
+        const numAmplifiers = finiteNumber(point.numAmplifiers ?? point.num_amplifiers)
+        return {
+          spanLengthKm,
+          gsnrPerChannelDb,
+          osnrPerChannelDb,
+          avgGsnrDb,
+          minGsnrDb,
+          avgOsnrDb,
+          meetTarget,
+          gsnrMarginDb,
+          ...(numAmplifiers == null ? {} : { numAmplifiers }),
+        }
+      })
+      .filter((point): point is SpanScanPoint => point != null)
+
+    const channelCount = scanPoints[0]?.gsnrPerChannelDb.length ?? 0
+    if (scanPoints.length !== scanPointsValue.length || scanPoints.length !== spanLengthsKm.length
+      || scanPoints.some((point, index) => point.spanLengthKm !== spanLengthsKm[index]
+        || point.gsnrPerChannelDb.length !== channelCount
+        || point.osnrPerChannelDb.length !== channelCount)) continue
     const feasibleRangeValue = numberArray(candidate.feasibleRange ?? candidate.feasible_range ?? candidate.feasible_range_km)
 
     return {
       spanLengthsKm,
       scanPoints,
-      recommendedSpanKm: finiteNumber(candidate.recommendedSpanKm ?? candidate.recommended_span_km)
-        ?? spanLengthsKm[bestIndex]
-        ?? spanLengthsKm[0],
+      recommendedSpanKm,
       targetGsnrDb,
       feasibleRange: feasibleRangeValue.length >= 2
         ? [feasibleRangeValue[0], feasibleRangeValue[1]]
-        : feasible.length > 0
-          ? [Math.min(...feasible), Math.max(...feasible)]
-          : null,
+        : null,
       channelFrequencies: numberArray(candidate.channelFrequencies ?? candidate.channel_frequencies_thz),
     } as SimulationResponse['spanScanResult']
   }
@@ -563,25 +474,31 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(numberValue) ? numberValue : null
 }
 
+function booleanValue(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value
+  if (value === 1 || value === '1' || value === 'true') return true
+  if (value === 0 || value === '0' || value === 'false') return false
+  return null
+}
+
 function numberArray(value: unknown): number[] {
   const parsed = parseJsonValue(value)
   if (!Array.isArray(parsed)) return []
-  return parsed
-    .map(finiteNumber)
-    .filter((item): item is number => item != null)
+  const values = parsed.map(finiteNumber)
+  return values.some(item => item == null) ? [] : values as number[]
 }
 
 function numberMatrix(value: unknown): number[][] {
   const parsed = parseJsonValue(value)
-  if (!Array.isArray(parsed)) return []
-  return parsed
-    .map(row => numberArray(row))
-    .filter(row => row.length > 0)
-}
-
-function average(values: number[]): number {
-  if (values.length === 0) return 0
-  return values.reduce((sum, item) => sum + item, 0) / values.length
+  if (!Array.isArray(parsed) || parsed.length === 0) return []
+  const matrix: number[][] = []
+  for (const rawRow of parsed) {
+    if (!Array.isArray(rawRow) || rawRow.length === 0) return []
+    const row = rawRow.map(finiteNumber)
+    if (row.some(item => item == null)) return []
+    matrix.push(row as number[])
+  }
+  return matrix
 }
 
 function readFirst(record: Record<string, unknown>, keys: string[]): unknown {
@@ -596,58 +513,13 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return isRecord(parsed) ? parsed : null
 }
 
-function normalizeMatrix(
-  source: number[][],
+function hasMatrixShape(
+  matrix: number[][],
   rowCount: number,
   columnCount: number,
-  fallback?: number[][],
-  defaultValue = 0,
-): number[][] {
-  return Array.from({ length: rowCount }, (_, rowIndex) =>
-    Array.from({ length: columnCount }, (_, columnIndex) => {
-      const value = source[rowIndex]?.[columnIndex]
-      if (typeof value === 'number' && Number.isFinite(value)) return value
-      const fallbackValue = fallback?.[rowIndex]?.[columnIndex]
-      return typeof fallbackValue === 'number' && Number.isFinite(fallbackValue)
-        ? fallbackValue
-        : defaultValue
-    }),
-  )
-}
-
-function deriveMetricsFromPower(
-  signalPowerDbm: number[][],
-  aseNoisePowerDbm: number[][],
-  nliNoisePowerDbm: number[][],
-): SimulationMetricsMatrix | null {
-  const rowCount = signalPowerDbm.length
-  const columnCount = signalPowerDbm[0]?.length ?? 0
-  if (rowCount === 0 || columnCount === 0) return null
-
-  const signal = normalizeMatrix(signalPowerDbm, rowCount, columnCount)
-  const ase = normalizeMatrix(aseNoisePowerDbm, rowCount, columnCount, undefined, -300)
-  const nli = normalizeMatrix(nliNoisePowerDbm, rowCount, columnCount, undefined, -300)
-  const osnr = signal.map((row, rowIndex) => row.map((value, columnIndex) =>
-    value - ase[rowIndex][columnIndex],
-  ))
-  const snrNli = signal.map((row, rowIndex) => row.map((value, columnIndex) =>
-    value - nli[rowIndex][columnIndex],
-  ))
-  const gsnr = signal.map((row, rowIndex) => row.map((value, columnIndex) => {
-    const totalNoiseMw = 10 ** (ase[rowIndex][columnIndex] / 10)
-      + 10 ** (nli[rowIndex][columnIndex] / 10)
-    return value - 10 * Math.log10(Math.max(totalNoiseMw, Number.EPSILON))
-  }))
-
-  return {
-    gsnr_matrix_db: gsnr,
-    osnr_matrix_db: osnr,
-    snr_ase_matrix_db: osnr,
-    snr_nli_matrix_db: snrNli,
-    signal_power_matrix_dbm: signal,
-    ase_noise_power_matrix_dbm: ase,
-    nli_noise_power_matrix_dbm: nli,
-  }
+): boolean {
+  return matrix.length === rowCount
+    && matrix.every(row => row.length === columnCount)
 }
 
 function buildMetrics(root: Record<string, unknown>): SimulationMetricsMatrix | null {
@@ -667,75 +539,64 @@ function buildMetrics(root: Record<string, unknown>): SimulationMetricsMatrix | 
     'nli_noise_power_dbm', 'nliNoisePowerDbm', 'nli_matrix_dbm', 'nliMatrixDbm', 'nli_noise_power_matrix_dbm',
   ]))
 
-  const baseMatrix = gsnr.length ? gsnr : osnr.length ? osnr : snrAse.length ? snrAse : snrNli
-  if (baseMatrix.length > 0 && (baseMatrix[0]?.length ?? 0) > 0) {
-    const rowCount = baseMatrix.length
-    const columnCount = baseMatrix[0].length
-    return {
-      gsnr_matrix_db: normalizeMatrix(gsnr, rowCount, columnCount, osnr),
-      osnr_matrix_db: normalizeMatrix(osnr, rowCount, columnCount, gsnr),
-      snr_ase_matrix_db: normalizeMatrix(snrAse, rowCount, columnCount, osnr.length ? osnr : gsnr),
-      snr_nli_matrix_db: normalizeMatrix(snrNli, rowCount, columnCount, gsnr),
-      ...(signalPower.length > 0 ? {
-        signal_power_matrix_dbm: normalizeMatrix(signalPower, rowCount, columnCount),
-      } : {}),
-      ...(asePower.length > 0 ? {
-        ase_noise_power_matrix_dbm: normalizeMatrix(asePower, rowCount, columnCount, undefined, -300),
-      } : {}),
-      ...(nliPower.length > 0 ? {
-        nli_noise_power_matrix_dbm: normalizeMatrix(nliPower, rowCount, columnCount, undefined, -300),
-      } : {}),
-    }
-  }
+  const rowCount = gsnr.length
+  const columnCount = gsnr[0]?.length ?? 0
+  if (rowCount === 0 || columnCount === 0
+    || !hasMatrixShape(osnr, rowCount, columnCount)
+    || !hasMatrixShape(snrAse, rowCount, columnCount)
+    || !hasMatrixShape(snrNli, rowCount, columnCount)) return null
 
-  return deriveMetricsFromPower(
-    signalPower,
-    asePower,
-    nliPower,
-  )
+  return {
+    gsnr_matrix_db: gsnr,
+    osnr_matrix_db: osnr,
+    snr_ase_matrix_db: snrAse,
+    snr_nli_matrix_db: snrNli,
+    ...(hasMatrixShape(signalPower, rowCount, columnCount)
+      ? { signal_power_matrix_dbm: signalPower }
+      : {}),
+    ...(hasMatrixShape(asePower, rowCount, columnCount)
+      ? { ase_noise_power_matrix_dbm: asePower }
+      : {}),
+    ...(hasMatrixShape(nliPower, rowCount, columnCount)
+      ? { nli_noise_power_matrix_dbm: nliPower }
+      : {}),
+  }
 }
 
 function buildPositions(
   root: Record<string, unknown>,
   rowCount: number,
-  request?: SimulationRequest,
-): SimulationCache['positions'] {
+): SimulationCache['positions'] | null {
   const positions = recordValue(readFirst(root, ['positions']))
   const metadataValue = parseJsonValue(readFirst(root, ['node_metadata', 'nodeMetadata', 'nodes']))
   const metadata = Array.isArray(metadataValue) ? metadataValue : []
-  const requestDevices = [...(request?.deviceSequence ?? [])].sort((left, right) => left.kp - right.kp)
 
-  const names = positions ? stringArray(readFirst(positions, ['names', 'node_names'])) : []
+  const names = positions
+    ? stringArray(readFirst(positions, ['names', 'node_names', 'node_ids', 'nodeIds']))
+    : []
   const distances = positions ? numberArray(readFirst(positions, ['distances_km', 'distancesKm'])) : []
   const spanIds = positions ? stringArray(readFirst(positions, ['span_ids', 'spanIds'])) : []
 
   for (const [index, rawNode] of metadata.entries()) {
     const node = recordValue(rawNode)
     if (!node) continue
-    names[index] = String(readFirst(node, ['node_name', 'nodeName', 'name', 'event_id', 'node_id']) ?? `Node-${index + 1}`)
-    distances[index] = finiteNumber(readFirst(node, ['position_km', 'positionKm', 'kp_km', 'kpKm', 'kp'])) ?? distances[index]
+    const name = readFirst(node, ['node_id', 'nodeId', 'event_id', 'eventId', 'node_name', 'nodeName', 'name'])
+    const distance = finiteNumber(readFirst(node, ['position_km', 'positionKm', 'kp_km', 'kpKm', 'kp']))
+    if (name != null && String(name).trim()) names[index] = String(name)
+    if (distance != null) distances[index] = distance
   }
 
-  if (names.length === 0 && requestDevices.length > 0) {
-    requestDevices.forEach((device, index) => {
-      names[index] = device.name || `${device.type}-${index + 1}`
-      distances[index] = device.kp
-    })
-  }
+  if (names.length !== rowCount
+    || distances.length !== rowCount
+    || spanIds.length !== Math.max(0, rowCount - 1)
+    || names.some(name => !name.trim())
+    || spanIds.some(spanId => !spanId.trim())) return null
 
-  const totalLength = request?.totalLengthKm ?? distances[distances.length - 1] ?? 0
   return {
     count: rowCount,
-    names: Array.from({ length: rowCount }, (_, index) =>
-      names[index] || (index === 0 ? 'Tx' : index === rowCount - 1 ? 'Rx' : `Node-${index}`),
-    ),
-    distances_km: Array.from({ length: rowCount }, (_, index) => {
-      const value = distances[index]
-      return Number.isFinite(value) ? value : rowCount <= 1 ? 0 : totalLength * index / (rowCount - 1)
-    }),
-    span_ids: Array.from({ length: Math.max(0, rowCount - 1) }, (_, index) =>
-      spanIds[index] || `span_${String(index + 1).padStart(2, '0')}`,
-    ),
+    names,
+    distances_km: distances,
+    span_ids: spanIds,
   }
 }
 
@@ -748,46 +609,67 @@ function stringArray(value: unknown): string[] {
 function buildChannels(
   root: Record<string, unknown>,
   columnCount: number,
-  request?: SimulationRequest,
-): SimulationCache['channels'] {
+): SimulationCache['channels'] | null {
   const channels = recordValue(readFirst(root, ['channels']))
-  const ids = channels ? stringArray(readFirst(channels, ['ids', 'channel_ids'])) : []
+  const ids = channels
+    ? stringArray(readFirst(channels, ['ids', 'channel_ids', 'channelIds']))
+    : stringArray(readFirst(root, ['channel_ids', 'channelIds']))
   const frequencies = channels
     ? numberArray(readFirst(channels, ['frequencies_thz', 'frequenciesThz']))
     : numberArray(readFirst(root, ['channel_frequencies_thz', 'channelFrequenciesThz', 'channelFrequencies']))
-  const fallbackFrequencies = request?.channelConfig.channelFrequenciesThz ?? []
-  const center = request?.channelConfig.centerFrequencyThz ?? 193.1
-  const spacing = (request?.channelConfig.channelSpacingGhz ?? 50) / 1000
-  const start = center - (columnCount - 1) * spacing / 2
+  if (ids.length !== columnCount
+    || frequencies.length !== columnCount
+    || ids.some(id => !id.trim())) return null
 
   return {
     count: columnCount,
-    ids: Array.from({ length: columnCount }, (_, index) => ids[index] || `Ch${index + 1}`),
-    frequencies_thz: Array.from({ length: columnCount }, (_, index) =>
-      frequencies[index] ?? fallbackFrequencies[index] ?? Number((start + index * spacing).toFixed(6)),
-    ),
+    ids,
+    frequencies_thz: frequencies,
   }
 }
 
-function stats(values: number[]): { min: number; max: number; avg: number; minIndex: number; maxIndex: number } {
-  if (values.length === 0) return { min: 0, max: 0, avg: 0, minIndex: 0, maxIndex: 0 }
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  return {
-    min,
-    max,
-    avg: average(values),
-    minIndex: values.indexOf(min),
-    maxIndex: values.indexOf(max),
-  }
-}
+function buildSimulationSummary(root: Record<string, unknown>): SimulationCache['summary'] {
+  const source = recordValue(readFirst(root, ['summary'])) ?? {}
+  const gsnrSource = recordValue(readFirst(source, ['final_gsnr', 'finalGsnr'])) ?? {}
+  const osnrSource = recordValue(readFirst(source, ['final_osnr', 'finalOsnr'])) ?? {}
+  const result: SimulationCache['summary'] = {}
 
-function modulationBits(format: string): number {
-  if (format.includes('64QAM')) return 6
-  if (format.includes('32QAM')) return 5
-  if (format.includes('16QAM')) return 4
-  if (format.includes('8QAM')) return 3
-  return 2
+  const totalLengthKm = finiteNumber(readFirst(source, ['total_length_km', 'totalLengthKm']))
+  if (totalLengthKm != null) result.total_length_km = totalLengthKm
+
+  const totalSpanCount = finiteNumber(readFirst(source, ['total_span_count', 'totalSpanCount']))
+  if (totalSpanCount != null) result.total_span_count = totalSpanCount
+
+  const finalGsnr: NonNullable<SimulationCache['summary']['final_gsnr']> = {}
+  const gsnrAvg = finiteNumber(readFirst(gsnrSource, ['avg_db', 'avgDb'])
+    ?? readFirst(source, ['final_gsnr_avg_db', 'finalGsnrAvgDb']))
+  const gsnrMin = finiteNumber(readFirst(gsnrSource, ['min_db', 'minDb'])
+    ?? readFirst(source, ['final_gsnr_min_db', 'finalGsnrMinDb']))
+  const gsnrMax = finiteNumber(readFirst(gsnrSource, ['max_db', 'maxDb']))
+  const worstChannel = readFirst(gsnrSource, ['worst_channel', 'worstChannel'])
+  const bestChannel = readFirst(gsnrSource, ['best_channel', 'bestChannel'])
+  if (gsnrAvg != null) finalGsnr.avg_db = gsnrAvg
+  if (gsnrMin != null) finalGsnr.min_db = gsnrMin
+  if (gsnrMax != null) finalGsnr.max_db = gsnrMax
+  if (typeof worstChannel === 'string' && worstChannel.trim()) finalGsnr.worst_channel = worstChannel
+  if (typeof bestChannel === 'string' && bestChannel.trim()) finalGsnr.best_channel = bestChannel
+  if (Object.keys(finalGsnr).length > 0) result.final_gsnr = finalGsnr
+
+  const finalOsnr: NonNullable<SimulationCache['summary']['final_osnr']> = {}
+  const osnrAvg = finiteNumber(readFirst(osnrSource, ['avg_db', 'avgDb'])
+    ?? readFirst(source, ['final_osnr_avg_db', 'finalOsnrAvgDb']))
+  const osnrMin = finiteNumber(readFirst(osnrSource, ['min_db', 'minDb']))
+  if (osnrAvg != null) finalOsnr.avg_db = osnrAvg
+  if (osnrMin != null) finalOsnr.min_db = osnrMin
+  if (Object.keys(finalOsnr).length > 0) result.final_osnr = finalOsnr
+
+  const systemCapacityTbps = finiteNumber(readFirst(source, ['system_capacity_tbps', 'systemCapacityTbps']))
+  if (systemCapacityTbps != null) result.system_capacity_tbps = systemCapacityTbps
+  if (gsnrAvg != null) result.final_gsnr_avg_db = gsnrAvg
+  if (gsnrMin != null) result.final_gsnr_min_db = gsnrMin
+  if (osnrAvg != null) result.final_osnr_avg_db = osnrAvg
+
+  return result
 }
 
 /** Convert the platform's intentionally loose Object response into the cache used by Step 7. */
@@ -804,13 +686,9 @@ export function normalizePlatformSimulationCache(
   const columnCount = metrics.gsnr_matrix_db[0]?.length ?? 0
   if (rowCount === 0 || columnCount === 0) return null
 
-  const positions = buildPositions(parsed, rowCount, request)
-  const channels = buildChannels(parsed, columnCount, request)
-  const finalGsnr = stats(metrics.gsnr_matrix_db[rowCount - 1] ?? [])
-  const finalOsnr = stats(metrics.osnr_matrix_db[rowCount - 1] ?? [])
-  const totalLength = positions.distances_km[rowCount - 1] ?? request?.totalLengthKm ?? 0
-  const modulation = request?.channelConfig.modulationFormat ?? '16QAM'
-  const baudRate = request?.channelConfig.baudRateGbaud ?? 64
+  const positions = buildPositions(parsed, rowCount)
+  const channels = buildChannels(parsed, columnCount)
+  if (!positions || !channels) return null
   const routeParts = request?.linkName.split(/\s*[⇄↔]\s*/) ?? []
   const routeRef = recordValue(readFirst(parsed, ['route_ref', 'routeRef']))
   const modelSelection = recordValue(readFirst(parsed, ['model_selection', 'modelSelection']))
@@ -824,8 +702,8 @@ export function normalizePlatformSimulationCache(
       route_hash: String(readFirst(routeRef ?? {}, ['route_hash', 'routeHash']) ?? request?.linkId ?? ''),
     },
     model_selection: {
-      fiber_model_id: String(readFirst(modelSelection ?? {}, ['fiber_model_id', 'fiberModelId']) ?? request?.fiberModel ?? 'GN'),
-      edfa_model_id: String(readFirst(modelSelection ?? {}, ['edfa_model_id', 'edfaModelId']) ?? request?.amplifierModel ?? 'EDFA_Simple'),
+      fiber_model_id: String(readFirst(modelSelection ?? {}, ['fiber_model_id', 'fiberModelId']) ?? request?.fiberModel ?? ''),
+      edfa_model_id: String(readFirst(modelSelection ?? {}, ['edfa_model_id', 'edfaModelId']) ?? request?.amplifierModel ?? ''),
       bu_model_id: readFirst(modelSelection ?? {}, ['bu_model_id', 'buModelId']) == null
         ? null
         : String(readFirst(modelSelection ?? {}, ['bu_model_id', 'buModelId'])),
@@ -833,24 +711,6 @@ export function normalizePlatformSimulationCache(
     positions,
     channels,
     metrics,
-    summary: {
-      total_length_km: totalLength,
-      total_span_count: Math.max(0, positions.count - 1),
-      final_gsnr: {
-        avg_db: finalGsnr.avg,
-        min_db: finalGsnr.min,
-        max_db: finalGsnr.max,
-        worst_channel: channels.ids[finalGsnr.minIndex] ?? 'Ch1',
-        best_channel: channels.ids[finalGsnr.maxIndex] ?? 'Ch1',
-      },
-      final_osnr: {
-        avg_db: finalOsnr.avg,
-        min_db: finalOsnr.min,
-      },
-      system_capacity_tbps: Number((columnCount * baudRate * modulationBits(modulation) / 1000).toFixed(2)),
-      final_gsnr_avg_db: finalGsnr.avg,
-      final_gsnr_min_db: finalGsnr.min,
-      final_osnr_avg_db: finalOsnr.avg,
-    },
+    summary: buildSimulationSummary(parsed),
   }
 }

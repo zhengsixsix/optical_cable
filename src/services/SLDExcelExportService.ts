@@ -62,10 +62,8 @@ const TPL_REPEATER_R = "<xdr:twoCellAnchor><xdr:from><xdr:col>{{FROM_COL}}</xdr:
 const TPL_TERM_HEX   = "<xdr:twoCellAnchor><xdr:from><xdr:col>{{FROM_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{FROM_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>{{TO_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{TO_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id=\"{{ID_0}}\" name=\"{{NAME}}\"><a:extLst><a:ext uri=\"{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}\"><a16:creationId xmlns:a16=\"http://schemas.microsoft.com/office/drawing/2014/main\" id=\"{{ID_1}}\"/></a:ext></a:extLst></xdr:cNvPr><xdr:cNvGrpSpPr><a:grpSpLocks/></xdr:cNvGrpSpPr></xdr:nvGrpSpPr><xdr:grpSpPr bwMode=\"auto\"><a:xfrm><a:off x=\"1974273\" y=\"346364\"/><a:ext cx=\"658091\" cy=\"538595\"/><a:chOff x=\"883\" y=\"2553\"/><a:chExt cx=\"97\" cy=\"60\"/></a:xfrm></xdr:grpSpPr><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{{ID_2}}\" name=\"{{NAME}}\"><a:extLst><a:ext uri=\"{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}\"><a16:creationId xmlns:a16=\"http://schemas.microsoft.com/office/drawing/2014/main\" id=\"{{ID_3}}\"/></a:ext></a:extLst></xdr:cNvPr><xdr:cNvSpPr><a:spLocks/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr bwMode=\"auto\"><a:xfrm><a:off x=\"883\" y=\"2553\"/><a:ext cx=\"97\" cy=\"60\"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 20 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 20 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 40 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 60 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 40 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 20 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 60000 65536\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 60000 65536\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 60000 65536\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 60000 65536\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 60000 65536\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 60000 65536\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 60000 65536\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 0 h 60\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 196 w 196\"/><a:gd name=\"{{NAME}}\" fmla=\"*/ 60 h 60\"/></a:gdLst><a:ahLst/><a:cxnLst><a:cxn ang=\"T14\"><a:pos x=\"T0\" y=\"T1\"/></a:cxn><a:cxn ang=\"T15\"><a:pos x=\"T2\" y=\"T3\"/></a:cxn><a:cxn ang=\"T16\"><a:pos x=\"T4\" y=\"T5\"/></a:cxn><a:cxn ang=\"T17\"><a:pos x=\"T6\" y=\"T7\"/></a:cxn><a:cxn ang=\"T18\"><a:pos x=\"T8\" y=\"T9\"/></a:cxn><a:cxn ang=\"T19\"><a:pos x=\"T10\" y=\"T11\"/></a:cxn><a:cxn ang=\"T20\"><a:pos x=\"T12\" y=\"T13\"/></a:cxn></a:cxnLst><a:rect l=\"T21\" t=\"T22\" r=\"T23\" b=\"T24\"/><a:pathLst><a:path w=\"196\" h=\"60\"><a:moveTo><a:pt x=\"0\" y=\"20\"/></a:moveTo><a:lnTo><a:pt x=\"98\" y=\"0\"/></a:lnTo><a:lnTo><a:pt x=\"196\" y=\"20\"/></a:lnTo><a:lnTo><a:pt x=\"196\" y=\"40\"/></a:lnTo><a:lnTo><a:pt x=\"98\" y=\"60\"/></a:lnTo><a:lnTo><a:pt x=\"0\" y=\"40\"/></a:lnTo><a:lnTo><a:pt x=\"0\" y=\"20\"/></a:lnTo><a:close/></a:path></a:pathLst></a:custGeom><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill><a:round/><a:headEnd/><a:tailEnd/></a:ln></xdr:spPr></xdr:sp><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{{ID_4}}\" name=\"{{NAME}}\"><a:extLst><a:ext uri=\"{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}\"><a16:creationId xmlns:a16=\"http://schemas.microsoft.com/office/drawing/2014/main\" id=\"{{ID_5}}\"/></a:ext></a:extLst></xdr:cNvPr><xdr:cNvSpPr><a:spLocks noChangeArrowheads=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr bwMode=\"auto\"><a:xfrm><a:off x=\"910\" y=\"2562\"/><a:ext cx=\"42\" cy=\"42\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"FFFFFF\"/></a:solidFill><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill><a:miter lim=\"800000\"/><a:headEnd/><a:tailEnd/></a:ln></xdr:spPr></xdr:sp></xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor>"
 
 // 内联设备左侧连接线
-const TPL_INLINE_LINE_LEFT = "<xdr:twoCellAnchor><xdr:from><xdr:col>{{FROM_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{FROM_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>{{TO_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{TO_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{{ID_0}}\" name=\"{{NAME}}\"><a:extLst><a:ext uri=\"{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}\"><a16:creationId xmlns:a16=\"http://schemas.microsoft.com/office/drawing/2014/main\" id=\"{{ID_1}}\"/></a:ext></a:extLst></xdr:cNvPr><xdr:cNvSpPr><a:spLocks noChangeShapeType=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr bwMode=\"auto\"><a:xfrm><a:off x=\"0\" y=\"2583\"/><a:ext cx=\"18\" cy=\"0\"/></a:xfrm><a:prstGeom prst=\"line\"><a:avLst/></a:prstGeom><a:noFill/><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill><a:round/><a:headEnd/><a:tailEnd/></a:ln></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>"
 
 // 内联设备右侧连接线
-const TPL_INLINE_LINE_RIGHT = "<xdr:twoCellAnchor><xdr:from><xdr:col>{{FROM_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{FROM_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>{{TO_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{TO_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{{ID_0}}\" name=\"{{NAME}}\"><a:extLst><a:ext uri=\"{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}\"><a16:creationId xmlns:a16=\"http://schemas.microsoft.com/office/drawing/2014/main\" id=\"{{ID_1}}\"/></a:ext></a:extLst></xdr:cNvPr><xdr:cNvSpPr><a:spLocks noChangeShapeType=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr bwMode=\"auto\"><a:xfrm><a:off x=\"79\" y=\"2583\"/><a:ext cx=\"18\" cy=\"0\"/></a:xfrm><a:prstGeom prst=\"line\"><a:avLst/></a:prstGeom><a:noFill/><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill><a:round/><a:headEnd/><a:tailEnd/></a:ln></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>"
 
 // EQ 蓝色核心块（均衡器 T）
 const TPL_EQ_BLUE = "<xdr:twoCellAnchor><xdr:from><xdr:col>{{FROM_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{FROM_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>{{TO_COL}}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{{TO_ROW}}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{{ID_0}}\" name=\"{{NAME}}\"><a:extLst><a:ext uri=\"{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}\"><a16:creationId xmlns:a16=\"http://schemas.microsoft.com/office/drawing/2014/main\" id=\"{{ID_1}}\"/></a:ext></a:extLst></xdr:cNvPr><xdr:cNvSpPr><a:spLocks/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr bwMode=\"auto\"><a:xfrm><a:off x=\"18\" y=\"2553\"/><a:ext cx=\"61\" cy=\"60\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:pattFill prst=\"diagCross\"><a:fgClr><a:srgbClr val=\"1D4ED8\"/></a:fgClr><a:bgClr><a:srgbClr val=\"3B82F6\"/></a:bgClr></a:pattFill><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"1D4ED8\"/></a:solidFill><a:round/><a:headEnd/><a:tailEnd/></a:ln></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>"
@@ -212,7 +210,7 @@ function setCell(
   if (opts.border) cell.border = opts.border
 }
 
-function writeSheet(ws: ExcelJS.Worksheet, cols: ColDef[], table: SLDTable, startRow = 1) {
+function writeSheet(ws: ExcelJS.Worksheet, cols: ColDef[], startRow = 1) {
   const totalCols = cols.length > 0 ? Math.max(...cols.map(c => c.col)) + 2 : 20
   for (let c = 1; c <= totalCols; c++) ws.getColumn(c).width = COL_WIDTH
   for (let r = startRow; r <= startRow + SECTION_ROWS - 1; r++) ws.getRow(r).height = ROW_HEIGHT
@@ -231,10 +229,7 @@ function writeSheet(ws: ExcelJS.Worksheet, cols: ColDef[], table: SLDTable, star
   }
 
   const fpLabel = (seg?: SLDFiberSegment) => seg?.fiberPairs ? `${seg.fiberPairs}FP` : ''
-  const cableType = (seg?: SLDFiberSegment) => (seg?.cableType || '').toUpperCase() || 'SA'
-
-  const slaveMap = new Map<string, ColDef>()
-  cols.forEach(c => { /* for future use */ })
+  const cableType = (seg?: SLDFiberSegment) => (seg?.cableType || '').toUpperCase()
 
   for (const c of cols) {
     const r   = (off: number) => startRow + off
@@ -523,19 +518,6 @@ function generateSectionShapes(
   return { xml: shapes.join('\n'), nextIdBase: idBase }
 }
 
-/**
- * 根据 layout 生成 drawing1.xml (Trunk sheet) 内容（单段，向后兼容）
- */
-function generateDrawingXml(layout: ColDef[], sectionStartRow = 0): string {
-  const { xml: shapes } = generateSectionShapes(layout, sectionStartRow, 100)
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
-    shapes,
-    '</xdr:wsDr>',
-  ].join('\n')
-}
-
 // ═══════════════════════════════════════════════════
 // jszip 合并：把 ExcelJS xlsx + drawing XML 合成输出
 // ═══════════════════════════════════════════════════
@@ -607,7 +589,7 @@ async function injectDrawing(xlsxBuf: ArrayBuffer, drawingXml: string): Promise<
 // 主导出函数
 // ═══════════════════════════════════════════════════
 
-export function buildSLDExcelDrawingXml(table: SLDTable): string {
+function buildSLDExcelDrawingXml(table: SLDTable): string {
   // 构建完整列布局，然后分段（每段 MAX_SECTION_COLS 个元素）
   const layout   = buildLayout(table)
   const sections = splitIntoSections(layout)
@@ -649,7 +631,7 @@ export async function exportSLDToExcel(table: SLDTable): Promise<void> {
   // 3. 按段写入单元格数据
   sections.forEach((sectionCols, idx) => {
     const startRow = 1 + idx * sectionSpacing
-    writeSheet(ws, sectionCols, table, startRow)
+    writeSheet(ws, sectionCols, startRow)
   })
 
   // 4. 合并所有段的图形 XML

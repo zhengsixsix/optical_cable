@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
 import BindFuncListEditor from '@/components/settings/BindFuncListEditor.vue'
@@ -10,7 +11,7 @@ import { MapPin, RefreshCw, Save, X } from 'lucide-vue-next'
 import {
   buildDeviceValueList,
   deviceValueListToMap,
-  mergeDeviceConfigsWithDefaults,
+  normalizeDeviceConfigs,
 } from '@/services/platform/deviceAttributes'
 import {
   bindFuncDraftsToList,
@@ -61,6 +62,7 @@ const emit = defineEmits<{
 const connectorStore = useConnectorStore()
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
+const dictionaryStore = useDictionaryStore()
 
 const isEdit = computed(() => !!props.editId)
 const currentProjectId = computed(() => appStore.projectState.currentProject?.platformProjectId ?? null)
@@ -118,12 +120,7 @@ const fallbackSortNum = () => {
 }
 
 const dictionaryDeviceTypeOptions = computed(() =>
-  settingsStore.platformDeviceTypeDictionaries
-    .filter(item => item.code)
-    .map(item => ({
-      value: String(item.code),
-      label: item.name || String(item.code),
-    })),
+  dictionaryStore.getOptions(PLATFORM_DICTIONARY_TYPES.deviceType),
 )
 
 const deviceTypeOptions = computed(() => {
@@ -137,13 +134,13 @@ const deviceTypeOptions = computed(() => {
 
 const selectedDeviceTypeName = computed(() => {
   const selected = formData.value.deviceTypeCd
-  const dictionary = settingsStore.platformDeviceTypeDictionaries.find(item => item.code === selected)
+  const dictionary = dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, selected)
   return dictionary?.name || selected || '-'
 })
 
 const activeDeviceConfigs = computed(() =>
   formData.value.deviceTypeCd
-    ? mergeDeviceConfigsWithDefaults(formData.value.deviceTypeCd, settingsStore.platformDeviceConfigs)
+    ? normalizeDeviceConfigs(settingsStore.platformDeviceConfigs)
     : [],
 )
 
@@ -177,7 +174,7 @@ const librarySelectOptions = computed(() => [
 
 const loadDeviceConfigsForType = async (deviceTypeCd?: string | null) => {
   if (!deviceTypeCd) {
-    settingsStore.platformDeviceConfigs = []
+    settingsStore.clearPlatformDeviceConfigs()
     loadedConfigDeviceTypeCd.value = ''
     return
   }
@@ -224,7 +221,7 @@ const applyLibraryToForm = async (library: PlanDeviceLibrary | null, fillName = 
 const resetForm = () => {
   currentPlatformEntityId.value = null
   loadedConfigDeviceTypeCd.value = ''
-  settingsStore.platformDeviceConfigs = []
+  settingsStore.clearPlatformDeviceConfigs()
   formData.value = createDefaultForm()
 }
 
@@ -239,7 +236,7 @@ const ensureSourceData = async () => {
   sourceLoading.value = true
   try {
     await Promise.all([
-      settingsStore.loadPlatformDeviceTypeDictionaries(),
+      dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType),
       settingsStore.ensurePlatformDeviceLibrariesLoaded(),
     ])
   } catch (error) {
@@ -430,6 +427,10 @@ const syncLocalElement = (entity: PlanDeviceEntity) => {
 const handleSave = async () => {
   if (!formData.value.deviceTypeCd) {
     appStore.showNotification({ type: 'error', message: '请选择类型' })
+    return
+  }
+  if (!dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, formData.value.deviceTypeCd)) {
+    appStore.showNotification({ type: 'error', message: `DEVICE_TYPE 字典中不存在器件类型 ${formData.value.deviceTypeCd}` })
     return
   }
 

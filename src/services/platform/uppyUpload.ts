@@ -32,7 +32,7 @@ interface UppyUploadResult {
   failed?: unknown[]
 }
 
-export interface UppyLike {
+interface UppyLike {
   use(plugin: unknown, options: Record<string, unknown>): UppyLike
   addFile(file: { name: string; type: string; data: File; meta: Record<string, string> }): string
   on(event: string, handler: (...args: any[]) => void): UppyLike
@@ -40,7 +40,7 @@ export interface UppyLike {
   destroy?: () => void
 }
 
-export type CreateUppy = (options: {
+type CreateUppy = (options: {
   autoProceed: boolean
   restrictions: { maxNumberOfFiles: number }
 }) => UppyLike
@@ -52,7 +52,7 @@ export interface UploadFileWithUppyTusOptions {
   onProgress?: (progress: UppyUploadProgress) => void
 }
 
-export const DEFAULT_TUS_CHUNK_SIZE = 64 * 1024 * 1024
+const DEFAULT_TUS_CHUNK_SIZE = 64 * 1024 * 1024
 
 interface TusHttpResponse {
   getStatus(): number
@@ -174,11 +174,11 @@ function getUrlPath(value: string): string {
   return new URL(value, origin).pathname.replace(/\/+$/, '')
 }
 
-export function normalizeTusLocationHeader(location: string | undefined, endpoint: string): string | undefined {
+function normalizeTusLocationHeader(location: string | undefined, endpoint: string): string | undefined {
   return normalizeTusUploadUrl(location, endpoint)
 }
 
-export function normalizeTusUploadUrl(url: string | undefined, endpoint: string): string | undefined {
+function normalizeTusUploadUrl(url: string | undefined, endpoint: string): string | undefined {
   if (!url) return url
 
   const endpointPath = getUrlPath(endpoint)

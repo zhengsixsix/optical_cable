@@ -24,16 +24,6 @@ export interface LayerSettings {
   oceanRoute: boolean          // 海洋航道图
 }
 
-/** 图层设置默认值 */
-export const defaultLayerSettings: LayerSettings = {
-  oceanElevation: true,
-  oceanVolcano: false,
-  oceanFishingZone: false,
-  oceanSlope: false,
-  oceanEarthquake: false,
-  oceanRoute: false,
-}
-
 // ==================== 器件库配置 ====================
 
 /** 器件库配置 */
@@ -66,14 +56,6 @@ export interface TransmissionSystemConfig {
   calculationModel: CalculationModel  // 计算模型
 }
 
-/** 传输系统配置默认值 */
-export const defaultTransmissionConfig: TransmissionSystemConfig = {
-  channelCount: 80,
-  centerWavelength: 1550.0,
-  channelBandwidth: 50.0,
-  calculationModel: 'standard',
-}
-
 // ==================== 监控系统配置 ====================
 
 /** 数据源类型 */
@@ -86,15 +68,6 @@ export interface MonitoringSystemConfig {
   opticalPowerThreshold: number     // 光功率阈值 (dBm)
   temperatureThreshold: number      // 温度阈值 (°C)
   berThreshold: number              // BER阈值 (误码率)
-}
-
-/** 监控系统配置默认值 */
-export const defaultMonitoringConfig: MonitoringSystemConfig = {
-  dataSourceType: 'realtime',
-  connectionAddress: '',
-  opticalPowerThreshold: -20.0,
-  temperatureThreshold: 45.0,
-  berThreshold: 1e-9,
 }
 
 // ==================== RPL/SLD 文件引用 ====================
@@ -200,11 +173,3 @@ export interface USEProject {
 
 /** 项目文件类型 */
 export type ProjectFile = USEProject
-
-
-// ==================== 类型守卫 ====================
-
-/** 判断是否为 USE 项目 */
-export function isUSEProject(project: Record<string, unknown> | USEProject): project is USEProject {
-  return (project as USEProject).type === 'use'
-}

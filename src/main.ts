@@ -4,7 +4,7 @@ import router from './router'
 import App from './App.vue'
 import './style.css'
 
-import { initAppearance } from '@/composables'
+import { initAppearance } from '@/composables/useAppearance'
 import { onPlatformUnauthorized } from '@/services/platform/client'
 import { useAppStore } from '@/stores/app'
 import { useUserStore } from '@/stores/user'

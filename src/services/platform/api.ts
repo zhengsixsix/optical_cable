@@ -1,7 +1,6 @@
 import { platformClient, setPlatformToken, PLATFORM_USER_KEY } from './client'
 import { encryptPassword } from './sm2'
 import type {
-  EndpointDefinition,
   PcAuthInfo,
   PlatformDictionary,
   PlatformMenu,
@@ -21,15 +20,13 @@ import type {
   PlanDeviceEntitySearch,
   PlanDeviceLibrary,
   PlanDeviceLibrarySearch,
-  PlanDeviceValue,
-  PlanDeviceValueSave,
-  PlanDeviceValueSearch,
   PlanLayer,
   PlanLayerUploadCompletePayload,
   PlanPoint,
   PlanPointSaveListPayload,
   PlanCalculationResult,
   PlanProject,
+  PlanProjectDetail,
   PlanRouteResult,
   PlatformPlanningResults,
   PagedSearch,
@@ -133,7 +130,7 @@ export const platformProjectApi = {
   search: (payload: PagedSearch = { pageNumber: 1, pageSize: 10 }) =>
     platformClient.postWithPage<PlanProject[]>('/plan/project/search', payload),
   save: (payload: PlanProject) => platformClient.post<Id>('/plan/project/save', payload),
-  detail: (id: Id) => platformClient.post<PlanProject>('/plan/project/detail', { id }),
+  detail: (id: Id) => platformClient.post<PlanProjectDetail>('/plan/project/detail', { id }),
   queryRoute: (id: Id) => platformClient.post<PlanRouteResult | null>('/plan/project/query/route', { id }),
   fixedPlan: (id: Id) =>
     platformClient.post<PlanCalculationResult>('/plan/project/plan/fixed', { id }),
@@ -269,124 +266,7 @@ export const platformDeviceConfigApi = {
   remove: (id: Id) => platformClient.post<boolean>('/plan/deviceConfig/remove', { id }),
 }
 
-export const platformDeviceValueApi = {
-  search: (payload: PlanDeviceValueSearch = { pageNumber: 1, pageSize: 10 }) =>
-    platformClient.postWithPage<PlanDeviceValue[]>('/plan/deviceValue/search', payload),
-  save: (payload: PlanDeviceValueSave) => platformClient.post<number | string>('/plan/deviceValue/save', payload),
-  detail: (id: Id) => platformClient.post<PlanDeviceValue>('/plan/deviceValue/detail', { id }),
-  remove: (id: Id) => platformClient.post<boolean>('/plan/deviceValue/remove', { id }),
-}
-
 export const platformUploadApi = {
   complete: (payload: PlanLayerUploadCompletePayload) =>
     platformClient.postJson<unknown>('/sys/upload/complete', payload),
-}
-
-export const platformEndpointDefinitions: EndpointDefinition[] = [
-  { key: 'login', group: '1.1 User Management', name: 'PC login', path: '/login', authRequired: false, encryptPasswordFields: ['password'], defaultPayload: { username: 'admin', password: '' } },
-  { key: 'register', group: '1.1 User Management', name: 'Register user', path: '/register', authRequired: false, encryptPasswordFields: ['password'], defaultPayload: { username: '', password: '', realName: '', tele: '', remarks: '' } },
-  { key: 'searchRegister', group: '1.1 User Management', name: 'Search registered users', path: '/sys/user/searchRegister', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, realName: null, tele: null, username: null, remarks: null, approvalCd: null, isValidCd: null, key: '', accountId: null } },
-  { key: 'registerApproval', group: '1.1 User Management', name: 'Approve registration', path: '/sys/registerApproval', defaultPayload: { userId: null, approvalCd: 'approved', approvalDesc: '', roleIds: [], sortNum: 999 } },
-  { key: 'userAdd', group: '1.1 User Management', name: 'Create user', path: '/sys/user/add', encryptPasswordFields: ['password'], defaultPayload: { username: '', password: '', realName: '', tele: '', remarks: '', roleIds: [], sortNum: 999 } },
-  { key: 'userDetail', group: '1.1 User Management', name: 'User detail', path: '/sys/user/detail', defaultPayload: { id: null } },
-  { key: 'userSearch', group: '1.1 User Management', name: 'Search users', path: '/sys/user/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, realName: null, tele: null, username: null, remarks: null, approvalCd: null, isValidCd: null, key: '', accountId: null } },
-  { key: 'userSaveRoles', group: '1.1 User Management', name: 'Assign user roles', path: '/sys/user/saveRoles', defaultPayload: { userId: null, roleIds: [] } },
-  { key: 'userChangePassword', group: '1.1 User Management', name: 'Change password', path: '/sys/user/changePassword', encryptPasswordFields: ['oldPassword', 'newPassword'], defaultPayload: { oldPassword: '', newPassword: '' } },
-  { key: 'userResetPassword', group: '1.1 User Management', name: 'Reset password', path: '/sys/user/resetPassword', defaultPayload: { userId: null } },
-  { key: 'userRemove', group: '1.1 User Management', name: 'Delete user', path: '/sys/user/remove', defaultPayload: { id: null } },
-  { key: 'userModify', group: '1.1 User Management', name: 'Modify user', path: '/sys/user/modify', defaultPayload: { id: null, realName: '', tele: '', remarks: '', roleIds: [], sortNum: 999 } },
-  { key: 'userSetValid', group: '1.1 User Management', name: 'Set user valid state', path: '/sys/user/setValid', defaultPayload: { id: null } },
-  { key: 'roleSave', group: '1.2 Role Management', name: 'Save role', path: '/sys/role/save', defaultPayload: { id: null, code: '', name: '', description: '', isValidCd: '1', sortNum: 999, isSys: 0 } },
-  { key: 'roleRemove', group: '1.2 Role Management', name: 'Delete role', path: '/sys/role/remove', defaultPayload: { id: null } },
-  { key: 'roleDetail', group: '1.2 Role Management', name: 'Role detail', path: '/sys/role/detail', defaultPayload: { id: null } },
-  { key: 'roleSearch', group: '1.2 Role Management', name: 'Search roles', path: '/sys/role/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, code: null, name: '', description: null, isValidCd: null, sortNum: null, isSys: null } },
-  { key: 'roleSaveMenus', group: '1.2 Role Management', name: 'Assign role menus', path: '/sys/role/saveMenus', defaultPayload: { roleId: null, menuIds: [] } },
-  { key: 'menuDetail', group: '1.3 Menu Management', name: 'Menu detail', path: '/sys/menu/detail', defaultPayload: { id: null } },
-  { key: 'menuSearch', group: '1.3 Menu Management', name: 'Search menus', path: '/sys/menu/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', parentId: null, sortNum: null, url: null, typeCode: null, code: null, terminalType: null } },
-  { key: 'menuTree', group: '1.3 Menu Management', name: 'Menu tree', path: '/sys/menu/tree', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, roleId: null } },
-  { key: 'dicSave', group: '1.5 Dictionary Management', name: 'Save dictionary', path: '/sys/dic/save', defaultPayload: { id: null, type: 'PLAN_TYPE', code: '', name: '', detail: '', sortNum: 999, isValidCd: '1' } },
-  { key: 'dicRemove', group: '1.5 Dictionary Management', name: 'Delete dictionary', path: '/sys/dic/remove', defaultPayload: { id: null, type: 'PLAN_TYPE' } },
-  { key: 'dicSearch', group: '1.5 Dictionary Management', name: 'Search dictionaries by type', path: '/sys/dic/search/list', defaultPayload: { pageNumber: 1, pageSize: 10, type: 'PLAN_TYPE' } },
-  { key: 'dicListItem', group: '1.5 Dictionary Management', name: 'Dictionary list items by type', path: '/sys/dic/search/listItem', defaultPayload: { type: 'PLAN_TYPE' } },
-  { key: 'logSearch', group: '1.6 Log Management', name: 'Search operation logs', path: '/sys/log/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, title: '', businessType: null, method: null, requestMethod: null, operatorType: null, operName: null, orgName: null, operUrl: null, operIp: null, operLocation: null, operParam: null, jsonResult: null, status: null, errorMsg: null, operTime: null, costTime: null } },
-  { key: 'projectSave', group: '2.1 Project Management', name: 'Save project', path: '/plan/project/save', defaultPayload: { id: null, name: '', remarks: '', isPublic: 0 } },
-  { key: 'projectRemove', group: '2.1 Project Management', name: 'Delete project', path: '/plan/project/remove', defaultPayload: { id: null } },
-  { key: 'projectDetail', group: '2.1 Project Management', name: 'Project detail', path: '/plan/project/detail', defaultPayload: { id: null } },
-  { key: 'projectSearch', group: '2.1 Project Management', name: 'Search projects', path: '/plan/project/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', remarks: null, isPublic: null } },
-  { key: 'projectRoutePlan', group: '2.1 Project Management', name: 'Generate route plan', path: '/plan/project/plan/route', defaultPayload: { id: null, rectRange: [] } },
-  { key: 'projectQueryRoute', group: '2.1 Project Management', name: 'Query route plan', path: '/plan/project/query/route', defaultPayload: { id: null } },
-  { key: 'projectFixedPlan', group: '2.1 Project Management', name: 'Generate fixed layout', path: '/plan/project/plan/fixed', defaultPayload: { id: null } },
-  { key: 'projectOptimizedPlan', group: '2.1 Project Management', name: 'Generate optimized layout', path: '/plan/project/plan/optimized', defaultPayload: { id: null, fmmPathResultIndex: 1 } },
-  { key: 'projectSimulationPlan', group: '2.1 Project Management', name: 'Run physical simulation', path: '/plan/project/plan/simulation', defaultPayload: { id: null, fmmPathResultIndex: 1 } },
-  { key: 'projectQueryFixed', group: '2.1 Project Management', name: 'Query fixed layout', path: '/plan/project/query/fixed', defaultPayload: { id: null } },
-  { key: 'projectQueryOptimized', group: '2.1 Project Management', name: 'Query optimized layout', path: '/plan/project/query/optimized', defaultPayload: { id: null } },
-  { key: 'projectQuerySimulation', group: '2.1 Project Management', name: 'Query physical simulation', path: '/plan/project/query/simulation', defaultPayload: { id: null } },
-  { key: 'pointSave', group: '2.2 Point Management', name: 'Save point', path: '/plan/point/save', defaultPayload: { id: null, projectId: null, name: '', longitude: null, latitude: null, sortNum: 999 } },
-  { key: 'pointSaveList', group: '2.2 Point Management', name: 'Save point list', path: '/plan/point/saveList', defaultPayload: { projectId: null, pointList: [{ name: '', longitude: null, latitude: null, sortNum: 1 }] } },
-  { key: 'pointRemove', group: '2.2 Point Management', name: 'Delete point', path: '/plan/point/remove', defaultPayload: { id: null } },
-  { key: 'pointDetail', group: '2.2 Point Management', name: 'Point detail', path: '/plan/point/detail', defaultPayload: { id: null } },
-  { key: 'pointSearch', group: '2.2 Point Management', name: 'Search points', path: '/plan/point/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, projectId: null, name: '' } },
-  { key: 'planConfigSaveScope', group: '2.3 Plan Config Management', name: 'Save planning scope', path: '/plan/planConfig/saveScope', defaultPayload: { projectId: null, topLeftLng: null, topLeftLat: null, bottomRightLng: null, bottomRightLat: null } },
-  { key: 'planConfigSearchScope', group: '2.3 Plan Config Management', name: 'Search planning scope', path: '/plan/planConfig/searchScope', defaultPayload: { id: null } },
-  { key: 'planConfigSaveGridResolution', group: '2.3 Plan Config Management', name: 'Save grid resolution', path: '/plan/planConfig/saveGridResolution', defaultPayload: { projectId: null, gridResolution: null } },
-  { key: 'planConfigSearchGridResolution', group: '2.3 Plan Config Management', name: 'Search grid resolution', path: '/plan/planConfig/searchGridResolution', defaultPayload: { id: null } },
-  { key: 'planConfigSaveEnableRedundancy', group: '2.3 Plan Config Management', name: 'Save redundancy flag', path: '/plan/planConfig/saveEnableRedundancy', defaultPayload: { projectId: null, enableRedundancy: null } },
-  { key: 'planConfigSearchEnableRedundancy', group: '2.3 Plan Config Management', name: 'Search redundancy flag', path: '/plan/planConfig/searchEnableRedundancy', defaultPayload: { id: null } },
-  { key: 'planConfigSaveChannelConfig', group: '2.3 Plan Config Management', name: 'Save channel config', path: '/plan/planConfig/saveChannelConfig', defaultPayload: { projectId: null, channelCount: 96, baudRateGbaud: 64, modulationFormat: '16QAM', launchPowerDbm: [], channelFrequenciesThz: [], initialAseNoiseDbm: -90, initialNliNoiseDbm: -90, centerFrequencyThz: 193.1, channelSpacingGhz: 50 } },
-  { key: 'planConfigSearchChannelConfig', group: '2.3 Plan Config Management', name: 'Search channel config', path: '/plan/planConfig/searchChannelConfig', defaultPayload: { id: null } },
-  { key: 'planConfigSaveOptimization', group: '2.3 Plan Config Management', name: 'Save optimization config', path: '/plan/planConfig/saveOptimization', defaultPayload: { projectId: null, targetGsnrDb: 14, targetOsnrDb: 16 } },
-  { key: 'planConfigSearchOptimization', group: '2.3 Plan Config Management', name: 'Search optimization config', path: '/plan/planConfig/searchOptimization', defaultPayload: { id: null } },
-  { key: 'planConfigSaveSpanKm', group: '2.3 Plan Config Management', name: 'Save span length', path: '/plan/planConfig/saveSpanKm', defaultPayload: { projectId: null, spanKm: 70 } },
-  { key: 'planConfigSearchSpanKm', group: '2.3 Plan Config Management', name: 'Search span length', path: '/plan/planConfig/searchSpanKm', defaultPayload: { id: null } },
-]
-
-platformEndpointDefinitions.push(
-  { key: 'uploadComplete', group: '1.4 Attachment Management', name: 'Upload complete', path: '/sys/upload/complete', defaultPayload: { uploadUrl: '', bizId: null, typeDic: 'LAYER' } },
-  {
-    key: 'uploadTusRequests',
-    group: '1.4 Attachment Management',
-    name: 'TUS upload wildcard endpoint',
-    path: '/sys/upload/**',
-    methods: ['GET', 'PUT', 'POST', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH'],
-    callable: false,
-    description: 'Swagger exposes the TUS upload protocol endpoint; the layer upload flow calls it through Uppy.',
-    defaultPayload: {},
-  },
-  { key: 'planLayerSave', group: '2.4 Layer Management', name: 'Save plan layer', path: '/plan/planLayer/save', defaultPayload: { id: null, name: '', remarks: '', isPublic: 0, isDefault: 0, attachmentId: null, typeDic: 'BATHY' } },
-  { key: 'planLayerRemove', group: '2.4 Layer Management', name: 'Delete plan layer', path: '/plan/planLayer/remove', defaultPayload: { id: null } },
-  { key: 'planLayerDetail', group: '2.4 Layer Management', name: 'Plan layer detail', path: '/plan/planLayer/detail', defaultPayload: { id: null } },
-  { key: 'planLayerSearch', group: '2.4 Layer Management', name: 'Search plan layers', path: '/plan/planLayer/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', remarks: null, isPublic: null, isDefault: null, attachmentId: null, typeDic: null } },
-  { key: 'deviceLibrarySave', group: '2.5 Device Library Management', name: 'Save device library', path: '/plan/deviceLibrary/save', defaultPayload: { id: null, projectId: null, name: '', deviceTypeCd: '', iconId: null, iconSize: { width: 48, height: 48 }, dialogWindowId: null, bindFuncList: [{ name: '', isDefault: 0, defaultInputParams: {} }], deviceValueList: [{ configCode: '', value: '' }], isDefault: 0 } },
-  { key: 'deviceLibraryRemove', group: '2.5 Device Library Management', name: 'Delete device library', path: '/plan/deviceLibrary/remove', defaultPayload: { id: null } },
-  { key: 'deviceLibraryDetail', group: '2.5 Device Library Management', name: 'Device library detail', path: '/plan/deviceLibrary/detail', defaultPayload: { id: null } },
-  { key: 'deviceLibrarySearch', group: '2.5 Device Library Management', name: 'Search device libraries', path: '/plan/deviceLibrary/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, projectId: null, name: '', deviceTypeCd: null, dialogWindowId: null, isDefault: null } },
-  { key: 'deviceEntitySave', group: '2.6 Device Entity Management', name: 'Save device entity', path: '/plan/deviceEntity/save', defaultPayload: { id: null, name: '', deviceTypeCd: '', iconId: null, iconSize: { width: 48, height: 48 }, dialogWindowId: null, bindFuncList: [{ name: '', isDefault: 0, defaultInputParams: {} }], libraryId: null, longitude: null, latitude: null, projectId: null, sortNum: 999, deviceValueList: [{ configCode: '', value: '' }] } },
-  { key: 'deviceEntityRemove', group: '2.6 Device Entity Management', name: 'Delete device entity', path: '/plan/deviceEntity/remove', defaultPayload: { id: null } },
-  { key: 'deviceEntityDetail', group: '2.6 Device Entity Management', name: 'Device entity detail', path: '/plan/deviceEntity/detail', defaultPayload: { id: null } },
-  { key: 'deviceEntitySearch', group: '2.6 Device Entity Management', name: 'Search device entities', path: '/plan/deviceEntity/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, name: '', deviceTypeCd: null, libraryId: null, longitude: null, latitude: null, projectId: null } },
-  { key: 'deviceConfigSave', group: '2.7 Device Config Management', name: 'Save device config', path: '/plan/deviceConfig/save', defaultPayload: { id: null, deviceTypeCd: '', name: '', code: '', dataTypeCd: 'STRING', dataFormat: null, dicCode: null, defaultValue: null, description: null, jsonField: null, unit: null, groupCode: null, groupName: null } },
-  { key: 'deviceConfigRemove', group: '2.7 Device Config Management', name: 'Delete device config', path: '/plan/deviceConfig/remove', defaultPayload: { id: null } },
-  { key: 'deviceConfigDetail', group: '2.7 Device Config Management', name: 'Device config detail', path: '/plan/deviceConfig/detail', defaultPayload: { id: null } },
-  { key: 'deviceConfigSearch', group: '2.7 Device Config Management', name: 'Search device configs', path: '/plan/deviceConfig/search', defaultPayload: { pageSize: 10, pageNumber: 1, deviceTypeCd: '', name: null, code: null, dataTypeCd: null, dicCode: null, defaultValue: null, description: null, jsonField: null, unit: null, groupCode: null, groupName: null } },
-  { key: 'deviceValueSave', group: '2.8 Device Value Management', name: 'Save device value', path: '/plan/deviceValue/save', defaultPayload: { id: null, configCode: '', value: '' } },
-  { key: 'deviceValueRemove', group: '2.8 Device Value Management', name: 'Delete device value', path: '/plan/deviceValue/remove', defaultPayload: { id: null } },
-  { key: 'deviceValueDetail', group: '2.8 Device Value Management', name: 'Device value detail', path: '/plan/deviceValue/detail', defaultPayload: { id: null } },
-  { key: 'deviceValueSearch', group: '2.8 Device Value Management', name: 'Search device values', path: '/plan/deviceValue/search', defaultPayload: { pageSize: 10, pageNumber: 1, id: null, deviceTypeCd: null, configCode: null, deviceLibraryId: null, deviceEntityId: null, entityIsNull: null, value: null } },
-)
-export async function callPlatformEndpoint(definition: EndpointDefinition, rawPayload: unknown) {
-  if (definition.callable === false) {
-    throw new Error(definition.description || 'Swagger endpoint does not support generic JSON calls')
-  }
-
-  const payload = definition.encryptPasswordFields && rawPayload && !Array.isArray(rawPayload)
-    ? encryptPasswordFields(rawPayload as Record<string, unknown>, definition.encryptPasswordFields)
-    : rawPayload
-
-  const response = await platformClient.postWithPage<unknown>(definition.path, payload)
-  if (definition.path === '/login') {
-    const token = extractToken(response.data)
-    if (token) setPlatformToken(token)
-    localStorage.setItem(PLATFORM_USER_KEY, JSON.stringify(response.data ?? null))
-  }
-  return response
 }

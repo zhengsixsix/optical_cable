@@ -93,11 +93,11 @@ export type BUModel = 'BU_Fixed' | 'BU_WavelengthDependent'
 /** 仿真模型配置 */
 export interface SimulationModelConfig {
   /** 光纤传输计算模型 */
-  fiberModel: FiberSimModel
+  fiberModel: string
   /** EDFA 性能模型 */
-  edfaModel: EDFAModel
+  edfaModel: string
   /** BU 插损模型 */
-  buModel: BUModel
+  buModel: string
   /** 是否保存为模板 */
   saveAsTemplate?: boolean
   /** 模板名称 */
@@ -161,7 +161,7 @@ export interface EDFAFullParams {
 // ========== 默认值 ==========
 
 /** 默认 WDM 规划参数 */
-export const defaultWDMPlanningParams: WDMPlanningParams = {
+const defaultWDMPlanningParams: WDMPlanningParams = {
   channelCount: 96,
   centerFreqTHz: 193.1,
   channelSpacingGHz: 50,
@@ -176,7 +176,7 @@ export const defaultWDMPlanningParams: WDMPlanningParams = {
 }
 
 /** 默认 Span 扫描配置 */
-export const defaultSpanScanConfig: SpanScanConfig = {
+const defaultSpanScanConfig: SpanScanConfig = {
   spanLengthMinKm: 40,
   spanLengthMaxKm: 120,
   spanStepKm: 5,
@@ -188,26 +188,4 @@ export const defaultSpanScanConfig: SpanScanConfig = {
 export const defaultSystemPlanningParams: SystemPlanningParams = {
   wdmParams: defaultWDMPlanningParams,
   spanScanConfig: defaultSpanScanConfig,
-}
-
-/** 默认 GN 模型参数 */
-export const defaultGNModelParams: GNModelParams = {
-  equivalentNoiseBandwidth: 12.5,
-  coherentAccumulationFactor: 1.0,
-}
-
-/** 默认 EGN 模型参数 */
-export const defaultEGNModelParams: EGNModelParams = {
-  equivalentNoiseBandwidth: 12.5,
-  coherentAccumulationFactor: 1.0,
-  higherOrderDispersionFactor: 0.05,
-  xpmEnhancementFactor: 1.1,
-}
-
-/** 默认 SSFM 模型参数 */
-export const defaultSSFMModelParams: SSFMModelParams = {
-  stepSize: 100,
-  maxIterations: 1000,
-  samplePoints: 4096,
-  nonlinearOrder: 3,
 }

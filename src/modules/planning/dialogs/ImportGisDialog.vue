@@ -1,12 +1,14 @@
 ﻿<script setup lang="ts">
 import { useLayerStore } from '@/stores/layer'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { ref, computed, watch } from 'vue'
-import { Upload, X, FileText, Loader2, Check, AlertCircle, Trash2 } from 'lucide-vue-next'
+import { Upload, X, FileText, Loader2, Trash2 } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
 import { useGeoService } from '@/services/GeoService'
 import { Button } from '@/shared/components/base'
 import shp from 'shpjs'
 import { detectGisFormat } from '@/utils/gisFormat'
+import { getLocalLayerIdForDictionaryCode } from '@/services/platform/layerTypeAdapter'
 
 interface Props {
   visible: boolean
@@ -14,6 +16,7 @@ interface Props {
 
 interface GisLayerItem {
   id: string
+  typeDic: string
   name: string
   required: boolean
   checked: boolean
@@ -29,6 +32,7 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const layerStore = useLayerStore()
+const dictionaryStore = useDictionaryStore()
 const geoService = useGeoService()
 
 const isDragging = ref(false)
@@ -39,25 +43,39 @@ const showPreview = ref(true)
 const droppedFiles = ref<File[]>([])
 const uploadCacheKey = 'gis-upload-cache-v1'
 
-const gisLayers = ref<GisLayerItem[]>([
-  { id: 'elevation', name: '海洋高程', required: true, checked: true, filePath: '', status: 'none' },
-  { id: 'slope', name: '海洋坡度', required: true, checked: true, filePath: '', status: 'none' },
-  { id: 'fishing', name: '海洋渔区分布', required: false, checked: false, filePath: '', status: 'none' },
-  { id: 'volcano', name: '火山区域', required: false, checked: false, filePath: '', status: 'none' },
-  { id: 'earthquake', name: '地震活动', required: false, checked: false, filePath: '', status: 'none' },
-  { id: 'shipping', name: '航道分布', required: false, checked: false, filePath: '', status: 'none' },
-])
+const gisLayers = ref<GisLayerItem[]>([])
 
-const allChecked = computed(() => gisLayers.value.every(l => l.checked))
+function syncGisLayersFromDictionary() {
+  gisLayers.value = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType).map(item => {
+    const typeDic = String(item.code)
+    return {
+      id: getLocalLayerIdForDictionaryCode(typeDic),
+      typeDic,
+      name: item.name || typeDic,
+      required: false,
+      checked: false,
+      filePath: '',
+      status: 'none',
+    }
+  })
+}
+
+const allChecked = computed(() => gisLayers.value.length > 0 && gisLayers.value.every(l => l.checked))
 const someChecked = computed(() => gisLayers.value.some(l => l.checked) && !allChecked.value)
 
 const canImport = computed(() => {
-  const requiredLayers = gisLayers.value.filter(l => l.required && l.checked)
-  return requiredLayers.every(l => l.filePath)
+  const selectedLayers = gisLayers.value.filter(layer => layer.checked)
+  return selectedLayers.length > 0 && selectedLayers.every(layer => layer.filePath)
 })
 
-watch(() => props.visible, (val) => {
+watch(() => props.visible, async (val) => {
   if (val) {
+    try {
+      await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType)
+      syncGisLayersFromDictionary()
+    } catch (error) {
+      appStore.showNotification({ type: 'error', message: `图层类型字典加载失败：${(error as Error).message}` })
+    }
     resetForm()
   }
 })
@@ -69,7 +87,7 @@ function resetForm() {
   gisLayers.value.forEach(layer => {
     layer.filePath = ''
     layer.status = 'none'
-    layer.checked = layer.required
+    layer.checked = false
   })
 }
 
@@ -113,6 +131,7 @@ async function buildLayerDataFromLocalFile(layer: GisLayerItem, file: File) {
     gisKind: formatInfo.kind,
     loadStrategy: formatInfo.loadStrategy,
     supported: formatInfo.supported,
+    typeDic: layer.typeDic,
   }
 
   if (formatInfo.loadStrategy === 'geojson-vector') {
@@ -182,16 +201,9 @@ function autoMatchFile(file: File) {
   gisLayers.value.forEach(layer => {
     if (layer.filePath) return
     
-    const layerKeywords: Record<string, string[]> = {
-      elevation: ['elevation', 'dem', '高程', 'height'],
-      slope: ['slope', '坡度', 'gradient'],
-      fishing: ['fish', '渔区', 'fishing'],
-      volcano: ['volcano', '火山'],
-      earthquake: ['earthquake', '地震', 'seismic'],
-      shipping: ['ship', '航道', 'route', 'lane'],
-    }
-    
-    const keywords = layerKeywords[layer.id] || []
+    const keywords = [layer.typeDic, layer.name, layer.id]
+      .map(keyword => keyword.trim().toLowerCase())
+      .filter(Boolean)
     if (keywords.some(kw => fileName.includes(kw))) {
       layer.filePath = file.name
       layer.checked = true
@@ -214,7 +226,7 @@ function removeDroppedFile(index: number) {
 function handleBrowse(layer: GisLayerItem) {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.tif,.tiff,.geotiff,.zip,.shp,.geojson,.json,.kml,.kmz,.gpx,.gpkg,.csv,.xlsx,.xls'
+  input.accept = '.tif,.tiff,.geotiff,.zip,.geojson,.json'
   input.onchange = (e) => {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (file) {
@@ -241,7 +253,7 @@ function clearFilePath(layer: GisLayerItem) {
 
 async function handleImport() {
   if (!canImport.value) {
-    appStore.showNotification({ type: 'warning', message: '请选择必须的图层文件' })
+    appStore.showNotification({ type: 'warning', message: '请至少选择一个图层并指定文件' })
     return
   }
 

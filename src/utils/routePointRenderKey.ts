@@ -1,5 +1,3 @@
-export type SharedRoutePointType = 'landing' | 'branching'
-
 export function getSharedRoutePointRenderKey(
   pointType: string,
   coordinates: [number, number],

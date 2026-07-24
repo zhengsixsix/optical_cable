@@ -1,12 +1,11 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
-import type { AppSettings, CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types'
-import { defaultSettings, defaultFiberTypes, defaultAmplifierTypes, defaultBranchingUnitTypes, defaultEqualizerTypes, defaultJointBoxTypes } from '@/types/settings'
+import { ref } from 'vue'
+import type { CableType, RepeaterType, BranchingUnit, CostFactors, FiberType, AmplifierType, BranchingUnitType, EqualizerType, JointBoxType } from '@/types'
+import { defaultSettings } from '@/types/settings'
 import type { RespVO } from '@/services/platform/client'
-import { platformDeviceConfigApi, platformDeviceEntityApi, platformDeviceLibraryApi, platformDictionaryApi } from '@/services/platform/api'
+import { platformDeviceConfigApi, platformDeviceEntityApi, platformDeviceLibraryApi } from '@/services/platform/api'
 import type {
   PlanDeviceConfig,
-  PlanDeviceConfigSave,
   PlanDeviceConfigSearch,
   PlanDeviceEntity,
   PlanDeviceEntitySearch,
@@ -14,7 +13,6 @@ import type {
   PlanDeviceLibrarySearch,
   PlanConfigSnapshot,
   PlatformPlanningResults,
-  PlatformDictionary,
 } from '@/services/platform/types'
 import type { 
   SystemPlanningParams, 
@@ -23,22 +21,18 @@ import type {
   WDMPlanningParams 
 } from '@/types/systemPlanning'
 import { 
-  defaultSystemPlanningParams,
-  defaultSpanScanConfig,
-  defaultWDMPlanningParams
+  defaultSystemPlanningParams
 } from '@/types/systemPlanning'
 import type {
   ModelDefinition,
   SimulationCache,
   SystemPlanningCache,
 } from '@/types/useFile'
-import { createDefaultModels } from '@/types/useFile'
 
 const STORAGE_KEY = 'cable-planner-settings'
-const DEVICE_TYPE_DICTIONARY_TYPE = 'DEVICE_TYPE'
 
 // 多点坐标接口 - USE文件规范: imported_landing_points
-export interface WaypointConfig {
+interface WaypointConfig {
   id: string
   name: string
   lon: number
@@ -56,13 +50,27 @@ export interface BUConfig {
   portLimit: number  // 对应 USE 规范的 max_ports，范围 2-8
 }
 
-// 海缆铠装映射规则（新增）
+// 海缆铠装映射规则（USE 文件风险等级映射）
 export interface ArmorMapping {
   riskLevel: 'high' | 'medium' | 'low'
   riskThreshold: number      // 风险阈值
   cableTypeId: string        // 缆型ID（关联器件库）
   cableTypeName: string      // 缆型名称
   unitPrice: number          // 单价（千元/km）
+}
+
+export type ArmorRiskLevel = 'low' | 'medium' | 'high'
+
+export const armorRiskLevelOptions: Array<{ value: ArmorRiskLevel; label: string }> = [
+  { value: 'low', label: '低风险' },
+  { value: 'medium', label: '中风险' },
+  { value: 'high', label: '高风险' },
+]
+
+export interface ArmorTypeMapping {
+  armorTypeCode: string      // ARMORING_TYPE 字典编码
+  riskLevel: ArmorRiskLevel
+  unitPrice: number          // 成本（千元/km）
 }
 
 // 冗余策略配置（新增）
@@ -75,7 +83,7 @@ export interface RedundancyConfig {
 }
 
 // 避障区域配置
-export interface AvoidanceZoneConfig {
+interface AvoidanceZoneConfig {
   id: string
   name?: string
   points: { lon: number; lat: number }[]  // 多边形顶点
@@ -96,7 +104,8 @@ export interface RoutePlanningConfig {
   isConfigured?: boolean  // 用户是否主动配置过起点终点
   // 新增字段
   buList?: BUConfig[]              // BU 配置列表
-  armorMappings?: ArmorMapping[]   // 海缆铠装映射规则
+  armorMappings?: ArmorMapping[]   // USE 风险等级与缆型映射（兼容旧项目）
+  armorTypeMappings?: ArmorTypeMapping[] // 字典铠装类型的风险与成本配置
   redundancyConfig?: RedundancyConfig  // 冗余策略配置
   avoidanceZones?: AvoidanceZoneConfig[]  // 避障区域
 }
@@ -110,7 +119,7 @@ export interface TransmissionConfig {
 }
 
 // 数据字段映射接口
-export interface FieldMapping {
+interface FieldMapping {
   id: string
   sourceField: string   // NMS原始字段名
   targetField: string   // 系统内部字段名
@@ -133,12 +142,9 @@ export interface MonitoringConfig {
   fieldMappings: FieldMapping[]  // 数据字段映射配置
 }
 
-// 光纤仿真模型类型
-export type FiberSimulationModel = 'GN' | 'EGN' | 'SSFM'
-
 // 光纤仿真配置接口
 export interface FiberSimulationConfig {
-  model: FiberSimulationModel  // 仿真模型偏好
+  model: string  // 仿真模型偏好
   description: string
 }
 
@@ -146,27 +152,15 @@ export interface FiberSimulationConfig {
 export interface CableTypeSpec {
   id: string
   name: string
-  armorType: string  // DA, RA, SA, LW, LWP
+  armorType: string  // ARMORING_TYPE 字典编码
   unitPrice: number  // 千元/km
 }
 
 // 默认缆型数据库
-const defaultCableTypeDatabase: CableTypeSpec[] = [
-  { id: 'da-01', name: 'DA-01 (双铠装)', armorType: 'DA', unitPrice: 24.0 },
-  { id: 'da-02', name: 'DA-02 (双铠加强)', armorType: 'DA', unitPrice: 26.5 },
-  { id: 'ra-01', name: 'RA-01 (岩石铠装)', armorType: 'RA', unitPrice: 28.0 },
-  { id: 'sa-01', name: 'SA-01 (单铠装)', armorType: 'SA', unitPrice: 19.5 },
-  { id: 'sa-02', name: 'SA-02 (单铠加强)', armorType: 'SA', unitPrice: 21.0 },
-  { id: 'lw-01', name: 'LW-01 (轻型)', armorType: 'LW', unitPrice: 15.0 },
-  { id: 'lwp-01', name: 'LWP-01 (轻型保护)', armorType: 'LWP', unitPrice: 16.5 },
-]
+const defaultCableTypeDatabase: CableTypeSpec[] = []
 
 // 默认铠装映射规则
-const defaultArmorMappings: ArmorMapping[] = [
-  { riskLevel: 'high', riskThreshold: 3, cableTypeId: 'da-01', cableTypeName: 'DA-01 (双铠装)', unitPrice: 24.0 },
-  { riskLevel: 'medium', riskThreshold: 2, cableTypeId: 'sa-01', cableTypeName: 'SA-01 (单铠装)', unitPrice: 19.5 },
-  { riskLevel: 'low', riskThreshold: 0, cableTypeId: 'lw-01', cableTypeName: 'LW-01 (轻型)', unitPrice: 15.0 },
-]
+const defaultArmorMappings: ArmorMapping[] = []
 
 // 默认冗余策略配置
 const defaultRedundancyConfig: RedundancyConfig = {
@@ -190,6 +184,7 @@ const defaultRoutePlanningConfig: RoutePlanningConfig = {
   isConfigured: false,
   buList: [],
   armorMappings: defaultArmorMappings,
+  armorTypeMappings: [],
   redundancyConfig: defaultRedundancyConfig,
 }
 
@@ -197,7 +192,7 @@ const defaultTransmissionConfig: TransmissionConfig = {
   channelCount: 96,
   centerWavelength: 1550,
   channelBandwidth: 50,
-  calculationModels: ['power', 'ase', 'nli'],
+  calculationModels: [],
 }
 
 const defaultMonitoringConfig: MonitoringConfig = {
@@ -220,15 +215,15 @@ const defaultMonitoringConfig: MonitoringConfig = {
 }
 
 const defaultFiberSimulationConfig: FiberSimulationConfig = {
-  model: 'GN',
-  description: 'GN Model适用于计算速度要求高的场景',
+  model: '',
+  description: '',
 }
 
 // 默认仿真模型配置
 const defaultSimulationModelConfig: SimulationModelConfig = {
-  fiberModel: 'GN',
-  edfaModel: 'EDFA_Simple',
-  buModel: 'BU_Fixed',
+  fiberModel: '',
+  edfaModel: '',
+  buModel: '',
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -245,15 +240,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const equalizerTypes = ref<EqualizerType[]>([])
   const jointBoxTypes = ref<JointBoxType[]>([])
   const currentLibraryFile = ref('')
-  const platformDeviceTypeDictionaries = ref<PlatformDictionary[]>([])
   const platformDeviceConfigs = ref<PlanDeviceConfig[]>([])
   const platformDeviceLibraries = ref<PlanDeviceLibrary[]>([])
   const platformDeviceEntities = ref<PlanDeviceEntity[]>([])
-  const deviceTypeDictionaryLoading = ref(false)
-  const deviceTypeDictionaryLoaded = ref(false)
-  const deviceTypeDictionarySyncError = ref<string | null>(null)
   const deviceConfigLoading = ref(false)
-  const deviceConfigSyncing = ref(false)
   const deviceConfigSyncError = ref<string | null>(null)
   const deviceLibraryLoading = ref(false)
   const deviceLibrarySyncing = ref(false)
@@ -275,12 +265,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const systemPlanningConfig = ref<SystemPlanningParams>({ ...defaultSystemPlanningParams })
   // 仿真模型配置 (Step 4)
   const simulationModelConfig = ref<SimulationModelConfig>({ ...defaultSimulationModelConfig })
-  // 仿真模板列表
-  const savedSimulationTemplates = ref<SimulationModelConfig[]>([])
   
   // ========== USE 文件规范所需字段 ==========
   // 计算模型库 (libraries.models)
-  const models = ref<ModelDefinition[]>(createDefaultModels())
+  const models = ref<ModelDefinition[]>([])
   // 仿真缓存 (system_engineering.simulation_cache)
   const simulationCache = ref<SimulationCache | null>(null)
   // 系统规划缓存 (system_engineering.system_planning_cache)
@@ -302,14 +290,19 @@ export const useSettingsStore = defineStore('settings', () => {
     costFactors: costFactors.value,
   })
 
-  let deviceTypeDictionaryPromise: Promise<PlatformDictionary[]> | null = null
-  let allDeviceLibrariesPromise: Promise<RespVO<PlanDeviceLibrary[]>> | null = null
+  let allDeviceLibrariesPromise: {
+    sequence: number
+    promise: Promise<RespVO<PlanDeviceLibrary[]>>
+  } | null = null
+  let allDeviceLibrariesLoaded = false
+  let deviceLibraryRequestSequence = 0
+  let deviceConfigRequestSequence = 0
 
   const isAllDeviceLibrarySearch = (search: PlanDeviceLibrarySearch = {}) => {
-    const entries = Object.entries(search)
-    return entries.length === 0 || entries.every(([key, value]) =>
-      ['pageNumber', 'pageSize'].includes(key) || value == null || value === '',
-    )
+    const { pageNumber, pageSize, ...filters } = search
+    const isFirstPage = pageNumber == null || Number(pageNumber) === 1
+    const coversDefaultFullPage = pageSize == null || Number(pageSize) >= 1000
+    return isFirstPage && coversDefaultFullPage && Object.values(filters).every(value => value == null || value === '')
   }
 
   // 从 localStorage 加载
@@ -331,7 +324,6 @@ export const useSettingsStore = defineStore('settings', () => {
         if (Array.isArray(data.cableTypeDatabase)) cableTypeDatabase.value = data.cableTypeDatabase
         if (data.systemPlanningConfig) systemPlanningConfig.value = data.systemPlanningConfig
         if (data.simulationModelConfig) simulationModelConfig.value = data.simulationModelConfig
-        if (Array.isArray(data.savedSimulationTemplates)) savedSimulationTemplates.value = data.savedSimulationTemplates
         if (Array.isArray(data.models)) models.value = data.models
         if ('simulationCache' in data) simulationCache.value = data.simulationCache
         if ('systemPlanningCache' in data) systemPlanningCache.value = data.systemPlanningCache
@@ -361,7 +353,6 @@ export const useSettingsStore = defineStore('settings', () => {
         cableTypeDatabase: cableTypeDatabase.value,
         systemPlanningConfig: systemPlanningConfig.value,
         simulationModelConfig: simulationModelConfig.value,
-        savedSimulationTemplates: savedSimulationTemplates.value,
         models: models.value,
         simulationCache: simulationCache.value,
         systemPlanningCache: systemPlanningCache.value,
@@ -375,37 +366,13 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  async function loadPlatformDeviceTypeDictionaries(force = false) {
-    if (!force && deviceTypeDictionaryLoaded.value) return platformDeviceTypeDictionaries.value
-    if (!force && deviceTypeDictionaryPromise) return deviceTypeDictionaryPromise
-
-    deviceTypeDictionaryLoading.value = true
-    deviceTypeDictionarySyncError.value = null
-
-    deviceTypeDictionaryPromise = platformDictionaryApi.listItem(DEVICE_TYPE_DICTIONARY_TYPE)
-      .then(items => {
-        platformDeviceTypeDictionaries.value = items ?? []
-        deviceTypeDictionaryLoaded.value = true
-        return platformDeviceTypeDictionaries.value
-      })
-      .catch(error => {
-        deviceTypeDictionarySyncError.value = error instanceof Error ? error.message : '器件类型字典加载失败'
-        throw error
-      })
-      .finally(() => {
-        deviceTypeDictionaryLoading.value = false
-        deviceTypeDictionaryPromise = null
-      })
-
-    return deviceTypeDictionaryPromise
-  }
-
   async function loadPlatformDeviceLibraries(search: PlanDeviceLibrarySearch = {}) {
     const allSearch = isAllDeviceLibrarySearch(search)
-    if (allSearch && allDeviceLibrariesPromise) {
-      return allDeviceLibrariesPromise
+    if (allSearch && allDeviceLibrariesPromise?.sequence === deviceLibraryRequestSequence) {
+      return allDeviceLibrariesPromise.promise
     }
 
+    const requestSequence = ++deviceLibraryRequestSequence
     deviceLibraryLoading.value = true
     deviceLibrarySyncError.value = null
 
@@ -415,41 +382,50 @@ export const useSettingsStore = defineStore('settings', () => {
         pageSize: 1000,
         ...search,
       })
-      platformDeviceLibraries.value = response.data ?? []
-      if (platformDeviceLibraries.value.length) currentLibraryFile.value = '平台器件库'
+      if (requestSequence === deviceLibraryRequestSequence) {
+        const libraries = response.data ?? []
+        const dataTotal = Number(response.page?.dataTotal ?? libraries.length)
+        platformDeviceLibraries.value = libraries
+        allDeviceLibrariesLoaded = allSearch && Number.isFinite(dataTotal) && libraries.length >= dataTotal
+        if (platformDeviceLibraries.value.length) currentLibraryFile.value = '平台器件库'
+      }
       return response
     })()
 
     if (allSearch) {
-      allDeviceLibrariesPromise = request
-        .finally(() => {
-          allDeviceLibrariesPromise = null
-        })
+      allDeviceLibrariesPromise = { sequence: requestSequence, promise: request }
     }
 
     try {
       return await request
     } catch (error) {
-      deviceLibrarySyncError.value = error instanceof Error ? error.message : '器件库加载失败'
+      if (requestSequence === deviceLibraryRequestSequence) {
+        deviceLibrarySyncError.value = error instanceof Error ? error.message : '器件库加载失败'
+      }
       throw error
     } finally {
-      deviceLibraryLoading.value = false
+      if (allSearch && allDeviceLibrariesPromise?.sequence === requestSequence) {
+        allDeviceLibrariesPromise = null
+      }
+      if (requestSequence === deviceLibraryRequestSequence) {
+        deviceLibraryLoading.value = false
+      }
     }
   }
 
   async function ensurePlatformDeviceLibrariesLoaded(search: PlanDeviceLibrarySearch = {}) {
-    if (platformDeviceLibraries.value.length > 0) return platformDeviceLibraries.value
-    if (isAllDeviceLibrarySearch(search) && allDeviceLibrariesPromise) {
-      const response = await allDeviceLibrariesPromise
+    const allSearch = isAllDeviceLibrarySearch(search)
+    if (allSearch && allDeviceLibrariesLoaded) return platformDeviceLibraries.value
+    if (allSearch && allDeviceLibrariesPromise?.sequence === deviceLibraryRequestSequence) {
+      const response = await allDeviceLibrariesPromise.promise
       return response.data ?? []
     }
     const response = await loadPlatformDeviceLibraries(search)
     return response.data ?? []
   }
 
-  const loadDeviceLibraryFromPlatform = loadPlatformDeviceLibraries
-
   async function loadPlatformDeviceConfigs(search: PlanDeviceConfigSearch) {
+    const requestSequence = ++deviceConfigRequestSequence
     deviceConfigLoading.value = true
     deviceConfigSyncError.value = null
     try {
@@ -458,43 +434,27 @@ export const useSettingsStore = defineStore('settings', () => {
         pageSize: 1000,
         ...search,
       })
-      platformDeviceConfigs.value = response.data ?? []
+      if (requestSequence === deviceConfigRequestSequence) {
+        platformDeviceConfigs.value = response.data ?? []
+      }
       return response
     } catch (error) {
-      deviceConfigSyncError.value = error instanceof Error ? error.message : '器件配置加载失败'
+      if (requestSequence === deviceConfigRequestSequence) {
+        deviceConfigSyncError.value = error instanceof Error ? error.message : '器件配置加载失败'
+      }
       throw error
     } finally {
-      deviceConfigLoading.value = false
+      if (requestSequence === deviceConfigRequestSequence) {
+        deviceConfigLoading.value = false
+      }
     }
   }
 
-  async function savePlatformDeviceConfig(config: PlanDeviceConfigSave, reloadSearch?: PlanDeviceConfigSearch) {
-    deviceConfigSyncing.value = true
-    deviceConfigSyncError.value = null
-    try {
-      const id = await platformDeviceConfigApi.save(config)
-      await loadPlatformDeviceConfigs(reloadSearch ?? { deviceTypeCd: config.deviceTypeCd })
-      return id
-    } catch (error) {
-      deviceConfigSyncError.value = error instanceof Error ? error.message : '器件配置保存失败'
-      throw error
-    } finally {
-      deviceConfigSyncing.value = false
-    }
-  }
-
-  async function removePlatformDeviceConfig(id: number | string, search: PlanDeviceConfigSearch | string) {
-    deviceConfigSyncing.value = true
-    deviceConfigSyncError.value = null
-    try {
-      await platformDeviceConfigApi.remove(id)
-      await loadPlatformDeviceConfigs(typeof search === 'string' ? { deviceTypeCd: search } : search)
-    } catch (error) {
-      deviceConfigSyncError.value = error instanceof Error ? error.message : '器件配置删除失败'
-      throw error
-    } finally {
-      deviceConfigSyncing.value = false
-    }
+  /** 清空当前平台器件配置，避免组件直接修改 store 内部集合。 */
+  function clearPlatformDeviceConfigs() {
+    deviceConfigRequestSequence += 1
+    platformDeviceConfigs.value = []
+    deviceConfigLoading.value = false
   }
 
   async function loadPlatformDeviceLibraryDetail(id: number | string) {
@@ -515,6 +475,9 @@ export const useSettingsStore = defineStore('settings', () => {
         deviceValueList: library.deviceValueList ?? [],
       }
       const id = await platformDeviceLibraryApi.save(payload)
+      deviceLibraryRequestSequence += 1
+      allDeviceLibrariesPromise = null
+      deviceLibraryLoading.value = false
       const saved = { ...payload, id }
       const index = platformDeviceLibraries.value.findIndex(item => item.id === id || (payload.id != null && item.id === payload.id))
       if (index >= 0) platformDeviceLibraries.value[index] = saved
@@ -534,6 +497,9 @@ export const useSettingsStore = defineStore('settings', () => {
     deviceLibrarySyncError.value = null
     try {
       await platformDeviceLibraryApi.remove(id)
+      deviceLibraryRequestSequence += 1
+      allDeviceLibrariesPromise = null
+      deviceLibraryLoading.value = false
       platformDeviceLibraries.value = platformDeviceLibraries.value.filter(item => item.id !== id)
     } catch (error) {
       deviceLibrarySyncError.value = error instanceof Error ? error.message : '器件库删除失败'
@@ -541,11 +507,6 @@ export const useSettingsStore = defineStore('settings', () => {
     } finally {
       deviceLibrarySyncing.value = false
     }
-  }
-
-  async function syncDeviceLibraryToPlatform() {
-    await loadPlatformDeviceLibraries()
-    return platformDeviceLibraries.value.map(item => item.id).filter((id): id is number | string => id != null)
   }
 
   async function loadPlatformDeviceEntities(search: PlanDeviceEntitySearch | number = {}) {
@@ -607,152 +568,44 @@ export const useSettingsStore = defineStore('settings', () => {
     return detail
   }
 
-  // Actions
-  function updateCableType(id: string, updates: Partial<CableType>) {
-    const index = cableTypes.value.findIndex(c => c.id === id)
-    if (index >= 0) {
-      cableTypes.value[index] = { ...cableTypes.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  function addCableType(cableType: CableType) {
-    cableTypes.value.push(cableType)
-    saveToLocalStorage()
-  }
-
-  function removeCableType(id: string) {
-    cableTypes.value = cableTypes.value.filter(c => c.id !== id)
-    saveToLocalStorage()
-  }
-
-  function updateRepeaterType(id: string, updates: Partial<RepeaterType>) {
-    const index = repeaterTypes.value.findIndex(r => r.id === id)
-    if (index >= 0) {
-      repeaterTypes.value[index] = { ...repeaterTypes.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  function addRepeaterType(repeater: RepeaterType) {
-    repeaterTypes.value.push(repeater)
-    saveToLocalStorage()
-  }
-
-  function removeRepeaterType(id: string) {
-    repeaterTypes.value = repeaterTypes.value.filter(r => r.id !== id)
-    saveToLocalStorage()
-  }
-
-  function addBranchingUnit(bu: BranchingUnit) {
-    branchingUnits.value.push(bu)
-    saveToLocalStorage()
-  }
-
-  function removeBranchingUnit(id: string) {
-    branchingUnits.value = branchingUnits.value.filter(b => b.id !== id)
-    saveToLocalStorage()
-  }
-
-  // 光纤类型管理
-  function addFiberType(fiber: FiberType) {
-    fiberTypes.value.push(fiber)
-    saveToLocalStorage()
-  }
-
-  function updateFiberType(id: string, updates: Partial<FiberType>) {
-    const index = fiberTypes.value.findIndex(f => f.id === id)
-    if (index >= 0) {
-      fiberTypes.value[index] = { ...fiberTypes.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  function removeFiberType(id: string) {
-    fiberTypes.value = fiberTypes.value.filter(f => f.id !== id)
-    saveToLocalStorage()
-  }
-
-  // 放大器类型管理
-  function addAmplifierType(amp: AmplifierType) {
-    amplifierTypes.value.push(amp)
-    saveToLocalStorage()
-  }
-
-  function updateAmplifierType(id: string, updates: Partial<AmplifierType>) {
-    const index = amplifierTypes.value.findIndex(a => a.id === id)
-    if (index >= 0) {
-      amplifierTypes.value[index] = { ...amplifierTypes.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  function removeAmplifierType(id: string) {
-    amplifierTypes.value = amplifierTypes.value.filter(a => a.id !== id)
-    saveToLocalStorage()
-  }
-
-  // 分支器类型管理
-  function addBranchingUnitType(bu: BranchingUnitType) {
-    branchingUnitTypes.value.push(bu)
-    saveToLocalStorage()
-  }
-
-  function updateBranchingUnitType(id: string, updates: Partial<BranchingUnitType>) {
-    const index = branchingUnitTypes.value.findIndex(b => b.id === id)
-    if (index >= 0) {
-      branchingUnitTypes.value[index] = { ...branchingUnitTypes.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  function removeBranchingUnitType(id: string) {
-    branchingUnitTypes.value = branchingUnitTypes.value.filter(b => b.id !== id)
-    saveToLocalStorage()
-  }
-
-  // 均衡器类型管理
-  function addEqualizerType(eq: EqualizerType) {
-    equalizerTypes.value.push(eq)
-    saveToLocalStorage()
-  }
-
-  function updateEqualizerType(id: string, updates: Partial<EqualizerType>) {
-    const index = equalizerTypes.value.findIndex(e => e.id === id)
-    if (index >= 0) {
-      equalizerTypes.value[index] = { ...equalizerTypes.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  function removeEqualizerType(id: string) {
-    equalizerTypes.value = equalizerTypes.value.filter(e => e.id !== id)
-    saveToLocalStorage()
-  }
-
-  // 接头盒型号管理
-  function addJointBoxType(jb: JointBoxType) {
-    jointBoxTypes.value.push(jb)
-    saveToLocalStorage()
-  }
-
-  function updateJointBoxType(id: string, updates: Partial<JointBoxType>) {
-    const index = jointBoxTypes.value.findIndex(j => j.id === id)
-    if (index >= 0) {
-      jointBoxTypes.value[index] = { ...jointBoxTypes.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  function removeJointBoxType(id: string) {
-    jointBoxTypes.value = jointBoxTypes.value.filter(j => j.id !== id)
-    saveToLocalStorage()
-  }
-
   // 更新成本参数 (不保存到 localStorage，只存储在项目文件中)
   function updateCostFactors(updates: Partial<CostFactors>) {
     costFactors.value = { ...costFactors.value, ...updates }
     // 不调用 saveToLocalStorage，成本参数只存储在项目文件中
+  }
+
+  function replaceCableTypes(nextCableTypes: CableType[]) {
+    cableTypes.value = nextCableTypes
+  }
+
+  function replaceModels(nextModels: ModelDefinition[]) {
+    models.value = nextModels
+  }
+
+  function replacePlatformDeviceConfigs(configs: PlanDeviceConfig[]) {
+    deviceConfigRequestSequence += 1
+    platformDeviceConfigs.value = configs
+    deviceConfigLoading.value = false
+  }
+
+  function replacePlatformDeviceLibraries(libraries: PlanDeviceLibrary[]) {
+    deviceLibraryRequestSequence += 1
+    allDeviceLibrariesPromise = null
+    allDeviceLibrariesLoaded = true
+    platformDeviceLibraries.value = libraries
+    deviceLibraryLoading.value = false
+  }
+
+  function replacePlatformDeviceEntities(entities: PlanDeviceEntity[]) {
+    platformDeviceEntities.value = entities
+  }
+
+  function setTransmissionConfig(config: TransmissionConfig) {
+    transmissionConfig.value = config
+  }
+
+  function setMonitoringConfig(config: MonitoringConfig) {
+    monitoringConfig.value = config
   }
 
   // 重置器件库为默认值
@@ -817,10 +670,6 @@ export const useSettingsStore = defineStore('settings', () => {
     return true
   }
   
-  function removeCableTypeSpec(id: string) {
-    cableTypeDatabase.value = cableTypeDatabase.value.filter(c => c.id !== id)
-  }
-  
   function getCableTypesByArmor(armorTypes: string[]): CableTypeSpec[] {
     return cableTypeDatabase.value.filter(c => armorTypes.includes(c.armorType))
   }
@@ -849,48 +698,6 @@ export const useSettingsStore = defineStore('settings', () => {
   // 更新仿真模型配置 (Step 4)
   function updateSimulationModelConfig(updates: Partial<SimulationModelConfig>) {
     simulationModelConfig.value = { ...simulationModelConfig.value, ...updates }
-  }
-
-  // 保存仿真模板
-  function saveSimulationTemplate(template: SimulationModelConfig) {
-    savedSimulationTemplates.value.push(template)
-    saveToLocalStorage()
-  }
-
-  // 删除仿真模板
-  function removeSimulationTemplate(templateName: string) {
-    savedSimulationTemplates.value = savedSimulationTemplates.value.filter(
-      t => t.templateName !== templateName
-    )
-    saveToLocalStorage()
-  }
-
-  // ========== USE 文件规范模型管理 ==========
-  
-  // 添加计算模型
-  function addModel(model: ModelDefinition) {
-    models.value.push(model)
-    saveToLocalStorage()
-  }
-
-  // 更新计算模型
-  function updateModel(modelId: string, updates: Partial<ModelDefinition>) {
-    const index = models.value.findIndex(m => m.model_id === modelId)
-    if (index >= 0) {
-      models.value[index] = { ...models.value[index], ...updates }
-      saveToLocalStorage()
-    }
-  }
-
-  // 删除计算模型
-  function removeModel(modelId: string) {
-    models.value = models.value.filter(m => m.model_id !== modelId)
-    saveToLocalStorage()
-  }
-
-  // 根据领域获取模型
-  function getModelsByDomain(domain: 'FIBER' | 'EDFA' | 'BU' | 'SYSTEM') {
-    return models.value.filter(m => m.domain === domain)
   }
 
   // 更新仿真缓存
@@ -922,22 +729,6 @@ export const useSettingsStore = defineStore('settings', () => {
     saveToLocalStorage()
   }
 
-  // 使仿真缓存失效
-  function invalidateSimulationCache() {
-    if (simulationCache.value) {
-      simulationCache.value.is_valid = false
-      saveToLocalStorage()
-    }
-  }
-
-  // 使系统规划缓存失效
-  function invalidateSystemPlanningCache() {
-    if (systemPlanningCache.value) {
-      systemPlanningCache.value.is_valid = false
-      saveToLocalStorage()
-    }
-  }
-  
   // 设置当前器件库文件
   function setCurrentLibraryFile(fileName: string) {
     currentLibraryFile.value = fileName
@@ -959,7 +750,6 @@ export const useSettingsStore = defineStore('settings', () => {
     // 缆型数据库
     cableTypeDatabase,
     addCableTypeSpec,
-    removeCableTypeSpec,
     getCableTypesByArmor,
     // 新增器件类型
     fiberTypes,
@@ -968,14 +758,10 @@ export const useSettingsStore = defineStore('settings', () => {
     equalizerTypes,
     jointBoxTypes,
     currentLibraryFile,
-    platformDeviceTypeDictionaries,
     platformDeviceConfigs,
     platformDeviceLibraries,
     platformDeviceEntities,
-    deviceTypeDictionaryLoading,
-    deviceTypeDictionarySyncError,
     deviceConfigLoading,
-    deviceConfigSyncing,
     deviceConfigSyncError,
     deviceLibraryLoading,
     deviceLibrarySyncing,
@@ -983,10 +769,8 @@ export const useSettingsStore = defineStore('settings', () => {
     deviceEntityLoading,
     deviceEntitySyncing,
     deviceEntitySyncError,
-    loadPlatformDeviceTypeDictionaries,
     loadPlatformDeviceConfigs,
-    savePlatformDeviceConfig,
-    removePlatformDeviceConfig,
+    clearPlatformDeviceConfigs,
     loadPlatformDeviceLibraries,
     ensurePlatformDeviceLibrariesLoaded,
     loadPlatformDeviceLibraryDetail,
@@ -996,39 +780,15 @@ export const useSettingsStore = defineStore('settings', () => {
     loadPlatformDeviceEntityDetail,
     savePlatformDeviceEntity,
     removePlatformDeviceEntity,
-    loadDeviceLibraryFromPlatform,
-    syncDeviceLibraryToPlatform,
-    loadFromLocalStorage,
     saveToLocalStorage,
-    updateCableType,
-    addCableType,
-    removeCableType,
-    updateRepeaterType,
-    addRepeaterType,
-    removeRepeaterType,
-    addBranchingUnit,
-    removeBranchingUnit,
-    // 光纤类型
-    addFiberType,
-    updateFiberType,
-    removeFiberType,
-    // 放大器类型
-    addAmplifierType,
-    updateAmplifierType,
-    removeAmplifierType,
-    // 分支器类型
-    addBranchingUnitType,
-    updateBranchingUnitType,
-    removeBranchingUnitType,
-    // 均衡器类型
-    addEqualizerType,
-    updateEqualizerType,
-    removeEqualizerType,
-    // 接头盒型号
-    addJointBoxType,
-    updateJointBoxType,
-    removeJointBoxType,
     updateCostFactors,
+    replaceCableTypes,
+    replaceModels,
+    replacePlatformDeviceConfigs,
+    replacePlatformDeviceLibraries,
+    replacePlatformDeviceEntities,
+    setTransmissionConfig,
+    setMonitoringConfig,
     resetToDefaults,
     resetProjectSettings,
     updateRoutePlanningConfig,
@@ -1038,13 +798,10 @@ export const useSettingsStore = defineStore('settings', () => {
     // 系统规划相关 (Step 3, 4)
     systemPlanningConfig,
     simulationModelConfig,
-    savedSimulationTemplates,
     updateSystemPlanningConfig,
     updateWDMPlanningParams,
     updateSpanScanConfig,
     updateSimulationModelConfig,
-    saveSimulationTemplate,
-    removeSimulationTemplate,
     // USE 文件规范相关
     models,
     simulationCache,
@@ -1052,17 +809,11 @@ export const useSettingsStore = defineStore('settings', () => {
     platformPlanningResults,
     platformPlanConfigSnapshot,
     linkCalcSummaryCache,
-    addModel,
-    updateModel,
-    removeModel,
-    getModelsByDomain,
     updateSimulationCache,
     updateSystemPlanningCache,
     updatePlatformPlanningResults,
     updatePlatformPlanConfigSnapshot,
     updateLinkCalcSummaryCache,
-    invalidateSimulationCache,
-    invalidateSystemPlanningCache,
     setCurrentLibraryFile,
   }
 })

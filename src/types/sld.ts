@@ -63,6 +63,7 @@ export interface SLDEquipment {
   sequence: number           // 序号
   name: string               // 设备名称
   type: SLDEquipmentType     // 设备类型
+  deviceTypeCd?: string      // 平台 DEVICE_TYPE 字典编码
   location: string           // 位置描述
   kp: number                 // KP值
   longitude: number          // 经度
@@ -113,7 +114,7 @@ export interface SLDFiberSegment {
   fiberPairType: FiberPairType // 光纤对类型
   cableType: string          // 电缆类型
   attenuation: number        // 衰减 (dB/km)
-  totalLoss: number          // 总损耗 (dB)
+  totalLoss?: number         // 总损耗 (dB)，仅在后端或导入文件明确提供时存在
   remarks: string
   
   // === 器件库引用 ===
@@ -158,7 +159,6 @@ export interface SLDMetadata {
   equalizerCount: number     // 均衡器数量
   jointCount: number         // 接头数量
   totalFiberPairs: number    // 总光纤对数
-  estimatedCapacity: number  // 预估容量 (Tbps)
   exportTemplateVersion?: SLDExportTemplateVersion
   deviceDictionaryVersion?: string
   algorithmProfileVersion?: string

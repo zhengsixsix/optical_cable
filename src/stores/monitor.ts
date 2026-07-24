@@ -1,7 +1,5 @@
-import { defineStore, storeToRefs } from 'pinia'
-import { ref, computed, watch } from 'vue'
-import { mockAlarmHistory } from '@/data/mockData'
-import { dataLinkService } from '@/services'
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
 import { useConnectorStore } from './connector'
 
 // 监控设备类型 (派生自 ConnectorElement + 运行时数据)
@@ -9,6 +7,7 @@ export interface MonitorDevice {
   id: string
   name: string
   type: string
+  deviceTypeCd?: string
   neType: string
   status: 'normal' | 'warning' | 'error'
   location: string
@@ -56,17 +55,6 @@ export interface AlarmRecord {
   status: 'active' | 'acknowledged' | 'cleared'
 }
 
-// 默认运行时数据
-const defaultRuntimeData: RuntimeData = {
-  status: 'normal',
-  inputPower: -15,
-  outputPower: -10,
-  pumpCurrent: 200,
-  pfeVoltage: 48,
-  pfeCurrent: 1.2,
-  temperature: 5,
-}
-
 export const useMonitorStore = defineStore('monitor', () => {
   const connectorStore = useConnectorStore()
   
@@ -83,20 +71,15 @@ export const useMonitorStore = defineStore('monitor', () => {
     const nonDeviceTypes = ['fiber', 'cable_segment']
     const elements = connectorStore.elements.filter(e => !nonDeviceTypes.includes(e.type))
     
-    return elements.map(elem => {
-      const runtime = runtimeData.value[elem.id] || {
-        status: 'normal',
-        inputPower: 0,
-        outputPower: 0,
-        pumpCurrent: 0,
-        pfeVoltage: 0,
-        pfeCurrent: 0,
-        temperature: 0,
-      }
-      return {
+    return elements.flatMap(elem => {
+      const runtime = runtimeData.value[elem.id]
+      if (!runtime) return []
+
+      return [{
         id: elem.id,
         name: elem.name,
         type: elem.type,
+        deviceTypeCd: elem.deviceTypeCd,
         neType: elem.type,
         status: runtime.status,
         location: `KP ${elem.kp.toFixed(1)}`,
@@ -116,7 +99,7 @@ export const useMonitorStore = defineStore('monitor', () => {
         osnr: runtime.osnr,
         componentRefId: elem.componentRefId,
         fiberRefId: elem.fiberRefId,
-      }
+      }]
     })
   })
 
@@ -125,43 +108,54 @@ export const useMonitorStore = defineStore('monitor', () => {
     devices.value.find(d => d.id === selectedDeviceId.value) || null
   )
 
-  // 按状态分组统计
-  const statusSummary = computed(() => ({
-    normal: devices.value.filter(d => d.status === 'normal').length,
-    warning: devices.value.filter(d => d.status === 'warning').length,
-    error: devices.value.filter(d => d.status === 'error').length,
-  }))
-
-  // 活动告警数量
-  const activeAlarms = computed(() => 
-    alarmHistory.value.filter(a => a.level !== 'info').length
-  )
-
-  // 根据KP获取设备
-  function getDeviceByKp(kp: number): MonitorDevice | undefined {
-    return devices.value.find(d => Math.abs(d.kp - kp) < 1)
-  }
-
-  // 根据SLD设备名称获取监控设备
-  function getDeviceBySldName(name: string): MonitorDevice | undefined {
-    return devices.value.find(d => d.sldEquipmentName === name)
-  }
-
   // 选择设备
   function selectDevice(deviceId: string | null) {
     selectedDeviceId.value = deviceId
   }
 
-  // 更新设备运行时数据
-  function updateDevice(deviceId: string, data: Partial<RuntimeData>) {
-    const current = runtimeData.value[deviceId] || { ...defaultRuntimeData }
-    runtimeData.value[deviceId] = { ...current, ...data }
-  }
+  function replaceRuntimeData(devices: readonly unknown[]) {
+    const next: Record<string, RuntimeData> = {}
 
-  // 更新设备状态
-  function updateDeviceStatus(deviceId: string, status: MonitorDevice['status']) {
-    const current = runtimeData.value[deviceId] || { ...defaultRuntimeData }
-    runtimeData.value[deviceId] = { ...current, status }
+    for (const device of devices) {
+      if (!device || typeof device !== 'object') continue
+      const snapshot = device as Record<string, unknown>
+      if (
+        typeof snapshot.id !== 'string'
+        || (snapshot.status !== 'normal' && snapshot.status !== 'warning' && snapshot.status !== 'error')
+      ) {
+        continue
+      }
+
+      const inputPower = Number(snapshot.inputPower)
+      const outputPower = Number(snapshot.outputPower)
+      const pumpCurrent = Number(snapshot.pumpCurrent)
+      const pfeVoltage = Number(snapshot.pfeVoltage)
+      const pfeCurrent = Number(snapshot.pfeCurrent)
+      const temperature = Number(snapshot.temperature)
+      if (![inputPower, outputPower, pumpCurrent, pfeVoltage, pfeCurrent, temperature].every(Number.isFinite)) {
+        continue
+      }
+
+      const optionalNumber = (value: unknown): number | undefined => {
+        if (value === null || value === undefined || value === '') return undefined
+        const parsed = Number(value)
+        return Number.isFinite(parsed) ? parsed : undefined
+      }
+      next[snapshot.id] = {
+        status: snapshot.status,
+        inputPower,
+        outputPower,
+        pumpCurrent,
+        pfeVoltage,
+        pfeCurrent,
+        temperature,
+        qValue: optionalNumber(snapshot.qValue),
+        ber: optionalNumber(snapshot.ber),
+        osnr: optionalNumber(snapshot.osnr),
+      }
+    }
+
+    runtimeData.value = next
   }
 
   // 添加告警
@@ -173,87 +167,8 @@ export const useMonitorStore = defineStore('monitor', () => {
     alarmHistory.value.unshift(newAlarm)
   }
 
-  // 清除告警（标记为cleared状态）
-  function clearAlarm(alarmId: number) {
-    const alarm = alarmHistory.value.find(a => a.id === alarmId)
-    if (alarm) {
-      alarm.status = 'cleared'
-    }
-  }
-
-  // 确认告警
-  function acknowledgeAlarm(alarmId: number) {
-    const alarm = alarmHistory.value.find(a => a.id === alarmId)
-    if (alarm) {
-      alarm.status = 'acknowledged'
-    }
-  }
-
-  // 获取当前活动告警（用于拓扑图变红）
-  function getActiveAlarms(filters?: { neType?: string; level?: string }) {
-    let result = alarmHistory.value.filter(a => a.status === 'active')
-    
-    if (filters?.neType) {
-      result = result.filter(a => a.neType === filters.neType)
-    }
-    if (filters?.level) {
-      result = result.filter(a => a.level === filters.level)
-    }
-    
-    return result
-  }
-
-  // 获取历史告警日志（用于报表查询）
-  function getAlarmHistory(filters?: { 
-    neType?: string
-    level?: string
-    status?: string
-    startTime?: string
-    endTime?: string 
-  }) {
-    let result = [...alarmHistory.value]
-    
-    if (filters?.neType) {
-      result = result.filter(a => a.neType === filters.neType)
-    }
-    if (filters?.level) {
-      result = result.filter(a => a.level === filters.level)
-    }
-    if (filters?.status) {
-      result = result.filter(a => a.status === filters.status)
-    }
-    
-    return result
-  }
-
-  // 初始化模拟运行时数据 (仅用于演示)
-  function initMockData() {
-    if (mockAlarmHistory.length === 0) return
-
-    // 设备列表现在从 connectorStore 派生，这里只初始化运行时数据和告警
-    if (alarmHistory.value.length === 0) {
-      alarmHistory.value = (mockAlarmHistory as AlarmRecord[]).map(a => ({ ...a }))
-    }
-    // 为现有设备初始化模拟运行时数据
-    devices.value.forEach(device => {
-      if (!runtimeData.value[device.id]) {
-        runtimeData.value[device.id] = {
-          status: 'normal',
-          inputPower: 0,
-          outputPower: 0,
-          pumpCurrent: 0,
-          pfeVoltage: 0,
-          pfeCurrent: 0,
-          temperature: 0,
-        }
-      }
-    })
-  }
-
-  // 监听其他模块的数据变更 (设备信息现在从 connectorStore 派生，无需监听)
-  function setupDataLinkListener() {
-    // 设备基础信息现在从 connectorStore 自动派生
-    // 此方法保留以保持 API 兼容性
+  function replaceAlarmHistory(alarms: AlarmRecord[]) {
+    alarmHistory.value = alarms
   }
 
   // 清空运行时数据
@@ -271,22 +186,11 @@ export const useMonitorStore = defineStore('monitor', () => {
     selectedDeviceId,
     // Getters
     selectedDevice,
-    statusSummary,
-    activeAlarms,
     // Actions
-    getDeviceByKp,
-    getDeviceBySldName,
     selectDevice,
-    updateDevice,
-    updateDeviceStatus,
+    replaceRuntimeData,
     addAlarm,
-    clearAlarm,
-    acknowledgeAlarm,
-    getActiveAlarms,
-    getAlarmHistory,
-    // 项目数据管理
-    initMockData,
-    setupDataLinkListener,
+    replaceAlarmHistory,
     clearData,
   }
 })

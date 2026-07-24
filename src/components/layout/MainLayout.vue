@@ -1,7 +1,3 @@
-<script setup lang="ts">
-import AppHeader from './AppHeader.vue'
-</script>
-
 <template>
   <div class="h-full flex flex-col overflow-hidden" style="background-color: var(--app-bg-color); color: var(--app-text-color);">
     <!-- Header is now in App.vue -->

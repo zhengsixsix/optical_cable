@@ -5,16 +5,22 @@ import { Button, Input, Select } from '@/shared/components/base'
 import AdminPagination from '../components/AdminPagination.vue'
 import { useAppStore } from '@/stores/app'
 import { useLayerStore } from '@/stores/layer'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { platformPlanLayerApi } from '@/services/platform/api'
-import type { PlanLayer, PlanLayerTypeDic } from '@/services/platform/types'
+import type { PlanLayer } from '@/services/platform/types'
+import {
+  getLocalLayerIdForDictionaryCode,
+  getRuntimeLayerTypeForDictionaryCode,
+} from '@/services/platform/layerTypeAdapter'
 
 const appStore = useAppStore()
 const layerStore = useLayerStore()
+const dictionaryStore = useDictionaryStore()
 const isLoading = ref(false)
 const isSaving = ref(false)
 const isFormDialogOpen = ref(false)
 const keyword = ref('')
-const typeDic = ref('BATHY')
+const typeDic = ref('')
 const layers = ref<PlanLayer[]>([])
 const pageNumber = ref(1)
 const pageSize = ref(10)
@@ -26,38 +32,10 @@ const form = reactive({
   isPublic: '0',
   isDefault: '0',
   attachmentId: '',
-  typeDic: 'BATHY',
+  typeDic: '',
 })
 
-const layerTypeOptions = [
-  { value: 'BATHY', label: '海洋高程图' },
-  { value: 'SLOPE', label: '海洋坡度图' },
-  { value: 'VOLCANO', label: '海洋火山分布' },
-  { value: 'CWCORAL', label: '冷水珊瑚分布' },
-  { value: 'SEISMIC', label: '海洋地震分布' },
-  { value: 'FISHZONE', label: '海洋渔区分布' },
-  { value: 'SHIPLANE', label: '海洋航道图' },
-]
-
-const layerTypeToLocalId: Partial<Record<PlanLayerTypeDic, string>> = {
-  BATHY: 'elevation',
-  SLOPE: 'slope',
-  VOLCANO: 'volcano',
-  CWCORAL: 'coldCoral',
-  SEISMIC: 'earthquake',
-  FISHZONE: 'fishing',
-  SHIPLANE: 'shipping',
-}
-
-const localLayerTypeMap: Record<string, 'point' | 'heatmap' | 'raster' | 'vector' | 'both'> = {
-  elevation: 'raster',
-  slope: 'heatmap',
-  volcano: 'both',
-  coldCoral: 'vector',
-  earthquake: 'both',
-  fishing: 'point',
-  shipping: 'vector',
-}
+const layerTypeOptions = computed(() => dictionaryStore.getOptions(PLATFORM_DICTIONARY_TYPES.layerType))
 
 const publicCount = computed(() => layers.value.filter(layer => layer.isPublic === 1).length)
 const defaultCount = computed(() => layers.value.filter(layer => layer.isDefault === 1).length)
@@ -65,12 +43,11 @@ const activeTypeLabel = computed(() => getLayerTypeLabel(typeDic.value))
 const dialogTitle = computed(() => form.id ? '编辑图层' : '新增图层')
 
 function getLayerTypeLabel(value?: string | null) {
-  return layerTypeOptions.find(option => option.value === value)?.label ?? '未分类'
+  return dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.layerType, value)?.name ?? value ?? '未分类'
 }
 
 function getLocalLayerId(layer: PlanLayer) {
-  const mapped = layer.typeDic ? layerTypeToLocalId[layer.typeDic] : null
-  return mapped ?? `platform-layer-${layer.id}`
+  return layer.typeDic ? getLocalLayerIdForDictionaryCode(layer.typeDic) : `platform-layer-${layer.id}`
 }
 
 function resetForm() {
@@ -81,7 +58,7 @@ function resetForm() {
     isPublic: '0',
     isDefault: '0',
     attachmentId: '',
-    typeDic: typeDic.value || 'BATHY',
+    typeDic: typeDic.value,
   })
 }
 
@@ -102,7 +79,7 @@ async function openEditDialog(layer: PlanLayer) {
       isPublic: String(detail.isPublic ?? layer.isPublic ?? 0),
       isDefault: String(detail.isDefault ?? layer.isDefault ?? 0),
       attachmentId: String(detail.attachmentId ?? layer.attachmentId ?? ''),
-      typeDic: detail.typeDic ?? layer.typeDic ?? typeDic.value ?? 'BATHY',
+      typeDic: detail.typeDic ?? layer.typeDic ?? typeDic.value,
     })
     isFormDialogOpen.value = true
   } catch (error) {
@@ -160,6 +137,14 @@ async function saveLayer() {
     appStore.showNotification({ type: 'warning', message: '请输入图层名称' })
     return
   }
+  if (!form.typeDic) {
+    appStore.showNotification({ type: 'warning', message: '请选择图层类型' })
+    return
+  }
+  if (!dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.layerType, form.typeDic)) {
+    appStore.showNotification({ type: 'warning', message: `LAYER_TYPE 字典中不存在图层类型 ${form.typeDic}` })
+    return
+  }
   isSaving.value = true
   try {
     await platformPlanLayerApi.save({
@@ -204,7 +189,7 @@ function useLayerInPlanning(layer: PlanLayer) {
   layerStore.upsertLayer({
     id: key,
     name: layer.name || getLayerTypeLabel(layer.typeDic) || `平台图层 ${layer.id}`,
-    type: localLayerTypeMap[key] ?? 'vector',
+    type: getRuntimeLayerTypeForDictionaryCode(layer.typeDic),
     visible: true,
     loaded: true,
     loading: false,
@@ -219,9 +204,15 @@ function useLayerInPlanning(layer: PlanLayer) {
   appStore.showNotification({ type: 'success', message: `已加入当前规划图层：${layer.name || layer.id}` })
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType)
+    typeDic.value = layerTypeOptions.value[0]?.value ?? ''
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `图层类型字典加载失败：${(error as Error).message}` })
+  }
   resetForm()
-  void loadLayers()
+  await loadLayers()
 })
 </script>
 

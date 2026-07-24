@@ -2,7 +2,7 @@ import type { PlatformBindFunc } from './types'
 
 export type BindFuncParamValueType = 'string' | 'number' | 'boolean' | 'json' | 'field'
 
-export interface BindFuncFieldParamValue {
+interface BindFuncFieldParamValue {
   type: 'FIELD'
   value: string
 }

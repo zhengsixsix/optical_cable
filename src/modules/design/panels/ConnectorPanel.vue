@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { computed, onMounted, ref, watch } from 'vue'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { useConnectorStore } from '@/stores/connector'
@@ -8,12 +9,13 @@ import { useRouteStore } from '@/stores/route'
 import { Edit2, Link2, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { platformDeviceEntityToConnectorElement } from '@/services/platform/deviceLibraryMapping'
 import { mergePlatformConnectorElements } from '@/utils/platformDeviceEntityMerge'
-import type { Id, PlanDeviceEntity, PlatformDictionary } from '@/services/platform/types'
+import type { Id, PlanDeviceEntity } from '@/services/platform/types'
 
 const connectorStore = useConnectorStore()
 const routeStore = useRouteStore()
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
+const dictionaryStore = useDictionaryStore()
 const currentProjectId = computed(() => appStore.projectState.currentProject?.platformProjectId ?? null)
 const loadingPlatformEntities = ref(false)
 const filterType = ref('all')
@@ -36,31 +38,9 @@ interface PanelEntity extends PlanDeviceEntity {
   platformEntityId?: Id
 }
 
-const connectorTypePresentation: Record<string, { code: string; label: string }> = {
-  landing: { code: 'LANDING', label: '岸上站点' },
-  underwater: { code: 'UNDERWATER', label: '水下站点' },
-  amplifier_e: { code: 'AMP', label: '放大器' },
-  amplifier_w: { code: 'AMP', label: '放大器' },
-  ola: { code: 'AMP', label: '放大器' },
-  bu: { code: 'SPL', label: '分支器' },
-  equalizer: { code: 'EQL', label: '均衡器' },
-  joint: { code: 'SCL', label: '接头盒' },
-  fiber: { code: 'FIB', label: '光纤' },
-  cable_segment: { code: 'CABLE', label: '海缆段' },
-}
-
-const dictionaryByCode = computed(() => {
-  const map = new Map<string, PlatformDictionary>()
-  for (const item of settingsStore.platformDeviceTypeDictionaries) {
-    if (!item.code) continue
-    map.set(normalizeCode(item.code), item)
-  }
-  return map
-})
-
 const deviceTypeLabel = (entity: PlanDeviceEntity) => {
   const code = entity.deviceTypeCd || ''
-  const dictionary = dictionaryByCode.value.get(normalizeCode(code))
+  const dictionary = dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, code)
   return entity.typeName || dictionary?.name || code || '-'
 }
 
@@ -68,12 +48,6 @@ const libraryLabel = (entity: PlanDeviceEntity) => {
   if (entity.libraryName) return entity.libraryName
   const library = settingsStore.platformDeviceLibraries.find(item => sameId(item.id, entity.libraryId))
   return library?.name || '-'
-}
-
-const formatValue = (value: unknown) => {
-  if (value == null || value === '') return '-'
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '-'
-  return String(value)
 }
 
 const formatCoordinate = (value: unknown) => {
@@ -97,7 +71,7 @@ const typeBadgeClass = (code?: string | null) => {
 }
 
 const dictionaryFilterOptions = computed(() =>
-  settingsStore.platformDeviceTypeDictionaries
+  dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.deviceType)
     .filter(item => item.code)
     .map(item => ({
       key: String(item.code),
@@ -112,16 +86,16 @@ const panelEntities = computed<PanelEntity[]>(() => connectorStore.elements
   const platformEntity = settingsStore.platformDeviceEntities.find(entity =>
     sameId(entity.id, element.platformEntityId)
   )
-  const presentation = connectorTypePresentation[element.type]
-    || { code: String(element.type).toUpperCase(), label: String(element.type) }
+  const deviceTypeCd = platformEntity?.deviceTypeCd || element.deviceTypeCd || ''
+  const dictionary = dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, deviceTypeCd)
   return {
     ...platformEntity,
     id: platformEntity?.id ?? element.id,
     localElementId: element.id,
     platformEntityId: element.platformEntityId,
     name: element.name || platformEntity?.name,
-    deviceTypeCd: platformEntity?.deviceTypeCd || presentation.code,
-    typeName: platformEntity?.typeName || presentation.label,
+    deviceTypeCd,
+    typeName: platformEntity?.typeName || dictionary?.name || deviceTypeCd,
     libraryId: platformEntity?.libraryId ?? element.componentRefId ?? element.fiberRefId,
     libraryName: platformEntity?.libraryName || element.specifications,
     longitude: element.longitude,
@@ -176,16 +150,16 @@ const ensureConnectorTable = () => {
 
 const syncConnectorStoreFromEntities = (replacePlatformElements: boolean) => {
   ensureConnectorTable()
-  if (!connectorStore.currentTable) return
+  const currentTable = connectorStore.currentTable
+  if (!currentTable) return
   const incomingElements = settingsStore.platformDeviceEntities
     .map(platformDeviceEntityToConnectorElement)
     .filter(element => element.type !== 'cable_segment')
-  connectorStore.currentTable.elements = mergePlatformConnectorElements(
-    connectorStore.currentTable.elements,
+  connectorStore.replaceTableElements(mergePlatformConnectorElements(
+    currentTable.elements,
     incomingElements,
     { replacePlatformElements },
-  )
-  connectorStore.currentTable.updatedAt = new Date().toISOString()
+  ))
 }
 
 const loadConnectorEntities = async (deviceTypeCd = filterType.value) => {
@@ -213,9 +187,9 @@ const loadConnectorEntities = async (deviceTypeCd = filterType.value) => {
   }
 }
 
-const loadDeviceTypeDictionaries = async () => {
+const loadDeviceTypeDictionaries = async (force = false) => {
   try {
-    await settingsStore.loadPlatformDeviceTypeDictionaries()
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType, force)
     if (filterType.value !== 'all' && !filterOptions.value.some(option => normalizeCode(option.code) === normalizeCode(filterType.value))) {
       filterType.value = 'all'
     }
@@ -228,7 +202,7 @@ const loadDeviceTypeDictionaries = async () => {
 }
 
 const refreshPanelData = async () => {
-  await loadDeviceTypeDictionaries()
+  await loadDeviceTypeDictionaries(true)
   await loadConnectorEntities()
 }
 
@@ -289,11 +263,11 @@ watch(currentProjectId, () => {
           variant="ghost"
           size="sm"
           class="h-7 px-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700"
-          :disabled="loadingPlatformEntities || settingsStore.deviceTypeDictionaryLoading"
+          :disabled="loadingPlatformEntities || dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.deviceType)"
           title="刷新器件类型字典和平台器件实例"
           @click="refreshPanelData"
         >
-          <RefreshCw class="w-4 h-4" :class="loadingPlatformEntities || settingsStore.deviceTypeDictionaryLoading ? 'animate-spin' : ''" />
+          <RefreshCw class="w-4 h-4" :class="loadingPlatformEntities || dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.deviceType) ? 'animate-spin' : ''" />
         </Button>
         <Button variant="ghost" size="sm" class="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50" @click="emit('add')">
           <Plus class="w-4 h-4 mr-1" /> 添加
@@ -327,7 +301,7 @@ watch(currentProjectId, () => {
         >
           {{ option.label }}
         </button>
-        <span v-if="settingsStore.deviceTypeDictionaryLoading" class="px-2.5 py-1 text-xs text-gray-400">加载中...</span>
+        <span v-if="dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.deviceType)" class="px-2.5 py-1 text-xs text-gray-400">加载中...</span>
       </div>
 
       <div class="flex-1 overflow-auto pr-1">

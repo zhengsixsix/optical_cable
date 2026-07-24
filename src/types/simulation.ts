@@ -180,7 +180,7 @@ export interface LinkSimulationResult {
   /** 仿真时间 */
   simulatedAt: Date
   /** 使用的仿真模型 */
-  model: SimulationModel
+  model: string
   /** 各跨段结果 */
   spanResults: SpanSimulationResult[]
   /** 端到端 OSNR (dB) */
@@ -245,7 +245,7 @@ export interface SpanScanResult {
   /** 扫描时间 */
   scannedAt: Date
   /** 使用的仿真模型 */
-  model: SimulationModel
+  model: string
   /** Span 长度序列 (km) */
   spanLengthsKm: number[]
   /** 各 Span 配置下的 GSNR 值（按信道），二维数组 [spanIndex][channelIndex] */
@@ -346,41 +346,6 @@ export interface LinkBudget {
   systemMargin: number
   /** 是否满足预算 */
   isBudgetMet: boolean
-}
-
-// ========== 常量定义 ==========
-
-/** 物理常量 */
-export const PHYSICAL_CONSTANTS = {
-  /** 普朗克常量 (J·s) */
-  h: 6.62607015e-34,
-  /** 光速 (m/s) */
-  c: 299792458,
-  /** 玻尔兹曼常量 (J/K) */
-  k: 1.380649e-23,
-  /** 参考带宽 0.1nm -> Hz @1550nm */
-  refBandwidth: 12.5e9,
-} as const
-
-/** 默认光纤参数 (G.654.E) */
-export const DEFAULT_FIBER_PARAMS: FiberParams = {
-  type: 'G.654.E',
-  attenuation: 0.16,
-  dispersion: 20.5,
-  dispersionSlope: 0.06,
-  effectiveArea: 110,
-  nonlinearIndex: 2.2e-20,
-  nonlinearCoeff: 0.8,
-}
-
-/** 默认放大器参数 */
-export const DEFAULT_AMPLIFIER_PARAMS: AmplifierParams = {
-  type: 'EDFA',
-  noiseFigure: 5.0,
-  gain: 20,
-  maxOutputPower: 17,
-  gainFlatness: 1.0,
-  band: 'C+L',
 }
 
 // ========== 仿真输入构建 (Step 3) ==========
@@ -540,55 +505,3 @@ export interface SimulationProgress {
 
 /** 进度回调函数 */
 export type ProgressCallback = (progress: SimulationProgress) => void
-
-/** 调制格式参数表 */
-export const MODULATION_PARAMS: Record<ModulationFormat, ModulationParams> = {
-  'QPSK': {
-    bitsPerSymbol: 4,
-    requiredOSNR: 9.8,
-    requiredGSNR: 11.5,
-    spectralEfficiency: 2.0,
-  },
-  '8QAM': {
-    bitsPerSymbol: 6,
-    requiredOSNR: 13.0,
-    requiredGSNR: 15.0,
-    spectralEfficiency: 3.0,
-  },
-  '16QAM': {
-    bitsPerSymbol: 8,
-    requiredOSNR: 16.5,
-    requiredGSNR: 18.5,
-    spectralEfficiency: 4.0,
-  },
-  '32QAM': {
-    bitsPerSymbol: 10,
-    requiredOSNR: 19.5,
-    requiredGSNR: 21.5,
-    spectralEfficiency: 5.0,
-  },
-  '64QAM': {
-    bitsPerSymbol: 12,
-    requiredOSNR: 22.5,
-    requiredGSNR: 24.5,
-    spectralEfficiency: 6.0,
-  },
-  'DP-QPSK': {
-    bitsPerSymbol: 4,
-    requiredOSNR: 10.5,
-    requiredGSNR: 12.0,
-    spectralEfficiency: 2.0,
-  },
-  'DP-16QAM': {
-    bitsPerSymbol: 8,
-    requiredOSNR: 17.0,
-    requiredGSNR: 19.0,
-    spectralEfficiency: 4.0,
-  },
-  'PCS-64QAM': {
-    bitsPerSymbol: 11,
-    requiredOSNR: 20.0,
-    requiredGSNR: 22.0,
-    spectralEfficiency: 5.5,
-  },
-}

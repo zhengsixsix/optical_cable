@@ -12,16 +12,13 @@
 import { useAppStore } from '@/stores/app'
 import { useBUConfigStore } from '@/stores/buConfig'
 import { useConnectorStore } from '@/stores/connector'
-import { useRouteStore } from '@/stores/route'
 import { ref, computed, watch, reactive } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
 import { useSettingsStore } from '@/stores/settings'
 import { 
   X, ChevronDown, ChevronUp, Check, AlertCircle, 
-  GitBranch, Save, Database
+  GitBranch, Database
 } from 'lucide-vue-next'
-import type { ConnectorElement } from '@/types'
-import { calculateDistance } from '@/utils/geo'
 import {
   getDeviceLibrariesByCategory,
   type RuntimeBranchingLibrary,
@@ -41,7 +38,6 @@ const emit = defineEmits<{
 const settingsStore = useSettingsStore()
 const connectorStore = useConnectorStore()
 const appStore = useAppStore()
-const routeStore = useRouteStore()
 const buConfigStore = useBUConfigStore()  // 使用共享的 BU 配置 store
 
 const platformBranchingLibraries = computed(() =>
@@ -53,46 +49,7 @@ const platformBranchingLibraries = computed(() =>
 // 当前编辑的 BU 元素
 const currentBu = computed(() => {
   if (!props.buId) return null
-  
-  // 优先从 connectorStore 查找
-  const fromConnector = connectorStore.elements.find(e => e.id === props.buId)
-  if (fromConnector) return fromConnector
-  
-  // 否则从 routeStore 查找并转换格式
-  const selectedRoute = routeStore.selectedRoute
-  if (selectedRoute) {
-    const point = selectedRoute.points.find(p => p.id === props.buId)
-    if (point && point.type === 'branching') {
-      // 计算 KP（使用 Haversine 公式）
-      let kp = 0
-      const idx = selectedRoute.points.indexOf(point)
-      for (let i = 1; i <= idx; i++) {
-        const prev = selectedRoute.points[i - 1]
-        const curr = selectedRoute.points[i]
-        kp += calculateDistance(prev.coordinates, curr.coordinates)
-      }
-      
-      return {
-        id: point.id,
-        name: point.name || '分支器',
-        type: 'bu' as any,
-        kp,
-        longitude: point.coordinates[0],
-        latitude: point.coordinates[1],
-        depth: (point as any).depth || 0,
-        status: 'active' as any,
-        specifications: '',
-        remarks: '',
-        buPortCount: 3,
-        buTrunkLoss: 0.8,
-        buBranchLoss: 3.5,
-        buBranchTarget: point.branchTo?.name || '',
-        componentRefId: ''
-      } as any
-    }
-  }
-  
-  return null
+  return connectorStore.elements.find(element => element.id === props.buId && element.type === 'bu') || null
 })
 
 // 折叠状态
@@ -105,8 +62,8 @@ const expandedSections = reactive({
 // ============ Step 1: 器件选择 ============
 const selectedDeviceId = ref('')
 const localParams = reactive({
-  trunkLoss: 0.8,
-  branchLoss: 3.5
+  trunkLoss: Number.NaN,
+  branchLoss: Number.NaN,
 })
 const paramsModified = ref(false)
 
@@ -131,6 +88,9 @@ const loadParamsFromDevice = () => {
     localParams.trunkLoss = selectedDevice.value.trunkInsertionLoss
     localParams.branchLoss = selectedDevice.value.branchInsertionLoss
     paramsModified.value = false
+  } else {
+    localParams.trunkLoss = Number.NaN
+    localParams.branchLoss = Number.NaN
   }
 }
 
@@ -143,122 +103,17 @@ const markModified = () => {
 
 // ============ Step 2: 主干分支配置 ============
 
-// 获取所有可用的登陆站和 BU 节点
+// 下一跳只列出接线元中明确存在的设备。
 const allNodes = computed(() => {
-  const nodes: Array<{ id: string; name: string; type: string; index: number }> = []
-  
-  // 优先从 routeStore 获取
-  const selectedRoute = routeStore.selectedRoute
-  if (selectedRoute && selectedRoute.points.length > 0) {
-    const existsLandingByName = (name?: string) =>
-      !!name && nodes.some(n => n.type === 'landing' && n.name === name)
-    const existsLandingByCoord = (coord?: [number, number]) => {
-      if (!coord) return false
-      return nodes.some(n => (n as any).coord &&
-        Math.abs((n as any).coord[0] - coord[0]) < 1e-6 &&
-        Math.abs((n as any).coord[1] - coord[1]) < 1e-6
-      )
-    }
-    
-    let nodeIndex = 0
-    selectedRoute.points.forEach((p, idx) => {
-      if (p.type === 'landing' || p.type === 'branching') {
-        nodes.push({
-          id: p.id,
-          name: p.name || (p.type === 'landing' ? `登陆站${nodeIndex + 1}` : `分支器`),
-          type: p.type === 'landing' && (p as any).isBranchStation ? 'branch-landing' : p.type,
-          index: nodeIndex++,
-          ...(p.type === 'landing' ? { coord: p.coordinates } : {}),
-          ...(p.type === 'landing' && (p as any).isBranchStation ? { branchFrom: (p as any).branchFrom } : {})
-        })
-        
-        // 如果是分支器且有分支登陆站，紧跟其后添加
-        if (p.type === 'branching' && p.branchTo) {
-          if (!existsLandingByName(p.branchTo.name) && !existsLandingByCoord(p.branchTo.coord as [number, number])) {
-            nodes.push({
-              id: `branch-${p.id}`,
-              name: p.branchTo.name || '分支登陆站',
-              type: 'branch-landing',
-              index: nodeIndex++
-            })
-          }
-        }
-      }
-    })
-  }
-  
-  // 如果 routeStore 没数据，回退到 connectorStore
-  if (nodes.length === 0) {
-    connectorStore.elements.forEach((e, idx) => {
-      if (e.type === 'landing' || e.type === 'underwater' || e.type === 'bu') {
-        nodes.push({
-          id: e.id,
-          name: e.name,
-          type: e.type,
-          index: idx
-        })
-      }
-    })
-  }
-  
-  return nodes
-})
-
-// 当前 BU 在节点列表中的索引
-const currentBuIndex = computed(() => {
-  // 支持多种 ID 格式匹配
-  const node = allNodes.value.find(n => 
-    n.id === props.buId || 
-    n.id === `branch-${props.buId}` ||
-    (n.type === 'branching' && n.name === currentBu.value?.name)
-  )
-  return node ? node.index : -1
+  return connectorStore.elements
+    .filter(element => element.id !== props.buId
+      && (element.type === 'landing' || element.type === 'underwater' || element.type === 'bu'))
+    .map(element => ({ id: element.id, name: element.name, type: element.type }))
 })
 
 // 获取可用的下一跳选项
-const getNextHopOptions = (direction: 'upstream' | 'downstream' | 'branch') => {
-  const options: Array<{ value: string; label: string }> = []
-  const nodes = allNodes.value
-  const currentIdx = currentBuIndex.value
-  
-  // 如果找不到当前 BU，返回所有可选节点
-  if (currentIdx === -1) {
-    nodes
-      .filter(n => n.type === 'landing' || n.type === 'branching')
-      .forEach(n => options.push({ value: n.id, label: n.name }))
-    return options
-  }
-  
-  if (direction === 'upstream') {
-    // 上行：在当前 BU 之前的节点（排除其他 BU 的分支站）
-    const upstream = nodes.filter(n => n.index < currentIdx && n.type !== 'branch-landing')
-    upstream.reverse().forEach(n => options.push({ value: n.id, label: n.name }))
-  } else if (direction === 'downstream') {
-    // 下行：在当前 BU 之后的节点（排除 BU 自己的分支站）
-    const downstream = nodes.filter(n => n.index > currentIdx && n.type !== 'branch-landing')
-    downstream.forEach(n => options.push({ value: n.id, label: n.name }))
-  } else {
-    // 分支：优先使用 branch-landing
-    const currentBuName = currentBu.value?.name
-    const branchNodes = nodes.filter(n => 
-      n.type === 'branch-landing' && (!(n as any).branchFrom || (n as any).branchFrom === currentBuName)
-    )
-    if (branchNodes.length > 0) {
-      branchNodes.forEach(n => options.push({ value: n.id, label: n.name }))
-    } else {
-      // 添加所有登陆站作为备选
-      nodes
-        .filter(n => n.type === 'landing')
-        .forEach(n => {
-          if (!options.find(o => o.value === n.id)) {
-            options.push({ value: n.id, label: n.name })
-          }
-        })
-    }
-  }
-  
-  return options
-}
+const getNextHopOptions = (_direction: 'upstream' | 'downstream' | 'branch') =>
+  allNodes.value.map(node => ({ value: node.id, label: node.name }))
 
 // 下一跳配置
 const nextHopConfig = reactive({
@@ -269,7 +124,7 @@ const nextHopConfig = reactive({
 
 // 端口数（决定分支数量）
 const portCount = computed(() => {
-  return selectedDevice.value?.portCount || currentBu.value?.buPortCount || 3
+  return selectedDevice.value?.portCount ?? currentBu.value?.buPortCount ?? Number.NaN
 })
 
 // ============ Step 3: 配置预览 ============
@@ -278,12 +133,18 @@ const portCount = computed(() => {
 const isConfigComplete = computed(() => {
   // 必须选择器件
   if (!selectedDeviceId.value) return false
+  if (!Number.isInteger(portCount.value) || portCount.value < 2) return false
+  if (!Number.isFinite(localParams.trunkLoss) || localParams.trunkLoss < 0) return false
+  if (!Number.isFinite(localParams.branchLoss) || localParams.branchLoss < 0) return false
   
-  // 主干上下行必须配置
-  if (!nextHopConfig.upstream || !nextHopConfig.downstream) return false
-  
-  // 至少一个分支必须配置
-  if (portCount.value >= 3 && !nextHopConfig.branch1) return false
+  const requiredHopIds = [
+    nextHopConfig.upstream,
+    nextHopConfig.downstream,
+    ...(portCount.value >= 3 ? [nextHopConfig.branch1] : []),
+  ]
+  const availableNodeIds = new Set(allNodes.value.map(node => node.id))
+  if (requiredHopIds.some(id => !id || id === props.buId || !availableNodeIds.has(id))) return false
+  if (new Set(requiredHopIds).size !== requiredHopIds.length) return false
   
   return true
 })
@@ -332,7 +193,7 @@ const affectedLinks = computed(() => {
 
 // ============ 保存配置 ============
 const saveConfig = () => {
-  if (!props.buId || !currentBu.value) return
+  if (!props.buId || !currentBu.value || !isConfigComplete.value) return
   
   // 保存到共享的 BU 配置 store
   buConfigStore.saveConfig(props.buId, {
@@ -364,28 +225,6 @@ const saveConfig = () => {
   emit('close')
 }
 
-// 保存到器件库
-const saveToLibrary = () => {
-  if (!selectedDevice.value) return
-  
-  // 创建新的器件类型
-  const newDevice = {
-    id: `bu-${Date.now()}`,
-    name: `${selectedDevice.value.name} (派生)`,
-    portCount: portCount.value,
-    trunkInsertionLoss: localParams.trunkLoss,
-    branchInsertionLoss: localParams.branchLoss,
-    insertionLoss: localParams.trunkLoss,
-    wavelengthRange: selectedDevice.value.wavelengthRange
-  }
-  
-  settingsStore.addBranchingUnitType(newDevice)
-  selectedDeviceId.value = newDevice.id
-  paramsModified.value = false
-  
-  appStore.showNotification({ type: 'success', message: '新器件已保存到器件库' })
-}
-
 // 器件库选择对话框
 const showDeviceLibraryDialog = ref(false)
 
@@ -400,41 +239,6 @@ const selectFromLibrary = (deviceId: string) => {
   appStore.showNotification({ type: 'success', message: '已选择器件' })
 }
 
-// 新建器件
-const showNewDeviceDialog = ref(false)
-const newDeviceName = ref('')
-const newDevicePortCount = ref('3')
-
-const openNewDeviceDialog = () => {
-  newDeviceName.value = 'BU-新器件'
-  newDevicePortCount.value = '3'
-  showNewDeviceDialog.value = true
-}
-
-const createNewDevice = () => {
-  if (!newDeviceName.value) {
-    appStore.showNotification({ type: 'warning', message: '请输入器件名称' })
-    return
-  }
-  
-  const newDevice = {
-    id: `bu-${Date.now()}`,
-    name: newDeviceName.value,
-    portCount: parseInt(newDevicePortCount.value),
-    trunkInsertionLoss: 0.8,
-    branchInsertionLoss: 3.5,
-    insertionLoss: 0.8,
-    wavelengthRange: 1550  // 工作波长 (nm)
-  }
-  
-  settingsStore.addBranchingUnitType(newDevice)
-  selectedDeviceId.value = newDevice.id
-  loadParamsFromDevice()
-  showNewDeviceDialog.value = false
-  
-  appStore.showNotification({ type: 'success', message: `器件 "${newDeviceName.value}" 已创建` })
-}
-
 // 初始化
 watch(() => props.visible, async (visible) => {
   if (visible && props.buId) {
@@ -447,16 +251,16 @@ watch(() => props.visible, async (visible) => {
     
     if (cached) {
       selectedDeviceId.value = cached.componentRefId || ''
-      localParams.trunkLoss = cached.buTrunkLoss || 0.8
-      localParams.branchLoss = cached.buBranchLoss || 3.5
+      localParams.trunkLoss = cached.buTrunkLoss ?? Number.NaN
+      localParams.branchLoss = cached.buBranchLoss ?? Number.NaN
       nextHopConfig.upstream = cached.buNextHopUpstream || ''
       nextHopConfig.downstream = cached.buNextHopDownstream || ''
       nextHopConfig.branch1 = cached.buNextHopBranch1 || ''
     } else if (currentBu.value) {
       // 否则从 currentBu 加载（新打开时）
       selectedDeviceId.value = currentBu.value.componentRefId || ''
-      localParams.trunkLoss = currentBu.value.buTrunkLoss || 0.8
-      localParams.branchLoss = currentBu.value.buBranchLoss || 3.5
+      localParams.trunkLoss = currentBu.value.buTrunkLoss ?? Number.NaN
+      localParams.branchLoss = currentBu.value.buBranchLoss ?? Number.NaN
       nextHopConfig.upstream = (currentBu.value as any).buNextHopUpstream || ''
       nextHopConfig.downstream = (currentBu.value as any).buNextHopDownstream || ''
       
@@ -586,15 +390,6 @@ watch(() => props.visible, async (visible) => {
                 <Button variant="outline" size="sm" @click="openDeviceLibrary">
                   <Database class="w-4 h-4 mr-1" /> 从器件库选择...
                 </Button>
-                <Button variant="outline" size="sm" @click="openNewDeviceDialog">新建器件...</Button>
-                <Button 
-                  v-if="paramsModified" 
-                  variant="outline" 
-                  size="sm"
-                  @click="saveToLibrary"
-                >
-                  <Save class="w-4 h-4 mr-1" /> 保存到器件库
-                </Button>
               </div>
             </div>
           </div>
@@ -722,49 +517,6 @@ watch(() => props.visible, async (visible) => {
           <Button :disabled="!isConfigComplete" @click="saveConfig">
             <Check class="w-4 h-4 mr-1" /> 确认保存
           </Button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
-  
-  <!-- 新建器件对话框 -->
-  <Teleport to="body">
-    <div 
-      v-if="showNewDeviceDialog" 
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1001]"
-      @click.self="showNewDeviceDialog = false"
-    >
-      <div class="bg-white rounded-lg shadow-xl w-[400px]">
-        <div class="px-4 py-3 border-b flex items-center justify-between">
-          <h3 class="font-semibold text-gray-800">新建 BU 器件</h3>
-          <button class="text-gray-400 hover:text-gray-600" @click="showNewDeviceDialog = false">
-            <X class="w-5 h-5" />
-          </button>
-        </div>
-        <div class="p-4 space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">器件名称</label>
-            <Input v-model="newDeviceName" class="w-full" placeholder="输入器件名称" />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">端口数</label>
-<Select 
-              v-model="newDevicePortCount" 
-              :options="[
-                { value: '3', label: '3端口（主干2 + 分支1）' },
-                { value: '4', label: '4端口（主干2 + 分支2）' },
-                { value: '5', label: '5端口（主干2 + 分支3）' }
-              ]" 
-              class="w-full" 
-            />
-          </div>
-          <div class="text-xs text-gray-500">
-            创建后可在上方编辑主干插损和分支插损参数
-          </div>
-        </div>
-        <div class="px-4 py-3 border-t flex justify-end gap-2">
-          <Button variant="outline" size="sm" @click="showNewDeviceDialog = false">取消</Button>
-          <Button size="sm" @click="createNewDevice">创建</Button>
         </div>
       </div>
     </div>

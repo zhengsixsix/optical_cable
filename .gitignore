@@ -22,6 +22,7 @@ public/*.xls
 public/*.xlsx
 dist-ssr
 *.local
+*.tsbuildinfo
 .env.deploy.local
 
 # Editor directories and files

@@ -14,6 +14,7 @@ export type ConnectorType =
   | 'fiber'          // 光纤段（系统设计阶段，放大器间的光学传输段）
   | 'ola'            // 光放大器 (OLA)
   | 'joint'          // 接头盒
+  | 'device'         // 平台字典中尚无专用渲染器的通用器件
 
 // 接线元状态
 export type ConnectorStatus = 'active' | 'standby' | 'fault' | 'planned'
@@ -22,6 +23,7 @@ export type ConnectorStatus = 'active' | 'standby' | 'fault' | 'planned'
 export interface ConnectorElement {
   id: string
   platformEntityId?: string | number
+  deviceTypeCd?: string
   name: string
   type: ConnectorType
   kp: number
@@ -80,23 +82,5 @@ export const connectorTypeLabels: Record<ConnectorType, string> = {
   fiber: '光纤段',
   ola: '放大器',
   joint: '接头盒',
-}
-
-// 简化的过滤标签（只显示主要类型）
-export const connectorFilterLabels: Partial<Record<ConnectorType, string>> = {
-  landing: '岸上站点',
-  underwater: '水下站点',
-  amplifier_e: '放大器',
-  bu: '分支器',
-  equalizer: '均衡器',
-  joint: '接头盒',
-  fiber: '光纤段',
-}
-
-// 接线元状态标签
-export const connectorStatusLabels: Record<ConnectorStatus, string> = {
-  active: '运行中',
-  standby: '备用',
-  fault: '故障',
-  planned: '规划中',
+  device: '器件',
 }

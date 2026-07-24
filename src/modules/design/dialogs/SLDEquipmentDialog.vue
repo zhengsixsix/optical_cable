@@ -2,10 +2,13 @@
 import { ref, computed, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useSLDStore } from '@/stores/sld'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { X, Save, Radio } from 'lucide-vue-next'
-import type { SLDEquipmentType } from '@/types'
-import { equipmentTypeOptions } from '@/data/mockData'
+import {
+  getDeviceTypeCodeForSldEquipmentType,
+  getSldEquipmentTypeForDeviceTypeCode,
+} from '@/services/platform/deviceTypeAdapter'
 import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
 
 const props = defineProps<{
@@ -20,10 +23,19 @@ const emit = defineEmits<{
 
 const sldStore = useSLDStore()
 const appStore = useAppStore()
+const dictionaryStore = useDictionaryStore()
 
 const isEdit = computed(() => !!props.equipmentId)
 const dialogTitle = computed(() => isEdit.value ? '编辑设备' : '添加设备')
-const isEqualizerType = computed(() => form.value.type === 'EQ')
+const isEqualizerType = computed(() =>
+  getSldEquipmentTypeForDeviceTypeCode(form.value.deviceTypeCd) === 'EQ',
+)
+const equipmentTypeOptions = computed(() => dictionaryStore.getOptions(PLATFORM_DICTIONARY_TYPES.deviceType))
+
+function getAvailableDeviceTypeCode(type: Parameters<typeof getDeviceTypeCodeForSldEquipmentType>[0]): string {
+  const code = getDeviceTypeCodeForSldEquipmentType(type)
+  return code && dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, code) ? code : ''
+}
 
 const equalizerRoleOptions = [
   { value: 'T', label: 'T (蓝色)' },
@@ -35,9 +47,25 @@ const attenuationModeOptions = [
   { value: 'fixed', label: '固定光衰 (F-ATT)' },
 ]
 
-const form = ref({
+interface SLDEquipmentForm {
+  name: string
+  deviceTypeCd: string
+  location: string
+  kp: number
+  longitude: number
+  latitude: number
+  depth: number
+  specifications: string
+  manufacturer: string
+  remarks: string
+  equalizerRole: 'T' | 'S'
+  attenuationMode: 'adjustable' | 'fixed'
+  attenuationDb: number
+}
+
+const form = ref<SLDEquipmentForm>({
   name: '',
-  type: 'REP' as SLDEquipmentType,
+  deviceTypeCd: '',
   location: '',
   kp: 0,
   longitude: 0,
@@ -51,37 +79,46 @@ const form = ref({
   attenuationDb: 0,
 })
 
-watch(() => props.visible, (val) => {
-  if (val) {
-    if (props.equipmentId) {
-      const equipment = sldStore.currentTable?.equipments.find(e => e.id === props.equipmentId)
-      if (equipment) {
-        form.value = {
-          name: equipment.name,
-          type: equipment.type,
-          location: equipment.location,
-          kp: equipment.kp,
-          longitude: equipment.longitude,
-          latitude: equipment.latitude,
-          depth: equipment.depth,
-          specifications: equipment.specifications,
-          manufacturer: equipment.manufacturer || '',
-          remarks: equipment.remarks,
-          equalizerRole: equipment.equalizerRole || 'T',
-          attenuationMode: equipment.attenuationMode || 'adjustable',
-          attenuationDb: equipment.attenuationDb ?? 0,
-        }
+watch([() => props.visible, () => props.equipmentId], async ([visible, equipmentId]) => {
+  if (!visible) return
+
+  try {
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType)
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `器件类型字典加载失败：${(error as Error).message}` })
+  }
+  if (!props.visible || props.equipmentId !== equipmentId) return
+
+  if (equipmentId) {
+    const equipment = sldStore.currentTable?.equipments.find(e => e.id === equipmentId)
+    if (equipment) {
+      form.value = {
+        name: equipment.name,
+        deviceTypeCd: equipment.deviceTypeCd || getAvailableDeviceTypeCode(equipment.type),
+        location: equipment.location,
+        kp: equipment.kp,
+        longitude: equipment.longitude,
+        latitude: equipment.latitude,
+        depth: equipment.depth,
+        specifications: equipment.specifications,
+        manufacturer: equipment.manufacturer || '',
+        remarks: equipment.remarks,
+        equalizerRole: equipment.equalizerRole || 'T',
+        attenuationMode: equipment.attenuationMode || 'adjustable',
+        attenuationDb: equipment.attenuationDb ?? 0,
       }
     } else {
       resetForm()
     }
+  } else {
+    resetForm()
   }
-})
+}, { immediate: true })
 
 function resetForm() {
   form.value = {
     name: '',
-    type: 'REP',
+    deviceTypeCd: '',
     location: '',
     kp: 0,
     longitude: 0,
@@ -99,6 +136,23 @@ function resetForm() {
 function handleSave() {
   if (!form.value.name.trim()) {
     appStore.showNotification({ type: 'warning', message: '请输入设备名称' })
+    return
+  }
+  const deviceTypeCd = form.value.deviceTypeCd
+  if (!deviceTypeCd) {
+    appStore.showNotification({ type: 'warning', message: '当前没有可用的设备类型，无法保存' })
+    return
+  }
+  if (!dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, deviceTypeCd)) {
+    appStore.showNotification({ type: 'warning', message: `DEVICE_TYPE 字典中不存在器件类型 ${deviceTypeCd}` })
+    return
+  }
+  const currentEquipment = props.equipmentId
+    ? sldStore.currentTable?.equipments.find(equipment => equipment.id === props.equipmentId)
+    : null
+  const equipmentType = getSldEquipmentTypeForDeviceTypeCode(deviceTypeCd, currentEquipment?.type)
+  if (!equipmentType) {
+    appStore.showNotification({ type: 'warning', message: `器件类型 ${deviceTypeCd} 暂无 SLD 行为映射，无法保存为 SLD 设备` })
     return
   }
 
@@ -121,6 +175,8 @@ function handleSave() {
   const payload = {
     ...form.value,
     ...equalizerFields,
+    type: equipmentType,
+    deviceTypeCd,
   }
 
   if (isEdit.value && props.equipmentId) {
@@ -168,7 +224,7 @@ function handleSave() {
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">设备类型</label>
-                <Select v-model="form.type" :options="equipmentTypeOptions" />
+                <Select v-model="form.deviceTypeCd" :options="equipmentTypeOptions" />
               </div>
             </div>
 

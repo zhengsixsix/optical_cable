@@ -1,12 +1,17 @@
-﻿﻿<script setup lang="ts">
-import { useSettingsStore } from '@/stores/settings'
+﻿<script setup lang="ts">
+import {
+  armorRiskLevelOptions,
+  useSettingsStore,
+  type ArmorRiskLevel,
+  type ArmorTypeMapping,
+} from '@/stores/settings'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { ref, computed, watch } from 'vue'
-import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, CheckCircle, Plus, Trash2, Route, GitCommit, Cable } from 'lucide-vue-next'
+import { FilePlus, X, Loader2, ChevronRight, ChevronLeft, Check, MapPin, Package, CheckCircle, Plus, Trash2, Route, GitCommit } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
 import { Button, Select } from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
-import CableTypeCreateDialog from '@/modules/planning/dialogs/CableTypeCreateDialog.vue'
 import { deviceImportService } from '@/services/DeviceImportService'
 import {
   createProjectWizardSyncState,
@@ -55,6 +60,14 @@ interface DeviceItem {
   }
 }
 
+interface ArmorTypeMappingFormItem {
+  id: string
+  armorTypeCode: string
+  armorTypeName: string
+  riskLevel: ArmorRiskLevel | ''
+  unitPrice: string
+}
+
 type ProjectType = 'use'
 
 const projectTypeOptions = [
@@ -69,25 +82,7 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
-
-// 从 settingsStore 获取默认铠装映射（避免硬编码）
-const getDefaultArmorMappings = () => {
-  const defaults = settingsStore.routePlanningConfig.armorMappings || []
-  if (defaults.length > 0) {
-    return defaults.map(m => ({
-      riskLevel: m.riskLevel,
-      riskThreshold: String(m.riskThreshold),
-      cableTypeName: m.cableTypeName,
-      unitPrice: String(m.unitPrice),
-    }))
-  }
-  // 器件库为空时的极端回退
-  return [
-    { riskLevel: 'high', riskThreshold: '3', cableTypeName: '', unitPrice: '' },
-    { riskLevel: 'medium', riskThreshold: '2', cableTypeName: '', unitPrice: '' },
-    { riskLevel: 'low', riskThreshold: '0', cableTypeName: '', unitPrice: '' },
-  ]
-}
+const dictionaryStore = useDictionaryStore()
 
 // 步骤定义
 const steps = [
@@ -120,78 +115,114 @@ const waypoints = ref<Array<{ id: string; name: string; longitude: number; latit
 // BU 配置列表（多点模式） - max_ports 对应 USE 文件规范
 const buConfigs = ref<Array<{ id: string; name: string; longitude: number; latitude: number; max_ports: number }>>([])
 
-// 铠装映射配置（从 settingsStore 初始化，不再硬编码）
-const armorMappings = ref(getDefaultArmorMappings())
-const riskLevelLabels: Record<string, string> = { high: '高风险', medium: '中风险', low: '低风险' }
+const armorTypeMappings = ref<ArmorTypeMappingFormItem[]>([])
+const armorTypeLoading = computed(() => dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.armoringType))
+const armorTypeError = computed(() => dictionaryStore.getError(PLATFORM_DICTIONARY_TYPES.armoringType))
+let armorTypeMappingSequence = 0
 
-// 风险等级到铠装类型的映射
-const riskToArmorType: Record<string, string[]> = {
-  high: ['DA', 'RA'],     // 高风险 -> 双铠装/岩石铠装
-  medium: ['SA'],         // 中风险 -> 单铠装
-  low: ['LW', 'LWP']      // 低风险 -> 轻型/轻型保护
-}
-
-// 根据风险等级获取过滤后的缆型选项
-const getFilteredCableOptions = (riskLevel: string) => {
-  const armorTypes = riskToArmorType[riskLevel] || ['SA']
-  const filteredCables = settingsStore.getCableTypesByArmor(armorTypes)
-  return filteredCables
-    .filter(c => c.name) // 过滤空 name
-    .map(c => ({
-      value: c.name,
-      label: `${c.name} - ¥${c.unitPrice}千元/km`
-    }))
-}
-
-// 新建缆型弹窗状态
-const showCableTypeCreateDialog = ref(false)
-const cableTypePresetArmor = ref('')
-
-// 处理缆型选择
-const handleCableTypeSelect = (mapping: { riskLevel: string; cableTypeName: string; unitPrice: string }, value: string) => {
-  if (value === '__create_new__') {
-    // 打开新建缆型弹窗，预设铠装类型
-    const armorTypes = riskToArmorType[mapping.riskLevel]
-    cableTypePresetArmor.value = armorTypes?.[0] || 'SA'
-    showCableTypeCreateDialog.value = true
-    return
-  }
-  // 更新缆型名称
-  mapping.cableTypeName = value
-  // 更新单价
-  const cable = settingsStore.cableTypeDatabase.find(c => c.name === value)
-  if (cable) {
-    mapping.unitPrice = String(cable.unitPrice)
-  }
-}
-
-// 铠装类型到风险等级的反向映射
-const armorToRisk: Record<string, string> = {
-  'DA': 'high',
-  'RA': 'high',
-  'SA': 'medium',
-  'LW': 'low',
-  'LWP': 'low'
-}
-
-// 处理缆型创建完成
-const handleCableTypeCreated = (cableType: { id: string; name: string; armorType: string; unitPrice: number }) => {
-  // 添加到 store 的缆型数据库
-  settingsStore.addCableTypeSpec({
-    id: cableType.id,
-    name: cableType.name,
-    armorType: cableType.armorType,
-    unitPrice: cableType.unitPrice
+const armorTypeOptions = computed(() => (
+  dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.armoringType).map(item => {
+    const value = String(item.code)
+    return {
+      value,
+      label: item.name ? `${item.name} (${value})` : value,
+    }
   })
+))
 
-  // 根据铠装类型找到对应的映射行并更新
-  const targetRisk = armorToRisk[cableType.armorType] || 'medium'
-  const mapping = armorMappings.value.find(m => m.riskLevel === targetRisk)
-  if (mapping) {
-    mapping.cableTypeName = cableType.name
-    mapping.unitPrice = String(cableType.unitPrice)
-  }
+const canAddArmorTypeMapping = computed(() => {
+  const selectedCodes = new Set(
+    armorTypeMappings.value.map(row => row.armorTypeCode).filter(Boolean),
+  )
+  const availableCount = armorTypeOptions.value.filter(option => !selectedCodes.has(option.value)).length
+  const emptyRowCount = armorTypeMappings.value.filter(row => !row.armorTypeCode).length
+  return availableCount > emptyRowCount
+})
+
+const createArmorTypeMappingId = () => `armor-type-mapping-${++armorTypeMappingSequence}`
+
+const getArmorTypeOptions = (rowId: string) => {
+  const selectedCodes = new Set(
+    armorTypeMappings.value
+      .filter(row => row.id !== rowId && row.armorTypeCode)
+      .map(row => row.armorTypeCode),
+  )
+  return armorTypeOptions.value.map(option => ({
+    ...option,
+    disabled: selectedCodes.has(option.value),
+  }))
 }
+
+const addArmorTypeMapping = () => {
+  if (!canAddArmorTypeMapping.value) return
+  armorTypeMappings.value.push({
+    id: createArmorTypeMappingId(),
+    armorTypeCode: '',
+    armorTypeName: '',
+    riskLevel: '',
+    unitPrice: '',
+  })
+}
+
+const removeArmorTypeMapping = (id: string) => {
+  armorTypeMappings.value = armorTypeMappings.value.filter(row => row.id !== id)
+}
+
+const selectArmorType = (row: ArmorTypeMappingFormItem, armorTypeCode: string) => {
+  const dictionaryItem = dictionaryStore
+    .getItems(PLATFORM_DICTIONARY_TYPES.armoringType)
+    .find(item => String(item.code) === armorTypeCode)
+  row.armorTypeCode = armorTypeCode
+  row.armorTypeName = dictionaryItem?.name || armorTypeCode
+}
+
+const syncArmorTypeMappings = (
+  stored = settingsStore.routePlanningConfig.armorTypeMappings || [],
+) => {
+  const dictionaryItems = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.armoringType)
+  armorTypeMappings.value = stored.map(mapping => {
+    const armorTypeCode = String(mapping.armorTypeCode)
+    const dictionaryItem = dictionaryItems.find(item => String(item.code) === armorTypeCode)
+    return {
+      id: createArmorTypeMappingId(),
+      armorTypeCode,
+      armorTypeName: dictionaryItem?.name || armorTypeCode,
+      riskLevel: mapping.riskLevel,
+      unitPrice: String(mapping.unitPrice),
+    }
+  })
+}
+
+const collectArmorTypeMappings = (): { mappings: ArmorTypeMapping[]; error: string | null } => {
+  const mappings: ArmorTypeMapping[] = []
+  const selectedCodes = new Set<string>()
+
+  for (const [index, row] of armorTypeMappings.value.entries()) {
+    const armorTypeCode = row.armorTypeCode.trim()
+    const priceText = row.unitPrice.trim()
+    if (!armorTypeCode) return { mappings: [], error: `请选择第 ${index + 1} 行的铠装类型` }
+    if (selectedCodes.has(armorTypeCode)) {
+      return { mappings: [], error: `${row.armorTypeName || armorTypeCode} 不能重复添加` }
+    }
+    selectedCodes.add(armorTypeCode)
+    if (!row.riskLevel) return { mappings: [], error: `请为 ${row.armorTypeName || armorTypeCode} 选择风险等级` }
+    if (priceText === '') return { mappings: [], error: `请填写 ${row.armorTypeName || armorTypeCode} 的成本` }
+
+    const unitPrice = Number(priceText)
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      return { mappings: [], error: `${row.armorTypeName || armorTypeCode} 的成本必须是非负数` }
+    }
+    mappings.push({
+      armorTypeCode,
+      riskLevel: row.riskLevel,
+      unitPrice,
+    })
+  }
+
+  return { mappings, error: null }
+}
+
+syncArmorTypeMappings()
 
 // 冗余策略配置（多点模式）
 const redundancyConfig = ref({
@@ -353,14 +384,34 @@ const setPlanningMode = (mode: 'point-to-point' | 'multi-point') => {
   planningMode.value = mode
 }
 
-const layerList = ref<LayerItem[]>([
-  { key: 'elevation', label: '海洋高程图', checked: false, value: '', typeDic: 'BATHY', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
-  { key: 'volcano', label: '海洋火山分布', checked: false, value: '', typeDic: 'VOLCANO', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
-  { key: 'fishery', label: '海洋渔区分布', checked: false, value: '', typeDic: 'FISHZONE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
-  { key: 'slope', label: '海洋坡度图', checked: false, value: '', typeDic: 'SLOPE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
-  { key: 'earthquake', label: '海洋地震分布', checked: false, value: '', typeDic: 'SEISMIC', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
-  { key: 'shipping', label: '海洋航道图', checked: false, value: '', typeDic: 'SHIPLANE', file: null, fileSize: 0, uploadProgress: 0, uploadStatus: 'idle' },
-])
+const layerList = ref<LayerItem[]>([])
+const layerTypeLoading = computed(() => dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.layerType))
+const layerTypeError = computed(() => dictionaryStore.getError(PLATFORM_DICTIONARY_TYPES.layerType))
+
+function syncLayerListFromDictionary() {
+  const existingByType = new Map(layerList.value.map(item => [item.typeDic, item]))
+  layerList.value = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType).map(item => {
+    const typeDic = String(item.code)
+    const existing = existingByType.get(typeDic)
+    if (existing) {
+      return {
+        ...existing,
+        label: item.name || typeDic,
+      }
+    }
+    return {
+      key: typeDic,
+      label: item.name || typeDic,
+      checked: false,
+      value: '',
+      typeDic,
+      file: null,
+      fileSize: 0,
+      uploadProgress: 0,
+      uploadStatus: 'idle',
+    }
+  })
+}
 
 // 步骤3: 器件库
 const deviceList = ref<DeviceItem[]>([])
@@ -383,7 +434,7 @@ const resetForm = () => {
     { id: 'wp-3', name: '登陆站3', longitude: 0, latitude: 0, isUnderwater: false }
   ]
   buConfigs.value = []
-  armorMappings.value = getDefaultArmorMappings()
+  syncArmorTypeMappings()
   redundancyConfig.value = { enableRedundancy: false, costLimitType: 'relative', relativeCostPercent: '30', absoluteCostLimit: '', criticalNodes: [] }
   gisConfig.value = { rangeMode: 'auto', topLeftLng: '', topLeftLat: '', bottomRightLng: '', bottomRightLat: '', gridResolution: '500' }
   layerList.value.forEach(item => {
@@ -450,9 +501,18 @@ function getRestoredLayerFileName(layer: PlanLayer, fallbackLabel: string): stri
 }
 
 async function restoreUploadedLayers() {
+  const projectId = props.resumeProject?.id
+  if (projectId == null) return
+
   try {
     for (const item of layerList.value) {
-      const response = await platformPlanLayerApi.search({ pageNumber: 1, pageSize: 20, typeDic: item.typeDic })
+      const response = await platformPlanLayerApi.search({
+        pageNumber: 1,
+        pageSize: 20,
+        projectId,
+        typeDic: item.typeDic,
+      })
+      if (!props.visible || String(props.resumeProject?.id ?? '') !== String(projectId)) return
       const layers = response.data ?? []
       const matched = layers.find(layer => layer.attachmentId || layer.filename || layer.attachmentName)
       if (!matched) continue
@@ -481,15 +541,33 @@ async function restoreUploadedLayers() {
   }
 }
 
-watch(() => props.visible, (val) => {
+let visibleLoadSequence = 0
+
+watch(() => props.visible, async (val) => {
+  const loadSequence = ++visibleLoadSequence
   if (val) {
+    const [layerResult, armorResult] = await Promise.allSettled([
+      dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType),
+      dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.armoringType),
+    ])
+    if (!props.visible || loadSequence !== visibleLoadSequence) return
+
+    if (layerResult.status === 'fulfilled') {
+      syncLayerListFromDictionary()
+    } else {
+      appStore.showNotification({ type: 'error', message: `图层类型字典加载失败：${(layerResult.reason as Error).message}` })
+    }
+    if (armorResult.status === 'rejected') {
+      appStore.showNotification({ type: 'error', message: `铠装类型字典加载失败：${(armorResult.reason as Error).message}` })
+    }
+
     resetForm()
     applyResumeProject()
     if (props.resumeProject) {
       void restoreUploadedLayers()
     }
   }
-})
+}, { immediate: true })
 
 // 步骤导航
 const canGoNext = computed(() => {
@@ -512,8 +590,6 @@ const wizardSubtitle = computed(() => props.resumeProject
   ? `继续补全「${projectName.value || props.resumeProject.name || '未命名项目'}」的站点、范围和资源配置`
   : '按步骤创建平台项目草稿、配置站点范围，并进入规划')
 
-const resumeValidPointCount = computed(() => normalizePlanPoints(props.resumeProject?.points).length)
-
 function buildWizardSyncPayload() {
   return {
     projectType: projectType.value,
@@ -527,6 +603,7 @@ function buildWizardSyncPayload() {
       longitude: wp.longitude,
       latitude: wp.latitude,
     })),
+    armorTypeMappings: collectArmorTypeMappings().mappings,
     planConfig: {
       scope: gisConfig.value.rangeMode === 'manual' ? {
         topLeftLng: parseFloat(gisConfig.value.topLeftLng) || 0,
@@ -578,6 +655,14 @@ const goNext = async () => {
       const unuploadedLayer = layerList.value.find(layer => layer.checked && layer.file && !isLayerUploadComplete(layer))
       if (unuploadedLayer) {
         appStore.showNotification({ type: 'warning', message: `请先点击 ${unuploadedLayer.label} 的“确定”完成上传` })
+        return
+      }
+    }
+
+    if (currentStep.value === 2) {
+      const armorResult = collectArmorTypeMappings()
+      if (armorResult.error) {
+        appStore.showNotification({ type: 'warning', message: armorResult.error })
         return
       }
     }
@@ -742,7 +827,7 @@ const handleDeviceFileSelected = async (e: Event) => {
       const result = await deviceImportService.importFile(file)
       const s = result.summary
       const total = s.fiberCount + s.amplifierCount + s.branchingUnitCount + s.equalizerCount + s.jointCount
-      if (total > 0) {
+      if (result.success && total > 0) {
         parsedData = {
           fiberTypes: result.fiberTypes,
           amplifierTypes: result.amplifierTypes,
@@ -754,11 +839,18 @@ const handleDeviceFileSelected = async (e: Event) => {
           type: 'success',
           message: `解析成功：光纤${s.fiberCount}、放大器${s.amplifierCount}、分支器${s.branchingUnitCount}、均衡器${s.equalizerCount}、接头盒${s.jointCount}`
         })
-      } else if (result.errors.length > 0) {
-        appStore.showNotification({ type: 'warning', message: result.errors[0].message })
+      } else {
+        appStore.showNotification({
+          type: 'warning',
+          message: result.errors[0]?.message || '器件库文件中没有可导入的有效器件',
+        })
+        target.value = ''
+        return
       }
     } catch (err) {
       appStore.showNotification({ type: 'warning', message: `文件解析失败: ${(err as Error).message}` })
+      target.value = ''
+      return
     }
     
     deviceList.value.push({
@@ -778,6 +870,12 @@ const removeDevice = (id: string) => {
 
 // 提交
 const handleSubmit = async () => {
+  const armorResult = collectArmorTypeMappings()
+  if (armorResult.error) {
+    appStore.showNotification({ type: 'warning', message: armorResult.error })
+    return
+  }
+
   isProcessing.value = true
   await new Promise(resolve => setTimeout(resolve, 800))
 
@@ -813,13 +911,7 @@ const handleSubmit = async () => {
       latitude: bu.latitude,
       portLimit: Math.min(8, Math.max(2, bu.max_ports || 3))
     })),
-    armorMappings: armorMappings.value.map(m => ({
-      riskLevel: m.riskLevel,
-      riskThreshold: parseFloat(m.riskThreshold) || 0,
-      cableTypeId: m.riskLevel,
-      cableTypeName: m.cableTypeName,
-      unitPrice: parseFloat(m.unitPrice) || 0
-    })),
+    armorTypeMappings: armorResult.mappings,
     planConfig: {
       scope: gisConfig.value.rangeMode === 'manual' ? {
         topLeftLng: parseFloat(gisConfig.value.topLeftLng) || 0,
@@ -856,7 +948,7 @@ const handleSubmit = async () => {
       ref="deviceFileInputRef"
       type="file"
       class="hidden"
-      accept=".json,.xml,.csv"
+      accept=".json,.csv"
       @change="handleDeviceFileSelected"
     >
 
@@ -991,7 +1083,17 @@ const handleSubmit = async () => {
                 </div>
 
                 <div class="p-4 bg-white">
-                  <div class="grid grid-cols-2 gap-3">
+                  <div v-if="layerTypeLoading" class="flex h-16 items-center justify-center gap-2 text-sm text-gray-500">
+                    <Loader2 class="h-4 w-4 animate-spin" />
+                    正在加载图层类型
+                  </div>
+                  <div v-else-if="layerTypeError" class="flex min-h-16 items-center justify-center text-sm text-red-600">
+                    图层类型加载失败：{{ layerTypeError }}
+                  </div>
+                  <div v-else-if="layerList.length === 0" class="flex h-16 items-center justify-center text-sm text-gray-500">
+                    LAYER_TYPE 字典暂无可用项
+                  </div>
+                  <div v-else class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div
                       v-for="item in layerList"
                       :key="item.key"
@@ -1422,52 +1524,76 @@ const handleSubmit = async () => {
 
               <div class="border-t border-gray-100 my-4"></div>
 
-              <!-- 海缆铠装映射配置 -->
+              <!-- 海缆铠装风险与成本配置 -->
               <div>
-                <div class="flex items-center gap-2 mb-4">
-                  <div class="p-1.5 bg-purple-50 rounded text-purple-600">
-                    <Package class="w-4 h-4" />
+                <div class="mb-4 flex items-center justify-between gap-3">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <div class="rounded bg-purple-50 p-1.5 text-purple-600">
+                      <Package class="h-4 w-4" />
+                    </div>
+                    <h4 class="font-semibold text-gray-800">海缆铠装配置</h4>
                   </div>
-                  <h4 class="font-semibold text-gray-800">海缆铠装映射</h4>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    :disabled="armorTypeLoading || !!armorTypeError || !canAddArmorTypeMapping"
+                    @click="addArmorTypeMapping"
+                  >
+                    <Plus class="mr-1 h-3.5 w-3.5" />
+                    新增
+                  </Button>
                 </div>
 
                 <div class="bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-2">
-                  <div v-for="mapping in armorMappings" :key="mapping.riskLevel" 
-                       class="flex items-center gap-2 p-2 bg-white border rounded-lg hover:shadow-sm hover:border-gray-300 transition-all">
-                    <!-- 风险等级标签 -->
-                    <div class="w-16 shrink-0 flex flex-col items-center">
-                      <span :class="[
-                        'text-[11px] font-bold px-2 py-0.5 rounded-full w-full text-center',
-                        mapping.riskLevel === 'high' ? 'bg-red-50 text-red-700' :
-                        mapping.riskLevel === 'medium' ? 'bg-yellow-50 text-yellow-700' :
-                        'bg-green-50 text-green-700'
-                      ]">{{ riskLevelLabels[mapping.riskLevel] }}</span>
-                      <span class="text-[9px] text-gray-400 mt-0.5">
-                        {{ mapping.riskLevel === 'high' ? '风险≥ 3' : mapping.riskLevel === 'medium' ? '2≤风险<3' : '风险<2' }}
-                      </span>
-                    </div>
-                    <!-- 缆型选择 -->
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-1">
-                        <Cable class="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                        <Select
-                          :model-value="mapping.cableTypeName"
-                          @update:model-value="(val) => handleCableTypeSelect(mapping, val)"
-                          :options="[...getFilteredCableOptions(mapping.riskLevel), { value: '__create_new__', label: '➕ 新建缆型...' }]"
-                          placeholder="选择缆型"
-                          class="flex-1 h-7 text-sm"
+                  <div v-if="armorTypeLoading" class="h-14 flex items-center justify-center gap-2 text-sm text-gray-500">
+                    <Loader2 class="w-4 h-4 animate-spin" />
+                    正在加载铠装类型
+                  </div>
+                  <div v-else-if="armorTypeError" class="h-14 flex items-center justify-center text-sm text-red-600">
+                    铠装类型加载失败：{{ armorTypeError }}
+                  </div>
+                  <div v-else-if="armorTypeOptions.length === 0" class="h-14 flex items-center justify-center text-sm text-gray-500">
+                    ARMORING_TYPE 字典暂无可用项
+                  </div>
+                  <div v-else-if="armorTypeMappings.length === 0" class="h-14 flex items-center justify-center text-sm text-gray-500">
+                    暂无铠装配置
+                  </div>
+                  <div v-else class="space-y-2">
+                    <div v-for="mapping in armorTypeMappings" :key="mapping.id"
+                         class="grid grid-cols-1 gap-2 rounded-lg border bg-white px-3 py-2 sm:grid-cols-[minmax(180px,1fr)_140px_170px_32px] sm:items-center">
+                      <Select
+                        :model-value="mapping.armorTypeCode"
+                        :options="getArmorTypeOptions(mapping.id)"
+                        placeholder="选择铠装类型"
+                        @update:model-value="value => selectArmorType(mapping, value)"
+                      />
+                      <Select
+                        v-model="mapping.riskLevel"
+                        :options="armorRiskLevelOptions"
+                        placeholder="选择风险等级"
+                      />
+                      <div class="flex min-w-0 items-center gap-1.5">
+                        <input
+                          v-model="mapping.unitPrice"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="填写成本"
+                          class="h-9 min-w-0 flex-1 rounded border border-gray-200 px-2 text-right text-sm outline-none focus:border-purple-500"
                         />
+                        <span class="shrink-0 text-[11px] text-gray-500">千元/km</span>
                       </div>
-                    </div>
-                    <!-- 单价设置 -->
-                    <div class="shrink-0 flex items-center gap-1">
-                      <input v-model="mapping.unitPrice" type="number" class="w-16 h-7 px-1.5 text-sm border border-gray-200 rounded focus:border-purple-500 outline-none text-right" />
-                      <span class="text-[11px] text-gray-500 w-14">千元/km</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="text-red-500 hover:bg-red-50 hover:text-red-600"
+                        title="删除铠装配置"
+                        @click="removeArmorTypeMapping(mapping.id)"
+                      >
+                        <Trash2 class="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
-                  <p class="text-xs text-gray-500">
-                    <span class="text-purple-600 font-medium">提示：</span>根据风险值自动匹配铠装类型
-                  </p>
                 </div>
               </div>
 
@@ -1559,7 +1685,7 @@ const handleSubmit = async () => {
               </div>
               <h4 class="text-lg font-semibold text-gray-800 mb-2">暂无器件库数据</h4>
               <p class="text-gray-500 mb-8 max-w-md mx-auto">
-                您可以导入现有的器件库文件（JSON/XML/CSV），以便在项目中直接使用预设的设备参数。
+                您可以导入现有的器件库文件（JSON/CSV），以便在项目中直接使用器件参数。
               </p>
               <div class="flex justify-center gap-4">
                 <Button variant="outline" class="w-32" @click="goNext">跳过</Button>
@@ -1689,11 +1815,4 @@ const handleSubmit = async () => {
     @confirm="handleMapConfirm"
   />
 
-  <!-- 新建缆型弹窗 -->
-  <CableTypeCreateDialog
-    :visible="showCableTypeCreateDialog"
-    :preset-armor-type="cableTypePresetArmor"
-    @close="showCableTypeCreateDialog = false"
-    @created="handleCableTypeCreated"
-  />
 </template>

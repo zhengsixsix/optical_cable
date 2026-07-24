@@ -5,7 +5,7 @@ import { platformAuthApi, platformMenuApi, platformRoleApi, platformUserApi } fr
 import type { PageModel } from '@/services/platform/client'
 import type { PcAuthInfo, PlatformMenu, PlatformRole, PlatformUser } from '@/services/platform/types'
 
-export type UserRole = 'admin' | 'user'
+type UserRole = 'admin' | 'user'
 export type UserStatus = 'pending' | 'approved' | 'rejected' | 'disabled'
 
 export interface User {

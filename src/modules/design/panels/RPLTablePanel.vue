@@ -1,29 +1,24 @@
 ﻿﻿<script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useCableSegmentStore } from '@/stores/cableSegment'
-import { useConnectorStore } from '@/stores/connector'
 import { useRPLStore } from '@/stores/rpl'
-import { useRouteStore } from '@/stores/route'
-import { exportRPLFile } from '@/services'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
+import { exportRPLFile } from '@/services/RPLExportService'
 import { buildExportableRplTableSnapshot } from '@/services/RPLSyncService'
 import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
 import { 
-  Table, 
   Plus, 
   Trash2, 
   Download, 
-  Upload, 
   FileSpreadsheet,
   CheckCircle,
-  AlertTriangle,
   X,
   Filter,
   RotateCcw,
-  Edit3,
-  Copy
+  Edit3
 } from 'lucide-vue-next'
 import type { RPLPointType, RPLCableCode } from '@/types'
+import { pointTypeOptions } from '@/config/uiOptions'
 
 const props = defineProps<{
   visible?: boolean
@@ -36,9 +31,8 @@ const emit = defineEmits<{
 
 const rplStore = useRPLStore()
 const appStore = useAppStore()
-const routeStore = useRouteStore()
-const connectorStore = useConnectorStore()
-const cableSegmentStore = useCableSegmentStore()
+const dictionaryStore = useDictionaryStore()
+const cableTypeOptions = computed(() => dictionaryStore.getOptions(PLATFORM_DICTIONARY_TYPES.armoringType))
 
 const showFilterPanel = ref(false)
 const filterPointType = ref<RPLPointType[]>([])
@@ -49,28 +43,6 @@ const filteredRecords = computed(() => rplStore.filteredRecords)
 const selectedRecordIds = computed(() => rplStore.selectedRecordIds)
 const metadata = computed(() => currentTable.value?.metadata)
 
-const getRouteById = (routeId?: string | null) =>
-  routeStore.paretoRoutes.find(route => route.id === routeId) ||
-  routeStore.routes.find(route => route.id === routeId) ||
-  routeStore.selectedRoute ||
-  null
-
-const pointTypeOptions = [
-  { value: 'landing', label: '登陆站' },
-  { value: 'repeater', label: '放大器' },
-  { value: 'branching', label: '分支器' },
-  { value: 'joint', label: '接头盒' },
-  { value: 'waypoint', label: '路径点' },
-]
-
-const cableTypeOptions = [
-  { value: 'LW', label: 'LW (轻型)' },
-  { value: 'LWS', label: 'LWS (轻型加强)' },
-  { value: 'SA', label: 'SA (单铠装)' },
-  { value: 'DA', label: 'DA (双铠装)' },
-  { value: 'SAS', label: 'SAS (单铠装加强)' },
-]
-
 const tableOptions = computed(() => 
   rplStore.tables.map(t => ({ value: t.id, label: t.name }))
 )
@@ -78,6 +50,9 @@ const tableOptions = computed(() =>
 const getPointTypeLabel = (type: RPLPointType) => {
   return pointTypeOptions.find(o => o.value === type)?.label || type
 }
+
+const getCableTypeLabel = (type: RPLCableCode) =>
+  dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.armoringType, type)?.name || type
 
 const getPointTypeClass = (type: RPLPointType) => {
   const classes: Record<RPLPointType, string> = {
@@ -129,14 +104,8 @@ const handleValidate = () => {
 const handleExportRPL = async () => {
   if (!currentTable.value) return
   try {
-    const routeId = currentTable.value.routeId || routeStore.currentRouteId || null
     const snapshot = buildExportableRplTableSnapshot({
       baseTable: currentTable.value,
-      route: getRouteById(routeId),
-      connectorElements: connectorStore.getElementsForRoute(routeId),
-      cableSegments: cableSegmentStore.segments.filter(segment =>
-        !routeId || !segment.routeId || segment.routeId === routeId,
-      ),
     })
     await exportRPLFile(snapshot, 'xlsx')
     appStore.showNotification({ type: 'success', message: '导出 Excel 文件成功' })
@@ -169,6 +138,14 @@ const allSelected = computed(() =>
 const someSelected = computed(() => 
   selectedRecordIds.value.length > 0 && !allSelected.value
 )
+
+onMounted(async () => {
+  try {
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.armoringType)
+  } catch (error) {
+    appStore.showNotification({ type: 'error', message: `铠装类型字典加载失败：${(error as Error).message}` })
+  }
+})
 </script>
 
 <template>
@@ -370,7 +347,7 @@ const someSelected = computed(() =>
               <td class="px-2 py-1.5 text-right border-b">{{ record.segmentLength?.toFixed(3) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-right border-b font-medium">{{ record.cumulativeLength?.toFixed(3) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-right border-b">{{ record.slack?.toFixed(1) ?? '-' }}</td>
-              <td class="px-2 py-1.5 text-center border-b font-mono text-xs">{{ record.cableType ?? '-' }}</td>
+              <td class="px-2 py-1.5 text-center border-b text-xs">{{ getCableTypeLabel(record.cableType) || '-' }}</td>
               <td class="px-2 py-1.5 text-right border-b">{{ record.depth?.toFixed(1) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-right border-b">{{ record.burialDepth?.toFixed(2) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-left border-b text-gray-600 truncate max-w-[120px]" :title="record.remarks">

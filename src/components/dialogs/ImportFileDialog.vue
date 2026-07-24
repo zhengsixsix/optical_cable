@@ -1,16 +1,12 @@
 ﻿<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import * as XLSX from 'xlsx'
 import { X, FileText, Loader2 } from 'lucide-vue-next'
 import { Button } from '@/shared/components/base'
 import { useAppStore } from '@/stores/app'
-import { useConnectorStore } from '@/stores/connector'
 import { useRPLStore } from '@/stores/rpl'
-import { useRouteStore } from '@/stores/route'
-import { useSettingsStore } from '@/stores/settings'
-import { useProjectManager } from '@/composables'
+import { useProjectManager } from '@/composables/useProjectManager'
 import { projectFileService } from '@/services/ProjectFileService'
-import { buildImportedRplSyncPayload } from '@/services/RPLSyncService'
+import { readFirstWorksheetAsCsv } from '@/utils/excelWorkbook'
 
 /**
  * ImportFileDialog 导入项目文件对话框
@@ -32,9 +28,6 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const rplStore = useRPLStore()
-const routeStore = useRouteStore()
-const connectorStore = useConnectorStore()
-const settingsStore = useSettingsStore()
 const projectManager = useProjectManager()
 
 // 状态
@@ -78,37 +71,6 @@ const formatHint = computed(() => {
     default: return ''
   }
 })
-
-const syncImportedRplToViews = (tableName: string) => {
-  const currentTable = rplStore.currentTable
-  if (!currentTable) return
-
-  const syncPayload = buildImportedRplSyncPayload(currentTable, tableName)
-  const routeId = syncPayload.route?.id || currentTable.routeId || 'route-main'
-
-  if (syncPayload.routePlanningConfig) {
-    settingsStore.updateRoutePlanningConfig(syncPayload.routePlanningConfig)
-  }
-
-  if (syncPayload.route) {
-    routeStore.setParetoRoutes([syncPayload.route])
-  }
-
-  let connectorTable = connectorStore.getTableByRoute(routeId)
-  if (!connectorTable) {
-    connectorStore.createTable(tableName, routeId)
-    connectorTable = connectorStore.currentTable
-  } else {
-    connectorTable.routeId = routeId
-    connectorStore.selectTable(connectorTable.id)
-  }
-
-  if (connectorTable) {
-    connectorTable.name = tableName
-    connectorTable.elements = syncPayload.connectorElements
-    connectorTable.updatedAt = new Date().toISOString()
-  }
-}
 
 // 重置状态
 watch(() => props.visible, (visible) => {
@@ -210,16 +172,7 @@ const importRPL = async () => {
     let fileContent = ''
     if (isExcelFile) {
       const arrayBuffer = await selectedFile.value.arrayBuffer()
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-      const firstSheetName = workbook.SheetNames[0]
-      if (!firstSheetName) {
-        throw new Error('Excel 文件中没有可读取的工作表')
-      }
-
-      fileContent = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName], {
-        blankrows: false,
-        strip: false,
-      })
+      fileContent = await readFirstWorksheetAsCsv(arrayBuffer, fileName)
     } else {
       fileContent = await selectedFile.value.text()
     }
@@ -228,11 +181,10 @@ const importRPL = async () => {
     const success = rplStore.importFromCSV(fileContent, tableName, 'route-main')
     
     if (success) {
-      syncImportedRplToViews(tableName)
       projectManager.markDirty()
       const successMessage = `RPL 文件导入成功: ${rplStore.currentTable?.records.length || 0} 条记录`
       appStore.showNotification({ type: 'success', message: successMessage })
-      appStore.addLog('INFO', `导入 RPL 文件: ${selectedFile.value.name}，已同步地图与系统视图`)
+      appStore.addLog('INFO', `导入 RPL 文件: ${selectedFile.value.name}`)
       
       setTimeout(() => {
         emit('success')

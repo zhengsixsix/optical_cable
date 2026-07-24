@@ -3,15 +3,6 @@
  * The terrain and depth profile panels use the online DEM service directly.
  */
 
-export interface DemMeta {
-  filename: string
-  bbox: [number, number, number, number]
-  width: number
-  height: number
-  pixelWidth: number
-  pixelHeight: number
-}
-
 export interface DemClipResult {
   width: number
   height: number
@@ -21,13 +12,7 @@ export interface DemClipResult {
   elevation: number[]
 }
 
-export interface DemPointResult {
-  lon: number
-  lat: number
-  elevation: number
-}
-
-export interface DemProfilePoint {
+interface DemProfilePoint {
   distance: number
   depth: number
 }
@@ -72,14 +57,6 @@ async function readApiData<T>(response: Response, fallbackMessage: string): Prom
 }
 
 /**
- * Fetch all DEM metadata.
- */
-export async function fetchDemMeta(): Promise<DemMeta[]> {
-  const response = await fetch(`${DEM_API_BASE}/api/dem/meta`)
-  return readApiData<DemMeta[]>(response, '获取DEM元数据失败')
-}
-
-/**
  * Clip elevation data for a lon/lat bbox: [minX, minY, maxX, maxY].
  */
 export async function fetchDemClip(
@@ -99,19 +76,6 @@ export async function fetchDemClip(
 
   const response = await fetch(`${DEM_API_BASE}/api/dem/clip?${params.toString()}`)
   return readApiData<DemClipResult>(response, '裁剪DEM数据失败')
-}
-
-/**
- * Query elevation for a single lon/lat point.
- */
-export async function fetchDemPoint(lon: number, lat: number): Promise<DemPointResult> {
-  const params = new URLSearchParams({
-    lon: String(lon),
-    lat: String(lat),
-  })
-
-  const response = await fetch(`${DEM_API_BASE}/api/dem/point?${params.toString()}`)
-  return readApiData<DemPointResult>(response, '查询高程失败')
 }
 
 /**
@@ -141,11 +105,4 @@ export async function checkDemService(timeoutMs = 3000): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-/**
- * Get the DEM API base URL.
- */
-export function getDemApiBase(): string {
-  return DEM_API_BASE
 }

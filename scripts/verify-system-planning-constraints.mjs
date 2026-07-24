@@ -18,7 +18,6 @@ vm.runInNewContext(output, { module, exports: module.exports }, { filename })
 const {
   isSpanWithinBounds,
   resolvePlanningSpanBounds,
-  selectConstrainedSpanKm,
 } = module.exports
 
 const equal = (actual, expected, label) => {
@@ -36,18 +35,6 @@ const scanBounds = resolvePlanningSpanBounds({
 equal(scanBounds, { minKm: 40, maxKm: 100 }, 'scan and constraint intersection')
 equal(isSpanWithinBounds(73, scanBounds), true, 'span within bounds')
 equal(isSpanWithinBounds(101, scanBounds), false, 'span outside bounds')
-
-equal(selectConstrainedSpanKm({
-  optimizedSpanKm: 115,
-  optimizationTarget: 'min_amplifiers',
-  bounds: scanBounds,
-}), 100, 'minimum amplifier objective clamps optimized span')
-
-equal(selectConstrainedSpanKm({
-  optimizedSpanKm: 73,
-  optimizationTarget: 'max_gsnr',
-  bounds: scanBounds,
-}), 40, 'maximum GSNR objective uses shortest allowed span')
 
 let rejectedEmptyIntersection = false
 try {

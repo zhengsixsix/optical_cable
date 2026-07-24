@@ -30,10 +30,10 @@ export class PlatformApiError extends Error {
   }
 }
 
-export const PLATFORM_TOKEN_KEY = 'platform.auth.token'
+const PLATFORM_TOKEN_KEY = 'platform.auth.token'
 export const PLATFORM_USER_KEY = 'platform.auth.user'
 
-export interface PlatformUnauthorizedEvent {
+interface PlatformUnauthorizedEvent {
   code: string
   message: string
   path: string
@@ -86,7 +86,7 @@ function isRespVO<T>(payload: unknown): payload is RespVO<T> {
   )
 }
 
-export function createPlatformClient(baseUrl = PLATFORM_API_BASE_URL) {
+function createPlatformClient(baseUrl = PLATFORM_API_BASE_URL) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
 
   async function requestJson(path: string, body?: unknown): Promise<{ payload: unknown; headers: Headers; response: Response }> {

@@ -1,7 +1,7 @@
 ﻿﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Notification, LogEntry, LogCategory } from '@/types'
-import type { ProjectType, ProjectMetadata } from '@/services/ProjectFileService'
+import type { ProjectMetadata } from '@/services/ProjectFileService'
 
 export type ViewType = 'planning' | 'design' | 'monitoring' | 'settings'
 
@@ -11,13 +11,6 @@ export type ProjectPhase =
   | 'transmission-planning'  // 传输规划阶段
   | 'detailed-design'        // 详细设计阶段
   | 'monitoring'             // 运维监控阶段
-
-// 地图选点模式
-export interface MapSelectMode {
-  active: boolean
-  type: 'start' | 'end' | 'range' | null
-  callback: ((coord: string) => void) | null
-}
 
 // 项目状态
 export interface ProjectState {
@@ -92,41 +85,15 @@ export const useAppStore = defineStore('app', () => {
     { time: formatTime(), level: 'INFO', message: '初始化监控模块...', category: '系统日志' },
     { time: formatTime(), level: 'INFO', message: '系统就绪', category: '系统日志' },
   ])
-  const isLoading = ref(false)
-  const previousView = ref<ViewType | null>(null)
-
   const activeDialog = ref<string | null>(null)
-  
-  // 地图选点模式
-  const mapSelectMode = ref<MapSelectMode>({
-    active: false,
-    type: null,
-    callback: null,
-  })
 
   // Getters
   const recentLogs = computed(() => logs.value.slice(-50))
   const hasOpenProject = computed(() => projectState.value.currentProject !== null)
   const currentProjectName = computed(() => projectState.value.currentProject?.name || '')
   const currentProjectType = computed(() => projectState.value.currentProject?.type || null)
-  const currentPhase = computed(() => projectState.value.phase)
 
   // Actions
-  function switchView(view: ViewType) {
-    previousView.value = currentView.value
-    currentView.value = view
-    addLog('INFO', `切换到${getViewName(view)}视图`)
-  }
-
-  function getViewName(view: ViewType): string {
-    const names: Record<ViewType, string> = {
-      planning: '路由规划',
-      design: '系统设计',
-      monitoring: '设备健康度管理',
-      settings: '设置',
-    }
-    return names[view]
-  }
 
   function formatNotificationMessage(message: string): string {
     const compactMessage = message.replace(/\s+/g, ' ').trim()
@@ -221,10 +188,6 @@ export const useAppStore = defineStore('app', () => {
     addLog('INFO', `日志已导出: 运行日志_${timestamp}.${extension}`)
   }
 
-  function setLoading(loading: boolean) {
-    isLoading.value = loading
-  }
-
   function showGlobalLoading(message = '正在加载...', detail = '', key = 'global') {
     const nextKeys = new Set(globalLoadingKeys.value)
     nextKeys.add(key)
@@ -270,33 +233,6 @@ export const useAppStore = defineStore('app', () => {
 
   function closeDialog() {
     activeDialog.value = null
-  }
-
-  // 开始地图选点模式
-  function startMapSelect(type: 'start' | 'end' | 'range', callback: (coord: string) => void) {
-    mapSelectMode.value = {
-      active: true,
-      type,
-      callback,
-    }
-    switchView('planning')
-    addLog('INFO', `进入地图选点模式: ${type === 'start' ? '起点' : type === 'end' ? '终点' : '规划范围'}`)
-    showNotification({ type: 'info', message: '请在地图上双击选择坐标点' })
-  }
-
-  // 完成地图选点
-  function completeMapSelect(coord: string) {
-    if (mapSelectMode.value.callback) {
-      mapSelectMode.value.callback(coord)
-    }
-    mapSelectMode.value = { active: false, type: null, callback: null }
-    addLog('INFO', `地图选点完成: ${coord}`)
-  }
-
-  // 取消地图选点
-  function cancelMapSelect() {
-    mapSelectMode.value = { active: false, type: null, callback: null }
-    addLog('INFO', '取消地图选点')
   }
 
   // 设置当前项目
@@ -378,33 +314,24 @@ export const useAppStore = defineStore('app', () => {
     notifications,
     globalLoading,
     logs,
-    isLoading,
-    previousView,
     recentLogs,
     activeDialog,
     panelVisibility,
-    mapSelectMode,
     projectState,
     hasOpenProject,
     currentProjectName,
     currentProjectType,
-    currentPhase,
-    switchView,
     showNotification,
     removeNotification,
     addLog,
     clearLogs,
     exportLogs,
-    setLoading,
     showGlobalLoading,
     hideGlobalLoading,
     openDialog,
     closeDialog,
     togglePanel,
     setPanelVisible,
-    startMapSelect,
-    completeMapSelect,
-    cancelMapSelect,
     setCurrentProject,
     setProjectDirty,
     markProjectSaved,

@@ -1,27 +1,20 @@
 ﻿<script setup lang="ts">
 import { useAppStore } from '@/stores/app'
 import { ref, computed } from 'vue'
-import * as XLSX from 'xlsx'
-import { useConnectorStore } from '@/stores/connector'
-import { useRouteStore } from '@/stores/route'
 import { useRPLStore } from '@/stores/rpl'
-import { useSettingsStore } from '@/stores/settings'
 import { Card, CardHeader, CardContent, Button } from '@/shared/components/base'
 import { 
   X, 
   FileSpreadsheet, 
   Plus, 
   Trash2, 
-  Download, 
   Upload,
-  Check,
-  AlertTriangle
 } from 'lucide-vue-next'
 import RPLTablePanel from '@/modules/design/panels/RPLTablePanel.vue'
 import RPLRecordDialog from './RPLRecordDialog.vue'
-import { buildImportedRplSyncPayload } from '@/services/RPLSyncService'
+import { readFirstWorksheetAsCsv } from '@/utils/excelWorkbook'
 
-const props = defineProps<{
+defineProps<{
   visible: boolean
 }>()
 
@@ -30,51 +23,15 @@ const emit = defineEmits<{
 }>()
 
 const rplStore = useRPLStore()
-const routeStore = useRouteStore()
-const connectorStore = useConnectorStore()
-const settingsStore = useSettingsStore()
 const appStore = useAppStore()
 
 const showRecordDialog = ref(false)
 const editingRecordId = ref<string | undefined>()
 const showCreateDialog = ref(false)
 const newTableName = ref('')
-const importFile = ref<File | null>(null)
 
 const tables = computed(() => rplStore.tables)
 const currentTable = computed(() => rplStore.currentTable)
-const paretoRoutes = computed(() => routeStore.paretoRoutes)
-
-function syncImportedRpl(tableName: string) {
-  const currentTable = rplStore.currentTable
-  if (!currentTable) return
-
-  const syncPayload = buildImportedRplSyncPayload(currentTable, tableName)
-  const routeId = syncPayload.route?.id || currentTable.routeId || 'route-main'
-
-  if (syncPayload.routePlanningConfig) {
-    settingsStore.updateRoutePlanningConfig(syncPayload.routePlanningConfig)
-  }
-
-  if (syncPayload.route) {
-    routeStore.setParetoRoutes([syncPayload.route])
-  }
-
-  let connectorTable = connectorStore.getTableByRoute(routeId)
-  if (!connectorTable) {
-    connectorStore.createTable(tableName, routeId)
-    connectorTable = connectorStore.currentTable
-  } else {
-    connectorTable.routeId = routeId
-    connectorStore.selectTable(connectorTable.id)
-  }
-
-  if (connectorTable) {
-    connectorTable.name = tableName
-    connectorTable.elements = syncPayload.connectorElements
-    connectorTable.updatedAt = new Date().toISOString()
-  }
-}
 
 function handleEditRecord(recordId: string) {
   editingRecordId.value = recordId || undefined
@@ -97,75 +54,39 @@ function handleCreateTable() {
   showCreateDialog.value = false
 }
 
-function handleGenerateFromRoute(routeId: string, routeName: string) {
-  const route = routeStore.routes.find(r => r.id === routeId)
-  if (!route) return
-  
-  rplStore.generateFromRoute(
-    routeId,
-    routeName,
-    route.points,
-    route.segments
-  )
-  appStore.showNotification({ type: 'success', message: `已从路由 "${routeName}" 生成RPL表格` })
-}
-
 function handleDeleteTable(tableId: string) {
   rplStore.deleteTable(tableId)
   appStore.showNotification({ type: 'success', message: '表格已删除' })
 }
 
-function handleImportCSV(event: Event) {
+async function handleImportCSV(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
 
   const isExcelFile = /\.(xlsx|xls)$/i.test(file.name)
-  const reader = new FileReader()
-  reader.onload = () => {
-    let content = ''
-    if (isExcelFile) {
-      const workbook = XLSX.read(reader.result, { type: 'array' })
-      const firstSheetName = workbook.SheetNames[0]
-      if (!firstSheetName) {
-        appStore.showNotification({ type: 'error', message: 'Excel 文件中没有可读取的工作表' })
-        input.value = ''
-        return
-      }
-      content = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName], {
-        blankrows: false,
-        strip: false,
-      })
-    } else {
-      content = reader.result as string
-    }
+  try {
+    const content = isExcelFile
+      ? await readFirstWorksheetAsCsv(await file.arrayBuffer(), file.name)
+      : await file.text()
 
     const tableName = file.name.replace(/\.(rpl|csv|xlsx|xls)$/i, '')
-    const success = rplStore.importFromCSV(content, tableName, 'route-main')
+    const success = rplStore.importFromCSV(content, tableName)
     if (success) {
-      syncImportedRpl(tableName)
-      appStore.showNotification({ type: 'success', message: '导入成功，已同步地图与系统视图' })
+      appStore.showNotification({ type: 'success', message: '导入成功' })
     } else {
       appStore.showNotification({ type: 'error', message: '导入失败，请检查文件格式' })
     }
+  } catch (error) {
+    appStore.showNotification({
+      type: 'error',
+      message: `读取 RPL 文件失败: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  } finally {
     input.value = ''
-  }
-  if (isExcelFile) {
-    reader.readAsArrayBuffer(file)
-  } else {
-    reader.readAsText(file)
   }
 }
 
-function handleValidateTable() {
-  const result = rplStore.validateTable()
-  if (result.valid) {
-    appStore.showNotification({ type: 'success', message: '表格数据验证通过' })
-  } else {
-    const errorMsg = result.errors.map(e => e.message).join('; ')
-    appStore.showNotification({ type: 'error', message: `验证失败: ${errorMsg}` })
-  }
-}
 </script>
 
 <template>
@@ -243,20 +164,6 @@ function handleValidateTable() {
               </div>
             </div>
 
-            <!-- 从路由生成 -->
-            <div v-if="paretoRoutes.length > 0" class="p-3 border-t bg-white">
-              <h4 class="text-xs font-medium text-gray-500 mb-2">从路由生成</h4>
-              <div class="space-y-1">
-                <button
-                  v-for="route in paretoRoutes"
-                  :key="route.id"
-                  class="w-full px-2 py-1.5 text-left text-xs bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-300 transition-colors"
-                  @click="handleGenerateFromRoute(route.id, route.name)"
-                >
-                  {{ route.name }}
-                </button>
-              </div>
-            </div>
           </div>
 
           <!-- 右侧: 表格内容 -->
@@ -269,7 +176,7 @@ function handleValidateTable() {
               <div class="text-center">
                 <FileSpreadsheet class="w-16 h-16 mx-auto mb-4 opacity-30" />
                 <p class="text-lg">请选择或创建一个表格</p>
-                <p class="text-sm mt-2">可以从左侧选择表格，或从路由自动生成</p>
+                <p class="text-sm mt-2">可以从左侧选择表格，或导入后端生成的 RPL 文件</p>
               </div>
             </div>
           </div>

@@ -1,8 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ConnectorElement, ConnectorTable, ConnectorType } from '@/types'
-import { mockConnectorElements, ROUTE_ID, ROUTE_NAME } from '@/data/mockData'
-import { dataLinkService } from '@/services'
+import type { ConnectorElement, ConnectorTable } from '@/types'
 
 export const useConnectorStore = defineStore('connector', () => {
   const tables = ref<ConnectorTable[]>([])
@@ -42,6 +40,30 @@ export const useConnectorStore = defineStore('connector', () => {
     currentTableId.value = tableId
   }
 
+  function replaceTables(nextTables: ConnectorTable[]) {
+    tables.value = nextTables
+  }
+
+  function setCurrentTableId(tableId: string | null) {
+    currentTableId.value = tableId
+  }
+
+  /** 替换指定接线元表的元素，可按调用场景维护更新时间。 */
+  function replaceTableElements(
+    elementsToReplace: ConnectorElement[],
+    tableId = currentTableId.value,
+    updateTimestamp = true,
+  ) {
+    const table = tables.value.find(item => item.id === tableId)
+    if (!table) return false
+
+    table.elements = elementsToReplace
+    if (updateTimestamp) {
+      table.updatedAt = new Date().toISOString()
+    }
+    return true
+  }
+
   function getTableByRoute(routeId?: string | null) {
     if (routeId) {
       return tables.value.find(t => t.routeId === routeId) || null
@@ -68,7 +90,7 @@ export const useConnectorStore = defineStore('connector', () => {
   }
 
   // 添加接线元
-  function addElement(element: Omit<ConnectorElement, 'id'>, emitLink = true) {
+  function addElement(element: Omit<ConnectorElement, 'id'>, _emitLink = true) {
     if (!currentTable.value) return null
     
     const newElement: ConnectorElement = {
@@ -78,21 +100,11 @@ export const useConnectorStore = defineStore('connector', () => {
     currentTable.value.elements.push(newElement)
     currentTable.value.updatedAt = new Date().toISOString()
     
-    // 触发数据联动
-    if (emitLink) {
-      dataLinkService.emit({
-        source: 'connector',
-        action: 'add',
-        data: newElement,
-        kp: newElement.kp,
-      })
-    }
-    
     return newElement.id
   }
 
   // 更新接线元
-  function updateElement(id: string, updates: Partial<ConnectorElement>, emitLink = true) {
+  function updateElement(id: string, updates: Partial<ConnectorElement>, _emitLink = true) {
     if (!currentTable.value) return false
     
     const index = currentTable.value.elements.findIndex(e => e.id === id)
@@ -104,147 +116,20 @@ export const useConnectorStore = defineStore('connector', () => {
     }
     currentTable.value.updatedAt = new Date().toISOString()
     
-    // 触发数据联动
-    if (emitLink) {
-      dataLinkService.emit({
-        source: 'connector',
-        action: 'update',
-        data: currentTable.value.elements[index],
-        kp: currentTable.value.elements[index].kp,
-      })
-    }
-    
     return true
   }
 
   // 删除接线元
-  function deleteElement(id: string, emitLink = true) {
+  function deleteElement(id: string, _emitLink = true) {
     if (!currentTable.value) return false
     
     const index = currentTable.value.elements.findIndex(e => e.id === id)
     if (index === -1) return false
     
-    const element = currentTable.value.elements[index]
     currentTable.value.elements.splice(index, 1)
     currentTable.value.updatedAt = new Date().toISOString()
     
-    // 触发数据联动
-    if (emitLink) {
-      dataLinkService.emit({
-        source: 'connector',
-        action: 'delete',
-        data: element,
-        kp: element.kp,
-      })
-    }
-    
     return true
-  }
-
-  // 批量添加接线元（一次性添加，只触发一次更新）
-  function addElements(elementsToAdd: Omit<ConnectorElement, 'id'>[], emitLink = false) {
-    if (!currentTable.value) return []
-    
-    const ids: string[] = []
-    
-    const newElements: ConnectorElement[] = elementsToAdd.map((element, index) => {
-      const newElement: ConnectorElement = {
-        ...element,
-        id: createId(`elem-${index}`)
-      }
-      ids.push(newElement.id)
-      return newElement
-    })
-    
-    // 一次性替换数组，避免大量 push 触发多次响应式更新
-    currentTable.value.elements = currentTable.value.elements.concat(newElements)
-    currentTable.value.updatedAt = new Date().toISOString()
-    
-    // 可选：触发数据联动
-    if (emitLink) {
-      newElements.forEach(newElement => {
-        dataLinkService.emit({
-          source: 'connector',
-          action: 'add',
-          data: newElement,
-          kp: newElement.kp,
-        })
-      })
-    }
-    
-    return ids
-  }
-
-  // 批量删除接线元（根据类型删除，只触发一次更新）
-  function deleteElementsByType(types: ConnectorType[], emitLink = false) {
-    if (!currentTable.value) return 0
-    
-    const before = currentTable.value.elements.length
-    currentTable.value.elements = currentTable.value.elements.filter(
-      e => !types.includes(e.type)
-    )
-    const deleted = before - currentTable.value.elements.length
-    
-    if (deleted > 0) {
-      currentTable.value.updatedAt = new Date().toISOString()
-    }
-    return deleted
-  }
-
-  // 按类型筛选
-  function getElementsByType(type: ConnectorType) {
-    return elements.value.filter(e => e.type === type)
-  }
-
-  // 初始化加载mock数据
-  function initMockData() {
-    if (mockConnectorElements.length === 0) return
-
-    if (tables.value.length === 0) {
-      createTable(`${ROUTE_NAME}_接线元`, ROUTE_ID)
-      // 初始化时不触发联动，使用索引确保唯一ID
-      mockConnectorElements.forEach((elem, index) => {
-        if (!currentTable.value) return
-        const newElement = {
-          ...elem,
-          id: `elem-${index}`
-        }
-        currentTable.value.elements.push(newElement as ConnectorElement)
-      })
-      if (currentTable.value) {
-        currentTable.value.updatedAt = new Date().toISOString()
-      }
-    }
-  }
-
-  // 监听其他模块的数据变更
-  function setupDataLinkListener() {
-    dataLinkService.subscribe('connector', (event) => {
-      if (!currentTable.value) return
-      
-      // 根据KP查找对应接线元
-      const element = currentTable.value.elements.find(
-        e => Math.abs(e.kp - (event.kp || 0)) < 1
-      )
-      
-      if (event.action === 'add' && !element) {
-        // RPL新增了关键点，同步创建接线元
-        const connData = dataLinkService.rplToConnectorElement(event.data)
-        if (connData) {
-          addElement(connData, false)
-        }
-      } else if (event.action === 'update' && element) {
-        // 同步更新坐标和深度
-        updateElement(element.id, {
-          longitude: event.data.longitude ?? element.longitude,
-          latitude: event.data.latitude ?? element.latitude,
-          depth: event.data.depth ?? element.depth,
-        }, false)
-      } else if (event.action === 'delete' && element) {
-        // 同步删除接线元
-        deleteElement(element.id, false)
-      }
-    })
   }
 
   // 清空数据
@@ -272,19 +157,17 @@ export const useConnectorStore = defineStore('connector', () => {
     elements,
     createTable,
     selectTable,
+    replaceTables,
+    setCurrentTableId,
+    replaceTableElements,
     selectTableByRoute,
     getTableByRoute,
     getElementsForRoute,
     addElement,
-    addElements,
     updateElement,
     deleteElement,
-    deleteElementsByType,
-    getElementsByType,
     deleteTable,
     // 项目数据管理
-    initMockData,
-    setupDataLinkListener,
     clearData,
   }
 })

@@ -4,8 +4,6 @@ import { useMonitorStore } from '@/stores/monitor'
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouteStore } from '@/stores/route'
 import { useRPLStore } from '@/stores/rpl'
-import { fetchDemPoint, checkDemService } from '@/services/DemApiService'
-import { calculateDistance } from '@/utils/geo'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import TileLayer from 'ol/layer/Tile'
@@ -16,7 +14,7 @@ import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
 import { Style, Stroke, Icon, Text, Fill } from 'ol/style'
-import { DragPan, Translate } from 'ol/interaction'
+import { Translate } from 'ol/interaction'
 import 'ol/ol.css'
 import { getSystemDeviceIcon, systemDeviceLegendItems } from '@/utils/systemDesignIcons'
 
@@ -37,8 +35,7 @@ interface RoutePoint {
 const props = withDefaults(defineProps<{
   routePoints: RoutePoint[]
   selectedPointId?: string | null
-  editable?: boolean
-  /** Step 6.2: 启用放大器沿路由拖拽 */
+  /** 启用放大器坐标手工调整 */
   draggableAmplifiers?: boolean
   /** 放大器落位时使用的路由点（用于光纤线跟随路由几何渲染） */
   placementRoutePoints?: any[]
@@ -50,20 +47,17 @@ const props = withDefaults(defineProps<{
 })
 
 const routeStore = useRouteStore()
-const rplStore = useRPLStore()
+useRPLStore()
 const monitorStore = useMonitorStore()
 const connectorStore = useConnectorStore()
 
 const emit = defineEmits<{
   (e: 'point-click', pointId: string): void
   (e: 'bu-dblclick', buId: string): void  // 双击 BU 节点打开配置对话框
-  (e: 'line-click'): void
-  (e: 'segment-click', segmentIndex: number): void
-  (e: 'context-menu', type: 'point' | 'line' | 'segment', id: string | null, x: number, y: number): void
   (e: 'edit', type: 'point' | 'line' | 'segment', id: string | null): void
   (e: 'delete', type: 'point' | 'line' | 'segment', id: string | null): void
-  /** Step 6.2: 放大器拖拽完成 */
-  (e: 'amplifier-moved', data: { id: string; newKp: number; longitude: number; latitude: number }): void
+  /** 放大器坐标拖拽完成 */
+  (e: 'amplifier-moved', data: { id: string; longitude: number; latitude: number }): void
   (e: 'coordinate-picked', coordinate: { longitude: number; latitude: number }): void
 }>()
 
@@ -86,7 +80,7 @@ let pointLayer: VectorLayer<VectorSource> | null = null
 
 const simplifiedPointZoom = 5
 
-// ========== Step 6.2: 放大器沿路由拖拽 ==========
+// ========== 放大器坐标手工调整 ==========
 let translateInteraction: Translate | null = null
 const dragTooltip = ref<{ visible: boolean; x: number; y: number; text: string }>({
   visible: false, x: 0, y: 0, text: ''
@@ -96,53 +90,6 @@ const dragTooltip = ref<{ visible: boolean; x: number; y: number; text: string }
 const isAmplifierFeature = (feature: Feature) => {
   const ptype = feature.get('pointType')
   return ptype === 'ola' || ptype === 'amplifier_e' || ptype === 'amplifier_w'
-}
-
-/** 获取路由线段坐标序列（主干线，排除分支登陆站） */
-const getRouteLineCoords = (): [number, number][] => {
-  const selectedRoute = routeStore.selectedRoute
-  if (selectedRoute?.points?.length) {
-    return selectedRoute.points
-      .filter((p: any) => !(p as any).isBranchStation)
-      .map(p => p.coordinates as [number, number])
-  }
-  // 回退：使用 sortedPoints
-  return sortedPoints.value
-    .filter((p) => !p.isBranchStation)
-    .map((p) => [p.longitude, p.latitude] as [number, number])
-}
-
-/** 将点投影到最近的路由线段上（snap to route） */
-const snapToRoute = (coord: [number, number]): { coord: [number, number]; kp: number } | null => {
-  const routeCoords = getRouteLineCoords()
-  if (routeCoords.length < 2) return null
-
-  let bestDist = Infinity
-  let bestPoint: [number, number] = coord
-  let bestKp = 0
-
-  let cumulativeKp = 0
-  for (let i = 0; i < routeCoords.length - 1; i++) {
-    const [ax, ay] = routeCoords[i]
-    const [bx, by] = routeCoords[i + 1]
-    // 线段长度
-    const segLen = Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2) * 111 // 粗略 km
-    // 点到线段投影
-    const dx = bx - ax, dy = by - ay
-    const lenSq = dx * dx + dy * dy
-    if (lenSq === 0) { cumulativeKp += segLen; continue }
-    let t = ((coord[0] - ax) * dx + (coord[1] - ay) * dy) / lenSq
-    t = Math.max(0, Math.min(1, t))
-    const px = ax + t * dx, py = ay + t * dy
-    const dist = Math.sqrt((coord[0] - px) ** 2 + (coord[1] - py) ** 2)
-    if (dist < bestDist) {
-      bestDist = dist
-      bestPoint = [px, py]
-      bestKp = cumulativeKp + t * segLen
-    }
-    cumulativeKp += segLen
-  }
-  return { coord: bestPoint, kp: bestKp }
 }
 
 /** 初始化/更新 Translate 交互 */
@@ -160,19 +107,11 @@ const setupTranslateInteraction = () => {
     filter: (feature) => isAmplifierFeature(feature as Feature),
   })
 
-  let dragStartCoord: [number, number] | null = null
   let dragPointId: string | null = null
-  let dragStartKp: number = 0
-
   translateInteraction.on('translatestart', (evt) => {
     const feature = evt.features.item(0)
     if (!feature) return
     dragPointId = feature.get('pointId')
-    const geom = feature.getGeometry() as Point
-    dragStartCoord = geom.getCoordinates() as [number, number]
-    // 找到当前 KP
-    const device = sortedPoints.value.find((p) => p.id === dragPointId)
-    dragStartKp = device?.kp || 0
     dragTooltip.value.visible = true
   })
 
@@ -182,23 +121,15 @@ const setupTranslateInteraction = () => {
     const geom = feature.getGeometry() as Point
     const rawCoord = geom.getCoordinates() as [number, number]
 
-    // Snap 到路由
-    const snapped = snapToRoute(rawCoord)
-    if (snapped) {
-      geom.setCoordinates(snapped.coord)
-      // 更新 tooltip
-      if (map) {
-        const pixel = map.getPixelFromCoordinate(snapped.coord)
-        dragTooltip.value = {
-          visible: true,
-          x: pixel[0] + 20,
-          y: pixel[1] - 30,
-          text: `KP: ${snapped.kp.toFixed(1)} km (原 ${dragStartKp.toFixed(1)})`
-        }
+    if (map) {
+      const pixel = map.getPixelFromCoordinate(rawCoord)
+      dragTooltip.value = {
+        visible: true,
+        x: pixel[0] + 20,
+        y: pixel[1] - 30,
+        text: `${rawCoord[0].toFixed(5)}, ${rawCoord[1].toFixed(5)}`,
       }
     }
-    // 注意：拖拽过程中不重绘线路，路由底线是固定的海缆路径不会变
-    // 拖拽结束后由 amplifier-moved 事件触发正常的数据更新流程重绘光纤段
   })
 
   translateInteraction.on('translateend', (evt) => {
@@ -208,20 +139,14 @@ const setupTranslateInteraction = () => {
 
     const geom = feature.getGeometry() as Point
     const finalCoord = geom.getCoordinates() as [number, number]
-    const snapped = snapToRoute(finalCoord)
-    const newLon = snapped ? snapped.coord[0] : finalCoord[0]
-    const newLat = snapped ? snapped.coord[1] : finalCoord[1]
-    const newKp = snapped ? snapped.kp : dragStartKp
 
     emit('amplifier-moved', {
       id: dragPointId,
-      newKp,
-      longitude: newLon,
-      latitude: newLat
+      longitude: finalCoord[0],
+      latitude: finalCoord[1],
     })
 
     dragPointId = null
-    dragStartCoord = null
 
     // 拖拽结束后主动重绘线路（使用路由拓扑 + 光纤段的正确绘制方式）
     scheduleRedraw(false, true)
@@ -247,7 +172,7 @@ const getPointIconScale = (type: string) => {
   return 0.18
 }
 
-// 按 KP 排序的点列表 - 优先使用 monitorStore 数据，然后是 Pareto 选中路线
+// 点列表只保留 Store 或后端路线中明确给出的字段。
 const sortedPoints = computed(() => {
   // 优先使用 monitorStore 的设备数据（与实时监控页面一致）
   if (monitorStore.devices.length > 0) {
@@ -273,45 +198,6 @@ const sortedPoints = computed(() => {
   // 其次使用 Pareto 选中的路线
   const selectedRoute = routeStore.selectedRoute
   if (selectedRoute && selectedRoute.points.length > 0) {
-    // ★ 使用 segment 邻接图 BFS 计算正确的 KP（支持分支拓扑）
-    const hasBranching = selectedRoute.points.some(p => p.type === 'branching')
-    const pointKpMap: Record<string, number> = {}
-    
-    if (hasBranching && selectedRoute.segments && selectedRoute.segments.length > 0) {
-      const adj = new globalThis.Map<string, Array<{ neighbor: string; length: number }>>()
-      for (const seg of selectedRoute.segments) {
-        if (!adj.has(seg.startPointId)) adj.set(seg.startPointId, [])
-        if (!adj.has(seg.endPointId)) adj.set(seg.endPointId, [])
-        adj.get(seg.startPointId)!.push({ neighbor: seg.endPointId, length: seg.length || 0 })
-        adj.get(seg.endPointId)!.push({ neighbor: seg.startPointId, length: seg.length || 0 })
-      }
-      const startPoint = selectedRoute.points.find(p => p.type === 'landing' && !(p as any).isBranchStation)
-      if (startPoint) {
-        const queue: Array<{ id: string; kp: number }> = [{ id: startPoint.id, kp: 0 }]
-        const visited = new Set([startPoint.id])
-        pointKpMap[startPoint.id] = 0
-        while (queue.length > 0) {
-          const { id, kp } = queue.shift()!
-          for (const edge of (adj.get(id) || [])) {
-            if (!visited.has(edge.neighbor)) {
-              visited.add(edge.neighbor)
-              pointKpMap[edge.neighbor] = kp + edge.length
-              queue.push({ id: edge.neighbor, kp: kp + edge.length })
-            }
-          }
-        }
-      }
-    } else {
-      let cumulativeKp = 0
-      selectedRoute.points.forEach((point, index) => {
-        if (index > 0) {
-          const prevPoint = selectedRoute.points[index - 1]
-          cumulativeKp += calculateDistance(prevPoint.coordinates, point.coordinates)
-        }
-        pointKpMap[point.id] = cumulativeKp
-      })
-    }
-    
     const mainPoints = selectedRoute.points.map((point) => {
       let mappedType = 'waypoint'
       if (point.type === 'landing') mappedType = 'landing'
@@ -324,7 +210,7 @@ const sortedPoints = computed(() => {
         type: mappedType,
         longitude: point.coordinates[0],
         latitude: point.coordinates[1],
-        kp: pointKpMap[point.id] ?? 0,
+        kp: (point as typeof point & { kp?: number }).kp,
         depth: (point as any).depth || 0,
         branchTo: point.branchTo,
         isBranchStation: (point as any).isBranchStation || false,
@@ -379,22 +265,6 @@ const updateLineStyle = () => {
   })
 }
 
-// 获取路线所有点（包括 waypoint）用于绘制弯曲路径
-const getAllRoutePoints = computed(() => {
-  const selectedRoute = routeStore.selectedRoute
-  if (selectedRoute && selectedRoute.points.length > 0) {
-    return selectedRoute.points.map((point) => ({
-      id: point.id,
-      longitude: point.coordinates[0],
-      latitude: point.coordinates[1],
-      type: point.type,
-      name: point.name,
-      branchTo: point.branchTo
-    }))
-  }
-  return []
-})
-
 // 绘制路径线
 const drawRouteLine = () => {
   if (!routeSource) return
@@ -428,7 +298,7 @@ const drawRouteLine = () => {
         routeSource!.addFeature(f)
       }
       // 分支段（也用红色实线）
-      const branchSegGroups = _groupConsecutiveBranchSegs(selectedRoute.segments, ptMap)
+      const branchSegGroups = _groupConsecutiveBranchSegs(selectedRoute.segments)
       branchSegGroups.forEach((group) => {
         const coords = group.map((s: any) => ptMap[s.startPointId]).filter(Boolean)
         const lastSeg = group[group.length - 1]
@@ -504,7 +374,7 @@ const drawRouteLine = () => {
   if (branchSegs.length > 0) {
     const ptMap2: Record<string, [number, number]> = {}
     selectedRoute!.points.forEach(p => { ptMap2[p.id] = p.coordinates })
-    const branchGroups = _groupConsecutiveBranchSegs(selectedRoute!.segments, ptMap2)
+    const branchGroups = _groupConsecutiveBranchSegs(selectedRoute!.segments)
     branchGroups.forEach((group) => {
       const coords = group.map((s: any) => ptMap2[s.startPointId]).filter(Boolean)
       const lastSeg = group[group.length - 1]
@@ -545,7 +415,7 @@ const drawRouteLine = () => {
 /**
  * 将分支 segments 按连续链接分组（同一分支路径的连续段归为一组）
  */
-const _groupConsecutiveBranchSegs = (segments: any[], ptMap: Record<string, [number, number]>) => {
+const _groupConsecutiveBranchSegs = (segments: any[]) => {
   const branchSegs = segments.filter((s: any) => s.id?.startsWith('branch-'))
   if (branchSegs.length === 0) return []
 
@@ -679,7 +549,7 @@ const drawFiberLines = () => {
   // 分支路径坐标
   const branchPaths: [number, number][][] = []
   if (selectedRoute?.segments) {
-    const groups = _groupConsecutiveBranchSegs(selectedRoute.segments, ptMap)
+    const groups = _groupConsecutiveBranchSegs(selectedRoute.segments)
     groups.forEach(group => {
       const coords = group.map((s: any) => ptMap[s.startPointId]).filter(Boolean)
       const lastSeg = group[group.length - 1]
@@ -730,32 +600,9 @@ const drawFiberLines = () => {
   // ★ 交替色：偶数光纤段用琥珀色，奇数用橙色
   const fiberColors = ['#f59e0b', '#fb923c']
 
-  // ★ 登陆站按 KP 排序，用于首尾光纤的端点回退
-  const stationDevices = allDevices
-    .filter(d => d.type === 'landing' || d.type === 'underwater')
-    .sort((a, b) => a.kp - b.kp)
-  const startStation = stationDevices[0] || null
-  const endStation = stationDevices[stationDevices.length - 1] || null
-
   fibers.forEach((fiber, idx) => {
-    // ★ 查找光纤两端设备（优先 ID 匹配，回退 KP 匹配）
-    let fromDev = allDevices.find(d => d.id === fiber.fromDeviceId) || null
-    let toDev = allDevices.find(d => d.id === fiber.toDeviceId) || null
-    if (!fromDev && fiber.kp !== undefined) {
-      fromDev = allDevices.reduce<typeof allDevices[0] | null>((best, d) => {
-        const dist = Math.abs(d.kp - fiber.kp)
-        return dist < (best ? Math.abs(best.kp - fiber.kp) : Infinity) && dist < 10 ? d : best
-      }, null)
-    }
-    if (!toDev && fiber.endKp !== undefined) {
-      toDev = allDevices.reduce<typeof allDevices[0] | null>((best, d) => {
-        const dist = Math.abs(d.kp - fiber.endKp!)
-        return dist < (best ? Math.abs(best.kp - fiber.endKp!) : Infinity) && dist < 10 ? d : best
-      }, null)
-    }
-    // ★ 首尾光纤回退到登陆站
-    if (!fromDev && idx === 0 && startStation) fromDev = startStation
-    if (!toDev && idx === fibers.length - 1 && endStation) toDev = endStation
+    const fromDev = allDevices.find(d => d.id === fiber.fromDeviceId) || null
+    const toDev = allDevices.find(d => d.id === fiber.toDeviceId) || null
     if (!fromDev || !toDev) return
     if (fromDev.id === toDev.id) return
 
@@ -899,82 +746,6 @@ const handlePointerMove = (evt: Record<string, any>) => {
   }
 }
 
-// 更新路径线（分离主幹和分支）
-const updateRouteLineFromPoints = () => {
-  if (!routeSource || !pointSource) return
-  
-  routeSource.clear()
-  
-  const pointFeatures = pointSource.getFeatures()
-  if (pointFeatures.length < 2) return
-  
-  // 分离主干点和分支登陆站
-  const mainTrunkPoints = sortedPoints.value.filter((p) => !p.isBranchStation)
-  const branchStations = sortedPoints.value.filter((p) => p.isBranchStation)
-  
-  // 绘制主幹线（分段）
-  for (let i = 0; i < mainTrunkPoints.length - 1; i++) {
-    const startPoint = mainTrunkPoints[i]
-    const endPoint = mainTrunkPoints[i + 1]
-    
-    // 从 pointFeatures 中获取当前坐标（如果正在拖拽）
-    const startFeature = pointFeatures.find(f => f.get('pointId') === startPoint.id)
-    const endFeature = pointFeatures.find(f => f.get('pointId') === endPoint.id)
-    
-    const startCoords = startFeature 
-      ? (startFeature.getGeometry() as Point).getCoordinates() 
-      : [startPoint.longitude, startPoint.latitude]
-    const endCoords = endFeature 
-      ? (endFeature.getGeometry() as Point).getCoordinates() 
-      : [endPoint.longitude, endPoint.latitude]
-    
-    const segmentFeature = new Feature({
-      geometry: new LineString([startCoords, endCoords]),
-      segmentIndex: i,
-    })
-    
-    const isSelected = selectedSegmentIndex.value === i
-    segmentFeature.setStyle(new Style({
-      stroke: new Stroke({
-        color: isSelected ? '#f59e0b' : '#ef4444',
-        width: isSelected ? 5 : 3,
-      })
-    }))
-    
-    routeSource.addFeature(segmentFeature)
-  }
-  
-  // 绘制分支线（从分支器到分支登陆站）
-  branchStations.forEach((branchStation) => {
-    const branchFromName = branchStation.branchFrom
-    const branchingUnit = mainTrunkPoints.find((p) => p.name === branchFromName)
-    
-    if (branchingUnit) {
-      // 从 pointFeatures 中获取当前坐标
-      const branchingFeature = pointFeatures.find(f => f.get('pointId') === branchingUnit.id)
-      const branchStationFeature = pointFeatures.find(f => f.get('pointId') === branchStation.id)
-      
-      const branchingCoords = branchingFeature 
-        ? (branchingFeature.getGeometry() as Point).getCoordinates() 
-        : [branchingUnit.longitude, branchingUnit.latitude]
-      const branchStationCoords = branchStationFeature 
-        ? (branchStationFeature.getGeometry() as Point).getCoordinates() 
-        : [branchStation.longitude, branchStation.latitude]
-      
-      const branchFeature = new Feature({
-        geometry: new LineString([branchingCoords, branchStationCoords]),
-        featureType: 'branch',
-      })
-      
-      branchFeature.setStyle(new Style({
-        stroke: new Stroke({ color: '#ef4444', width: 3 })
-      }))
-      
-      routeSource!.addFeature(branchFeature)
-    }
-  })
-}
-
 // 初始化地图
 const initMap = () => {
   if (!mapContainer.value) return
@@ -1083,7 +854,6 @@ const initMap = () => {
       if (segmentIndex !== undefined) {
         selectedSegmentIndex.value = segmentIndex
         updateLineStyle()
-        emit('segment-click', segmentIndex)
       }
     } else {
       selectedSegmentIndex.value = -1
@@ -1243,8 +1013,6 @@ watch(
     }
   }
 )
-
-// editable 属性不再控制拖动，选中即可拖动
 
 // 处理右键菜单操作
 const handleEdit = () => {

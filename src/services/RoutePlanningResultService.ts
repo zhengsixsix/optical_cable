@@ -1,5 +1,9 @@
-import JSZip from 'jszip'
-import type { AlgorithmRouteBundle, RawPathResult, RawSegmentResult, RawStationPoint } from '@/services/RouteDataConverter'
+import type {
+  AlgorithmRouteBundle,
+  RawPathResult,
+  RawSegmentResult,
+  RawStationPoint,
+} from '@/services/RouteDataConverter'
 
 export interface LoadedRoutePlanningBundle {
   bundle: AlgorithmRouteBundle
@@ -10,9 +14,9 @@ export type RoutePlanningResultFileMap = Partial<Record<
   'FMM_path_result.json' |
   'segment_result_base_FixSpacing.json' |
   'segment_result_base_Risk.json' |
-  'pointList' |
   'cost.txt' |
-  'risk.txt',
+  'risk.txt' |
+  'pointList',
   string
 >>
 
@@ -53,26 +57,23 @@ function parseFmmPaths(filename: string, text: string): RawPathResult[] {
   return parsed as RawPathResult[]
 }
 
+function parseStationPoints(filename: string, text: string): RawStationPoint[] {
+  const parsed = parseResultJson(filename, text)
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${filename} 格式错误：应为站点数组`)
+  }
+  return parsed as RawStationPoint[]
+}
+
 function parseSegmentResult(filename: string, text: string): RawSegmentResult {
   const parsed = parseResultJson(filename, text)
   if (!isRecord(parsed)) {
     throw new Error(`${filename} 格式错误：应为分段结果对象`)
   }
-  if (!Array.isArray(parsed.segment_nodes) || !Array.isArray(parsed.segments)) {
-    throw new Error(`${filename} 格式错误：缺少 segment_nodes 或 segments 数组`)
-  }
-  return parsed as unknown as RawSegmentResult
+  return parsed as RawSegmentResult
 }
 
-function parseStationPoints(filename: string, text: string): RawStationPoint[] {
-  const parsed = parseResultJson(filename, text)
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${filename} format error: expected station point array`)
-  }
-  return parsed as RawStationPoint[]
-}
-
-export function assignRoutePlanningResultFile(
+function assignRoutePlanningResultFile(
   bundle: AlgorithmRouteBundle,
   filename: string,
   text: string,
@@ -80,16 +81,16 @@ export function assignRoutePlanningResultFile(
   const lower = filename.toLowerCase()
   if (lower.endsWith('fmm_path_result.json')) {
     bundle.fmmPaths = parseFmmPaths(filename, text)
-  } else if (lower === 'pointlist' || lower.endsWith('pointlist.json')) {
-    bundle.stationPoints = parseStationPoints(filename, text)
   } else if (lower.endsWith('segment_result_base_fixspacing.json')) {
-    bundle.fixSpacing = parseSegmentResult(filename, text)
+    bundle.fixedSpacing = parseSegmentResult(filename, text)
   } else if (lower.endsWith('segment_result_base_risk.json')) {
     bundle.riskBased = parseSegmentResult(filename, text)
   } else if (lower.endsWith('cost.txt')) {
-    bundle.costMatrixText = text
+    bundle.costText = text
   } else if (lower.endsWith('risk.txt')) {
-    bundle.riskMatrixText = text
+    bundle.riskText = text
+  } else if (lower === 'pointlist' || lower.endsWith('pointlist.json')) {
+    bundle.stationPoints = parseStationPoints(filename, text)
   }
 }
 
@@ -106,32 +107,4 @@ export function loadRoutePlanningBundleFromFileMap(
   }
 
   return { bundle, files: bundle.files || [] }
-}
-
-export async function loadRoutePlanningBundleFromFiles(
-  files: File[],
-  source = 'uploaded-result-package',
-): Promise<LoadedRoutePlanningBundle> {
-  const bundle: AlgorithmRouteBundle = { source, files: [] }
-  const loadedNames: string[] = []
-
-  for (const file of files) {
-    if (file.name.toLowerCase().endsWith('.zip')) {
-      const zip = await JSZip.loadAsync(await file.arrayBuffer())
-      const entries = Object.values(zip.files).filter(entry => !entry.dir)
-      for (const entry of entries) {
-        const text = await entry.async('text')
-        const name = entry.name.split('/').pop() || entry.name
-        assignRoutePlanningResultFile(bundle, name, text)
-        loadedNames.push(entry.name)
-      }
-    } else {
-      const text = await file.text()
-      assignRoutePlanningResultFile(bundle, file.name, text)
-      loadedNames.push(file.name)
-    }
-  }
-
-  bundle.files = loadedNames
-  return { bundle, files: loadedNames }
 }

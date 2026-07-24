@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Input, Select } from '@/shared/components/base'
-import { platformDictionaryApi } from '@/services/platform/api'
-import type { PlanDeviceConfig, PlatformDictionary } from '@/services/platform/types'
+import { useDictionaryStore } from '@/stores/dictionary'
+import type { PlanDeviceConfig } from '@/services/platform/types'
 import {
   groupDeviceAttributeRows,
   inputTypeForDeviceConfig,
   resolveDeviceAttributeRows,
-  type DeviceAttributeRow,
 } from '@/services/platform/deviceAttributes'
 import { ChevronDown, ChevronRight } from 'lucide-vue-next'
 
@@ -22,7 +21,7 @@ const emit = defineEmits<{
   (event: 'update:modelValue', value: Record<string, string>): void
 }>()
 
-const dictionaryOptions = ref<Record<string, Array<{ value: string; label: string }>>>({})
+const dictionaryStore = useDictionaryStore()
 const openGroups = ref<Record<string, boolean>>({})
 
 const recordToValueList = (record?: Record<string, string>) =>
@@ -52,17 +51,9 @@ watch(() => props.configs, async configs => {
       .map(config => String(config.dicCode)),
   ))
 
-  await Promise.all(dicCodes.map(async dicCode => {
-    if (dictionaryOptions.value[dicCode]) return
-    const items = await platformDictionaryApi.listItem(dicCode)
-    dictionaryOptions.value = {
-      ...dictionaryOptions.value,
-      [dicCode]: (items ?? []).map((item: PlatformDictionary) => ({
-        value: String(item.code ?? ''),
-        label: item.name || item.code || '',
-      })).filter(item => item.value),
-    }
-  }))
+  await Promise.all(dicCodes.map(dicCode =>
+    dictionaryStore.loadDictionary(dicCode).catch(() => []),
+  ))
 }, { immediate: true, deep: true })
 
 const updateValue = (configCode: string, value: unknown) => {
@@ -92,9 +83,7 @@ const textInputTypeForConfig = (config: PlanDeviceConfig): 'text' | 'number' =>
   inputTypeForDeviceConfig(config) === 'number' ? 'number' : 'text'
 
 const optionsForConfig = (config: PlanDeviceConfig) =>
-  config.dicCode ? dictionaryOptions.value[String(config.dicCode)] ?? [] : []
-
-const groupTitle = (name: string) => name.startsWith('【') ? name : `【${name}】`
+  config.dicCode ? dictionaryStore.getOptions(String(config.dicCode)) : []
 </script>
 
 <template>

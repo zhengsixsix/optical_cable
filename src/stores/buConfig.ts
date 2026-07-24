@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 /**
  * BU 配置 Store
@@ -69,27 +69,11 @@ export const useBUConfigStore = defineStore('buConfig', () => {
     )
   }
 
-  /**
-   * 获取所有已配置的 BU ID
-   */
-  const configuredBuIds = computed(() => {
-    return Object.keys(configs.value).filter(id => isConfigured(id))
-  })
-
-  /**
-   * 清空所有配置
-   */
-  function clearAll() {
-    configs.value = {}
-  }
-
   return {
     configs,
     getConfig,
     saveConfig,
     updateConfig,
     isConfigured,
-    configuredBuIds,
-    clearAll
   }
 })

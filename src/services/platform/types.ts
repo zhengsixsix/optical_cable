@@ -6,10 +6,6 @@ export interface PagedSearch {
   [key: string]: unknown
 }
 
-export interface LongKeyCondition {
-  id: number
-}
-
 export interface PcAuthInfo {
   userId?: number | string
   username?: string
@@ -94,24 +90,12 @@ export interface PlanProject {
 
 export interface PlanRouteResult {
   pointList?: PlanPoint[] | null
-  'cost.txt'?: string | null
-  'risk.txt'?: string | null
   'FMM_path_result.json'?: unknown[] | string | null
   'segment_result_base_FixSpacing.json'?: Record<string, unknown> | string | null
   'segment_result_base_Risk.json'?: Record<string, unknown> | string | null
+  'cost.txt'?: string | null
+  'risk.txt'?: string | null
 }
-
-/** Swagger: PlanAPIFixedParam */
-export interface PlanFixedParam {
-  id: Id
-}
-
-/** Swagger: PlanAPIOptimizedParam / PlanAPISimulationParam */
-export interface PlanRouteSelectionParam {
-  id: Id
-  fmmPathResultIndex: number
-}
-
 /**
  * Swagger 将 fixed / optimized / simulation 的 data 声明为 Object，
  * 没有公开内部字段。保留 unknown，等真实响应确认后再收紧类型。
@@ -123,6 +107,67 @@ export interface PlatformPlanningResults {
   optimized: PlanCalculationResult | null
   simulation: PlanCalculationResult | null
   errors: string[]
+}
+
+type PlanProjectDetailNumber = number | string | null
+type PlanProjectDetailBoolean = boolean | number | string | null
+
+export interface PlanProjectDetailScope {
+  topLeftLng?: PlanProjectDetailNumber
+  topLeftLat?: PlanProjectDetailNumber
+  bottomRightLng?: PlanProjectDetailNumber
+  bottomRightLat?: PlanProjectDetailNumber
+}
+
+export interface PlanProjectDetailChannel {
+  channelCount?: PlanProjectDetailNumber
+  baudRateGbaud?: PlanProjectDetailNumber
+  modulationFormat?: string | null
+  launchPowerDbm?: Array<number | string> | string | null
+  channelFrequenciesThz?: Array<number | string> | string | null
+  initialAseNoiseDbm?: PlanProjectDetailNumber
+  initialNliNoiseDbm?: PlanProjectDetailNumber
+  centerFrequencyThz?: PlanProjectDetailNumber
+  channelSpacingGhz?: PlanProjectDetailNumber
+}
+
+export interface PlanProjectDetailOptimization {
+  targetGsnrDb?: PlanProjectDetailNumber
+  targetOsnrDb?: PlanProjectDetailNumber
+  osnrMarginDb?: PlanProjectDetailNumber
+  spanMinKm?: PlanProjectDetailNumber
+  spanMaxKm?: PlanProjectDetailNumber
+  spanStepKm?: PlanProjectDetailNumber
+  minSpanLimitKm?: PlanProjectDetailNumber
+  maxSpanLimitKm?: PlanProjectDetailNumber
+  optimizationTarget?: string | null
+}
+
+export interface PlanProjectResult {
+  id?: Id
+  projectId?: Id
+  routeResult?: unknown
+  fixed?: PlanCalculationResult | null
+  fixedResult?: PlanCalculationResult | null
+  optimized?: PlanCalculationResult | null
+  optimizedResult?: PlanCalculationResult | null
+  simulation?: PlanCalculationResult | null
+  simulationResult?: PlanCalculationResult | null
+  [key: string]: unknown
+}
+
+/**
+ * `/plan/project/detail` returns the project and its persisted planning configuration.
+ * Numeric and boolean values are strings in the current backend response.
+ */
+export interface PlanProjectDetail extends PlanProject {
+  scope?: PlanProjectDetailScope | null
+  gridResolution?: PlanProjectDetailNumber
+  enableRedundancy?: PlanProjectDetailBoolean
+  channelConfig?: PlanProjectDetailChannel | null
+  optimization?: PlanProjectDetailOptimization | null
+  spanKm?: PlanProjectDetailNumber
+  planResult?: PlanProjectResult | string | null
 }
 
 export interface PlanPoint {
@@ -150,10 +195,6 @@ export interface PlanConfigScope {
   topLeftLat?: number | null
   bottomRightLng?: number | null
   bottomRightLat?: number | null
-}
-
-export interface PlanConfigSearchProject {
-  id: Id
 }
 
 export interface PlanConfigGridResolution {
@@ -193,11 +234,12 @@ export interface PlanConfigSpanKm {
 /** 系统规划向导的本地表单快照；平台接口不接收这些扩展字段。 */
 export interface SystemPlanningFormSnapshot {
   routeId: string
-  rplId: string
-  fiberModel: 'GN' | 'EGN' | 'SSFM'
-  amplifierModel: 'EDFA_Simple' | 'EDFA_Full' | 'EDFA_Raman'
+  fiberModel: string
+  amplifierModel: string
   fiberTypeId: string
   amplifierTypeId: string
+  fiberDeviceValues?: Record<string, string>
+  amplifierDeviceValues?: Record<string, string>
   fiberParams: Record<string, number>
   amplifierParams: Record<string, number>
   ssfmParams: {
@@ -238,15 +280,7 @@ export interface PlanConfigSnapshot {
   form?: SystemPlanningFormSnapshot | null
 }
 
-export type PlanLayerTypeDic =
-  | 'LAYER_TYPE'
-  | 'BATHY'
-  | 'SLOPE'
-  | 'VOLCANO'
-  | 'CWCORAL'
-  | 'SEISMIC'
-  | 'FISHZONE'
-  | 'SHIPLANE'
+export type PlanLayerTypeDic = string
 
 export interface PlanLayer {
   id?: Id
@@ -268,7 +302,7 @@ export interface PlanLayerUploadCompletePayload {
   typeDic: string
 }
 
-export interface PlatformIconSize {
+interface PlatformIconSize {
   width?: number | null
   height?: number | null
 }
@@ -279,7 +313,7 @@ export interface PlatformBindFunc {
   defaultInputParams?: Record<string, unknown>
 }
 
-export type PlanDeviceDataType = 'DATA_TYPE' | 'NUMBER' | 'STRING' | 'BOOLEAN' | 'DATETIME'
+type PlanDeviceDataType = 'DATA_TYPE' | 'NUMBER' | 'STRING' | 'BOOLEAN' | 'DATETIME'
 
 export interface PlanDeviceConfig {
   id?: Id
@@ -351,28 +385,6 @@ export interface PlanDeviceValueSimple {
   value?: string | null
 }
 
-export interface PlanDeviceValue {
-  id?: Id
-  deviceTypeCd?: string | null
-  deviceTypeName?: string | null
-  configCode?: string | null
-  deviceLibraryId?: Id | null
-  deviceLibraryName?: string | null
-  deviceEntityId?: Id | null
-  deviceEntityName?: string | null
-  value?: string | null
-}
-
-export interface PlanDeviceValueSearch extends PagedSearch {
-  id?: Id | null
-  deviceTypeCd?: string | null
-  configCode?: string | null
-  deviceLibraryId?: Id | null
-  deviceEntityId?: Id | null
-  entityIsNull?: boolean | null
-  value?: string | null
-}
-
 export interface PlanDeviceLibrary {
   id?: Id
   projectId?: Id | null
@@ -415,6 +427,9 @@ export interface PlanDeviceEntity {
   latitude?: number | null
   projectId?: Id | null
   sortNum?: number | null
+  nodeId?: Id | null
+  positionKm?: number | string | null
+  mode?: string | null
   deviceValueList?: Array<PlanDeviceValueSave | PlanDeviceValueSimple> | null
 }
 
@@ -426,17 +441,4 @@ export interface PlanDeviceEntitySearch extends PagedSearch {
   longitude?: number | null
   latitude?: number | null
   projectId?: Id | null
-}
-
-export interface EndpointDefinition {
-  key: string
-  group: string
-  name: string
-  path: string
-  defaultPayload: unknown
-  authRequired?: boolean
-  encryptPasswordFields?: string[]
-  methods?: string[]
-  callable?: boolean
-  description?: string
 }

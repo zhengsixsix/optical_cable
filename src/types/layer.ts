@@ -44,16 +44,3 @@ export interface LayerData {
   rasterData?: ArrayBuffer
   metadata: LayerMetadata
 }
-
-// 火山数据
-export interface VolcanoData {
-  latitude: number
-  longitude: number
-}
-
-// 地震数据
-export interface EarthquakeData {
-  latitude: number
-  longitude: number
-  magnitude: number
-}

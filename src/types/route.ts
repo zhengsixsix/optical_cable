@@ -49,62 +49,32 @@ export interface RouteSegment {
   startPointId: string
   endPointId: string
   length: number
-  depth: number
-  cableType: string
-  riskLevel: RiskLevel
-  cost: number
+  depth?: number
+  cableType?: string
+  riskLevel?: RiskLevel
+  cost?: number
 }
 
 // 成本明细结构
 export interface RouteCostBreakdown {
-  cable: number        // 电缆成本
-  installation: number // 安装成本
-  equipment: number    // 设备成本
-  total: number        // 总成本
+  cable?: number        // 电缆成本（仅后端明确返回时存在）
+  installation?: number // 安装成本（仅后端明确返回时存在）
+  equipment?: number    // 设备成本（仅后端明确返回时存在）
+  total?: number        // 总成本（仅后端明确返回时存在）
 }
 
 // 风险分析结构
 export interface RouteRiskAnalysis {
-  seismic: number      // 地震风险 0-1
-  volcanic: number     // 火山风险 0-1
-  depth: number        // 深度风险 0-1
-  overall: number      // 综合风险 0-1
+  seismic?: number      // 地震风险 0-1
+  volcanic?: number     // 火山风险 0-1
+  depth?: number        // 深度风险 0-1
+  overall?: number      // 综合风险（仅后端明确返回时存在）
 }
-
-// 路由沿算法矩阵采样摘要
-export interface RouteMatrixSample {
-  points: number
-  min: number
-  max: number
-  avg: number
-  start: number
-  end: number
-}
-
-export interface RouteMatrixSamples {
-  cost?: RouteMatrixSample
-  risk?: RouteMatrixSample
-}
-
-export interface RouteFmmMetadata {
-  pointCount: number
-  length?: number
-  totalCost?: number
-  totalRisk?: number
-}
-
-export type RouteSegmentSource = 'riskBased' | 'fixedSpacing' | 'fmmFallback' | 'none'
 
 export interface RouteAlgorithmSummary {
   originalFmmIndex?: number
-  duplicateOriginalIndexes?: number[]
-  algorithmTotalCost?: number
-  algorithmTotalRisk?: number
-  highRiskLength: number
-  mediumRiskLength: number
-  lowRiskLength: number
-  armorEstimatedCost: number
-  segmentSource: RouteSegmentSource
+  coordinateOrder?: 'longitude-latitude' | 'latitude-longitude'
+  realTracePointCount?: number
 }
 
 // 路由
@@ -113,49 +83,17 @@ export interface Route {
   name: string
   points: RoutePoint[]
   segments: RouteSegment[]
-  totalLength: number
-  totalCost: number
-  riskScore: number
+  totalLength?: number
+  totalCost?: number
+  riskScore?: number
   // 结构化成本和风险（用于 Pareto 优化）
   cost: RouteCostBreakdown
   risk: RouteRiskAnalysis
-  distance: number     // 总距离 (km)
+  distance?: number     // 总距离 (km)
   createdAt: Date
   updatedAt: Date
-  // 后端原始 A* 路径坐标（用于精确放大器落位等）
+  // 后端返回的原始路由坐标
   rawTrunkCoordinates?: [number, number][]
-  rawMatrixTraceCoordinates?: [number, number][]
-  rawMatrixSamples?: RouteMatrixSamples
-  fmmPathMeta?: RouteFmmMetadata
   algorithmSummary?: RouteAlgorithmSummary
-  rawBranches?: Array<{ fromBuId: string; toLandingName: string; coordinates: [number, number][] }>
   rawNamedPoints?: Array<{ id: string; type: string; lon: number; lat: number; name: string }>
-}
-
-// 路由成本（旧版兼容）
-export interface RouteCost {
-  cableCost: number
-  installationCost: number
-  equipmentCost: number
-  totalCost: number
-}
-
-// 规划参数
-export interface PlanningParams {
-  startPoint: [number, number]
-  endPoint: [number, number]
-  avoidAreas?: [number, number, number, number][]
-  maxDepth?: number
-  preferredCableType?: string
-}
-
-// 海缆类型枚举
-export type CableCategory = 'LPA' | 'HPA'
-
-// 海缆规格
-export interface CableSpec {
-  value: string
-  label: string
-  category: CableCategory
-  unitPrice: number  // 单价 (万元/km)
 }

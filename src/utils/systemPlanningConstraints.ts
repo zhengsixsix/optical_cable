@@ -13,8 +13,6 @@ export interface PlanningSpanConstraintInput {
   maxSpanLength: number
 }
 
-export type PlanningOptimizationTarget = 'min_amplifiers' | 'max_gsnr'
-
 const finitePositive = (value: number): boolean => Number.isFinite(value) && value > 0
 
 export function resolvePlanningSpanBounds(input: PlanningSpanConstraintInput): PlanningSpanBounds {
@@ -45,18 +43,4 @@ export function isSpanWithinBounds(spanKm: number | null | undefined, bounds: Pl
     && Number.isFinite(spanKm)
     && spanKm >= bounds.minKm - 1e-6
     && spanKm <= bounds.maxKm + 1e-6
-}
-
-export function selectConstrainedSpanKm(input: {
-  optimizedSpanKm?: number | null
-  optimizationTarget: PlanningOptimizationTarget
-  bounds: PlanningSpanBounds
-}): number {
-  // 平台优化接口没有 optimizationTarget 字段；最大 GSNR 模式以允许范围内
-  // 最短 Span 触发固定布局，确保该选择会真实改变后续布局与仿真输入。
-  const requested = input.optimizationTarget === 'max_gsnr'
-    ? input.bounds.minKm
-    : input.optimizedSpanKm ?? input.bounds.maxKm
-  const constrained = Math.min(input.bounds.maxKm, Math.max(input.bounds.minKm, requested))
-  return Number(constrained.toFixed(6))
 }

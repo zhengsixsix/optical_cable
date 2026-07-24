@@ -25,25 +25,6 @@ const checks = [
       'ensureTransmissionMockRoute',
     ],
   },
-  {
-    file: 'src/repositories/index.ts',
-    forbidden: [
-      'MockRouteRepository',
-      'createRouteRepository',
-    ],
-  },
-  {
-    file: 'src/repositories/mock/MockGeoRepository.ts',
-    forbidden: [
-      'createRouteRepository',
-    ],
-  },
-  {
-    file: 'src/data/mockData.ts',
-    forbidden: [
-      'mockRoutes',
-    ],
-  },
 ]
 
 const failures = []

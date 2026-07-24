@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import type { 
   RPLTable, 
   RPLRecord, 
@@ -9,16 +10,14 @@ import type {
   RPLPointType,
   RPLCableCode 
 } from '@/types'
-import { mockRPLRecords, ROUTE_ID, ROUTE_NAME } from '@/data/mockData'
-import { dataLinkService } from '@/services'
 
 export const useRPLStore = defineStore('rpl', () => {
+  const dictionaryStore = useDictionaryStore()
   // 状态
   const tables = ref<RPLTable[]>([])
   const currentTableId = ref<string | null>(null)
   const selectedRecordIds = ref<string[]>([])
   const filter = ref<RPLFilter>({})
-  const isEditing = ref(false)
 
   // Getters
   const currentTable = computed(() => 
@@ -48,18 +47,26 @@ export const useRPLStore = defineStore('rpl', () => {
     return records
   })
 
-  const selectedRecords = computed(() => 
-    currentTable.value?.records.filter(r => selectedRecordIds.value.includes(r.id)) || []
-  )
-
   // Actions
+  const createEmptyMetadata = (): RPLMetadata => ({
+    totalLength: 0,
+    totalCableLength: 0,
+    landingStations: 0,
+    repeaters: 0,
+    branchingUnits: 0,
+    joints: 0,
+    averageDepth: 0,
+    maxDepth: 0,
+    minDepth: 0,
+  })
+
   function createTable(name: string, routeId: string): RPLTable {
     const newTable: RPLTable = {
       id: `rpl-${Date.now()}`,
       name,
       routeId,
       records: [],
-      metadata: calculateMetadata([]),
+      metadata: createEmptyMetadata(),
       createdAt: new Date(),
       updatedAt: new Date(),
     }
@@ -73,6 +80,14 @@ export const useRPLStore = defineStore('rpl', () => {
     selectedRecordIds.value = []
   }
 
+  function replaceTables(nextTables: RPLTable[]) {
+    tables.value = nextTables
+  }
+
+  function setCurrentTableId(tableId: string | null) {
+    currentTableId.value = tableId
+  }
+
   function deleteTable(tableId: string) {
     const index = tables.value.findIndex(t => t.id === tableId)
     if (index > -1) {
@@ -83,7 +98,7 @@ export const useRPLStore = defineStore('rpl', () => {
     }
   }
 
-  function addRecord(record: Omit<RPLRecord, 'id' | 'sequence'>, emitLink = true): RPLRecord | null {
+  function addRecord(record: Omit<RPLRecord, 'id' | 'sequence'>, _emitLink = true): RPLRecord | null {
     if (!currentTable.value) return null
     
     const newRecord: RPLRecord = {
@@ -96,47 +111,22 @@ export const useRPLStore = defineStore('rpl', () => {
     recalculateSequences()
     updateMetadata()
     
-    // 触发数据联动
-    if (emitLink && newRecord.pointType !== 'waypoint') {
-      dataLinkService.emit({
-        source: 'rpl',
-        action: 'add',
-        data: newRecord,
-        kp: newRecord.kp,
-      })
-    }
-    
     return newRecord
   }
 
-  function updateRecord(recordId: string, data: Partial<RPLRecord>, emitLink = true) {
+  function updateRecord(recordId: string, data: Partial<RPLRecord>, _emitLink = true) {
     if (!currentTable.value) return
     
     const record = currentTable.value.records.find(r => r.id === recordId)
     if (record) {
-      const oldKp = record.kp
       Object.assign(record, data)
       updateMetadata()
       
-      // 触发数据联动
-      if (emitLink && record.pointType !== 'waypoint') {
-        dataLinkService.emit({
-          source: 'rpl',
-          action: 'update',
-          data: record,
-          kp: record.kp,
-        })
-      }
     }
   }
 
-  function deleteRecords(recordIds: string[], emitLink = true) {
+  function deleteRecords(recordIds: string[], _emitLink = true) {
     if (!currentTable.value) return
-    
-    // 记录要删除的记录信息用于联动
-    const deletedRecords = currentTable.value.records.filter(
-      r => recordIds.includes(r.id) && r.pointType !== 'waypoint'
-    )
     
     currentTable.value.records = currentTable.value.records.filter(
       r => !recordIds.includes(r.id)
@@ -147,92 +137,18 @@ export const useRPLStore = defineStore('rpl', () => {
     recalculateSequences()
     updateMetadata()
     
-    // 触发数据联动
-    if (emitLink) {
-      deletedRecords.forEach(record => {
-        dataLinkService.emit({
-          source: 'rpl',
-          action: 'delete',
-          data: record,
-          kp: record.kp,
-        })
-      })
-    }
-  }
-
-  function insertRecord(index: number, record: Omit<RPLRecord, 'id' | 'sequence'>): RPLRecord | null {
-    if (!currentTable.value) return null
-    
-    const newRecord: RPLRecord = {
-      ...record,
-      id: `rec-${Date.now()}`,
-      sequence: index + 1,
-    }
-    
-    currentTable.value.records.splice(index, 0, newRecord)
-    recalculateSequences()
-    updateMetadata()
-    return newRecord
-  }
-
-  function moveRecord(fromIndex: number, toIndex: number) {
-    if (!currentTable.value) return
-    
-    const records = currentTable.value.records
-    const [removed] = records.splice(fromIndex, 1)
-    records.splice(toIndex, 0, removed)
-    recalculateSequences()
   }
 
   function recalculateSequences() {
     if (!currentTable.value) return
-    
-    let cumulativeLength = 0
     currentTable.value.records.forEach((record, index) => {
       record.sequence = index + 1
-      cumulativeLength += record.segmentLength
-      record.cumulativeLength = cumulativeLength
-      record.kp = cumulativeLength
     })
   }
 
   function updateMetadata() {
     if (!currentTable.value) return
-    currentTable.value.metadata = calculateMetadata(currentTable.value.records)
     currentTable.value.updatedAt = new Date()
-  }
-
-  function calculateMetadata(records: RPLRecord[]): RPLMetadata {
-    if (records.length === 0) {
-      return {
-        totalLength: 0,
-        totalCableLength: 0,
-        landingStations: 0,
-        repeaters: 0,
-        branchingUnits: 0,
-        joints: 0,
-        averageDepth: 0,
-        maxDepth: 0,
-        minDepth: 0,
-      }
-    }
-
-    const effectiveRecords = records.filter(r => !(r as any).isBranchStation)
-    const depths = records.map(r => r.depth)
-    const totalLength = records.reduce((sum, r) => sum + r.segmentLength, 0)
-    const totalSlack = records.reduce((sum, r) => sum + r.segmentLength * (r.slack / 100), 0)
-
-    return {
-      totalLength,
-      totalCableLength: totalLength + totalSlack,
-      landingStations: effectiveRecords.filter(r => r.pointType === 'landing').length,
-      repeaters: effectiveRecords.filter(r => r.pointType === 'repeater').length,
-      branchingUnits: effectiveRecords.filter(r => r.pointType === 'branching').length,
-      joints: effectiveRecords.filter(r => r.pointType === 'joint').length,
-      averageDepth: depths.reduce((a, b) => a + b, 0) / depths.length,
-      maxDepth: Math.max(...depths),
-      minDepth: Math.min(...depths),
-    }
   }
 
   function setFilter(newFilter: RPLFilter) {
@@ -265,9 +181,6 @@ export const useRPLStore = defineStore('rpl', () => {
     selectedRecordIds.value = []
   }
 
-  // 有效的电缆类型列表
-  const validCableTypes: RPLCableCode[] = ['LW', 'LWS', 'SA', 'DA', 'SAS']
-
   function validateTable(): RPLValidationResult {
     const errors: RPLValidationResult['errors'] = []
     const warnings: RPLValidationResult['warnings'] = []
@@ -278,19 +191,7 @@ export const useRPLStore = defineStore('rpl', () => {
 
     const records = currentTable.value.records
 
-    // 检查起止点
-    if (records.length > 0) {
-      if (records[0].pointType !== 'landing') {
-        errors.push({ recordId: records[0].id, field: 'pointType', message: '第一个点必须是登陆站' })
-      }
-      if (records[records.length - 1].pointType !== 'landing') {
-        errors.push({ recordId: records[records.length - 1].id, field: 'pointType', message: '最后一个点必须是登陆站' })
-      }
-    }
-
-    let prevCumulativeDistance = 0
-
-    // 检查每条记录
+    // 这里只校验字段结构和取值格式，不在前端执行工程规则判定。
     records.forEach((record, index) => {
       const lineNum = index + 1
 
@@ -315,49 +216,23 @@ export const useRPLStore = defineStore('rpl', () => {
       if (record.slack < 0) {
         errors.push({ recordId: record.id, field: 'slack', message: `格式错误: 行${lineNum} Slack % 不能为负数` })
       }
-      if (record.slack > 10) {
-        warnings.push({ recordId: record.id, field: 'slack', message: `行${lineNum}: 余缆率${record.slack}%超过建议值10%` })
-      }
 
-      // 4. 水深检查
+      // 4. 水深格式检查
       if (record.depth < 0) {
         errors.push({ recordId: record.id, field: 'depth', message: `格式错误: 行${lineNum} 水深不能为负数` })
       }
-      if (record.depth > 11000) {
-        warnings.push({ recordId: record.id, field: 'depth', message: `行${lineNum}: 水深${record.depth}m超过11000m，请确认` })
-      }
 
-      // 5. 引用校验 - Cable Type 必须在器件库中存在
-      if (record.cableType && !validCableTypes.includes(record.cableType)) {
+      // 5. 引用校验 - Cable Type 必须来自平台铠装类型字典
+      const armoringTypes = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.armoringType)
+      const armoringTypeCodes = new Set(armoringTypes.map(item => item.code))
+      if (record.cableType && dictionaryStore.isLoaded(PLATFORM_DICTIONARY_TYPES.armoringType) && !armoringTypeCodes.has(record.cableType)) {
         errors.push({ 
           recordId: record.id, 
           field: 'cableType', 
-          message: `引用错误: 行${lineNum} 系统器件库中不存在海缆类型: ${record.cableType}` 
+          message: `引用错误: 行${lineNum} ARMORING_TYPE 字典中不存在铠装类型: ${record.cableType}`
         })
       }
 
-      // 6. 距离闭环校验 (Continuity - Distance)
-      const expectedCumulative = prevCumulativeDistance + record.segmentLength
-      const tolerance = 0.1 // 允许0.1km误差
-      if (Math.abs(record.cumulativeLength - expectedCumulative) > tolerance) {
-        errors.push({ 
-          recordId: record.id, 
-          field: 'cumulativeLength', 
-          message: `连续性错误: 行${lineNum} 距离计算不闭环 (预期: ${expectedCumulative.toFixed(2)}, 实际: ${record.cumulativeLength.toFixed(2)})` 
-        })
-      }
-      prevCumulativeDistance = record.cumulativeLength
-
-      // 7. 放大器间距检查
-      if (index > 0 && record.pointType === 'repeater') {
-        const prevRepeaterIndex = records.slice(0, index).reverse().findIndex(r => r.pointType === 'repeater')
-        if (prevRepeaterIndex > -1) {
-          const distance = record.cumulativeLength - records[index - 1 - prevRepeaterIndex].cumulativeLength
-          if (distance > 120) {
-            warnings.push({ recordId: record.id, field: 'segmentLength', message: `行${lineNum}: 放大器间距${distance.toFixed(1)}km超过建议值120km` })
-          }
-        }
-      }
     })
 
     return {
@@ -365,179 +240,6 @@ export const useRPLStore = defineStore('rpl', () => {
       errors,
       warnings,
     }
-  }
-
-  // 验证导入的RPL文件 - 基于 docs/RPL表头.xlsx 行业标准
-  function validateImportedRPL(headers: string[], rows: any[]): RPLValidationResult {
-    const errors: RPLValidationResult['errors'] = []
-    const warnings: RPLValidationResult['warnings'] = []
-
-    // 必填表头校验 - 按行业标准字段名
-    const requiredHeaders = [
-      'Pos No.', 
-      'Event', 
-      'Decimal Latitude (degrees)', 
-      'Decimal Longitude (minutes)',
-      'Slack %', 
-      'Cable Type', 
-      'Between Positions',  // Distance (km) Between Positions
-      'Cumulative Total'    // Distance (km) Cumulative Total
-    ]
-    // 支持部分匹配表头名称
-    const hasHeader = (required: string) => headers.some(h => 
-      h.includes(required) || required.includes(h) || h === required
-    )
-    const missingHeaders = requiredHeaders.filter(h => !hasHeader(h))
-    if (missingHeaders.length > 0) {
-      errors.push({ 
-        recordId: '', 
-        field: 'headers', 
-        message: `格式错误: 缺失必填表头 [${missingHeaders.join(', ')}]` 
-      })
-      return { valid: false, errors, warnings }
-    }
-
-    let prevCumulativeDistance = 0
-
-    rows.forEach((row, index) => {
-      const lineNum = index + 1
-
-      // 序号连续性
-      if (row.posNo !== lineNum) {
-        errors.push({ 
-          recordId: `row-${lineNum}`, 
-          field: 'posNo', 
-          message: `连续性错误: 行${lineNum} 序号不连续，应为 ${lineNum}` 
-        })
-      }
-
-      // 经纬度格式校验
-      if (isNaN(row.latitude) || row.latitude < -90 || row.latitude > 90) {
-        errors.push({ recordId: `row-${lineNum}`, field: 'latitude', message: `格式错误: 行${lineNum} 纬度格式无效` })
-      }
-      if (isNaN(row.longitude) || row.longitude < -180 || row.longitude > 180) {
-        errors.push({ recordId: `row-${lineNum}`, field: 'longitude', message: `格式错误: 行${lineNum} 经度格式无效` })
-      }
-
-      // Slack非负校验
-      if (row.slack < 0) {
-        errors.push({ recordId: `row-${lineNum}`, field: 'slack', message: `格式错误: 行${lineNum} Slack % 不能为负数` })
-      }
-
-      // Cable Type引用校验
-      if (row.cableType && !validCableTypes.includes(row.cableType)) {
-        errors.push({ 
-          recordId: `row-${lineNum}`, 
-          field: 'cableType', 
-          message: `引用错误: 行${lineNum} 系统器件库中不存在海缆类型: ${row.cableType}` 
-        })
-      }
-
-      // 距离闭环校验
-      const expectedCum = prevCumulativeDistance + (row.distBetween || 0)
-      if (Math.abs((row.distCumulative || 0) - expectedCum) > 0.1) {
-        errors.push({ 
-          recordId: `row-${lineNum}`, 
-          field: 'distCumulative', 
-          message: `连续性错误: 行${lineNum} 距离计算不闭环 (预期: ${expectedCum.toFixed(2)}, 实际: ${row.distCumulative?.toFixed(2)})` 
-        })
-      }
-      prevCumulativeDistance = row.distCumulative || 0
-    })
-
-    return { valid: errors.length === 0, errors, warnings }
-  }
-
-  /**
-   * 根据海底地形动态计算余缆率 (%)
-   * 公式: slack = base_slack + slope_factor * slope_angle
-   *   - base_slack: 基础余缆率 (%, 用于补偿海底起伏和施工张力)
-   *   - slope_factor: 坡度系数 (%/°)
-   *   - slope_angle: 海底坡度 (度)
-   */
-  function calculateDynamicSlack(prevDepth: number, currentDepth: number, segmentLengthKm: number): number {
-    const BASE_SLACK = 1.5       // 基础余缆率 (%)
-    const SLOPE_FACTOR = 0.15    // 坡度系数 (%/°)
-    const MAX_SLACK = 8.0        // 余缆率上限 (%)
-
-    // 计算坡度角度 (degrees)
-    const elevDiffM = Math.abs(currentDepth - prevDepth)
-    const horizDistM = segmentLengthKm * 1000
-    const slopeAngle = horizDistM > 0 ? Math.atan(elevDiffM / horizDistM) * (180 / Math.PI) : 0
-
-    const slack = BASE_SLACK + SLOPE_FACTOR * slopeAngle
-    return Math.min(parseFloat(slack.toFixed(1)), MAX_SLACK)
-  }
-
-  // 从路由生成RPL表格
-  function generateFromRoute(routeId: string, routeName: string, points: Array<{
-    coordinates: [number, number]
-    type: string
-    name?: string
-  }>, segments: Array<{
-    length: number
-    depth: number
-    cableType: string
-  }>): RPLTable {
-    const table = createTable(`${routeName}_RPL`, routeId)
-    
-    let cumulativeLength = 0
-    let prevDepth = 0
-    points.forEach((point, index) => {
-      const segment = segments[index] || segments[segments.length - 1] || { length: 0, depth: 0, cableType: 'LW' }
-      cumulativeLength += segment.length
-
-      // 动态余缆率计算
-      const slack = calculateDynamicSlack(prevDepth, segment.depth, segment.length)
-      prevDepth = segment.depth
-
-      // 埋深推荐: 浅水区(< 1500m) 需埋设保护
-      let burialDepth = 0
-      if (segment.depth < 200) burialDepth = 1.5
-      else if (segment.depth < 500) burialDepth = 1.0
-      else if (segment.depth < 1500) burialDepth = 0.6
-
-      const record: Omit<RPLRecord, 'id' | 'sequence'> = {
-        kp: cumulativeLength,
-        longitude: point.coordinates[0],
-        latitude: point.coordinates[1],
-        depth: segment.depth,
-        pointType: mapPointType(point.type),
-        cableType: mapCableType(segment.cableType),
-        segmentLength: segment.length,
-        cumulativeLength,
-        slack,
-        burialDepth,
-        remarks: point.name || '',
-      }
-      
-      addRecord(record)
-    })
-
-    return table
-  }
-
-  function mapPointType(type: string): RPLPointType {
-    const map: Record<string, RPLPointType> = {
-      landing: 'landing',
-      repeater: 'repeater',
-      branching: 'branching',
-      joint: 'joint',
-      waypoint: 'waypoint',
-    }
-    return map[type] || 'waypoint'
-  }
-
-  function mapCableType(type: string): RPLCableCode {
-    const map: Record<string, RPLCableCode> = {
-      lw: 'LW',
-      sa: 'SA',
-      da: 'DA',
-      LW: 'LW',
-      SA: 'SA',
-      DA: 'DA',
-    }
-    return map[type] || 'LW'
   }
 
   // Event名称到pointType的反向映射
@@ -550,24 +252,6 @@ export const useRPLStore = defineStore('rpl', () => {
     'Joint': 'joint',
     'Alter Course': 'waypoint',
     'Waypoint': 'waypoint',
-  }
-
-  // 解析度分秒格式的坐标
-  function parseDMSCoordinate(dms: string): number | null {
-    if (!dms) return null
-    // 匹配格式: "1° 17.425' N" 或 "121° 30.500' E"
-    const match = dms.match(/([\d.]+)\u00b0\s*([\d.]+)'\s*([NSEW])/i)
-    if (!match) return null
-    
-    const degrees = parseFloat(match[1])
-    const minutes = parseFloat(match[2])
-    const direction = match[3].toUpperCase()
-    
-    let decimal = degrees + minutes / 60
-    if (direction === 'S' || direction === 'W') {
-      decimal = -decimal
-    }
-    return decimal
   }
 
   // 解析CSV行，处理引号内的逗号
@@ -596,6 +280,12 @@ export const useRPLStore = defineStore('rpl', () => {
     return result
   }
 
+  function parseOptionalNumber(value: string | undefined): number | undefined {
+    if (!value?.trim()) return undefined
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+
   // 检测是否为新格式表头 - 基于 docs/RPL表头.xlsx 行业标准
   function detectNewFormat(headers: string[]): boolean {
     const newFormatIndicators = [
@@ -619,7 +309,7 @@ export const useRPLStore = defineStore('rpl', () => {
   }
 
   // 从CSV导入(支持新旧格式)
-  function importFromCSV(csvContent: string, tableName: string, routeId: string): boolean {
+  function importFromCSV(csvContent: string, tableName: string, routeId = ''): boolean {
     try {
       const lines = csvContent.trim().split(/\r?\n/).filter(line => !line.startsWith('#') && line.trim())
       if (lines.length < 2) return false
@@ -634,7 +324,7 @@ export const useRPLStore = defineStore('rpl', () => {
       const headers = parseCSVLine(lines[headerLineIndex])
       const isNewFormat = detectNewFormat(headers)
       
-      const table = createTable(tableName, routeId)
+      createTable(tableName, routeId)
       
       // 构建表头索引映射
       const headerIndex: Record<string, number> = {}
@@ -660,12 +350,14 @@ export const useRPLStore = defineStore('rpl', () => {
           const latDec = cols[headerIndex['Decimal Latitude (degrees)']] || ''
           const lonDecMin = cols[headerIndex['Decimal Longitude (minutes)']] || ''
           // 距离和电缆
-          const routeDistBetween = cols[headerIndex['Between Positions']] || '0'
-          const routeDistCum = cols[headerIndex['Cumulative Total']] || '0'
-          const slackPct = cols[headerIndex['Slack %']] || '2.5'
-          const cableType = cols[headerIndex['Type']] || cols[headerIndex['Cable Type']] || 'LW'
-          const depth = cols[headerIndex['Approx Depth (m)']] || '0'
-          const burial = cols[headerIndex['Target Burial Depth (m)']] || '0'
+          const routeDistBetween = parseOptionalNumber(cols[headerIndex['Between Positions']])
+          const routeDistCum = parseOptionalNumber(cols[headerIndex['Cumulative Total']])
+          const cableDistanceBetween = parseOptionalNumber(cols[headerIndex['Cable Distance (km) Between Positions']])
+          const cableDistanceCumulative = parseOptionalNumber(cols[headerIndex['Cable Distance (km) Cumulative Total']])
+          const slackPct = parseOptionalNumber(cols[headerIndex['Slack %']])
+          const cableType = cols[headerIndex['Type']] || cols[headerIndex['Cable Type']] || ''
+          const depth = parseOptionalNumber(cols[headerIndex['Approx Depth (m)']])
+          const burial = parseOptionalNumber(cols[headerIndex['Target Burial Depth (m)']])
           const remarks = cols[headerIndex['Additional Route Features']] || ''
           
           // 解析坐标 - 支持度分秒分列和十进制格式
@@ -694,32 +386,68 @@ export const useRPLStore = defineStore('rpl', () => {
           }
           
           record = {
-            kp: parseFloat(routeDistCum) || 0,
+            kp: routeDistCum ?? 0,
             longitude,
             latitude,
-            depth: parseFloat(depth) || 0,
+            depth: depth ?? 0,
             pointType: EVENT_TO_POINT_TYPE[event] || 'waypoint',
-            cableType: (cableType as RPLCableCode) || 'LW',
-            segmentLength: parseFloat(routeDistBetween) || 0,
-            cumulativeLength: parseFloat(routeDistCum) || 0,
-            slack: parseFloat(slackPct) || 2.5,
-            burialDepth: parseFloat(burial) || 0,
+            cableType: cableType as RPLCableCode,
+            segmentLength: routeDistBetween ?? 0,
+            cumulativeLength: routeDistCum ?? 0,
+            slack: slackPct ?? 0,
+            burialDepth: burial ?? 0,
             remarks,
+            ...(event ? { event: event as RPLRecord['event'] } : {}),
+            ...(parseOptionalNumber(latDec) !== undefined ? { decimalLatitudeDegrees: parseOptionalNumber(latDec) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Radians Latitude']]) !== undefined ? { radiansLatitude: parseOptionalNumber(cols[headerIndex['Radians Latitude']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Sin Latitude']]) !== undefined ? { sinLatitude: parseOptionalNumber(cols[headerIndex['Sin Latitude']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Meridional Parts']]) !== undefined ? { meridionalParts: parseOptionalNumber(cols[headerIndex['Meridional Parts']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Distance from Equator']]) !== undefined ? { distanceFromEquator: parseOptionalNumber(cols[headerIndex['Distance from Equator']]) } : {}),
+            ...(parseOptionalNumber(lonDecMin) !== undefined ? { decimalLongitudeMinutes: parseOptionalNumber(lonDecMin) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Difference in Latitude']]) !== undefined ? { diffLatitude: parseOptionalNumber(cols[headerIndex['Difference in Latitude']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Difference in MPs']]) !== undefined ? { diffMPs: parseOptionalNumber(cols[headerIndex['Difference in MPs']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Difference in E Dist']]) !== undefined ? { diffEDist: parseOptionalNumber(cols[headerIndex['Difference in E Dist']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Difference in Longitude']]) !== undefined ? { diffLongitude: parseOptionalNumber(cols[headerIndex['Difference in Longitude']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Course (Radians)']]) !== undefined ? { courseRadians: parseOptionalNumber(cols[headerIndex['Course (Radians)']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Distance in nmiles']]) !== undefined ? { distanceNmiles: parseOptionalNumber(cols[headerIndex['Distance in nmiles']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Bearing °T']]) !== undefined ? { bearingT: parseOptionalNumber(cols[headerIndex['Bearing °T']]) } : {}),
+            ...(routeDistBetween !== undefined ? { routeDistanceBetween: routeDistBetween } : {}),
+            ...(routeDistCum !== undefined ? { routeDistanceCumulative: routeDistCum } : {}),
+            ...(cableDistanceBetween !== undefined ? { cableDistanceBetween } : {}),
+            ...(cableDistanceCumulative !== undefined ? { cableDistanceCumulative } : {}),
+            ...(slackPct !== undefined ? { slackPercent: slackPct } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Cumulative by type']]) !== undefined ? { cumulativeByType: parseOptionalNumber(cols[headerIndex['Cumulative by type']]) } : {}),
+            ...(parseOptionalNumber(cols[headerIndex['Cable Totals By Type (km)']]) !== undefined ? { cableTotalsByType: parseOptionalNumber(cols[headerIndex['Cable Totals By Type (km)']]) } : {}),
+            ...(depth !== undefined ? { approxDepth: depth } : {}),
+            ...(burial !== undefined ? { targetBurialDepth: burial } : {}),
+            ...(remarks ? { additionalFeatures: remarks } : {}),
           }
         } else {
           // 旧格式解析
+          const routeDistanceBetween = parseOptionalNumber(cols[7])
+          const routeDistanceCumulative = parseOptionalNumber(cols[8])
+          const slackPercent = parseOptionalNumber(cols[9])
+          const approxDepth = parseOptionalNumber(cols[4])
+          const targetBurialDepth = parseOptionalNumber(cols[10])
+          const additionalFeatures = cols[11] || ''
           record = {
             kp: parseFloat(cols[1]) || 0,
             longitude: parseFloat(cols[2]) || 0,
             latitude: parseFloat(cols[3]) || 0,
-            depth: parseFloat(cols[4]) || 0,
+            depth: approxDepth ?? 0,
             pointType: (cols[5] as RPLPointType) || 'waypoint',
-            cableType: (cols[6] as RPLCableCode) || 'LW',
-            segmentLength: parseFloat(cols[7]) || 0,
-            cumulativeLength: parseFloat(cols[8]) || 0,
-            slack: parseFloat(cols[9]) || 2.5,
-            burialDepth: parseFloat(cols[10]) || 0,
-            remarks: cols[11] || '',
+            cableType: (cols[6] as RPLCableCode) || '',
+            segmentLength: routeDistanceBetween ?? 0,
+            cumulativeLength: routeDistanceCumulative ?? 0,
+            slack: slackPercent ?? 0,
+            burialDepth: targetBurialDepth ?? 0,
+            remarks: additionalFeatures,
+            ...(routeDistanceBetween !== undefined ? { routeDistanceBetween } : {}),
+            ...(routeDistanceCumulative !== undefined ? { routeDistanceCumulative } : {}),
+            ...(slackPercent !== undefined ? { slackPercent } : {}),
+            ...(approxDepth !== undefined ? { approxDepth } : {}),
+            ...(targetBurialDepth !== undefined ? { targetBurialDepth } : {}),
+            ...(additionalFeatures ? { additionalFeatures } : {}),
           }
         }
         addRecord(record)
@@ -731,47 +459,12 @@ export const useRPLStore = defineStore('rpl', () => {
     }
   }
 
-  // 初始化加载mock数据
-  function initMockData() {
-    if (mockRPLRecords.length === 0) return null
-
-    if (tables.value.length === 0) {
-      const table = createTable(`${ROUTE_NAME}_RPL`, ROUTE_ID)
-      // 初始化时不触发联动，避免循环
-      mockRPLRecords.forEach(record => addRecord(record, false))
-      return table
-    }
-    return null
-  }
-
-  // 监听其他模块的数据变更
-  function setupDataLinkListener() {
-    dataLinkService.subscribe('rpl', (event) => {
-      if (!currentTable.value) return
-      
-      // 根据KP查找对应记录
-      const record = currentTable.value.records.find(
-        r => Math.abs(r.kp - (event.kp || 0)) < 1
-      )
-      
-      if (event.action === 'update' && record) {
-        // 同步更新坐标和深度
-        updateRecord(record.id, {
-          longitude: event.data.longitude ?? record.longitude,
-          latitude: event.data.latitude ?? record.latitude,
-          depth: event.data.depth ?? record.depth,
-        }, false)
-      }
-    })
-  }
-
   // 清空数据
   function clearData() {
     tables.value = []
     currentTableId.value = null
     selectedRecordIds.value = []
     filter.value = {}
-    isEditing.value = false
   }
 
   return {
@@ -780,20 +473,18 @@ export const useRPLStore = defineStore('rpl', () => {
     currentTableId,
     selectedRecordIds,
     filter,
-    isEditing,
     // Getters
     currentTable,
     filteredRecords,
-    selectedRecords,
     // Actions
     createTable,
     selectTable,
+    replaceTables,
+    setCurrentTableId,
     deleteTable,
     addRecord,
     updateRecord,
     deleteRecords,
-    insertRecord,
-    moveRecord,
     setFilter,
     clearFilter,
     selectRecords,
@@ -801,12 +492,8 @@ export const useRPLStore = defineStore('rpl', () => {
     selectAllRecords,
     clearSelection,
     validateTable,
-    validateImportedRPL,
-    generateFromRoute,
     importFromCSV,
     // 项目数据管理
-    initMockData,
-    setupDataLinkListener,
     clearData,
   }
 })

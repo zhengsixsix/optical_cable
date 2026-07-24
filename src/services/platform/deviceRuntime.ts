@@ -1,24 +1,22 @@
 import type { PlanDeviceLibrary, PlanDeviceValueSave, PlanDeviceValueSimple } from './types'
+import {
+  getDeviceLibraryCategory,
+  type DeviceLibraryCategory,
+} from './deviceTypeAdapter'
 
-export type DeviceLibraryCategory = 'fiber' | 'amplifier' | 'branching' | 'equalizer' | 'joint'
-
-export interface DeviceLibraryOption {
-  value: string
-  label: string
-  library: PlanDeviceLibrary
-}
+export type { DeviceLibraryCategory } from './deviceTypeAdapter'
 
 export interface RuntimeFiberLibrary {
   id: string
   name: string
-  fiberCategory: string
+  fiberCategory?: string
   attenuationCoeff: number
   dispersion: number
   dispersionSlope: number
   effectiveArea: number
   nonlinearRefractiveIndex: number
   nonlinearCoeff: number
-  simulationModel: 'GN' | 'EGN' | 'SSFM'
+  simulationModel?: 'GN' | 'EGN' | 'SSFM'
   raw: PlanDeviceLibrary
 }
 
@@ -26,27 +24,27 @@ export interface RuntimeAmplifierLibrary {
   id: string
   name: string
   gain: number
-  bandwidth: number
-  gainFlatness: number
+  bandwidth?: number
+  gainFlatness?: number
   noiseFigure: number
-  pumpPower: number
+  pumpPower?: number
   outputPower: number
   saturationPower: number
-  gainRangePower: number
+  gainRangePower?: number
   unitPrice?: number
-  operatingMode: 'AGC' | 'APC' | 'fixed_gain' | 'fixed_output' | 'apc'
+  operatingMode?: 'AGC' | 'APC' | 'fixed_gain' | 'fixed_output' | 'apc'
   raw: PlanDeviceLibrary
 }
 
 export interface RuntimeBranchingLibrary {
   id: string
   name: string
-  subType: 'BU' | 'ROADM' | 'OADM'
+  subType?: 'BU' | 'ROADM' | 'OADM'
   portCount: number
   trunkInsertionLoss: number
   branchInsertionLoss: number
-  insertionLoss: number
-  wavelengthRange: number
+  insertionLoss?: number
+  wavelengthRange?: number
   raw: PlanDeviceLibrary
 }
 
@@ -56,23 +54,6 @@ export interface RuntimeEqualizerLibrary {
   attenuationMode: 'adjustable' | 'fixed'
   defaultAttenuationDb: number
   raw: PlanDeviceLibrary
-}
-
-export interface RuntimeJointBoxLibrary {
-  id: string
-  name: string
-  subType?: 'BJB' | 'SEJB' | 'BUJB' | 'SJB' | 'FJB' | 'LIJB'
-  insertionLoss: number
-  maxFiberPairs?: number
-  raw: PlanDeviceLibrary
-}
-
-const categoryMatchers: Record<DeviceLibraryCategory, string[]> = {
-  fiber: ['FIB', 'FIBER', 'OPTICAL_FIBER', '光纤', '光缆'],
-  amplifier: ['AMP', 'AMPLIFIER', 'EDFA', 'OLA', 'REPEATER', '放大器', '中继器'],
-  branching: ['SPL', 'SPLITTER', 'BU', 'BRANCHING', 'BRANCHING_UNIT', '分支器', '分支单元'],
-  equalizer: ['EQL', 'EQ', 'EQUALIZER', '均衡器'],
-  joint: ['SCL', 'JB', 'JOINT', 'JOINT_BOX', '接头盒'],
 }
 
 const valueAliases = {
@@ -170,37 +151,27 @@ function readString(library: PlanDeviceLibrary | null | undefined, aliases: stri
   return fallback
 }
 
-function readNumber(library: PlanDeviceLibrary | null | undefined, aliases: string[], fallback: number): number {
-  const value = Number(readString(library, aliases, ''))
-  return Number.isFinite(value) ? value : fallback
+function readNumber(library: PlanDeviceLibrary | null | undefined, aliases: string[]): number | null {
+  const rawValue = readString(library, aliases).trim()
+  if (!rawValue) return null
+  const value = Number(rawValue)
+  return Number.isFinite(value) ? value : null
 }
 
-function readEnum<T extends string>(library: PlanDeviceLibrary | null | undefined, aliases: string[], allowed: readonly T[], fallback: T): T {
-  const value = readString(library, aliases, fallback).trim()
+function readEnum<T extends string>(library: PlanDeviceLibrary | null | undefined, aliases: string[], allowed: readonly T[]): T | null {
+  const value = readString(library, aliases).trim()
+  if (!value) return null
   const matched = allowed.find(item => item.toUpperCase() === value.toUpperCase())
-  return matched ?? fallback
+  return matched ?? null
 }
 
-export function getDeviceLibraryCategory(library: PlanDeviceLibrary): DeviceLibraryCategory | null {
-  const source = [
-    library.deviceTypeCd,
-    library.typeName,
-    library.name,
-    library.dialogWindowId,
-  ]
-  const normalized = source.flatMap(value => [normalizeText(value), normalizeKey(value)])
+const isPositive = (value: number | null): value is number => value !== null && value > 0
+const isNonNegative = (value: number | null): value is number => value !== null && value >= 0
+const isFiniteValue = (value: number | null): value is number => value !== null
 
-  for (const [category, matchers] of Object.entries(categoryMatchers) as Array<[DeviceLibraryCategory, string[]]>) {
-    if (matchers.some(matcher => normalized.includes(normalizeText(matcher)) || normalized.includes(normalizeKey(matcher)))) {
-      return category
-    }
-  }
-
-  return null
-}
-
-export function isDeviceLibraryCategory(library: PlanDeviceLibrary, category: DeviceLibraryCategory): boolean {
-  return getDeviceLibraryCategory(library) === category
+function isDeviceLibraryCategory(library: PlanDeviceLibrary, category: DeviceLibraryCategory): boolean {
+  if (library.deviceTypeCd) return getDeviceLibraryCategory(library.deviceTypeCd) === category
+  return library.dialogWindowId === category
 }
 
 export function getDeviceLibrariesByCategory(
@@ -210,20 +181,7 @@ export function getDeviceLibrariesByCategory(
   return libraries.filter(library => isDeviceLibraryCategory(library, category))
 }
 
-export function getDeviceLibraryOptions(
-  libraries: PlanDeviceLibrary[],
-  category: DeviceLibraryCategory,
-): DeviceLibraryOption[] {
-  return getDeviceLibrariesByCategory(libraries, category)
-    .filter(library => library.id != null)
-    .map(library => ({
-      value: String(library.id),
-      label: nameOf(library),
-      library,
-    }))
-}
-
-export function findDeviceLibraryById(
+function findDeviceLibraryById(
   libraries: PlanDeviceLibrary[],
   id: string | number | null | undefined,
   category?: DeviceLibraryCategory,
@@ -250,97 +208,128 @@ export function firstDeviceLibraryByCategory(
   return getDeviceLibrariesByCategory(libraries, category)[0] ?? null
 }
 
-export function hasDeviceLibraryCategory(
-  libraries: PlanDeviceLibrary[],
-  category: DeviceLibraryCategory,
-): boolean {
-  return getDeviceLibrariesByCategory(libraries, category).length > 0
-}
-
-export function getDeviceLibraryParam(
-  library: PlanDeviceLibrary | null | undefined,
-  aliases: string | string[],
-  fallback = 0,
-): number {
-  return readNumber(library, Array.isArray(aliases) ? aliases : [aliases], fallback)
-}
-
 export function toRuntimeFiberLibrary(library: PlanDeviceLibrary | null | undefined): RuntimeFiberLibrary | null {
   if (!library || !isDeviceLibraryCategory(library, 'fiber')) return null
+  const id = idOf(library)
+  const name = nameOf(library)
+  const attenuationCoeff = readNumber(library, valueAliases.attenuation)
+  const dispersion = readNumber(library, valueAliases.dispersion)
+  const dispersionSlope = readNumber(library, valueAliases.dispersionSlope)
+  const effectiveArea = readNumber(library, valueAliases.effectiveArea)
+  const nonlinearRefractiveIndex = readNumber(library, valueAliases.nonlinearIndex)
+  const nonlinearCoeff = readNumber(library, valueAliases.nonlinearCoeff)
+  if (!id || !name
+    || !isPositive(attenuationCoeff)
+    || !isFiniteValue(dispersion)
+    || !isFiniteValue(dispersionSlope)
+    || !isPositive(effectiveArea)
+    || !isPositive(nonlinearRefractiveIndex)
+    || !isPositive(nonlinearCoeff)) return null
+
+  const fiberCategory = readString(library, valueAliases.fiberCategory).trim() || undefined
+  const simulationModel = readEnum(library, valueAliases.simulationModel, ['GN', 'EGN', 'SSFM'] as const) ?? undefined
   return {
-    id: idOf(library),
-    name: nameOf(library),
-    fiberCategory: readString(library, valueAliases.fiberCategory, nameOf(library) || 'G.654.E'),
-    attenuationCoeff: readNumber(library, valueAliases.attenuation, 0.16),
-    dispersion: readNumber(library, valueAliases.dispersion, 20.5),
-    dispersionSlope: readNumber(library, valueAliases.dispersionSlope, 0.06),
-    effectiveArea: readNumber(library, valueAliases.effectiveArea, 110),
-    nonlinearRefractiveIndex: readNumber(library, valueAliases.nonlinearIndex, 2.2),
-    nonlinearCoeff: readNumber(library, valueAliases.nonlinearCoeff, 0.8),
-    simulationModel: readEnum(library, valueAliases.simulationModel, ['GN', 'EGN', 'SSFM'] as const, 'GN'),
+    id,
+    name,
+    fiberCategory,
+    attenuationCoeff,
+    dispersion,
+    dispersionSlope,
+    effectiveArea,
+    nonlinearRefractiveIndex,
+    nonlinearCoeff,
+    simulationModel,
     raw: library,
   }
 }
 
 export function toRuntimeAmplifierLibrary(library: PlanDeviceLibrary | null | undefined): RuntimeAmplifierLibrary | null {
   if (!library || !isDeviceLibraryCategory(library, 'amplifier')) return null
+  const id = idOf(library)
+  const name = nameOf(library)
+  const gain = readNumber(library, valueAliases.gain)
+  const noiseFigure = readNumber(library, valueAliases.noiseFigure)
+  const outputPower = readNumber(library, valueAliases.outputPower)
+  const saturationPower = readNumber(library, valueAliases.saturationPower)
+  if (!id || !name
+    || !isPositive(gain)
+    || !isNonNegative(noiseFigure)
+    || !isFiniteValue(outputPower)
+    || !isFiniteValue(saturationPower)) return null
+
+  const rawBandwidth = readNumber(library, valueAliases.bandwidth)
+  const rawGainFlatness = readNumber(library, valueAliases.gainFlatness)
+  const rawPumpPower = readNumber(library, valueAliases.pumpPower)
+  const rawGainRangePower = readNumber(library, valueAliases.gainRangePower)
+  const bandwidth = isPositive(rawBandwidth) ? rawBandwidth : undefined
+  const gainFlatness = isNonNegative(rawGainFlatness) ? rawGainFlatness : undefined
+  const pumpPower = isNonNegative(rawPumpPower) ? rawPumpPower : undefined
+  const gainRangePower = isNonNegative(rawGainRangePower) ? rawGainRangePower : undefined
+  const unitPrice = readNumber(library, valueAliases.unitPrice) ?? undefined
+  const operatingMode = readEnum(
+    library,
+    valueAliases.operatingMode,
+    ['AGC', 'APC', 'fixed_gain', 'fixed_output', 'apc'] as const,
+  ) ?? undefined
   return {
-    id: idOf(library),
-    name: nameOf(library),
-    gain: readNumber(library, valueAliases.gain, 20),
-    bandwidth: readNumber(library, valueAliases.bandwidth, 35),
-    gainFlatness: readNumber(library, valueAliases.gainFlatness, 1),
-    noiseFigure: readNumber(library, valueAliases.noiseFigure, 5),
-    pumpPower: readNumber(library, valueAliases.pumpPower, 200),
-    outputPower: readNumber(library, valueAliases.outputPower, 17),
-    saturationPower: readNumber(library, valueAliases.saturationPower, 20),
-    gainRangePower: readNumber(library, valueAliases.gainRangePower, 15),
-    unitPrice: readNumber(library, valueAliases.unitPrice, NaN) || undefined,
-    operatingMode: readEnum(library, valueAliases.operatingMode, ['AGC', 'APC', 'fixed_gain', 'fixed_output', 'apc'] as const, 'AGC'),
+    id,
+    name,
+    gain,
+    bandwidth,
+    gainFlatness,
+    noiseFigure,
+    pumpPower,
+    outputPower,
+    saturationPower,
+    gainRangePower,
+    unitPrice,
+    operatingMode,
     raw: library,
   }
 }
 
 export function toRuntimeBranchingLibrary(library: PlanDeviceLibrary | null | undefined): RuntimeBranchingLibrary | null {
   if (!library || !isDeviceLibraryCategory(library, 'branching')) return null
-  const trunkInsertionLoss = readNumber(library, valueAliases.trunkInsertionLoss, 0.8)
+  const id = idOf(library)
+  const name = nameOf(library)
+  const portCount = readNumber(library, valueAliases.portCount)
+  const trunkInsertionLoss = readNumber(library, valueAliases.trunkInsertionLoss)
+  const branchInsertionLoss = readNumber(library, valueAliases.branchInsertionLoss)
+  if (!id || !name
+    || portCount === null || !Number.isInteger(portCount) || portCount < 2
+    || !isNonNegative(trunkInsertionLoss)
+    || !isNonNegative(branchInsertionLoss)) return null
+
+  const rawInsertionLoss = readNumber(library, valueAliases.insertionLoss)
+  const rawWavelengthRange = readNumber(library, valueAliases.wavelengthRange)
+  const insertionLoss = isNonNegative(rawInsertionLoss) ? rawInsertionLoss : undefined
+  const wavelengthRange = isPositive(rawWavelengthRange) ? rawWavelengthRange : undefined
+  const subType = readEnum(library, valueAliases.subType, ['BU', 'ROADM', 'OADM'] as const) ?? undefined
   return {
-    id: idOf(library),
-    name: nameOf(library),
-    subType: readEnum(library, valueAliases.subType, ['BU', 'ROADM', 'OADM'] as const, 'BU'),
-    portCount: readNumber(library, valueAliases.portCount, 3),
+    id,
+    name,
+    subType,
+    portCount,
     trunkInsertionLoss,
-    branchInsertionLoss: readNumber(library, valueAliases.branchInsertionLoss, 3.5),
-    insertionLoss: readNumber(library, valueAliases.insertionLoss, trunkInsertionLoss),
-    wavelengthRange: readNumber(library, valueAliases.wavelengthRange, 1550),
+    branchInsertionLoss,
+    insertionLoss,
+    wavelengthRange,
     raw: library,
   }
 }
 
 export function toRuntimeEqualizerLibrary(library: PlanDeviceLibrary | null | undefined): RuntimeEqualizerLibrary | null {
   if (!library || !isDeviceLibraryCategory(library, 'equalizer')) return null
+  const id = idOf(library)
+  const name = nameOf(library)
+  const attenuationMode = readEnum(library, valueAliases.attenuationMode, ['adjustable', 'fixed'] as const)
+  const defaultAttenuationDb = readNumber(library, valueAliases.defaultAttenuationDb)
+  if (!id || !name || !attenuationMode || !isNonNegative(defaultAttenuationDb)) return null
   return {
-    id: idOf(library),
-    name: nameOf(library),
-    attenuationMode: readEnum(library, valueAliases.attenuationMode, ['adjustable', 'fixed'] as const, 'adjustable'),
-    defaultAttenuationDb: readNumber(library, valueAliases.defaultAttenuationDb, 0),
-    raw: library,
-  }
-}
-
-export function toRuntimeJointBoxLibrary(library: PlanDeviceLibrary | null | undefined): RuntimeJointBoxLibrary | null {
-  if (!library || !isDeviceLibraryCategory(library, 'joint')) return null
-  const subType = readString(library, valueAliases.subType, '')
-  const validSubType = ['BJB', 'SEJB', 'BUJB', 'SJB', 'FJB', 'LIJB'].includes(subType)
-    ? subType as RuntimeJointBoxLibrary['subType']
-    : undefined
-
-  return {
-    id: idOf(library),
-    name: nameOf(library),
-    subType: validSubType,
-    insertionLoss: readNumber(library, valueAliases.insertionLoss, 0.05),
-    maxFiberPairs: readNumber(library, valueAliases.maxFiberPairs, NaN) || undefined,
+    id,
+    name,
+    attenuationMode,
+    defaultAttenuationDb,
     raw: library,
   }
 }

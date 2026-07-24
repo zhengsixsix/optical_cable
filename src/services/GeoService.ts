@@ -1,203 +1,117 @@
-import type { GeoTiffData, ElevationData, Extent, ImportResult, ExportFormat, Route, GeoJSON } from '@/types'
-import type { IGeoRepository } from '@/repositories'
-import { createGeoRepository } from '@/repositories'
+import type { GeoJSON, ImportResult } from '@/types'
+import GeoJSONFormat from 'ol/format/GeoJSON'
+import type Geometry from 'ol/geom/Geometry'
+import type GeometryCollection from 'ol/geom/GeometryCollection'
+import type MultiLineString from 'ol/geom/MultiLineString'
+import type MultiPolygon from 'ol/geom/MultiPolygon'
+import type Polygon from 'ol/geom/Polygon'
+import type SimpleGeometry from 'ol/geom/SimpleGeometry'
+
+const geoJSONFormat = new GeoJSONFormat()
+
+function hasValidFlatCoordinates(geometry: SimpleGeometry, minimumPositions: number): boolean {
+  const stride = geometry.getStride()
+  const coordinates = geometry.getFlatCoordinates()
+  return stride >= 2
+    && coordinates.length >= stride * minimumPositions
+    && coordinates.length % stride === 0
+    && coordinates.every(Number.isFinite)
+}
+
+function hasValidGeometry(geometry: Geometry | null | undefined): boolean {
+  if (!geometry) return true
+  switch (geometry.getType()) {
+    case 'GeometryCollection':
+      return (geometry as GeometryCollection).getGeometries().every(hasValidGeometry)
+    case 'Point':
+    case 'MultiPoint':
+      return hasValidFlatCoordinates(geometry as SimpleGeometry, 1)
+    case 'LineString':
+      return hasValidFlatCoordinates(geometry as SimpleGeometry, 2)
+    case 'LinearRing':
+      return hasValidFlatCoordinates(geometry as SimpleGeometry, 4)
+    case 'Polygon': {
+      const rings = (geometry as Polygon).getLinearRings()
+      return rings.length > 0 && rings.every(hasValidGeometry)
+    }
+    case 'MultiLineString': {
+      const lines = (geometry as MultiLineString).getLineStrings()
+      return lines.length > 0 && lines.every(hasValidGeometry)
+    }
+    case 'MultiPolygon': {
+      const polygons = (geometry as MultiPolygon).getPolygons()
+      return polygons.length > 0 && polygons.every(hasValidGeometry)
+    }
+    default:
+      return false
+  }
+}
+
+function isFeatureCollection(value: unknown): value is GeoJSON.FeatureCollection {
+  if (!value || typeof value !== 'object') return false
+  const collection = value as Record<string, unknown>
+  if (collection.type !== 'FeatureCollection' || !Array.isArray(collection.features)) return false
+
+  try {
+    const features = geoJSONFormat.readFeatures(collection, {
+      dataProjection: 'EPSG:4326',
+      featureProjection: 'EPSG:4326',
+    })
+    return features.length === collection.features.length
+      && features.every(feature => hasValidGeometry(feature.getGeometry()))
+  } catch {
+    return false
+  }
+}
 
 /**
  * 地理数据业务服务
- * 封装 GeoTIFF 加载、高程数据处理、导入导出等功能
+ * 封装用户提供的 GIS 文件解析。
  */
 export class GeoService {
-    private repository: IGeoRepository
-
-    constructor(repository?: IGeoRepository) {
-        this.repository = repository ?? createGeoRepository()
+  async importFile(file: File): Promise<ImportResult> {
+    const extension = `.${file.name.split('.').pop()?.toLowerCase()}`
+    if (extension !== '.geojson' && extension !== '.json') {
+      return {
+        success: false,
+        message: '不支持的文件格式',
+        errors: ['支持的格式: .geojson, .json'],
+      }
     }
 
-    /**
-     * 加载 GeoTIFF 地形数据
-     * @param url 文件URL或路径
-     */
-    async loadTerrain(url: string): Promise<GeoTiffData> {
-        try {
-            const data = await this.repository.loadGeoTiff(url)
-            return data
-        } catch {
-            throw new Error('无法加载地形数据')
-        }
-    }
-
-    /**
-     * 获取指定范围的高程数据
-     * @param extent 范围 [minX, minY, maxX, maxY]
-     */
-    async getElevationProfile(extent: Extent): Promise<ElevationData> {
-        try {
-            const data = await this.repository.getElevationData(extent)
-            return data
-        } catch {
-            throw new Error('无法获取高程数据')
-        }
-    }
-
-    /**
-     * 导入 GIS 文件
-     * 支持 GeoJSON, KML, Shapefile 等格式
-     * @param file 文件对象
-     */
-    async importFile(file: File): Promise<ImportResult> {
-        try {
-            // 验证文件类型
-            const validTypes = ['.geojson', '.json', '.kml', '.kmz', '.shp', '.tif', '.tiff']
-            const ext = '.' + file.name.split('.').pop()?.toLowerCase()
-
-            if (!validTypes.includes(ext)) {
-                return {
-                    success: false,
-                    message: '不支持的文件格式',
-                    errors: [`支持的格式: ${validTypes.join(', ')}`]
-                }
-            }
-
-            const result = await this.repository.importGisFile(file)
-            return result
-        } catch (error) {
-            return {
-                success: false,
-                message: '导入失败',
-                errors: [(error as Error).message]
-            }
-        }
-    }
-
-    /**
-     * 导出路由数据
-     * @param routeId 路由ID
-     * @param format 导出格式
-     */
-    async exportRoute(routeId: string, format: ExportFormat): Promise<Blob> {
-        try {
-            const blob = await this.repository.exportRouteData(routeId, format)
-            return blob
-        } catch {
-            throw new Error('导出路由数据失败')
-        }
-    }
-
-    /**
-     * 触发文件下载
-     * @param blob 数据Blob
-     * @param filename 文件名
-     */
-    downloadFile(blob: Blob, filename: string): void {
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = filename
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(url)
-    }
-
-    /**
-     * 将路由转换为 GeoJSON
-     * @param route 路由数据
-     */
-    routeToGeoJSON(route: Route): GeoJSON.FeatureCollection {
-        const features: GeoJSON.Feature[] = []
-
-        // 添加点要素
-        for (const point of route.points) {
-            features.push({
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: point.coordinates
-                },
-                properties: {
-                    id: point.id,
-                    type: point.type,
-                    name: point.name
-                }
-            })
-        }
-
-        // 添加线要素 (连接所有点)
-        if (route.points.length >= 2) {
-            features.push({
-                type: 'Feature',
-                geometry: {
-                    type: 'LineString',
-                    coordinates: route.points.map(p => p.coordinates)
-                },
-                properties: {
-                    id: route.id,
-                    name: route.name,
-                    totalLength: route.totalLength,
-                    totalCost: route.totalCost
-                }
-            })
-        }
-
+    try {
+      const parsed: unknown = JSON.parse(await file.text())
+      if (!isFeatureCollection(parsed)) {
         return {
-            type: 'FeatureCollection',
-            features
+          success: false,
+          message: '无效的 GeoJSON 格式',
+          errors: ['文件必须是有效的 GeoJSON FeatureCollection'],
         }
+      }
+
+      const geojson = parsed
+      const pointCount = geojson.features.filter(feature => feature.geometry?.type === 'Point').length
+      const lineCount = geojson.features.filter(feature => feature.geometry?.type === 'LineString').length
+      return {
+        success: true,
+        message: `成功解析 ${geojson.features.length} 个要素（${pointCount} 个点，${lineCount} 条线）`,
+        data: geojson,
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: 'GeoJSON 解析失败',
+        errors: [(error as Error).message],
+      }
     }
-
-    /**
-     * 高程数据归一化
-     * @param data 高程数据
-     * @param min 目标最小值
-     * @param max 目标最大值
-     */
-    normalizeElevation(data: ElevationData, min = 0, max = 1): Float32Array {
-        const range = data.maxValue - data.minValue
-        const normalized = new Float32Array(data.values.length)
-
-        for (let i = 0; i < data.values.length; i++) {
-            const value = data.values[i]
-            normalized[i] = ((value - data.minValue) / range) * (max - min) + min
-        }
-
-        return normalized
-    }
-
-    /**
-     * 高程值转换为颜色
-     * 使用海洋学常用的配色方案
-     * @param value 归一化后的高程值 (0-1)
-     */
-    elevationToColor(value: number): [number, number, number] {
-        // 深海到浅海的渐变色
-        const colors = [
-            [0, 0, 80],      // 深海 - 深蓝
-            [0, 50, 150],    // 中深海 - 蓝色
-            [0, 100, 200],   // 浅海 - 浅蓝
-            [100, 200, 255], // 近岸 - 浅青
-            [200, 255, 200], // 沿海 - 浅绿
-        ]
-
-        const idx = Math.min(Math.floor(value * (colors.length - 1)), colors.length - 2)
-        const t = (value * (colors.length - 1)) - idx
-
-        const c1 = colors[idx]
-        const c2 = colors[idx + 1]
-
-        return [
-            Math.round(c1[0] + (c2[0] - c1[0]) * t),
-            Math.round(c1[1] + (c2[1] - c1[1]) * t),
-            Math.round(c1[2] + (c2[2] - c1[2]) * t)
-        ]
-    }
+  }
 }
 
-// 创建单例实例
 let _geoService: GeoService | null = null
 
 export function useGeoService(): GeoService {
-    if (!_geoService) {
-        _geoService = new GeoService()
-    }
-    return _geoService
+  if (!_geoService) {
+    _geoService = new GeoService()
+  }
+  return _geoService
 }

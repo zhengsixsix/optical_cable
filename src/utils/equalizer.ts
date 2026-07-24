@@ -1,5 +1,5 @@
-export type EqualizerRole = 'T' | 'S'
-export type EqualizerAttenuationMode = 'adjustable' | 'fixed'
+type EqualizerRole = 'T' | 'S'
+type EqualizerAttenuationMode = 'adjustable' | 'fixed'
 
 export interface EqualizerConfigLike {
   equalizerRole?: EqualizerRole | null

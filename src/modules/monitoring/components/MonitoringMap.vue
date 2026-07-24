@@ -423,8 +423,7 @@ const closePopup = () => {
   popup?.setPosition(undefined)
 }
 
-// 获取健康度颜色
-const getHealthColor = (status: string) => {
+const getStatusColor = (status: string) => {
   if (status === 'normal') return 'text-green-600'
   if (status === 'warning') return 'text-yellow-600'
   return 'text-red-600'
@@ -479,23 +478,10 @@ onUnmounted(() => {
             <span class="text-xs text-gray-500">状态：</span>
             <span class="flex items-center gap-1.5">
               <span :class="['w-2 h-2 rounded-full', popupDevice?.status === 'normal' ? 'bg-green-500' : popupDevice?.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500']"></span>
-              <span :class="['text-xs font-medium', getHealthColor(popupDevice?.status || '')]">
+              <span :class="['text-xs font-medium', getStatusColor(popupDevice?.status || '')]">
                 {{ getStatusText(popupDevice?.status || '') }}
               </span>
             </span>
-          </div>
-          
-          <!-- 健康度 - 突出显示 -->
-          <div class="pt-2">
-            <div class="text-xs text-gray-500 mb-1">健康度：</div>
-            <div :class="['text-3xl font-bold', popupDevice?.health >= 80 ? 'text-green-600' : popupDevice?.health >= 60 ? 'text-yellow-600' : 'text-red-600']">
-              {{ popupDevice?.health?.toFixed(0) || '--' }}<span class="text-lg">%</span>
-            </div>
-            <!-- 健康度进度条 -->
-            <div class="h-2 bg-gray-200 rounded-full overflow-hidden mt-2">
-              <div :class="['h-full transition-all rounded-full', popupDevice?.health >= 80 ? 'bg-green-500' : popupDevice?.health >= 60 ? 'bg-yellow-500' : 'bg-red-500']" 
-                   :style="{ width: (popupDevice?.health || 0) + '%' }"></div>
-            </div>
           </div>
         </div>
         

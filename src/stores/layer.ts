@@ -1,43 +1,15 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import type { LayerConfig, LayerData } from '@/types'
-import { createLayerRepository } from '@/repositories'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { platformPlanLayerApi } from '@/services/platform/api'
-import type { PlanLayer, PlanLayerTypeDic } from '@/services/platform/types'
+import type { PlanLayer } from '@/services/platform/types'
 import { detectGisFormat, getPlanLayerFileName } from '@/utils/gisFormat'
 import { getPlatformAttachmentUrl } from '@/services/platform/attachment'
-
-const platformLayerTypeToLocalId: Partial<Record<PlanLayerTypeDic, string>> = {
-  BATHY: 'elevation',
-  SLOPE: 'slope',
-  VOLCANO: 'volcano',
-  CWCORAL: 'coldCoral',
-  SEISMIC: 'earthquake',
-  FISHZONE: 'fishing',
-  SHIPLANE: 'shipping',
-}
-
-const localLayerTypes: Record<string, LayerConfig['type']> = {
-  elevation: 'raster',
-  slope: 'heatmap',
-  volcano: 'both',
-  coldCoral: 'vector',
-  earthquake: 'both',
-  fishing: 'point',
-  shipping: 'vector',
-}
-
-const defaultLayerNames: Record<string, string> = {
-  elevation: '海洋高程',
-  slope: '海洋坡度',
-  volcano: '火山区域',
-  coldCoral: '冷水珊瑚',
-  earthquake: '地震活动',
-  fishing: '海洋渔区分布',
-  shipping: '航道分布',
-}
-
-const platformManagedLayerIds = new Set(Object.values(platformLayerTypeToLocalId))
+import {
+  getLocalLayerIdForDictionaryCode,
+  getRuntimeLayerTypeForDictionaryCode,
+} from '@/services/platform/layerTypeAdapter'
 
 function getPlatformLayerDownloadUrl(platformLayer: PlanLayer): string | null {
   const layerWithUrl = platformLayer as PlanLayer & {
@@ -58,22 +30,10 @@ function getPlatformLayerDownloadUrl(platformLayer: PlanLayer): string | null {
 }
 
 export const useLayerStore = defineStore('layer', () => {
-  const repository = createLayerRepository()
-
+  const dictionaryStore = useDictionaryStore()
   // 状态
-  const layers = ref<LayerConfig[]>([
-    { id: 'volcano', name: '火山区域', type: 'both', visible: false, loaded: false, loading: false },
-    { id: 'earthquake', name: '地震活动', type: 'both', visible: false, loaded: false, loading: false },
-    { id: 'elevation', name: '海洋高程', type: 'raster', visible: false, loaded: false, loading: false },
-    { id: 'slope', name: '海洋坡度', type: 'heatmap', visible: false, loaded: false, loading: false },
-    { id: 'fishing', name: '海洋渔区分布', type: 'point', visible: false, loaded: false, loading: false },
-    { id: 'shipping', name: '航道分布', type: 'vector', visible: false, loaded: false, loading: false },
-    { id: 'coldCoral', name: '冷水珊瑚', type: 'vector', visible: false, loaded: false, loading: false },
-  ])
+  const layers = ref<LayerConfig[]>([])
 
-  // Getters
-  const visibleLayers = computed(() => layers.value.filter(l => l.visible))
-  const loadedLayers = computed(() => layers.value.filter(l => l.loaded))
   const platformProjectLayers = ref<PlanLayer[]>([])
   const platformLayersLoading = ref(false)
   const platformLayersError = ref<string | null>(null)
@@ -120,9 +80,28 @@ export const useLayerStore = defineStore('layer', () => {
     layers.value.push(config)
   }
 
+  function syncDictionaryLayers() {
+    for (const item of dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType)) {
+      const id = getLocalLayerIdForDictionaryCode(item.code)
+      const existing = layers.value.find(layer => layer.id === id)
+      upsertLayer({
+        id,
+        name: item.name || String(item.code),
+        type: getRuntimeLayerTypeForDictionaryCode(item.code),
+        visible: existing?.visible ?? false,
+        loaded: existing?.loaded ?? false,
+        loading: existing?.loading ?? false,
+        error: existing?.error,
+        opacity: existing?.opacity,
+        zIndex: existing?.zIndex,
+      })
+    }
+  }
+
   function getPlatformLayerId(layer: PlanLayer): string {
-    const localId = layer.typeDic ? platformLayerTypeToLocalId[layer.typeDic] : undefined
-    return localId ?? `platform-layer-${layer.id ?? layer.attachmentId ?? layer.name ?? Date.now()}`
+    return layer.typeDic
+      ? getLocalLayerIdForDictionaryCode(layer.typeDic)
+      : `platform-layer-${layer.id ?? layer.attachmentId ?? layer.name ?? Date.now()}`
   }
 
   function mapPlatformLayer(layer: PlanLayer): LayerConfig {
@@ -132,8 +111,9 @@ export const useLayerStore = defineStore('layer', () => {
 
     return {
       id,
-      name: defaultLayerNames[id] || layer.name || layer.attachmentName || layer.filename || `平台图层 ${layer.id ?? ''}`.trim(),
-      type: localLayerTypes[id] ?? 'vector',
+      name: dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.layerType, layer.typeDic)?.name
+        || layer.name || layer.attachmentName || layer.filename || `平台图层 ${layer.id ?? ''}`.trim(),
+      type: getRuntimeLayerTypeForDictionaryCode(layer.typeDic),
       visible: existingPlatformSource ? (existing?.visible ?? false) : false,
       loaded: Boolean(layer.attachmentId),
       loading: false,
@@ -170,8 +150,13 @@ export const useLayerStore = defineStore('layer', () => {
   }
 
   function applyPlatformLayers(platformLayers: PlanLayer[]) {
+    syncDictionaryLayers()
     const nextIds = new Set<string>()
     const uploadedManagedIds = new Set<string>()
+    const platformManagedLayerIds = new Set(
+      dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType)
+        .map(item => getLocalLayerIdForDictionaryCode(item.code)),
+    )
 
     for (const platformLayer of platformLayers) {
       const config = mapPlatformLayer(platformLayer)
@@ -265,39 +250,13 @@ export const useLayerStore = defineStore('layer', () => {
     return layerDataMap.value.get(id)
   }
 
-  /**
-   * 检查图层是否有实际数据（用户上传过文件）
-   */
-  function hasLayerData(id: string): boolean {
-    return layerDataMap.value.has(id)
-  }
-
-  function showAllLayers() {
-    layers.value.forEach(layer => {
-      layer.visible = true
-    })
-    }
-
-  function hideAllLayers() {
-    layers.value.forEach(layer => {
-      layer.visible = false
-    })
-    }
-
-  async function loadLayers() {
-    try {
-      const data = await repository.getLayers()
-      layers.value = data
-    } catch {
-      // 静默处理加载失败
-    }
-  }
-
   async function loadPlatformProjectLayers(projectId?: number | string | null) {
     platformLayersLoading.value = true
     platformLayersError.value = null
 
     try {
+      await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType)
+      syncDictionaryLayers()
       if (!projectId) {
         platformProjectLayers.value = []
         applyPlatformLayers([])
@@ -321,28 +280,9 @@ export const useLayerStore = defineStore('layer', () => {
     }
   }
 
-  async function loadLayer(id: string) {
-    const layer = layers.value.find(l => l.id === id)
-    if (!layer) return
-
-    layer.loading = true
-    layer.error = false
-
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      layer.loaded = true
-      layer.loading = false
-      } catch {
-      layer.loading = false
-      layer.error = true
-    }
-  }
-
   return {
     layers,
     layerDataMap,
-    visibleLayers,
-    loadedLayers,
     platformProjectLayers,
     platformLayersLoading,
     platformLayersError,
@@ -355,12 +295,8 @@ export const useLayerStore = defineStore('layer', () => {
     getLayerById,
     setLayerData,
     getLayerData,
-    hasLayerData,
-    showAllLayers,
-    hideAllLayers,
-    loadLayers,
     loadPlatformProjectLayers,
     loadPlatformLayerDetail,
-    loadLayer,
+    syncDictionaryLayers,
   }
 })

@@ -15,11 +15,11 @@ export type RPLEventType =
   | 'Landing Station' // 登陆站
   | 'Waypoint'        // 路径点 (路由规划阶段分段管理节点)
 
-// RPL电缆类型代码
-export type RPLCableCode = 'LW' | 'LWS' | 'SA' | 'DA' | 'SAS'
+// RPL 电缆类型代码来自平台 ARMORING_TYPE 字典。
+export type RPLCableCode = string
 
 // RPL表格单条记录 - 基于 docs/RPL表头.xlsx 行业标准格式
-// 说明：系统内部以最小字段集维护记录；导出/导入时按行业标准字段补全（可计算字段可缺省）。
+// 说明：系统内部以最小字段集维护记录；行业标准扩展字段仅在后端或导入文件明确提供时存在。
 export interface RPLRecord {
   id: string
 
@@ -37,7 +37,7 @@ export interface RPLRecord {
   burialDepth: number        // Target Burial Depth (m) - 目标埋设深度
   remarks: string            // Planned Additional Route Features - 备注
 
-  // === 行业标准导出字段（可选，可由导出服务计算） ===
+  // === 行业标准导出字段（可选，由后端或导入文件提供） ===
   event?: RPLEventType                    // Event列显示名称
   latitudeDMS?: string                    // Latitude ° ' Dir
   longitudeDMS?: string                   // Longitude ° ' Dir
@@ -58,6 +58,7 @@ export interface RPLRecord {
   routeDistanceCumulative?: number        // Distance (km) Cumulative Total
   cableDistanceBetween?: number           // Cable Distance (km) Between Positions
   cableDistanceCumulative?: number        // Cable Distance (km) Cumulative Total
+  slackPercent?: number                   // Slack %
   cumulativeByType?: number               // Cumulative by type
   cableTotalsByType?: number              // Cable Totals By Type (km)
   approxDepth?: number                    // Approx Depth (m)
@@ -99,14 +100,6 @@ export interface RPLFilter {
   cableType?: RPLCableCode[]
   depthRange?: [number, number]
   kpRange?: [number, number]
-}
-
-// RPL编辑操作
-export interface RPLEditOperation {
-  type: 'add' | 'update' | 'delete' | 'reorder'
-  recordId?: string
-  data?: Partial<RPLRecord>
-  index?: number
 }
 
 // RPL验证结果

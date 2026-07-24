@@ -13,10 +13,10 @@ interface SegmentInfo {
   routeId: string
   startPoint: { lon: number; lat: number }
   endPoint: { lon: number; lat: number }
-  length: number
-  depth: number
-  cableType: string
-  riskLevel: string
+  length?: number
+  depth?: number
+  cableType?: string
+  riskLevel?: string
 }
 
 interface Props {
@@ -40,9 +40,23 @@ const hoverInfo = ref({
   elevation: 0,
 })
 
-const loadProfileData = async (extent: [number, number, number, number]) => {
-  loading.value = true
+let profileRequestId = 0
+
+const clearProfileData = () => {
+  profileData.value = []
   hasData.value = false
+  hoverInfo.value.visible = false
+
+  const canvas = canvasRef.value
+  if (!canvas) return
+  canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+  delete (canvas as any)._profileData
+}
+
+const loadProfileData = async (extent: [number, number, number, number]) => {
+  const requestId = ++profileRequestId
+  loading.value = true
+  clearProfileData()
 
   try {
     const result = await fetchDemProfile({
@@ -50,19 +64,21 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
       extent,
       sampleCount: 100,
     })
+    if (requestId !== profileRequestId) return
     profileData.value = result.points || []
     hasData.value = profileData.value.length > 0
     if (hasData.value) nextTick(() => drawProfile())
   } catch {
-    profileData.value = []
+    if (requestId === profileRequestId) clearProfileData()
   } finally {
-    loading.value = false
+    if (requestId === profileRequestId) loading.value = false
   }
 }
 
 const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
+  const requestId = ++profileRequestId
   loading.value = true
-  hasData.value = false
+  clearProfileData()
 
   try {
     const result = await fetchDemProfile({
@@ -73,13 +89,14 @@ const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
       },
       sampleCount: 100,
     })
+    if (requestId !== profileRequestId) return
     profileData.value = result.points || []
     hasData.value = profileData.value.length > 0
     if (hasData.value) nextTick(() => drawProfile())
   } catch {
-    profileData.value = []
+    if (requestId === profileRequestId) clearProfileData()
   } finally {
-    loading.value = false
+    if (requestId === profileRequestId) loading.value = false
   }
 }
 
@@ -164,14 +181,6 @@ const drawProfile = () => {
   ctx.lineWidth = 2
   ctx.moveTo(xScale(seabedData[0].distance), yScale(seabedData[0].depth))
   seabedData.forEach(point => ctx.lineTo(xScale(point.distance), yScale(point.depth)))
-  ctx.stroke()
-
-  const cableData = seabedData.map(p => ({ distance: p.distance, depth: p.depth + 5 }))
-  ctx.beginPath()
-  ctx.strokeStyle = '#FF5722'
-  ctx.lineWidth = 3
-  ctx.moveTo(xScale(cableData[0].distance), yScale(cableData[0].depth))
-  cableData.forEach(point => ctx.lineTo(xScale(point.distance), yScale(point.depth)))
   ctx.stroke()
 
   ctx.fillStyle = '#374151'
@@ -276,20 +285,27 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  profileRequestId += 1
   resizeObserver?.disconnect()
   containerRef.value?.removeEventListener('mousemove', handleMouseMove)
   containerRef.value?.removeEventListener('mouseleave', handleMouseLeave)
 })
 
-watch(() => props.extent, (newExtent) => {
-  if (newExtent) loadProfileData(newExtent)
-}, { immediate: true })
-
-watch(() => props.segmentInfo, (newSegment) => {
-  if (newSegment) {
-    loadProfileDataFromSegment(newSegment)
-  }
-}, { immediate: true, deep: true })
+watch(
+  [() => props.segmentInfo, () => props.extent],
+  ([newSegment, newExtent]) => {
+    if (newSegment) {
+      void loadProfileDataFromSegment(newSegment)
+    } else if (newExtent) {
+      void loadProfileData(newExtent)
+    } else {
+      profileRequestId += 1
+      loading.value = false
+      clearProfileData()
+    }
+  },
+  { immediate: true, deep: true },
+)
 </script>
 
 <template>

@@ -1,0 +1,37 @@
+{
+  "data": {
+    "FMM_path_result.json": [
+      {
+        "trace": [
+          [1, 120, 30],
+          [2, 120.1, 30.1]
+        ],
+        "real_trace": [
+          [1, 120, 30],
+          [2, 120.1, 30.1]
+        ],
+        "total_cost": 1000,
+        "total_risk": 0.2,
+        "length": 15
+      }
+    ],
+    "segment_result_base_Risk.json": {
+      "route_index": 0,
+      "segment_nodes": [
+        [1, 120, 30],
+        [2, 120.1, 30.1]
+      ],
+      "segments": [
+        {
+          "segment_id": 1,
+          "start_node_id": 1,
+          "end_node_id": 2,
+          "cable_type": "LW",
+          "length_km": 15
+        }
+      ]
+    },
+    "cost.txt": "1 2\n3 4",
+    "risk.txt": "0.1 0.2\n0.3 0.4"
+  }
+}

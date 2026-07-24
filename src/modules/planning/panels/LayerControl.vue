@@ -2,12 +2,14 @@
 import { useAppStore } from '@/stores/app'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useLayerStore } from '@/stores/layer'
+import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { Select } from '@/shared/components/base'
-import { RefreshCw, Download, Maximize2, X, Upload, Settings } from 'lucide-vue-next'
-import type { PlanLayerTypeDic } from '@/services/platform/types'
+import { RefreshCw, Download, Maximize2, X, Settings } from 'lucide-vue-next'
 import { detectGisFormat, getPlanLayerFileName } from '@/utils/gisFormat'
+import { getLocalLayerIdForDictionaryCode } from '@/services/platform/layerTypeAdapter'
 
 const layerStore = useLayerStore()
+const dictionaryStore = useDictionaryStore()
 const appStore = useAppStore()
 const currentProject = computed(() => appStore.projectState.currentProject)
 const hasOpenProject = computed(() => currentProject.value !== null)
@@ -21,12 +23,10 @@ const emit = defineEmits<{
 
 // 图层类型筛选
 const layerType = ref('all')
-const layerTypeOptions = [
+const layerTypeOptions = computed(() => [
   { value: 'all', label: '所有类型' },
-  { value: 'base', label: '基础图层' },
-  { value: 'route', label: '路由图层' },
-  { value: 'risk', label: '风险图层' },
-]
+  ...dictionaryStore.getOptions(PLATFORM_DICTIONARY_TYPES.layerType),
+])
 
 interface PlatformLayerRow {
   id: string
@@ -42,32 +42,12 @@ interface PlatformLayerRow {
   formatLabel: string
 }
 
-const platformLayerDefinitions = [
-  { typeDic: 'BATHY', id: 'bathy', storeLayerId: 'elevation', name: '海洋高程图', type: 'base' },
-  { typeDic: 'VOLCANO', id: 'volcano', storeLayerId: 'volcano', name: '海洋火山分布', type: 'risk' },
-  { typeDic: 'FISHZONE', id: 'fishzone', storeLayerId: 'fishing', name: '海洋渔区分布', type: 'risk' },
-  { typeDic: 'SLOPE', id: 'slope', storeLayerId: 'slope', name: '海洋坡度图', type: 'base' },
-  { typeDic: 'SEISMIC', id: 'seismic', storeLayerId: 'earthquake', name: '海洋地震分布', type: 'risk' },
-  { typeDic: 'SHIPLANE', id: 'shiplane', storeLayerId: 'shipping', name: '海洋航道图', type: 'risk' },
-] satisfies Array<{
-  typeDic: PlanLayerTypeDic
-  id: string
-  storeLayerId: string
-  name: string
-  type: string
-}>
-
-// 图层类型显示名
-const layerTypeName: Record<string, string> = {
-  base: '基础',
-  route: '路由',
-  risk: '风险',
-}
-
 // 图层列表
 const layers = computed<PlatformLayerRow[]>(() => {
-  const allLayers = platformLayerDefinitions.map((definition) => {
-    const platformLayer = layerStore.platformProjectLayers.find(layer => layer.typeDic === definition.typeDic)
+  const allLayers = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType).map((dictionaryItem) => {
+    const typeDic = String(dictionaryItem.code)
+    const storeLayerId = getLocalLayerIdForDictionaryCode(typeDic)
+    const platformLayer = layerStore.platformProjectLayers.find(layer => layer.typeDic === typeDic)
     const uploaded = Boolean(platformLayer?.attachmentId)
     const fileName = getPlanLayerFileName(platformLayer)
     const formatInfo = detectGisFormat(fileName)
@@ -75,12 +55,12 @@ const layers = computed<PlatformLayerRow[]>(() => {
     const statusClass: PlatformLayerRow['statusClass'] = uploaded ? 'success' : 'info'
 
     return {
-      id: definition.id,
-      storeLayerId: definition.storeLayerId,
-      name: definition.name,
-      type: definition.type,
-      typeName: layerTypeName[definition.type],
-      visible: uploaded && layerStore.getLayerVisible(definition.storeLayerId),
+      id: typeDic,
+      storeLayerId,
+      name: dictionaryItem.name || typeDic,
+      type: typeDic,
+      typeName: typeDic,
+      visible: uploaded && layerStore.getLayerVisible(storeLayerId),
       uploaded,
       status,
       statusClass,
@@ -140,7 +120,16 @@ async function handleVisibleChange(layer: PlatformLayerRow, visible: boolean) {
   }, 800)
 }
 
-async function loadProjectLayers(showSuccess = false) {
+async function loadProjectLayers(showSuccess = false, forceDictionary = false) {
+  if (forceDictionary) {
+    try {
+      await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType, true)
+      layerStore.syncDictionaryLayers()
+    } catch (error) {
+      appStore.showNotification({ type: 'error', message: `图层类型字典加载失败：${(error as Error).message}` })
+      return
+    }
+  }
   if (!hasOpenProject.value) {
     await layerStore.loadPlatformProjectLayers(null)
     return
@@ -169,7 +158,7 @@ async function loadProjectLayers(showSuccess = false) {
 }
 
 function handleRefresh() {
-  void loadProjectLayers(true)
+  void loadProjectLayers(true, true)
 }
 
 function handleImportGis() {
@@ -178,10 +167,6 @@ function handleImportGis() {
 
 function handleLayerSettings(layerId: string) {
   appStore.showNotification({ type: 'info', message: `打开 ${layerId} 图层设置` })
-}
-
-function handleExport(layerId: string) {
-  appStore.openDialog('export')
 }
 
 onMounted(() => {
@@ -213,13 +198,6 @@ watch(currentPlatformProjectId, () => {
           @click="handleImportGis"
         >
           <Download class="w-3.5 h-3.5" />
-        </button>
-        <button 
-          class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 
-          title="导出图层"
-          @click="handleExport('')"
-        >
-          <Upload class="w-3.5 h-3.5" />
         </button>
         <button 
           class="p-1 hover:text-blue-500 text-gray-400 transition-colors" 
@@ -312,13 +290,6 @@ watch(currentPlatformProjectId, () => {
               @click="handleLayerSettings(layer.id)"
             >
               <Settings class="w-3 h-3" />
-            </button>
-            <button
-              class="p-0.5 hover:text-blue-500 text-gray-400 transition-colors"
-              title="导出"
-              @click="handleExport(layer.id)"
-            >
-              <Upload class="w-3 h-3" />
             </button>
           </div>
         </div>
