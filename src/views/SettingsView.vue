@@ -7,7 +7,8 @@ import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictiona
 import { useRouteStore } from '@/stores/route'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { platformPlanConfigApi, platformPointApi } from '@/services/platform/api'
-import type { PlanPoint } from '@/services/platform/types'
+import { normalizePlanPoint } from '@/services/platform/normalizers'
+import type { Id, PlanPoint, PlanPointSaveListItem } from '@/services/platform/types'
 import {Card, CardContent, Button, Select, Input} from '@/shared/components/base'
 import MapSelectDialog from '@/modules/planning/dialogs/MapSelectDialog.vue'
 import type { MapMarker } from '@/modules/planning/dialogs/MapSelectDialog.vue'
@@ -26,6 +27,8 @@ import {
   Plus,
   RotateCcw,
   Save,
+  Edit,
+  Loader2,
   Trash2,
   X,
   Anchor,
@@ -119,16 +122,30 @@ const formatCoord = (point: { lon: number; lat: number }): string => {
   return `${point.lon.toFixed(6)},${point.lat.toFixed(6)}`
 }
 
+interface EditableWaypoint {
+  id: string
+  platformPointId?: Id
+  name: string
+  coord: string
+  isUnderwater: boolean
+}
+
+const formatWaypointCoord = (longitude: number, latitude: number): string =>
+  Number.isFinite(longitude) && Number.isFinite(latitude) && (longitude !== 0 || latitude !== 0)
+    ? `${longitude},${latitude}`
+    : ''
+
 // 多点坐标列表 - USE文件规范: imported_landing_points
-const waypoints = ref<Array<{ id: string; name: string; coord: string; isUnderwater: boolean }>>([])
+const waypoints = ref<EditableWaypoint[]>([])
 
 // 初始化多点坐标
 const initWaypoints = () => {
   const stored = settingsStore.routePlanningConfig.waypoints || []
   waypoints.value = stored.map(wp => ({
     id: wp.id,
+    platformPointId: wp.platformPointId,
     name: wp.name,
-    coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : '',
+    coord: formatWaypointCoord(wp.lon, wp.lat),
     isUnderwater: (wp.depth && wp.depth > 0) ? true : false  // depth > 0 表示水下站点
   }))
 }
@@ -142,18 +159,6 @@ const handleAddWaypoint = () => {
     coord: '',
     isUnderwater: false  // 默认为岸上站点
   })
-}
-
-// 删除多点坐标
-const handleRemoveWaypoint = (id: string) => {
-  waypoints.value = waypoints.value.filter(wp => wp.id !== id)
-}
-
-// 编辑登陆站（复用地图选点）
-const handleEditWaypoint = (id: string) => {
-  const waypoint = waypoints.value.find(wp => wp.id === id)
-  if (!waypoint) return
-  openWaypointEditDialog(waypoint)
 }
 
 // 获取坐标经度
@@ -338,23 +343,221 @@ const handleMapBoxSelect = () => {
 
 // 登陆站编辑弹窗
 const showWaypointEditDialog = ref(false)
-const editingWaypoint = ref<{ id: string; name: string; coord: string } | null>(null)
+const editingWaypoint = ref<EditableWaypoint | null>(null)
+const stationDetailLoading = ref(false)
+const stationSaving = ref(false)
+const pendingStationIds = ref<Set<string>>(new Set())
+const stationCrudPendingBatch = ref(false)
 
-const openWaypointEditDialog = (wp: { id: string; name: string; coord: string }) => {
+const openWaypointEditDialog = (wp: EditableWaypoint) => {
   editingWaypoint.value = {...wp}
   showWaypointEditDialog.value = true
 }
 
-const saveWaypointEdit = () => {
-  if (editingWaypoint.value) {
-    const wp = waypoints.value.find(w => w.id === editingWaypoint.value!.id)
-    if (wp) {
-      wp.name = editingWaypoint.value.name
-      wp.coord = editingWaypoint.value.coord
-    }
-  }
+const closeWaypointEditDialog = () => {
+  if (stationSaving.value) return
   showWaypointEditDialog.value = false
   editingWaypoint.value = null
+}
+
+const normalizePlatformPointId = (value: Id | null | undefined): Id | null => {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value > 0 ? value : null
+  }
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return /^[1-9]\d*$/.test(normalized) ? normalized : null
+}
+
+const parseStationCoordinate = (coord: string): { longitude: number; latitude: number } | null => {
+  const parts = coord.split(',').map(value => Number(value.trim()))
+  if (parts.length !== 2 || !parts.every(Number.isFinite)) return null
+  const [longitude, latitude] = parts
+  if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) return null
+  return { longitude, latitude }
+}
+
+const syncWaypointDraftsToSettings = () => {
+  settingsStore.updateRoutePlanningConfig({
+    waypoints: waypoints.value.map(waypoint => {
+      const coordinate = parseStationCoordinate(waypoint.coord)
+      return {
+        id: waypoint.id,
+        platformPointId: waypoint.platformPointId,
+        name: waypoint.name,
+        lon: coordinate?.longitude ?? 0,
+        lat: coordinate?.latitude ?? 0,
+        depth: waypoint.isUnderwater ? 100 : 0,
+      }
+    }),
+  })
+  settingsStore.saveToLocalStorage()
+}
+
+const setStationPending = (id: string, pending: boolean) => {
+  const next = new Set(pendingStationIds.value)
+  if (pending) next.add(id)
+  else next.delete(id)
+  pendingStationIds.value = next
+}
+
+const isStationPending = (id: string) => pendingStationIds.value.has(id)
+
+const resolveWaypointPlatformPointId = async (waypoint: EditableWaypoint): Promise<Id | null> => {
+  const knownId = normalizePlatformPointId(waypoint.platformPointId)
+    ?? normalizePlatformPointId(waypoint.id)
+  if (knownId != null) {
+    waypoint.platformPointId = knownId
+    return knownId
+  }
+
+  const projectId = appStore.projectState.currentProject?.platformProjectId
+  if (projectId == null) return null
+
+  const waypointIndex = waypoints.value.findIndex(item => item.id === waypoint.id)
+  const expectedSortNum = waypointIndex >= 0 ? waypointIndex + 1 : null
+  const points = await platformPointApi.searchAll({ projectId })
+  const candidates = points
+    .map(normalizePlanPoint)
+    .filter(point => point?.id != null && (expectedSortNum == null || point.sortNum === expectedSortNum))
+  const coordinate = parseStationCoordinate(waypoint.coord)
+  const exactMatch = coordinate
+    ? candidates.find(point => point?.name === waypoint.name
+      && point.longitude === coordinate.longitude
+      && point.latitude === coordinate.latitude)
+    : null
+  const matchedPoint = exactMatch ?? (candidates.length === 1 ? candidates[0] : null)
+  const resolvedId = normalizePlatformPointId(matchedPoint?.id)
+  if (resolvedId != null) waypoint.platformPointId = resolvedId
+  return resolvedId
+}
+
+// 编辑已持久化站点时，先以详情接口的数据填充弹窗。
+const handleEditWaypoint = async (id: string) => {
+  const waypoint = waypoints.value.find(item => item.id === id)
+  if (!waypoint || isStationPending(id)) return
+  openWaypointEditDialog(waypoint)
+
+  const projectId = appStore.projectState.currentProject?.platformProjectId
+  if (projectId == null) return
+
+  stationDetailLoading.value = true
+  setStationPending(id, true)
+  try {
+    const pointId = await resolveWaypointPlatformPointId(waypoint)
+    if (pointId == null) return
+    const detail = normalizePlanPoint(await platformPointApi.detail(pointId))
+    if (!detail) throw new Error('站点详情缺少有效坐标')
+    if (detail.projectId != null && String(detail.projectId) !== String(projectId)) {
+      throw new Error('站点不属于当前项目')
+    }
+    if (editingWaypoint.value?.id === id) {
+      editingWaypoint.value.platformPointId = detail.id
+      editingWaypoint.value.name = detail.name || waypoint.name
+      editingWaypoint.value.coord = `${detail.longitude},${detail.latitude}`
+    }
+    waypoint.platformPointId = detail.id
+  } catch (error) {
+    closeWaypointEditDialog()
+    appStore.showNotification({
+      type: 'error',
+      message: `站点详情加载失败：${error instanceof Error ? error.message : String(error)}`,
+    })
+  } finally {
+    stationDetailLoading.value = false
+    setStationPending(id, false)
+  }
+}
+
+const saveWaypointEdit = async () => {
+  const draft = editingWaypoint.value
+  if (!draft || stationSaving.value) return
+  const waypoint = waypoints.value.find(item => item.id === draft.id)
+  const waypointIndex = waypoints.value.findIndex(item => item.id === draft.id)
+  if (!waypoint || waypointIndex < 0) return
+
+  const name = draft.name.trim()
+  const coordinate = parseStationCoordinate(draft.coord)
+  if (!name) {
+    appStore.showNotification({ type: 'warning', message: '请输入站点名称' })
+    return
+  }
+  if (!coordinate) {
+    appStore.showNotification({ type: 'warning', message: '站点坐标无效，经度应为 -180~180，纬度应为 -90~90' })
+    return
+  }
+
+  stationSaving.value = true
+  setStationPending(draft.id, true)
+  try {
+    const projectId = appStore.projectState.currentProject?.platformProjectId
+    let platformPointId = normalizePlatformPointId(draft.platformPointId)
+    if (projectId != null) {
+      platformPointId ??= await resolveWaypointPlatformPointId(waypoint)
+      const savedId = await platformPointApi.save({
+        ...(platformPointId != null ? { id: platformPointId } : {}),
+        projectId,
+        name,
+        longitude: coordinate.longitude,
+        latitude: coordinate.latitude,
+        sortNum: waypointIndex + 1,
+      })
+      platformPointId = normalizePlatformPointId(savedId)
+      if (platformPointId == null) throw new Error('保存接口未返回有效站点 ID')
+    }
+
+    waypoint.name = name
+    waypoint.coord = `${coordinate.longitude},${coordinate.latitude}`
+    waypoint.platformPointId = platformPointId ?? waypoint.platformPointId
+    stationCrudPendingBatch.value = true
+    syncWaypointDraftsToSettings()
+    appStore.setProjectDirty(true)
+    routeStore.clearParetoRoutes()
+    cableSegmentStore.clearSegments()
+    showWaypointEditDialog.value = false
+    editingWaypoint.value = null
+    appStore.showNotification({ type: 'success', message: '站点已保存' })
+  } catch (error) {
+    appStore.showNotification({
+      type: 'error',
+      message: `站点保存失败：${error instanceof Error ? error.message : String(error)}`,
+    })
+  } finally {
+    stationSaving.value = false
+    setStationPending(draft.id, false)
+  }
+}
+
+const handleRemoveWaypoint = async (id: string) => {
+  const waypoint = waypoints.value.find(item => item.id === id)
+  if (!waypoint || isStationPending(id)) return
+  if (!window.confirm(`确定删除站点“${waypoint.name}”吗？`)) return
+
+  setStationPending(id, true)
+  try {
+    const projectId = appStore.projectState.currentProject?.platformProjectId
+    if (projectId != null) {
+      const pointId = await resolveWaypointPlatformPointId(waypoint)
+      if (pointId != null) {
+        const removed = await platformPointApi.remove(pointId)
+        if (removed !== true) throw new Error('删除接口返回 false')
+      }
+    }
+    waypoints.value = waypoints.value.filter(item => item.id !== id)
+    stationCrudPendingBatch.value = true
+    syncWaypointDraftsToSettings()
+    appStore.setProjectDirty(true)
+    routeStore.clearParetoRoutes()
+    cableSegmentStore.clearSegments()
+    appStore.showNotification({ type: 'success', message: '站点已删除' })
+  } catch (error) {
+    appStore.showNotification({
+      type: 'error',
+      message: `站点删除失败：${error instanceof Error ? error.message : String(error)}`,
+    })
+  } finally {
+    setStationPending(id, false)
+  }
 }
 
 // BU 编辑弹窗 - USE规范: max_ports
@@ -492,8 +695,9 @@ watch(
       if (newConfig.waypoints) {
         waypoints.value = newConfig.waypoints.map(wp => ({
           id: wp.id,
+          platformPointId: wp.platformPointId,
           name: wp.name,
-          coord: wp.lon && wp.lat ? `${wp.lon},${wp.lat}` : '',
+          coord: formatWaypointCoord(wp.lon, wp.lat),
           isUnderwater: (wp.depth && wp.depth > 0) ? true : false
         }))
       }
@@ -804,26 +1008,60 @@ const planningRangeContainsStations = (
   && station.lat <= range.northwest.lat
   && station.lat >= range.southeast.lat)
 
+interface PlatformStationDraft {
+  id: string
+  platformPointId?: Id
+  name: string
+  lon: number
+  lat: number
+  depth?: number
+}
+
 const savePlatformStations = async (
   projectId: string | number,
-  stations: Array<{ id: string; name: string; lon: number; lat: number }>,
-) => {
-  const response = await platformPointApi.search({ projectId, pageNumber: 1, pageSize: 1000 })
-  const existingPoints = [...(response.data ?? [])]
+  stations: PlatformStationDraft[],
+): Promise<PlanPoint[]> => {
+  const existingPoints = (await platformPointApi.searchAll({ projectId }))
     .sort((a, b) => Number(a.sortNum ?? 0) - Number(b.sortNum ?? 0))
-  const pointList: PlanPoint[] = stations.map((station, index) => {
-    const existing = existingPoints.find(point => String(point.id ?? '') === station.id)
-      ?? existingPoints[index]
+  const pointList: PlanPointSaveListItem[] = stations.map((station, index) => {
+    const knownId = normalizePlatformPointId(station.platformPointId)
+      ?? normalizePlatformPointId(station.id)
+    const existingById = knownId == null
+      ? null
+      : existingPoints.find(point => String(point.id ?? '') === String(knownId))
+    const existingPointToPoint = existingById == null && (station.id === 'start' || station.id === 'end')
+      ? existingPoints.find(point => Number(point.sortNum) === index + 1)
+      : null
+    const existingExact = existingById == null && existingPointToPoint == null
+      ? existingPoints.find(point => point.name === station.name
+        && Number(point.longitude) === station.lon
+        && Number(point.latitude) === station.lat)
+      : null
+    const existing = existingById ?? existingPointToPoint ?? existingExact
     return {
       id: existing?.id,
-      projectId,
       name: station.name,
       longitude: station.lon,
       latitude: station.lat,
       sortNum: index + 1,
     }
   })
-  await platformPointApi.saveList({ projectId, pointList })
+  const saved = await platformPointApi.saveList({ projectId, pointList })
+  if (saved !== true) throw new Error('批量保存接口返回 false')
+  return platformPointApi.searchAll({ projectId })
+}
+
+const attachPlatformPointIds = <T extends PlatformStationDraft>(
+  stations: T[],
+  persistedPoints: PlanPoint[],
+): Array<T & { platformPointId?: Id }> => {
+  const pointsBySort = new Map(
+    persistedPoints.map(point => [Number(point.sortNum), normalizePlatformPointId(point.id)]),
+  )
+  return stations.map((station, index) => ({
+    ...station,
+    platformPointId: pointsBySort.get(index + 1) ?? station.platformPointId,
+  }))
 }
 
 const persistSelectedStartAndEnd = async (): Promise<boolean> => {
@@ -840,7 +1078,7 @@ const persistSelectedStartAndEnd = async (): Promise<boolean> => {
     lat: Number(endPointConfig.lat),
     depth: endPointConfig.isUnderwater ? 100 : 0,
   }
-  const stations = [
+  let stations: PlatformStationDraft[] = [
     { id: 'start', ...startPoint },
     { id: 'end', ...endPoint },
   ]
@@ -849,7 +1087,8 @@ const persistSelectedStartAndEnd = async (): Promise<boolean> => {
     const loadingKey = `save-route-points:${projectId}`
     appStore.showGlobalLoading('正在保存起点终点', '正在查询站点ID并提交修改', loadingKey)
     try {
-      await savePlatformStations(projectId, stations)
+      const persistedPoints = await savePlatformStations(projectId, stations)
+      stations = attachPlatformPointIds(stations, persistedPoints)
     } catch (error) {
       appStore.showNotification({
         type: 'error',
@@ -900,16 +1139,25 @@ const handleSave = async (): Promise<boolean> => {
   const isEndValid = endPoint.lon !== 0 || endPoint.lat !== 0
 
   // 解析多点坐标 - USE规范: imported_landing_points
-  const parsedWaypoints = waypoints.value.map(wp => {
-    const coord = parseCoordString(wp.coord)
-    return {
+  const invalidWaypoint = routeConfig.mode === 'multi-point'
+    ? waypoints.value.find(waypoint => !waypoint.name.trim() || !parseStationCoordinate(waypoint.coord))
+    : null
+  if (invalidWaypoint) {
+    appStore.showNotification({ type: 'warning', message: `站点“${invalidWaypoint.name || '未命名'}”的名称或坐标无效` })
+    return false
+  }
+  const parsedWaypoints = waypoints.value.flatMap(wp => {
+    const coordinate = parseStationCoordinate(wp.coord)
+    if (!coordinate) return []
+    return [{
       id: wp.id,
-      name: wp.name,
-      lon: coord.lon,
-      lat: coord.lat,
+      platformPointId: wp.platformPointId,
+      name: wp.name.trim(),
+      lon: coordinate.longitude,
+      lat: coordinate.latitude,
       depth: wp.isUnderwater ? 100 : 0  // 水下站点默认水深100m，岸上站点为0
-    }
-  }).filter(wp => wp.lon !== 0 || wp.lat !== 0) // 过滤无效坐标
+    }]
+  })
 
   // 解析 BU 配置列表 - USE规范: imported_bu_nodes
   const parsedBuList: BUConfig[] = buConfigs.value.map(bu => {
@@ -952,7 +1200,7 @@ const handleSave = async (): Promise<boolean> => {
   }
 
   // 点对点模式下，把起点和终点也保存到 waypoints
-  let finalWaypoints = parsedWaypoints
+  let finalWaypoints: PlatformStationDraft[] = parsedWaypoints
   if (routeConfig.mode === 'point-to-point') {
     finalWaypoints = [
       {id: 'start', name: startPointConfig.name || '起点', lon: startPoint.lon, lat: startPoint.lat, depth: startPoint.depth},
@@ -974,7 +1222,8 @@ const handleSave = async (): Promise<boolean> => {
   }
 
   const originalConfig = settingsStore.routePlanningConfig
-  const stationChanged = routeConfig.mode !== originalConfig.mode
+  const stationChanged = stationCrudPendingBatch.value
+    || routeConfig.mode !== originalConfig.mode
     || finalWaypoints.length !== (originalConfig.waypoints?.length ?? 0)
     || (routeConfig.mode === 'point-to-point'
       ? !sameStation(originalConfig.startPoint, startPoint) || !sameStation(originalConfig.endPoint, endPoint)
@@ -987,7 +1236,15 @@ const handleSave = async (): Promise<boolean> => {
   const platformProjectId = appStore.projectState.currentProject?.platformProjectId
   if (platformProjectId != null && stationChanged) {
     try {
-      await savePlatformStations(platformProjectId, finalWaypoints)
+      const persistedPoints = await savePlatformStations(platformProjectId, finalWaypoints)
+      finalWaypoints = attachPlatformPointIds(finalWaypoints, persistedPoints)
+      if (routeConfig.mode === 'multi-point') {
+        const idsByLocalId = new Map(finalWaypoints.map(point => [point.id, point.platformPointId]))
+        waypoints.value = waypoints.value.map(point => ({
+          ...point,
+          platformPointId: idsByLocalId.get(point.id) ?? point.platformPointId,
+        }))
+      }
     } catch (error) {
       appStore.showNotification({
         type: 'error',
@@ -1010,6 +1267,7 @@ const handleSave = async (): Promise<boolean> => {
     redundancyConfig: parsedRedundancyConfig,
     isConfigured,
   })
+  stationCrudPendingBatch.value = false
 
   settingsStore.updateTransmissionConfig({
     channelCount: transConfig.channelCount,
@@ -1343,10 +1601,12 @@ const handleReset = () => {
                             <div class="flex items-center justify-center gap-1">
                               <button
                                 class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-primary hover:bg-primary/10 rounded-full transition-colors"
-                                title="编辑" 
+                                title="加载详情并编辑"
+                                :disabled="isStationPending(wp.id)"
                                 @click="handleEditWaypoint(wp.id)"
                               >
-                                <Edit class="w-4 h-4"/>
+                                <Loader2 v-if="isStationPending(wp.id)" class="w-4 h-4 animate-spin"/>
+                                <Edit v-else class="w-4 h-4"/>
                               </button>
                               <button
                                 class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
@@ -1357,7 +1617,8 @@ const handleReset = () => {
                               </button>
                               <button
                                 class="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                                title="删除" 
+                                title="删除"
+                                :disabled="isStationPending(wp.id)"
                                 @click="handleRemoveWaypoint(wp.id)"
                               >
                                 <Trash2 class="w-4 h-4"/>
@@ -2029,7 +2290,7 @@ const handleReset = () => {
   <!-- 编辑登陆站弹窗 -->
   <Teleport to="body">
     <div v-if="showWaypointEditDialog && editingWaypoint" class="fixed inset-0 z-50 flex items-center justify-center">
-      <div class="absolute inset-0 bg-black/50" @click="showWaypointEditDialog = false"/>
+      <div class="absolute inset-0 bg-black/50" @click="closeWaypointEditDialog"/>
       <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[400px]">
         <div class="px-5 py-3 border-b">
           <h3 class="font-bold text-gray-800 dark:text-gray-100 text-center">编辑登陆站</h3>
@@ -2037,30 +2298,36 @@ const handleReset = () => {
         <div class="p-5 space-y-4">
           <div class="flex items-center gap-3">
             <label class="w-20 text-sm text-gray-600 dark:text-gray-400 text-right">站点名称：</label>
-            <Input v-model="editingWaypoint.name" class="flex-1" placeholder="请输入站点名称"/>
+            <Input v-model="editingWaypoint.name" :disabled="stationDetailLoading || stationSaving"
+                   class="flex-1" placeholder="请输入站点名称"/>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-20 text-sm text-gray-600 dark:text-gray-400 text-right">经度：</label>
             <Input :model-value="getCoordLon(editingWaypoint.coord)"
+                   :disabled="stationDetailLoading || stationSaving"
                    @update:model-value="setCoordLon(editingWaypoint, $event)" class="flex-1" placeholder="如：121.4737"/>
           </div>
           <div class="flex items-center gap-3">
             <label class="w-20 text-sm text-gray-600 dark:text-gray-400 text-right">纬度：</label>
             <Input :model-value="getCoordLat(editingWaypoint.coord)"
+                   :disabled="stationDetailLoading || stationSaving"
                    @update:model-value="setCoordLat(editingWaypoint, $event)" class="flex-1" placeholder="如：31.2304"/>
           </div>
           <div class="flex justify-center">
-            <Button size="sm" variant="outline" @click="handleWaypointMapSelect(editingWaypoint.id)">
+            <Button size="sm" variant="outline" :disabled="stationDetailLoading || stationSaving"
+                    @click="handleWaypointMapSelect(editingWaypoint.id)">
               <MapPin class="w-3.5 h-3.5 mr-1"/>
               地图选点
             </Button>
           </div>
         </div>
         <div class="flex justify-center gap-4 p-4 border-t">
-          <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6" @click="saveWaypointEdit">
-            保存
+          <Button class="bg-primary hover:bg-primary hover:brightness-90 text-white px-6"
+                  :disabled="stationDetailLoading || stationSaving" @click="saveWaypointEdit">
+            <Loader2 v-if="stationDetailLoading || stationSaving" class="w-4 h-4 mr-2 animate-spin"/>
+            {{ stationDetailLoading ? '加载中' : stationSaving ? '保存中' : '保存' }}
           </Button>
-          <Button variant="outline" class="px-6" @click="showWaypointEditDialog = false">取消</Button>
+          <Button variant="outline" class="px-6" :disabled="stationSaving" @click="closeWaypointEditDialog">取消</Button>
         </div>
       </div>
     </div>

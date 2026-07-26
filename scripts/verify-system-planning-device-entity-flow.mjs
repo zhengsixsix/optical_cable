@@ -148,6 +148,22 @@ expect(
   'dialog close/reopen does not invalidate stale asynchronous device initialization',
 )
 
+expect(
+  dialogSource.includes('deviceEntityList')
+    && dialogSource.includes('settingsStore.loadPlatformDeviceEntities({')
+    && dialogSource.includes('syncConnectorStoreFromDeviceEntities(entities)')
+    && dialogSource.includes('platformDeviceEntityToConnectorElement')
+    && dialogSource.includes('replacePlatformElements: true'),
+  'generated deviceEntityList is not synchronized into the platform and connector stores',
+)
+expect(
+  platformApiSource.includes("'/plan/deviceEntity/search'")
+    && platformApiSource.includes("'/plan/deviceEntity/save'")
+    && platformApiSource.includes("'/plan/deviceEntity/detail'")
+    && platformApiSource.includes("'/plan/deviceEntity/remove'"),
+  'device entity search/save/detail/remove APIs are not all connected',
+)
+
 const typesSource = fs.readFileSync(path.join(root, 'src/services/platform/types.ts'), 'utf8')
 expect(
   typesSource.includes('positionKm?: number | string | null')

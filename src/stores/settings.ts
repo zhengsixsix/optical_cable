@@ -34,6 +34,7 @@ const STORAGE_KEY = 'cable-planner-settings'
 // 多点坐标接口 - USE文件规范: imported_landing_points
 interface WaypointConfig {
   id: string
+  platformPointId?: string | number
   name: string
   lon: number
   lat: number
@@ -226,6 +227,58 @@ const defaultSimulationModelConfig: SimulationModelConfig = {
   buModel: '',
 }
 
+function createDefaultSystemPlanningConfig(): SystemPlanningParams {
+  const wdmParams = defaultSystemPlanningParams.wdmParams
+  return {
+    ...defaultSystemPlanningParams,
+    wdmParams: {
+      ...wdmParams,
+      shapingMoments: wdmParams.shapingMoments ? { ...wdmParams.shapingMoments } : undefined,
+      vectorParams: wdmParams.vectorParams ? {
+        launchPowerVector: [...wdmParams.vectorParams.launchPowerVector],
+        initialAseVector: [...wdmParams.vectorParams.initialAseVector],
+        initialNliVector: [...wdmParams.vectorParams.initialNliVector],
+      } : undefined,
+    },
+    spanScanConfig: { ...defaultSystemPlanningParams.spanScanConfig },
+  }
+}
+
+function restoreSystemPlanningConfig(value: Partial<SystemPlanningParams>): SystemPlanningParams {
+  const defaults = createDefaultSystemPlanningConfig()
+  const savedWdm = value.wdmParams
+  const savedVectors = savedWdm?.vectorParams
+  const defaultVectors = defaults.wdmParams.vectorParams
+  const vector = (candidate: unknown, fallback: number[] | undefined): number[] =>
+    Array.isArray(candidate) ? [...candidate] as number[] : [...(fallback ?? [])]
+
+  return {
+    ...defaults,
+    ...value,
+    wdmParams: {
+      ...defaults.wdmParams,
+      ...savedWdm,
+      shapingMoments: {
+        moment4: savedWdm?.shapingMoments?.moment4
+          ?? defaults.wdmParams.shapingMoments?.moment4
+          ?? 1.32,
+        moment6: savedWdm?.shapingMoments?.moment6
+          ?? defaults.wdmParams.shapingMoments?.moment6
+          ?? 1.96,
+      },
+      vectorParams: savedVectors ? {
+        launchPowerVector: vector(savedVectors.launchPowerVector, defaultVectors?.launchPowerVector),
+        initialAseVector: vector(savedVectors.initialAseVector, defaultVectors?.initialAseVector),
+        initialNliVector: vector(savedVectors.initialNliVector, defaultVectors?.initialNliVector),
+      } : defaultVectors,
+    },
+    spanScanConfig: {
+      ...defaults.spanScanConfig,
+      ...value.spanScanConfig,
+    },
+  }
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   // 器件库状态
   const cableTypes = ref<CableType[]>([...defaultSettings.cableTypes])
@@ -262,7 +315,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const cableTypeDatabase = ref<CableTypeSpec[]>([...defaultCableTypeDatabase])
   
   // 系统规划参数配置 (Step 3)
-  const systemPlanningConfig = ref<SystemPlanningParams>({ ...defaultSystemPlanningParams })
+  const systemPlanningConfig = ref<SystemPlanningParams>(createDefaultSystemPlanningConfig())
   // 仿真模型配置 (Step 4)
   const simulationModelConfig = ref<SimulationModelConfig>({ ...defaultSimulationModelConfig })
   
@@ -322,7 +375,9 @@ export const useSettingsStore = defineStore('settings', () => {
         if (Array.isArray(data.jointBoxTypes)) jointBoxTypes.value = data.jointBoxTypes
         if (data.currentLibraryFile) currentLibraryFile.value = data.currentLibraryFile
         if (Array.isArray(data.cableTypeDatabase)) cableTypeDatabase.value = data.cableTypeDatabase
-        if (data.systemPlanningConfig) systemPlanningConfig.value = data.systemPlanningConfig
+        if (data.systemPlanningConfig) {
+          systemPlanningConfig.value = restoreSystemPlanningConfig(data.systemPlanningConfig)
+        }
         if (data.simulationModelConfig) simulationModelConfig.value = data.simulationModelConfig
         if (Array.isArray(data.models)) models.value = data.models
         if ('simulationCache' in data) simulationCache.value = data.simulationCache
@@ -628,7 +683,7 @@ export const useSettingsStore = defineStore('settings', () => {
     transmissionConfig.value = { ...defaultTransmissionConfig }
     monitoringConfig.value = { ...defaultMonitoringConfig }
     fiberSimulationConfig.value = { ...defaultFiberSimulationConfig }
-    systemPlanningConfig.value = { ...defaultSystemPlanningParams }
+    systemPlanningConfig.value = createDefaultSystemPlanningConfig()
     simulationModelConfig.value = { ...defaultSimulationModelConfig }
     simulationCache.value = null
     systemPlanningCache.value = null

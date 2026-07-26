@@ -9,6 +9,7 @@ import type {
   PlanConfigGridResolution,
   PlanConfigChannel,
   PlanConfigOptimization,
+  PlanConfigOptimizationWire,
   PlanConfigRedundancy,
   PlanConfigSnapshot,
   PlanConfigSpanKm,
@@ -19,15 +20,22 @@ import type {
   PlanDeviceEntity,
   PlanDeviceEntitySearch,
   PlanDeviceLibrary,
+  PlanDeviceLibrarySaveDefaultPayload,
   PlanDeviceLibrarySearch,
   PlanLayer,
   PlanLayerUploadCompletePayload,
   PlanPoint,
+  PlanPointSaveListItem,
   PlanPointSaveListPayload,
+  PlanPointSavePayload,
+  PlanPointSearch,
   PlanCalculationResult,
+  PlanLayoutCalculationResponse,
+  PlanProjectSaveResultPayload,
   PlanProject,
   PlanProjectDetail,
   PlanRouteResult,
+  PlanSimulationMode,
   PlatformPlanningResults,
   PagedSearch,
   Id,
@@ -43,6 +51,48 @@ function encryptPasswordFields<T extends Record<string, unknown>>(payload: T, fi
     }
   }
   return next
+}
+
+function serializeNullableNumber(value: number | null | undefined): string | null | undefined {
+  return typeof value === 'number' ? String(value) : value
+}
+
+function serializePlanConfigOptimization(payload: PlanConfigOptimization): PlanConfigOptimizationWire {
+  return {
+    projectId: payload.projectId,
+    targetGsnrDb: serializeNullableNumber(payload.targetGsnrDb),
+    targetOsnrDb: serializeNullableNumber(payload.targetOsnrDb),
+    osnrMarginDb: serializeNullableNumber(payload.osnrMarginDb),
+    spanMinKm: serializeNullableNumber(payload.spanMinKm),
+    spanMaxKm: serializeNullableNumber(payload.spanMaxKm),
+    spanStepKm: serializeNullableNumber(payload.spanStepKm),
+    minSpanLimitKm: serializeNullableNumber(payload.minSpanLimitKm),
+    maxSpanLimitKm: serializeNullableNumber(payload.maxSpanLimitKm),
+    optimizationTarget: payload.optimizationTarget,
+  }
+}
+
+function deserializeNullableNumber(value: string | null | undefined): number | null | undefined {
+  if (value === null || value === undefined) return value
+  if (value.trim() === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function deserializePlanConfigOptimization(
+  payload: Omit<PlanConfigOptimizationWire, 'projectId'>,
+): Omit<PlanConfigOptimization, 'projectId'> {
+  return {
+    targetGsnrDb: deserializeNullableNumber(payload.targetGsnrDb),
+    targetOsnrDb: deserializeNullableNumber(payload.targetOsnrDb),
+    osnrMarginDb: deserializeNullableNumber(payload.osnrMarginDb),
+    spanMinKm: deserializeNullableNumber(payload.spanMinKm),
+    spanMaxKm: deserializeNullableNumber(payload.spanMaxKm),
+    spanStepKm: deserializeNullableNumber(payload.spanStepKm),
+    minSpanLimitKm: deserializeNullableNumber(payload.minSpanLimitKm),
+    maxSpanLimitKm: deserializeNullableNumber(payload.maxSpanLimitKm),
+    optimizationTarget: payload.optimizationTarget,
+  }
 }
 
 function extractToken(data: unknown, headers?: Headers): string | null {
@@ -132,18 +182,20 @@ export const platformProjectApi = {
   save: (payload: PlanProject) => platformClient.post<Id>('/plan/project/save', payload),
   detail: (id: Id) => platformClient.post<PlanProjectDetail>('/plan/project/detail', { id }),
   queryRoute: (id: Id) => platformClient.post<PlanRouteResult | null>('/plan/project/query/route', { id }),
-  fixedPlan: (id: Id) =>
-    platformClient.post<PlanCalculationResult>('/plan/project/plan/fixed', { id }),
-  optimizedPlan: (id: Id, fmmPathResultIndex: number) =>
-    platformClient.post<PlanCalculationResult>('/plan/project/plan/optimized', { id, fmmPathResultIndex }),
-  simulationPlan: (id: Id, fmmPathResultIndex: number) =>
-    platformClient.post<PlanCalculationResult>('/plan/project/plan/simulation', { id, fmmPathResultIndex }),
+  fixedPlan: (id: Id, clearAll: boolean) =>
+    platformClient.post<PlanLayoutCalculationResponse>('/plan/project/plan/fixed', { id, clearAll }),
+  optimizedPlan: (id: Id, fmmPathResultIndex: number, clearAll: boolean) =>
+    platformClient.post<PlanLayoutCalculationResponse>('/plan/project/plan/optimized', { id, fmmPathResultIndex, clearAll }),
+  simulationPlan: (id: Id, mode: PlanSimulationMode) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/plan/simulation', { id, mode }),
   queryFixed: (id: Id) =>
     platformClient.post<PlanCalculationResult>('/plan/project/query/fixed', { id }),
   queryOptimized: (id: Id) =>
     platformClient.post<PlanCalculationResult>('/plan/project/query/optimized', { id }),
   querySimulation: (id: Id) =>
     platformClient.post<PlanCalculationResult>('/plan/project/query/simulation', { id }),
+  saveResult: (payload: PlanProjectSaveResultPayload) =>
+    platformClient.post<PlanCalculationResult>('/plan/project/saveResult', payload),
   async queryPlanningResults(id: Id): Promise<PlatformPlanningResults> {
     const results = await Promise.allSettled([
       this.queryFixed(id),
@@ -173,18 +225,61 @@ export const platformProjectApi = {
 }
 
 export const platformPointApi = {
-  search: (payload: PagedSearch = { pageNumber: 1, pageSize: 10 }) =>
+  search: (payload: PlanPointSearch = { pageNumber: 1, pageSize: 10 }) =>
     platformClient.postWithPage<PlanPoint[]>('/plan/point/search', payload),
-  save: (payload: PlanPoint) => platformClient.post<Id>('/plan/point/save', payload),
-  saveList: (projectIdOrPayload: PlanPointSaveListPayload['projectId'] | PlanPointSaveListPayload | null, pointList?: PlanPoint[]) => {
-    const payload: PlanPointSaveListPayload = typeof projectIdOrPayload === 'object'
-      ? projectIdOrPayload ?? { projectId: null, pointList: pointList ?? [] }
+  async searchAll(payload: Omit<PlanPointSearch, 'pageNumber' | 'pageSize'> = {}) {
+    const pageSize = 10
+    const points: PlanPoint[] = []
+
+    for (let pageNumber = 1; pageNumber <= 1000; pageNumber += 1) {
+      const response = await platformClient.postWithPage<PlanPoint[]>('/plan/point/search', {
+        ...payload,
+        pageNumber,
+        pageSize,
+      })
+      const pagePoints = response.data ?? []
+      points.push(...pagePoints)
+
+      const pageTotal = Number(response.page?.pageTotal)
+      if (response.page?.hasNextPage === false
+        || (Number.isFinite(pageTotal) && pageTotal > 0 && pageNumber >= pageTotal)
+        || pagePoints.length < pageSize) {
+        return points
+      }
+    }
+
+    throw new Error('站点分页超过 1000 页，已停止查询')
+  },
+  save: (payload: PlanPointSavePayload) => platformClient.post<Id>('/plan/point/save', {
+    id: payload.id,
+    projectId: payload.projectId,
+    name: payload.name,
+    longitude: payload.longitude,
+    latitude: payload.latitude,
+    sortNum: payload.sortNum,
+  }),
+  saveList: (
+    projectIdOrPayload: PlanPointSaveListPayload['projectId'] | PlanPointSaveListPayload,
+    pointList?: PlanPointSaveListItem[],
+  ) => {
+    const source: PlanPointSaveListPayload = typeof projectIdOrPayload === 'object' && projectIdOrPayload !== null
+      ? projectIdOrPayload
       : { projectId: projectIdOrPayload, pointList: pointList ?? [] }
+    const payload: PlanPointSaveListPayload = {
+      projectId: source.projectId,
+      pointList: source.pointList?.map(point => ({
+        id: point.id,
+        name: point.name,
+        longitude: point.longitude,
+        latitude: point.latitude,
+        sortNum: point.sortNum,
+      })) ?? source.pointList,
+    }
 
     return platformClient.post<boolean>('/plan/point/saveList', payload)
   },
-  detail: (id: number) => platformClient.post<PlanPoint>('/plan/point/detail', { id }),
-  remove: (id: number) => platformClient.post<boolean>('/plan/point/remove', { id }),
+  detail: (id: Id) => platformClient.post<PlanPoint>('/plan/point/detail', { id }),
+  remove: (id: Id) => platformClient.post<boolean>('/plan/point/remove', { id }),
 }
 
 export const platformPlanConfigApi = {
@@ -201,9 +296,14 @@ export const platformPlanConfigApi = {
   searchChannelConfig: (id: Id) =>
     platformClient.post<Omit<PlanConfigChannel, 'projectId'> | null>('/plan/planConfig/searchChannelConfig', { id }),
   saveOptimization: (payload: PlanConfigOptimization) =>
-    platformClient.post<boolean>('/plan/planConfig/saveOptimization', payload),
-  searchOptimization: (id: Id) =>
-    platformClient.post<Omit<PlanConfigOptimization, 'projectId'> | null>('/plan/planConfig/searchOptimization', { id }),
+    platformClient.post<boolean>('/plan/planConfig/saveOptimization', serializePlanConfigOptimization(payload)),
+  async searchOptimization(id: Id) {
+    const payload = await platformClient.post<Omit<PlanConfigOptimizationWire, 'projectId'> | null>(
+      '/plan/planConfig/searchOptimization',
+      { id },
+    )
+    return payload ? deserializePlanConfigOptimization(payload) : null
+  },
   saveSpanKm: (payload: PlanConfigSpanKm) => platformClient.post<boolean>('/plan/planConfig/saveSpanKm', payload),
   searchSpanKm: (id: Id) => platformClient.post<number | null>('/plan/planConfig/searchSpanKm', { id }),
   async searchAll(id: Id): Promise<PlanConfigSnapshot> {
@@ -247,6 +347,8 @@ export const platformDeviceLibraryApi = {
     platformClient.postWithPage<PlanDeviceLibrary[]>('/plan/deviceLibrary/search', payload),
   save: (payload: PlanDeviceLibrary) => platformClient.post<number | string>('/plan/deviceLibrary/save', payload),
   detail: (id: number | string) => platformClient.post<PlanDeviceLibrary>('/plan/deviceLibrary/detail', { id }),
+  saveDefault: (payload: PlanDeviceLibrarySaveDefaultPayload) =>
+    platformClient.post<boolean>('/plan/deviceLibrary/saveDefault', payload),
   remove: (id: number | string) => platformClient.post<boolean>('/plan/deviceLibrary/remove', { id }),
 }
 
@@ -262,7 +364,6 @@ export const platformDeviceConfigApi = {
   search: (payload: PlanDeviceConfigSearch) =>
     platformClient.postWithPage<PlanDeviceConfig[]>('/plan/deviceConfig/search', payload),
   save: (payload: PlanDeviceConfigSave) => platformClient.post<number | string>('/plan/deviceConfig/save', payload),
-  detail: (id: Id) => platformClient.post<PlanDeviceConfig>('/plan/deviceConfig/detail', { id }),
   remove: (id: Id) => platformClient.post<boolean>('/plan/deviceConfig/remove', { id }),
 }
 

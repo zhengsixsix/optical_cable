@@ -36,12 +36,16 @@ function expect(condition, label) {
 const apiState = {
   layout: null,
   simulation: null,
+  deviceEntityList: [],
+  fixedStart: null,
 }
 let simulationQueryCalls = 0
 let fixedQueryCalls = 0
 let fixedPlanCalls = 0
+const layoutPlanCalls = []
 const planningCallOrder = []
 let savedChannelConfig = null
+let savedOptimizationConfig = null
 
 const layoutUtils = loadTsModule('src/utils/systemPlanningLayout.ts')
 const constraintUtils = loadTsModule('src/utils/systemPlanningConstraints.ts')
@@ -51,13 +55,21 @@ const service = loadTsModule('src/services/SimulationApiService.ts', {
   '@/utils/systemPlanningConstraints': constraintUtils,
   '@/services/platform/api': {
     platformProjectApi: {
-      fixedPlan: async () => {
+      fixedPlan: async (_projectId, clearAll) => {
         fixedPlanCalls += 1
-        return apiState.layout
+        layoutPlanCalls.push({ mode: 'fixed', clearAll })
+        return apiState.fixedStart ?? {
+          layoutResult: apiState.layout,
+          deviceEntityList: apiState.deviceEntityList,
+        }
       },
-      optimizedPlan: async () => {
+      optimizedPlan: async (_projectId, _fmmPathResultIndex, clearAll) => {
         planningCallOrder.push('optimizedPlan')
-        return { status: 'accepted' }
+        layoutPlanCalls.push({ mode: 'optimized', clearAll })
+        return {
+          layoutResult: apiState.layout,
+          deviceEntityList: apiState.deviceEntityList,
+        }
       },
       simulationPlan: async () => apiState.simulation,
       queryFixed: async () => {
@@ -82,8 +94,9 @@ const service = loadTsModule('src/services/SimulationApiService.ts', {
         const { projectId, ...config } = savedChannelConfig
         return config
       },
-      saveOptimization: async () => {
+      saveOptimization: async payload => {
         planningCallOrder.push('saveOptimization')
+        savedOptimizationConfig = payload
         return true
       },
       saveSpanKm: async () => {
@@ -106,6 +119,7 @@ expect(
 const request = {
   projectId: 123,
   fmmPathResultIndex: 2,
+  clearAll: false,
   linkId: 'route-1',
   linkName: 'A ⇄ B',
   totalLengthKm: 160,
@@ -136,7 +150,17 @@ const request = {
     centerFrequencyThz: 193.1,
     channelSpacingGhz: 50,
   },
-  optimizationConfig: { targetGsnrDb: 14, targetOsnrDb: 16 },
+  optimizationConfig: {
+    targetGsnrDb: 14,
+    targetOsnrDb: 16,
+    osnrMarginDb: 1,
+    spanMinKm: 40,
+    spanMaxKm: 120,
+    spanStepKm: 5,
+    minSpanLimitKm: 30,
+    maxSpanLimitKm: 100,
+    optimizationTarget: 'min_amp',
+  },
   spanKm: 80,
   spanStrategy: { mode: 'fixed' },
   constraints: { maxSpanLength: 100, minSpanLength: 30, osnrMargin: 1 },
@@ -214,6 +238,7 @@ apiState.layout = {
   ],
   meta: { status: 'success', node_count: '3', amplifier_count: '1' },
 }
+apiState.deviceEntityList = [{ id: 901, name: 'AMP-01', deviceTypeCd: 'AMP' }]
 apiState.simulation = {
   span_scan_result: {
     target_gsnr_db: 14,
@@ -274,16 +299,46 @@ expect(
 expect(simulationQueryCalls === 0, 'direct simulation result should not trigger a query')
 expect(fixedPlanCalls === fixedPlansBeforeOptimized, 'optimized layout unexpectedly triggered a frontend fixed-plan retry')
 expect(response.constraintAdjusted === false, 'frontend reported a locally adjusted optimized layout')
+expect(
+  JSON.stringify(savedOptimizationConfig) === JSON.stringify({
+    projectId: request.projectId,
+    ...request.optimizationConfig,
+  }),
+  'complete optimization config was not forwarded to planConfig/saveOptimization',
+)
+expect(response.layoutResult === apiState.layout, 'optimized layout response envelope was not unpacked')
+expect(response.deviceEntityList[0]?.id === 901, 'generated device entities were not returned')
+expect(
+  layoutPlanCalls.some(call => call.mode === 'optimized' && call.clearAll === false),
+  'optimized layout did not receive clearAll=false',
+)
+
+const nestedLayout = layoutUtils.parsePlanningLayoutResult({
+  data: {
+    layoutResult: JSON.stringify(apiState.layout),
+    deviceEntityList: apiState.deviceEntityList,
+  },
+}, 'fixed')
+expect(nestedLayout?.totalLengthKm === 160, 'nested layoutResult envelope was not normalized')
 
 apiState.simulation = null
+apiState.fixedStart = { layoutResult: null, deviceEntityList: [] }
+const fixedQueryCallsBefore = fixedQueryCalls
 const withoutSimulation = await service.runSimulation({
   ...request,
+  clearAll: true,
   spanStrategy: { mode: 'fixed' },
 })
 expect(withoutSimulation.success === true, 'layout should succeed when simulation data is null')
 expect(withoutSimulation.detailedResult == null, 'null simulation data should remain unavailable')
 expect(simulationQueryCalls === 1, 'null simulation data should trigger only one fallback query')
-expect(fixedQueryCalls === 0, 'direct fixed layout result should not trigger a query')
+expect(fixedQueryCalls === fixedQueryCallsBefore + 1, 'empty fixed envelope did not query the bare layout result')
+expect(withoutSimulation.layoutResult === apiState.layout, 'bare fixed query result was not preserved')
+expect(withoutSimulation.deviceEntityList.length === 0, 'bare fixed query result created device entities')
+expect(
+  layoutPlanCalls.some(call => call.mode === 'fixed' && call.clearAll === true),
+  'fixed layout did not receive clearAll=true',
+)
 
 const analysisSource = fs.readFileSync(
   path.join(root, 'src/modules/design/dialogs/SimulationAnalysisDialog.vue'),

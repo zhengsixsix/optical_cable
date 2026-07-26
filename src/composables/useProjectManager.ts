@@ -15,7 +15,7 @@ import { useAppStore } from '@/stores/app'
 import { useRPLStore } from '@/stores/rpl'
 import { projectFileService, type OpenProjectResult, type ProjectMetadata, type ProjectType } from '@/services/ProjectFileService'
 import { applyImportResultToStore } from '@/services/DeviceImportService'
-import { platformDeviceEntityApi, platformProjectApi } from '@/services/platform/api'
+import { platformDeviceEntityApi, platformPlanConfigApi, platformProjectApi } from '@/services/platform/api'
 import {
   connectorElementToDeviceEntity,
   platformDeviceEntityToConnectorElement,
@@ -25,11 +25,20 @@ import {
   getDeviceTypeCodeForCategory,
   type DeviceLibraryCategory,
 } from '@/services/platform/deviceTypeAdapter'
-import { isPublicFlag, normalizePlanProject, normalizePlanProjectDetail } from '@/services/platform/normalizers'
+import {
+  isPublicFlag,
+  mergePlanConfigSnapshots,
+  mergePlatformPlanningResults,
+  normalizePlanConfigSnapshot,
+  normalizePlanProject,
+  normalizePlanProjectDetail,
+  planConfigNeedsFallback,
+} from '@/services/platform/normalizers'
 import { syncPlanningProjectToPlatform } from '@/services/platform/projectSync'
 import { queryRoutePlanningByProjectId } from '@/services/RoutePlanningApiService'
 import { normalizePlatformSimulationCache } from '@/services/SimulationApiService'
 import type { Id, PlanConfigScope } from '@/services/platform/types'
+import type { WDMPlanningParams } from '@/types/systemPlanning'
 import { generateUUID } from '@/types/useFile'
 import { useRouter } from 'vue-router'
 
@@ -266,7 +275,7 @@ export function useProjectManager() {
     )
 
     try {
-      const [project, routeQuery, deviceEntitiesQuery] = await Promise.all([
+      const [project, routeQuery, deviceEntitiesQuery, planningResultsQuery] = await Promise.all([
         platformProjectApi.detail(projectId),
         queryRoutePlanningByProjectId(projectId)
           .then(data => ({ data, error: null as Error | null }))
@@ -274,12 +283,28 @@ export function useProjectManager() {
         platformDeviceEntityApi.search({ projectId, pageNumber: 1, pageSize: 1000 })
           .then(response => ({ data: response.data ?? [], error: null as Error | null }))
           .catch(error => ({ data: [], error: error instanceof Error ? error : new Error(String(error)) })),
+        platformProjectApi.queryPlanningResults(projectId)
+          .then(data => ({ data, error: null as Error | null }))
+          .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) })),
       ])
       const {
         project: normalizedProject,
-        planConfig,
-        planningResults,
+        planConfig: detailPlanConfig,
+        planningResults: detailPlanningResults,
       } = normalizePlanProjectDetail(project)
+      const planConfigQuery = planConfigNeedsFallback(detailPlanConfig)
+        ? await platformPlanConfigApi.searchAll(projectId)
+            .then(data => ({ data, error: null as Error | null }))
+            .catch(error => ({ data: null, error: error instanceof Error ? error : new Error(String(error)) }))
+        : { data: null, error: null as Error | null }
+      const queriedPlanConfig = planConfigQuery.data
+        ? normalizePlanConfigSnapshot(planConfigQuery.data)
+        : null
+      const planConfig = mergePlanConfigSnapshots(detailPlanConfig, queriedPlanConfig)
+      const planningResults = mergePlatformPlanningResults(
+        detailPlanningResults,
+        planningResultsQuery.data,
+      )
       projectDataStore.clearProjectData()
       const metadata: ProjectMetadata = {
         name: normalizedProject.name || `平台项目 ${projectId}`,
@@ -334,6 +359,7 @@ export function useProjectManager() {
           : { lon: 0, lat: 0 },
         waypoints: points.map(point => ({
           id: String(point.id ?? `${projectId}-${point.sortNum ?? point.name}`),
+          platformPointId: point.id,
           name: point.name || '站点',
           lon: point.longitude!,
           lat: point.latitude!,
@@ -369,6 +395,46 @@ export function useProjectManager() {
           && Number.isFinite(endLatitude),
       })
       settingsStore.updatePlatformPlanConfigSnapshot(planConfig)
+      const restoredChannel = planConfig.channelConfig
+      if (restoredChannel) {
+        const currentWdm = settingsStore.systemPlanningConfig.wdmParams
+        const channelCount = Number.isFinite(Number(restoredChannel.channelCount))
+          && Number(restoredChannel.channelCount) > 0
+          ? Math.trunc(Number(restoredChannel.channelCount))
+          : currentWdm.channelCount
+        const launchPower = restoredChannel.launchPowerDbm?.[0] ?? currentWdm.launchPower
+        const channelVector = (values: number[] | null | undefined, fallback: number) =>
+          Array.from({ length: channelCount }, (_, index) =>
+            Number.isFinite(Number(values?.[index])) ? Number(values?.[index]) : fallback
+          )
+
+        settingsStore.updateWDMPlanningParams({
+          channelCount,
+          centerFreqTHz: restoredChannel.centerFrequencyThz ?? currentWdm.centerFreqTHz,
+          channelSpacingGHz: restoredChannel.channelSpacingGhz ?? currentWdm.channelSpacingGHz,
+          baudRateGbaud: restoredChannel.baudRateGbaud ?? currentWdm.baudRateGbaud,
+          modulation: (restoredChannel.modulationFormat ?? currentWdm.modulation) as WDMPlanningParams['modulation'],
+          launchPower,
+          vectorParams: {
+            launchPowerVector: channelVector(restoredChannel.launchPowerDbm, launchPower),
+            initialAseVector: channelVector(null, restoredChannel.initialAseNoiseDbm ?? -90),
+            initialNliVector: channelVector(null, restoredChannel.initialNliNoiseDbm ?? -90),
+          },
+        })
+      }
+      const restoredOptimization = planConfig.optimization
+      if (restoredOptimization || planConfig.spanKm != null) {
+        const currentSpan = settingsStore.systemPlanningConfig.spanScanConfig
+        const fixedSpanKm = planConfig.spanKm
+        settingsStore.updateSpanScanConfig({
+          spanLengthMinKm: restoredOptimization?.spanMinKm ?? fixedSpanKm ?? currentSpan.spanLengthMinKm,
+          spanLengthMaxKm: restoredOptimization?.spanMaxKm ?? fixedSpanKm ?? currentSpan.spanLengthMaxKm,
+          spanStepKm: restoredOptimization?.spanStepKm ?? (fixedSpanKm != null ? 0 : currentSpan.spanStepKm),
+          targetGsnrDb: restoredOptimization?.targetGsnrDb ?? currentSpan.targetGsnrDb,
+          targetOsnrDb: restoredOptimization?.targetOsnrDb ?? currentSpan.targetOsnrDb,
+          marginDb: restoredOptimization?.osnrMarginDb ?? currentSpan.marginDb,
+        })
+      }
       settingsStore.updatePlatformPlanningResults(planningResults)
       const restoredSimulationCache = normalizePlatformSimulationCache(
         planningResults?.simulation,
@@ -388,7 +454,10 @@ export function useProjectManager() {
           })
         }
       }
-      appStore.addLog('INFO', '已从项目详情恢复项目规划配置')
+      appStore.addLog(
+        'INFO',
+        queriedPlanConfig ? '已从项目详情和独立配置接口恢复项目规划配置' : '已从项目详情恢复项目规划配置',
+      )
 
       const routeStore = useRouteStore()
       routeStore.setAlgorithmRouteResult(routeQuery.data)
@@ -421,8 +490,25 @@ export function useProjectManager() {
       } else {
         appStore.addLog('INFO', `项目暂无路由规划结果，已显示 ${points.length} 个站点`)
       }
-      if (planningResults) {
-        appStore.addLog('INFO', '已从项目详情恢复固定布局、优化布局和物理仿真结果')
+      const restoredPlanningResultCount = [
+        planningResults?.fixed,
+        planningResults?.optimized,
+        planningResults?.simulation,
+      ].filter(result => result != null).length
+      if (restoredPlanningResultCount > 0) {
+        appStore.addLog('INFO', `已恢复 ${restoredPlanningResultCount} 类系统规划结果`)
+      }
+      for (const error of planningResultsQuery.data?.errors ?? []) {
+        appStore.addLog('WARN', `查询系统规划结果失败（项目仍已打开）: ${error}`)
+      }
+      if (planningResultsQuery.error) {
+        appStore.addLog('WARN', `查询系统规划结果失败（项目仍已打开）: ${planningResultsQuery.error.message}`)
+      }
+      for (const error of queriedPlanConfig?.errors ?? []) {
+        appStore.addLog('WARN', `查询项目规划配置失败（已使用详情数据）: ${error}`)
+      }
+      if (planConfigQuery.error) {
+        appStore.addLog('WARN', `查询项目规划配置失败（已使用详情数据）: ${planConfigQuery.error.message}`)
       }
       if (deviceEntitiesQuery.error) {
         appStore.addLog('WARN', `查询项目器件实例失败: ${deviceEntitiesQuery.error.message}`)
@@ -617,9 +703,14 @@ export function useProjectManager() {
       return false
     }
 
-    // 关闭当前项目
+    const settingsStore = useSettingsStore()
+
+    // 新项目必须从空的项目级规划状态开始；即使页面刷新后 appStore 暂无打开项目，
+    // localStorage 中也可能仍保留上一个项目的计算缓存。
     if (hasOpenProject.value) {
       closeProject()
+    } else {
+      settingsStore.resetProjectSettings()
     }
 
     isProcessing.value = true
@@ -705,8 +796,6 @@ export function useProjectManager() {
       }
 
       // 更新工程设置（站点 + GIS + 铠装映射 + 冗余策略）
-      const settingsStore = useSettingsStore()
-      
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const routeConfigUpdates: Record<string, any> = {
         mode: planningMode || 'point-to-point',

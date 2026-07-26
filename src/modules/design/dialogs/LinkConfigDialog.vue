@@ -28,6 +28,7 @@ import {
   Copy, ClipboardPaste, Upload, Eye,
 } from 'lucide-vue-next'
 import type { SystemPlanningCache } from '@/types/useFile'
+import type { ConnectorElement } from '@/types/connector'
 import {
   preferSpecificRouteStationName,
   resolveRouteStationNames,
@@ -70,6 +71,13 @@ import {
   normalizeDeviceConfigs,
   resolveDeviceAttributeRows,
 } from '@/services/platform/deviceAttributes'
+import { platformDeviceEntityToConnectorElement } from '@/services/platform/deviceLibraryMapping'
+import {
+  applyPlanningTemplateToEntity,
+  buildPlanningConnectorEntity,
+  buildPlanningTemplateEntity,
+  mergePlanningDeviceEntities,
+} from '@/services/SystemPlanningDeviceService'
 import { getDeviceTypeCodeForCategory } from '@/services/platform/deviceTypeAdapter'
 import {
   getDeviceLibrariesByCategory,
@@ -78,10 +86,14 @@ import {
   toRuntimeBranchingLibrary,
   toRuntimeEqualizerLibrary,
 } from '@/services/platform/deviceRuntime'
+import { mergePlatformConnectorElements } from '@/utils/platformDeviceEntityMerge'
 
 type NonNullableFields<T> = { [K in keyof T]-?: NonNullable<T[K]> }
 type ChannelConfigState = NonNullableFields<Omit<PlanConfigChannel, 'projectId'>>
-type OptimizationConfigState = NonNullableFields<Omit<PlanConfigOptimization, 'projectId'>>
+type OptimizationConfigState = NonNullableFields<Pick<
+  PlanConfigOptimization,
+  'targetGsnrDb' | 'targetOsnrDb'
+>>
 
 const props = defineProps<{
   visible: boolean
@@ -395,6 +407,127 @@ const linkInfo = computed(() => {
     createdAt: formatRouteCreatedAt(route.createdAt),
   }
 })
+
+const haversineDistanceKm = (
+  left: [number, number],
+  right: [number, number],
+): number => {
+  const radians = (value: number) => value * Math.PI / 180
+  const [leftLon, leftLat] = left
+  const [rightLon, rightLat] = right
+  const latitudeDelta = radians(rightLat - leftLat)
+  const longitudeDelta = radians(rightLon - leftLon)
+  const value = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(radians(leftLat)) * Math.cos(radians(rightLat))
+    * Math.sin(longitudeDelta / 2) ** 2
+  return 6371.0088 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(Math.max(0, 1 - value)))
+}
+
+const routePolyline = (): Array<[number, number]> => {
+  const route = selectedPlanningRoute.value
+  if (!route) return []
+  const raw = route.rawTrunkCoordinates?.filter(point =>
+    Array.isArray(point) && point.length >= 2 && point.every(Number.isFinite),
+  ) ?? []
+  if (raw.length >= 2) return raw
+  return route.points
+    .map(point => point.coordinates)
+    .filter(point => point.length >= 2 && point.every(Number.isFinite))
+}
+
+const coordinateAtRouteKp = (kp: number): [number, number] => {
+  const coordinates = routePolyline()
+  if (coordinates.length === 0) return [0, 0]
+  if (coordinates.length === 1) return coordinates[0]
+  const cumulative = [0]
+  for (let index = 1; index < coordinates.length; index += 1) {
+    cumulative.push(cumulative[index - 1] + haversineDistanceKm(coordinates[index - 1], coordinates[index]))
+  }
+  const geometryLength = cumulative[cumulative.length - 1]
+  if (geometryLength <= 0) return coordinates[0]
+  const plannedLength = linkInfo.value?.totalLength ?? geometryLength
+  const target = Math.min(geometryLength, Math.max(0, kp) / Math.max(plannedLength, 1e-9) * geometryLength)
+  const segmentIndex = cumulative.findIndex(distance => distance >= target)
+  if (segmentIndex <= 0) return coordinates[0]
+  const startDistance = cumulative[segmentIndex - 1]
+  const endDistance = cumulative[segmentIndex]
+  const ratio = endDistance === startDistance ? 0 : (target - startDistance) / (endDistance - startDistance)
+  const start = coordinates[segmentIndex - 1]
+  const end = coordinates[segmentIndex]
+  return [
+    start[0] + (end[0] - start[0]) * ratio,
+    start[1] + (end[1] - start[1]) * ratio,
+  ]
+}
+
+const routePointKp = (pointIndex: number): number => {
+  const route = selectedPlanningRoute.value
+  if (!route || pointIndex <= 0) return 0
+  const pointCoordinates = route.points.map(point => point.coordinates)
+  const distances = pointCoordinates.slice(1).map((point, index) =>
+    haversineDistanceKm(pointCoordinates[index], point),
+  )
+  const total = distances.reduce((sum, value) => sum + value, 0)
+  const partial = distances.slice(0, pointIndex).reduce((sum, value) => sum + value, 0)
+  const plannedLength = linkInfo.value?.totalLength
+  return total > 0 && plannedLength != null ? partial / total * plannedLength : partial
+}
+
+/** Ensure route stations and BUs have stable connector records before configuration. */
+const ensureRouteTopologyConnectorElements = (): void => {
+  const route = selectedPlanningRoute.value
+  if (!route) return
+  const routeId = selectedRouteId.value || route.id
+  if (!connectorStore.selectTableByRoute(routeId)) {
+    connectorStore.createTable(`${route.name || linkInfo.value?.name || '系统规划'}_接线元表`, routeId)
+  }
+  const table = connectorStore.currentTable
+  if (!table) return
+
+  route.points.forEach((point, pointIndex) => {
+    if (point.type !== 'landing' && point.type !== 'branching') return
+    const existing = table.elements.find(element => element.routePointId === point.id)
+    if (existing) return
+    const [longitude, latitude] = point.coordinates
+    const type: ConnectorElement['type'] = point.type === 'branching'
+      ? 'bu'
+      : Number(point.depth ?? 0) > 0 ? 'underwater' : 'landing'
+    const runtimeBu = point.type === 'branching'
+      ? platformBranchingLibraries.value.find(item => item.id === point.device?.deviceId)
+      : null
+    const connectorId = connectorStore.addElement({
+      routePointId: point.id,
+      deviceTypeCd: point.type === 'branching' ? planningDeviceTypeCodeForTopology.branching : undefined,
+      name: point.name?.trim() || (point.type === 'branching' ? `BU-${pointIndex + 1}` : `站点-${pointIndex + 1}`),
+      type,
+      kp: routePointKp(pointIndex),
+      hasExplicitKp: true,
+      longitude,
+      latitude,
+      depth: Number(point.depth ?? 0),
+      status: 'planned',
+      specifications: point.device?.deviceName || runtimeBu?.name || '',
+      remarks: '由路由规划节点生成',
+      componentRefId: point.device?.deviceId || runtimeBu?.id,
+      buPortCount: point.device?.portCount ?? runtimeBu?.portCount,
+      buTrunkLoss: point.device?.insertionLoss ?? runtimeBu?.trunkInsertionLoss,
+      buBranchLoss: point.device?.insertionLoss ?? runtimeBu?.branchInsertionLoss,
+    })
+    if (!connectorId || point.type !== 'branching') return
+    const element = connectorStore.elements.find(item => item.id === connectorId)
+    if (!element) return
+    buConfigStore.updateConfig(connectorId, {
+      componentRefId: element.componentRefId || '',
+      buTrunkLoss: element.buTrunkLoss ?? 0,
+      buBranchLoss: element.buBranchLoss ?? 0,
+    })
+  })
+}
+
+const planningDeviceTypeCodeForTopology = {
+  branching: getDeviceTypeCodeForCategory('branching'),
+  equalizer: getDeviceTypeCodeForCategory('equalizer'),
+}
 
 interface PlanningTopologyNode {
   id: string
@@ -999,6 +1132,28 @@ function setOptimizationConfig(config: Omit<PlanConfigOptimization, 'projectId'>
   if (!config) return
   optimizationConfig.targetGsnrDb = finiteNumberValue(config.targetGsnrDb, optimizationConfig.targetGsnrDb)
   optimizationConfig.targetOsnrDb = finiteNumberValue(config.targetOsnrDb, optimizationConfig.targetOsnrDb)
+  constraints.osnrMargin = finiteNumberValue(config.osnrMarginDb, constraints.osnrMargin)
+  spanScanConfig.min = finiteNumberValue(config.spanMinKm, spanScanConfig.min)
+  spanScanConfig.max = finiteNumberValue(config.spanMaxKm, spanScanConfig.max)
+  spanScanConfig.step = finiteNumberValue(config.spanStepKm, spanScanConfig.step)
+  constraints.minSpanLength = finiteNumberValue(config.minSpanLimitKm, constraints.minSpanLength)
+  constraints.maxSpanLength = finiteNumberValue(config.maxSpanLimitKm, constraints.maxSpanLength)
+  if (config.optimizationTarget === 'max_gsnr') optimizationTarget.value = 'max_gsnr'
+  if (config.optimizationTarget === 'min_amp') optimizationTarget.value = 'min_amplifiers'
+}
+
+function buildPlatformOptimizationConfig(): Omit<PlanConfigOptimization, 'projectId'> {
+  return {
+    targetGsnrDb: finiteNumberValue(optimizationConfig.targetGsnrDb, 14),
+    targetOsnrDb: finiteNumberValue(optimizationConfig.targetOsnrDb, 16),
+    osnrMarginDb: Math.max(0, finiteNumberValue(constraints.osnrMargin, 1)),
+    spanMinKm: finiteNumberValue(spanScanConfig.min, 40),
+    spanMaxKm: finiteNumberValue(spanScanConfig.max, 120),
+    spanStepKm: finiteNumberValue(spanScanConfig.step, 5),
+    minSpanLimitKm: finiteNumberValue(constraints.minSpanLength, 30),
+    maxSpanLimitKm: finiteNumberValue(constraints.maxSpanLength, 100),
+    optimizationTarget: optimizationTarget.value === 'max_gsnr' ? 'max_gsnr' : 'min_amp',
+  }
 }
 
 function resetLinkConfig(): void {
@@ -1096,10 +1251,7 @@ function persistPlatformPlanningSnapshot(): void {
       errors: [],
     }),
     channelConfig: { ...channelConfig },
-    optimization: {
-      targetGsnrDb: finiteNumberValue(optimizationConfig.targetGsnrDb, 14),
-      targetOsnrDb: finiteNumberValue(optimizationConfig.targetOsnrDb, 16),
-    },
+    optimization: buildPlatformOptimizationConfig(),
     spanKm: finiteNumberValue(spanKm.value, 70),
     form: buildPlanningFormSnapshot(),
   })
@@ -1132,8 +1284,7 @@ async function savePlatformAmplifierConfig(projectId: string | number): Promise<
   try {
     await platformPlanConfigApi.saveOptimization({
       projectId,
-      targetGsnrDb: finiteNumberValue(optimizationConfig.targetGsnrDb, 14),
-      targetOsnrDb: finiteNumberValue(optimizationConfig.targetOsnrDb, 16),
+      ...buildPlatformOptimizationConfig(),
     })
   } catch (error) {
     throw new Error(`优化配置保存失败：${error instanceof Error ? error.message : String(error)}`)
@@ -1232,6 +1383,213 @@ const buConfigs = computed(() => {
     })
 })
 
+interface PersistedPlanningTemplates {
+  fiber: PlanDeviceEntity
+  amplifier: PlanDeviceEntity
+}
+
+const replaceLocalPlanningEntity = (
+  type: PlanningDeviceKind,
+  originalId: string,
+  entity: PlanDeviceEntity,
+): void => {
+  const source = type === 'fiber' ? fiberDeviceEntities.value : amplifierDeviceEntities.value
+  const next = source.map(item => String(item.id) === originalId ? entity : item)
+  replacePlanningDeviceEntities(type, next)
+  if (type === 'fiber') selectedFiberTypeId.value = String(entity.id ?? originalId)
+  else selectedAmplifierTypeId.value = String(entity.id ?? originalId)
+}
+
+const persistPlanningTemplate = async (
+  type: PlanningDeviceKind,
+  projectId: string | number,
+): Promise<PlanDeviceEntity> => {
+  const entity = type === 'fiber' ? selectedFiberEntity.value : selectedAmplifierEntity.value
+  if (!entity) throw new Error(type === 'fiber' ? '请选择光纤器件' : '请选择放大器器件')
+  const entityId = String(entity.id ?? '')
+  const payload = buildPlanningTemplateEntity({
+    kind: type,
+    entity,
+    projectId,
+    values: type === 'fiber' ? fiberDeviceValues.value : amplifierDeviceValues.value,
+    configs: type === 'fiber' ? fiberDeviceConfigs.value : amplifierDeviceConfigs.value,
+    calculationModel: type === 'fiber' ? selectedFiberModel.value : selectedAmplifierModel.value,
+    ...(type === 'fiber' ? { ssfmParams: { ...ssfmParams } } : {}),
+  })
+  const savedId = await settingsStore.savePlatformDeviceEntity(payload)
+  const saved = { ...payload, id: savedId }
+  replaceLocalPlanningEntity(type, entityId, saved)
+  return saved
+}
+
+const persistPlanningTemplates = async (
+  projectId: string | number,
+): Promise<PersistedPlanningTemplates> => {
+  const fiber = await persistPlanningTemplate('fiber', projectId)
+  const amplifier = await persistPlanningTemplate('amplifier', projectId)
+  return { fiber, amplifier }
+}
+
+const persistConnectorEntity = async (
+  element: ConnectorElement,
+  projectId: string | number,
+  sortNum: number,
+  values: Record<string, string | number | boolean | null | undefined>,
+): Promise<PlanDeviceEntity> => {
+  const payload = buildPlanningConnectorEntity({
+    element,
+    projectId,
+    sortNum,
+    libraries: settingsStore.platformDeviceLibraries,
+    values,
+  })
+  const savedId = await settingsStore.savePlatformDeviceEntity(payload)
+  connectorStore.updateElement(element.id, {
+    platformEntityId: savedId,
+    deviceTypeCd: payload.deviceTypeCd || element.deviceTypeCd,
+  })
+  return { ...payload, id: savedId }
+}
+
+const syncPlannedEqualizerEntities = async (
+  projectId: string | number,
+): Promise<PlanDeviceEntity[]> => {
+  const existing = routeConnectorElements.value.filter(element => element.type === 'equalizer')
+  const retainedIds = new Set(plannedEqualizers.value.map(item => item.id).filter(Boolean))
+  for (const element of existing) {
+    if (retainedIds.has(element.id)) continue
+    if (element.platformEntityId != null) {
+      await settingsStore.removePlatformDeviceEntity(element.platformEntityId)
+    }
+    connectorStore.deleteElement(element.id)
+  }
+
+  const saved: PlanDeviceEntity[] = []
+  for (let index = 0; index < plannedEqualizers.value.length; index += 1) {
+    const planned = plannedEqualizers.value[index]
+    const normalized = normalizeEqualizerConfig(planned)
+    const [longitude, latitude] = coordinateAtRouteKp(planned.kp)
+    let connectorId = planned.id
+    const existingElement = connectorId
+      ? connectorStore.elements.find(element => element.id === connectorId)
+      : null
+    const updates: Partial<ConnectorElement> = {
+      name: planned.name,
+      type: 'equalizer',
+      deviceTypeCd: planningDeviceTypeCodeForTopology.equalizer,
+      kp: planned.kp,
+      hasExplicitKp: true,
+      longitude,
+      latitude,
+      depth: existingElement?.depth ?? 0,
+      status: 'planned',
+      specifications: planned.specifications,
+      remarks: planned.remarks,
+      componentRefId: planned.componentRefId,
+      equalizerRole: normalized.equalizerRole,
+      attenuationMode: normalized.attenuationMode,
+      attenuationDb: normalized.attenuationDb,
+    }
+    if (existingElement && connectorId) {
+      connectorStore.updateElement(connectorId, updates)
+    } else {
+      connectorId = connectorStore.addElement(updates as Omit<ConnectorElement, 'id'>) ?? undefined
+      planned.id = connectorId
+    }
+    const element = connectorId
+      ? connectorStore.elements.find(item => item.id === connectorId)
+      : null
+    if (!element) throw new Error(`${planned.name} 无法写入接线元`)
+    saved.push(await persistConnectorEntity(element, projectId, 20_000 + index, {
+      attenuationMode: normalized.attenuationMode,
+      attenuationDb: normalized.attenuationDb,
+      equalizerRole: normalized.equalizerRole,
+    }))
+  }
+  return saved
+}
+
+const syncBuEntities = async (
+  projectId: string | number,
+): Promise<PlanDeviceEntity[]> => {
+  const saved: PlanDeviceEntity[] = []
+  for (let index = 0; index < buConfigs.value.length; index += 1) {
+    const config = buConfigs.value[index]
+    const element = connectorStore.elements.find(item => item.id === config.id)
+    if (!element) throw new Error(`${config.name} 不存在对应接线元`)
+    const branchTarget = allNodes.value.find(node => node.id === config.nextHopBranch1)?.name || ''
+    connectorStore.updateElement(element.id, {
+      deviceTypeCd: planningDeviceTypeCodeForTopology.branching,
+      componentRefId: config.componentRefId,
+      buPortCount: config.portCount,
+      buTrunkLoss: config.trunkLoss,
+      buBranchLoss: config.branchLoss,
+      buBranchTarget: branchTarget,
+      buNextHopUpstream: config.nextHopUpstream,
+      buNextHopDownstream: config.nextHopDownstream,
+      buNextHopBranch1: config.nextHopBranch1,
+      buNextHopBranch2: config.nextHopBranch2,
+      buNextHopBranch3: config.nextHopBranch3,
+    })
+    const updated = connectorStore.elements.find(item => item.id === element.id)
+    if (!updated) continue
+    saved.push(await persistConnectorEntity(updated, projectId, 30_000 + index, {
+      portCount: config.portCount,
+      trunkInsertionLoss: config.trunkLoss,
+      branchInsertionLoss: config.branchLoss,
+    }))
+  }
+  return saved
+}
+
+const persistPlanningTopologyEntities = async (
+  projectId: string | number,
+): Promise<PlanDeviceEntity[]> => {
+  ensureRouteTopologyConnectorElements()
+  const equalizers = await syncPlannedEqualizerEntities(projectId)
+  const branchingUnits = await syncBuEntities(projectId)
+  return [...equalizers, ...branchingUnits]
+}
+
+const prepareLayoutEntitiesForSimulation = async (
+  context: { mode: 'fixed' | 'optimized'; deviceEntityList: PlanDeviceEntity[] },
+  projectId: string | number,
+  templates: PersistedPlanningTemplates,
+): Promise<PlanDeviceEntity[]> => {
+  const generated = context.deviceEntityList.length > 0
+    ? context.deviceEntityList
+    : settingsStore.platformDeviceEntities
+  const configured: PlanDeviceEntity[] = []
+  let fiberApplied = false
+  let amplifierApplied = false
+  for (const entity of generated) {
+    const typeCode = String(entity.deviceTypeCd ?? '').trim().toUpperCase()
+    let payload = entity
+    if (typeCode === planningDeviceTypeCode.fiber) {
+      payload = applyPlanningTemplateToEntity(entity, templates.fiber)
+      fiberApplied = true
+    } else if (typeCode === planningDeviceTypeCode.amplifier) {
+      payload = applyPlanningTemplateToEntity(entity, templates.amplifier)
+      amplifierApplied = true
+    } else {
+      configured.push(entity)
+      continue
+    }
+    const savedId = await settingsStore.savePlatformDeviceEntity({
+      ...payload,
+      projectId,
+      mode: context.mode,
+    })
+    configured.push({ ...payload, id: savedId, projectId, mode: context.mode })
+  }
+  if (!fiberApplied) configured.push(templates.fiber)
+  if (!amplifierApplied) configured.push(templates.amplifier)
+  const topology = await persistPlanningTopologyEntities(projectId)
+  const merged = mergePlanningDeviceEntities(configured, topology)
+  settingsStore.replacePlatformDeviceEntities(merged)
+  return merged
+}
+
 const buildPlanningFormSnapshot = (): SystemPlanningFormSnapshot => ({
   routeId: selectedRouteId.value,
   fiberModel: selectedFiberModel.value,
@@ -1258,6 +1616,28 @@ const buildPlanningFormSnapshot = (): SystemPlanningFormSnapshot => ({
   },
   launchPowerMode: launchPowerMode.value,
   launchPowerGroups: { ...launchPowerGroups },
+  buConfigs: buConfigs.value.map(config => ({
+    connectorId: config.id,
+    componentRefId: config.componentRefId,
+    trunkLoss: config.trunkLoss,
+    branchLoss: config.branchLoss,
+    nextHopUpstream: config.nextHopUpstream,
+    nextHopDownstream: config.nextHopDownstream,
+    nextHopBranch1: config.nextHopBranch1,
+    nextHopBranch2: config.nextHopBranch2,
+    nextHopBranch3: config.nextHopBranch3,
+  })),
+  equalizers: plannedEqualizers.value.map(equalizer => ({
+    connectorId: equalizer.id,
+    name: equalizer.name,
+    kp: equalizer.kp,
+    componentRefId: equalizer.componentRefId,
+    equalizerRole: equalizer.equalizerRole,
+    attenuationMode: equalizer.attenuationMode,
+    attenuationDb: equalizer.attenuationDb,
+    specifications: equalizer.specifications,
+    remarks: equalizer.remarks,
+  })),
   savedAt: new Date().toISOString(),
 })
 
@@ -1314,6 +1694,8 @@ const restorePlanningFormSnapshot = async (): Promise<boolean> => {
 
   hydratingPlanningForm.value = true
   if (routeStore.routes.some(route => route.id === form.routeId)) selectedRouteId.value = form.routeId
+  await nextTick()
+  ensureRouteTopologyConnectorElements()
   selectedFiberModel.value = form.fiberModel
   selectedAmplifierModel.value = form.amplifierModel
   selectedFiberTypeId.value = form.fiberTypeId
@@ -1346,6 +1728,31 @@ const restorePlanningFormSnapshot = async (): Promise<boolean> => {
   launchPowerMode.value = form.launchPowerMode
   Object.assign(launchPowerGroups, form.launchPowerGroups ?? { lower: -1.5, center: -1, upper: -1.5 })
   Object.assign(ssfmParams, form.ssfmParams)
+  for (const config of form.buConfigs ?? []) {
+    buConfigStore.saveConfig(config.connectorId, {
+      componentRefId: config.componentRefId,
+      buTrunkLoss: config.trunkLoss,
+      buBranchLoss: config.branchLoss,
+      buNextHopUpstream: config.nextHopUpstream,
+      buNextHopDownstream: config.nextHopDownstream,
+      buNextHopBranch1: config.nextHopBranch1,
+      buNextHopBranch2: config.nextHopBranch2,
+      buNextHopBranch3: config.nextHopBranch3,
+    })
+  }
+  if (form.equalizers?.length) {
+    plannedEqualizers.value = form.equalizers.map(equalizer => createPlannedEqualizer({
+      id: equalizer.connectorId,
+      name: equalizer.name,
+      kp: equalizer.kp,
+      componentRefId: equalizer.componentRefId,
+      equalizerRole: equalizer.equalizerRole,
+      attenuationMode: equalizer.attenuationMode,
+      attenuationDb: equalizer.attenuationDb,
+      specifications: equalizer.specifications,
+      remarks: equalizer.remarks,
+    }))
+  }
   await nextTick()
   Object.assign(fiberParams, form.fiberParams)
   Object.assign(amplifierParams, form.amplifierParams)
@@ -1726,14 +2133,25 @@ const savePlanningStep = async (step: ConfigStepId): Promise<void> => {
   platformConfigSaving.value = true
   try {
     const projectId = platformProjectId.value
-    if ((step === 'amplifier' || step === 'wdm') && projectId == null) {
+    if (projectId == null) {
       throw new Error('当前工程未关联平台项目，无法保存系统规划参数')
     }
-    if (step === 'amplifier' && projectId != null) {
+    if (step === 'link') {
+      ensureRouteTopologyConnectorElements()
+      await syncPlannedEqualizerEntities(projectId)
+    }
+    if (step === 'fiber') {
+      await persistPlanningTemplate('fiber', projectId)
+    }
+    if (step === 'amplifier') {
+      await persistPlanningTemplate('amplifier', projectId)
       await savePlatformAmplifierConfig(projectId)
     }
-    if (step === 'wdm' && projectId != null) {
+    if (step === 'wdm') {
       await savePlatformWdmConfig(projectId)
+    }
+    if (step === 'bu') {
+      await syncBuEntities(projectId)
     }
 
     persistPlatformPlanningSnapshot()
@@ -1921,9 +2339,103 @@ const spanScanData = ref<SpanScanResult | null>(null)
 const calculationError = ref('')
 const platformCalculationCompleted = ref(false)
 const calculationProgress = reactive({ value: 0, message: '正在准备计算' })
+const recalculationConfirmationVisible = ref(false)
+const recalculationConfirmationDialog = ref<HTMLElement | null>(null)
+let recalculationReturnFocus: HTMLElement | null = null
+
+const responseDeviceEntities = (response: unknown): PlanDeviceEntity[] | null => {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return null
+  const value = (response as { deviceEntityList?: unknown }).deviceEntityList
+  if (!Array.isArray(value)) return null
+  return value.filter((entity): entity is PlanDeviceEntity => Boolean(
+    entity && typeof entity === 'object' && !Array.isArray(entity),
+  ))
+}
+
+const mergeGeneratedDeviceEntities = (
+  existing: PlanDeviceEntity[],
+  generated: PlanDeviceEntity[],
+): PlanDeviceEntity[] => {
+  const generatedIds = new Set(generated
+    .map(entity => entity.id)
+    .filter(id => id != null && id !== '')
+    .map(String))
+  const manualEntities = existing.filter(entity => {
+    const mode = String(entity.mode ?? '').trim().toLowerCase()
+    const isGenerated = mode === 'fixed' || mode === 'optimized'
+    const replacedByGenerated = entity.id != null && generatedIds.has(String(entity.id))
+    return !isGenerated && !replacedByGenerated
+  })
+  return [...manualEntities, ...generated]
+}
+
+const syncConnectorStoreFromDeviceEntities = (entities: PlanDeviceEntity[]) => {
+  const routeId = selectedRouteId.value || routeStore.currentRouteId || null
+  if (routeId) connectorStore.selectTableByRoute(routeId)
+  if (!connectorStore.currentTable) {
+    const tableName = `${linkInfo.value?.name || '系统规划'}_接线元表`
+    connectorStore.createTable(tableName, routeId || undefined)
+  }
+  const currentTable = connectorStore.currentTable
+  if (!currentTable) return
+
+  const incomingElements = entities
+    .map(entity => {
+      const element = platformDeviceEntityToConnectorElement(entity)
+      const positionKm = Number(entity.positionKm)
+      return Number.isFinite(positionKm) ? { ...element, kp: positionKm } : element
+    })
+    .filter(element => element.type !== 'cable_segment')
+  connectorStore.replaceTableElements(mergePlatformConnectorElements(
+    currentTable.elements,
+    incomingElements,
+    { replacePlatformElements: true },
+  ))
+}
+
+const syncCalculatedDeviceEntities = async (
+  response: unknown,
+  projectId: number | string,
+  clearAll: boolean,
+) => {
+  const generatedEntities = responseDeviceEntities(response)
+  const fallbackEntities = generatedEntities
+    ? clearAll
+      ? generatedEntities
+      : mergeGeneratedDeviceEntities(settingsStore.platformDeviceEntities, generatedEntities)
+    : null
+  if (fallbackEntities) settingsStore.replacePlatformDeviceEntities(fallbackEntities)
+
+  let entities = fallbackEntities
+  try {
+    const authoritativeResponse = await settingsStore.loadPlatformDeviceEntities({
+      projectId,
+      pageNumber: 1,
+      pageSize: 1000,
+    })
+    const authoritativeEntities = authoritativeResponse.data ?? []
+    if (authoritativeEntities.length > 0) {
+      entities = fallbackEntities
+        ? mergePlanningDeviceEntities(authoritativeEntities, fallbackEntities)
+        : authoritativeEntities
+    }
+  } catch (error) {
+    appStore.showNotification({
+      type: 'warning',
+      message: generatedEntities
+        ? '设备实例全量同步失败，已暂时使用本次计算返回的实例'
+        : `设备实例同步失败：${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+
+  if (!entities) return
+  settingsStore.replacePlatformDeviceEntities(entities)
+  syncConnectorStoreFromDeviceEntities(entities)
+}
 
 // 执行计算并跳转到结果页
-const startCalculation = async () => {
+const startCalculation = async (clearAll: boolean = false) => {
+  recalculationConfirmationVisible.value = false
   const invalidStep = stepOrder.value
     .filter((step): step is Exclude<typeof step, 'result'> => step !== 'result')
     .find(step => !stepStatus.value[step])
@@ -1955,7 +2467,8 @@ const startCalculation = async () => {
   }
 
   if (platformConfigSaving.value) return
-  if (platformProjectId.value == null) {
+  const projectId = platformProjectId.value
+  if (projectId == null) {
     calculationError.value = '当前工程未关联平台项目，无法调用系统规划接口'
     appStore.showNotification({ type: 'error', message: calculationError.value })
     return
@@ -2044,13 +2557,17 @@ const startCalculation = async () => {
 
     const fiberType = selectedFiberEntity.value
     const ampType = selectedAmplifierEntity.value
+    calculationProgress.value = 9
+    calculationProgress.message = '正在保存光纤与放大器模板'
+    const persistedTemplates = await persistPlanningTemplates(projectId)
     const totalLengthKm = info?.trunkLength || info?.totalLength || 0
     if (!Number.isFinite(totalLengthKm) || totalLengthKm <= 0) {
       throw new Error('后端仿真缺少有效链路总长度')
     }
 
     const response = await runSimulation({
-      projectId: platformProjectId.value,
+      projectId,
+      clearAll,
       fmmPathResultIndex: selectedFmmPathResultIndex.value,
       linkId: selectedRouteId.value,
       linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
@@ -2082,10 +2599,7 @@ const startCalculation = async () => {
         amplifierName: ampType?.name ?? undefined,
       },
       channelConfig: { ...channelConfig },
-      optimizationConfig: {
-        targetGsnrDb: finiteNumberValue(optimizationConfig.targetGsnrDb, 14),
-        targetOsnrDb: finiteNumberValue(optimizationConfig.targetOsnrDb, 16),
-      },
+      optimizationConfig: buildPlatformOptimizationConfig(),
       spanKm: finiteNumberValue(spanKm.value, 70),
       spanStrategy: spanStrategyPayload,
       constraints: {
@@ -2102,6 +2616,11 @@ const startCalculation = async () => {
         branchLoss: bu.branchLoss,
       })),
       deviceSequence: devices,
+      prepareSimulationDevices: context => prepareLayoutEntitiesForSimulation(
+        context,
+        projectId,
+        persistedTemplates,
+      ),
       onProgress: update => {
         calculationProgress.value = update.progress
         calculationProgress.message = update.message
@@ -2135,6 +2654,7 @@ const startCalculation = async () => {
       simulation: response.detailedResult,
       errors: [],
     })
+    await syncCalculatedDeviceEntities(response, projectId, clearAll)
     platformCalculationCompleted.value = true
 
     const detailedResult = unwrapPlatformSimulationResult(response.detailedResult)
@@ -2678,11 +3198,58 @@ const closeWithResult = () => {
 }
 
 // 重新计算
-const recalculate = () => {
-  calculationResult.value = null
-  platformLayoutResult.value = null
-  startCalculation()
+const dismissRecalculationConfirmation = (restoreFocus = true) => {
+  recalculationConfirmationVisible.value = false
+  if (!restoreFocus || !recalculationReturnFocus) return
+  const returnFocus = recalculationReturnFocus
+  void nextTick(() => returnFocus.focus())
 }
+
+const recalculate = () => {
+  if (isCalculating.value || platformConfigSaving.value) return
+  recalculationReturnFocus = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null
+  recalculationConfirmationVisible.value = true
+  void nextTick(() => {
+    recalculationConfirmationDialog.value
+      ?.querySelector<HTMLButtonElement>('[data-recalculation-cancel]')
+      ?.focus()
+  })
+}
+
+const confirmRecalculation = (clearAll: boolean) => {
+  dismissRecalculationConfirmation(false)
+  void startCalculation(clearAll)
+}
+
+const handleRecalculationConfirmationKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    dismissRecalculationConfirmation()
+    return
+  }
+  if (event.key !== 'Tab') return
+
+  const focusable = Array.from(
+    recalculationConfirmationDialog.value?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [],
+  )
+  if (focusable.length === 0) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+watch([() => props.visible, isCalculating], ([visible, calculating]) => {
+  if (!visible || calculating) dismissRecalculationConfirmation(false)
+})
 
 
 // 初始化
@@ -3225,7 +3792,34 @@ watch(() => props.visible, async (visible) => {
                   
                   <div class="mb-4">
                     <div class="text-xs text-gray-500 mb-2">优化目标：</div>
-                    <div class="text-sm text-gray-700">优化策略由后端规划服务决定</div>
+                    <div
+                      class="inline-flex w-full max-w-sm rounded-md border border-gray-200 bg-white p-1"
+                      role="group"
+                      aria-label="优化目标"
+                    >
+                      <button
+                        type="button"
+                        class="min-h-9 flex-1 rounded px-3 text-sm font-medium transition-colors"
+                        :class="optimizationTarget === 'min_amplifiers'
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-gray-50'"
+                        :aria-pressed="optimizationTarget === 'min_amplifiers'"
+                        @click="optimizationTarget = 'min_amplifiers'"
+                      >
+                        最少放大器
+                      </button>
+                      <button
+                        type="button"
+                        class="min-h-9 flex-1 rounded px-3 text-sm font-medium transition-colors"
+                        :class="optimizationTarget === 'max_gsnr'
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-gray-50'"
+                        :aria-pressed="optimizationTarget === 'max_gsnr'"
+                        @click="optimizationTarget = 'max_gsnr'"
+                      >
+                        最大 GSNR
+                      </button>
+                    </div>
                   </div>
                   
                   <div class="border-t pt-4">
@@ -3740,7 +4334,7 @@ watch(() => props.visible, async (visible) => {
               <div v-else-if="isLastConfigStep" class="flex gap-2">
                 <Button 
                   :disabled="!canStartCalculation || isCalculating || platformConfigSaving"
-                  @click="startCalculation"
+                  @click="startCalculation(false)"
                 >
                   <PlayCircle class="w-4 h-4 mr-1" />
                   {{ platformConfigSaving ? '保存中...' : (isCalculating ? '计算中...' : '下一步：开始计算') }}
@@ -3748,7 +4342,7 @@ watch(() => props.visible, async (visible) => {
                 </Button>
               </div>
               
-              <!-- 结果页：只保留重算和关闭，不把布局写入项目设备状态。 -->
+              <!-- 结果页：算法生成的设备已同步，这里保留重算和完成操作。 -->
               <div v-else-if="activeStep === 'result'" class="flex gap-2">
                 <Button 
                   variant="outline"
@@ -3766,6 +4360,62 @@ watch(() => props.visible, async (visible) => {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <Teleport to="body">
+    <div
+      v-if="visible && recalculationConfirmationVisible"
+      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4"
+      @click.self="dismissRecalculationConfirmation()"
+    >
+      <div
+        ref="recalculationConfirmationDialog"
+        class="w-full max-w-[560px] rounded-lg border border-gray-200 bg-white shadow-2xl"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="recalculation-confirmation-title"
+        aria-describedby="recalculation-confirmation-description"
+        @keydown="handleRecalculationConfirmationKeydown"
+      >
+        <div class="flex items-start gap-3 px-5 pb-4 pt-5 sm:px-6 sm:pt-6">
+          <div class="flex h-9 w-9 flex-none items-center justify-center rounded-md bg-amber-50 text-amber-600">
+            <AlertCircle class="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div class="min-w-0">
+            <h2 id="recalculation-confirmation-title" class="text-base font-semibold text-gray-900">
+              重新计算
+            </h2>
+            <p id="recalculation-confirmation-description" class="mt-2 text-sm leading-6 text-gray-600">
+              重新计算会删除之前生成的设备实例，是否要同时删除手动添加的设备？
+            </p>
+          </div>
+        </div>
+        <div class="flex flex-wrap justify-end gap-2 border-t bg-gray-50 px-5 py-4 sm:px-6">
+          <button
+            type="button"
+            data-recalculation-cancel
+            class="min-h-9 rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            @click="dismissRecalculationConfirmation()"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="min-h-9 rounded-md border border-blue-200 bg-white px-4 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            @click="confirmRecalculation(false)"
+          >
+            保留手动添加
+          </button>
+          <button
+            type="button"
+            class="min-h-9 rounded-md bg-red-600 px-4 text-sm font-medium text-white transition-colors hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+            @click="confirmRecalculation(true)"
+          >
+            同时删除
+          </button>
         </div>
       </div>
     </div>

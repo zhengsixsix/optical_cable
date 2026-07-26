@@ -33,6 +33,10 @@ const mergeElement = (existing: ConnectorElement, incoming: ConnectorElement): C
   ...incoming,
   id: existing.id,
   kp: preferIncomingNumber(incoming.kp, existing.kp),
+  // A refresh that lacks position data must not downgrade a previously
+  // explicit local KP to the platform's zero fallback. Legacy elements with
+  // no marker are explicit by compatibility convention.
+  hasExplicitKp: (incoming.hasExplicitKp ?? true) || (existing.hasExplicitKp ?? true),
   depth: preferIncomingNumber(incoming.depth, existing.depth),
   specifications: incoming.specifications || existing.specifications,
   remarks: incoming.remarks || existing.remarks,

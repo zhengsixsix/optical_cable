@@ -160,45 +160,56 @@ watch(() => props.draggableAmplifiers, () => {
   setupTranslateInteraction()
 })
 
-// 当点位重绘后重新挂载 translate
-watch(() => monitorStore.devices.length, () => {
-  if (props.draggableAmplifiers) {
-    setTimeout(() => setupTranslateInteraction(), 300)
-  }
-})
-
 const getPointIconScale = (type: string) => {
   if (type === 'equalizer' || type === 'joint') return 0.24
   return 0.18
 }
 
-// 点列表只保留 Store 或后端路线中明确给出的字段。
-const sortedPoints = computed(() => {
-  // 优先使用 monitorStore 的设备数据（与实时监控页面一致）
-  if (monitorStore.devices.length > 0) {
-    return [...monitorStore.devices]
-      .sort((a, b) => (a.kp || 0) - (b.kp || 0))
-      .map(d => ({
-        id: d.id,
-        name: d.name,
-        type: d.type,
-        longitude: d.longitude,
-        latitude: d.latitude,
-        kp: d.kp,
-        depth: d.depth || 0, // 保留水深信息，用于区分岸上/水下站点
-        // 保留分支站点信息
-        isBranchStation: (d as any).isBranchStation || false,
-        isBranchRepeater: (d as any).isBranchRepeater || false,
-        branchFrom: (d as any).branchFrom || null,
-        branchTo: (d as any).branchTo || null,
-        branchInfo: (d as any).branchInfo || null,
-      }))
+const pointTypeIdentity = (type: string): string => {
+  const normalized = String(type || '').trim().toLowerCase()
+  if (normalized === 'branching') return 'bu'
+  if (['repeater', 'ola', 'amplifier_e', 'amplifier_w'].includes(normalized)) return 'amplifier'
+  return normalized
+}
+
+const pointSpatialIdentity = (point: RoutePoint): string | null => {
+  const longitude = Number(point.longitude)
+  const latitude = Number(point.latitude)
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null
+  return `${pointTypeIdentity(point.type)}:${longitude.toFixed(5)}:${latitude.toFixed(5)}`
+}
+
+const mergePointSource = (
+  target: RoutePoint[],
+  incoming: RoutePoint[],
+  preserveExistingIdentity = false,
+) => {
+  for (const point of incoming) {
+    const idIndex = point.id ? target.findIndex(candidate => candidate.id === point.id) : -1
+    const spatialIdentity = pointSpatialIdentity(point)
+    const spatialIndex = idIndex < 0 && spatialIdentity
+      ? target.findIndex(candidate => pointSpatialIdentity(candidate) === spatialIdentity)
+      : -1
+    const existingIndex = idIndex >= 0 ? idIndex : spatialIndex
+    if (existingIndex < 0) {
+      target.push({ ...point })
+      continue
+    }
+    const existing = target[existingIndex]
+    target[existingIndex] = {
+      ...existing,
+      ...point,
+      ...(preserveExistingIdentity && idIndex < 0 ? { id: existing.id } : {}),
+    }
   }
-  
-  // 其次使用 Pareto 选中的路线
+}
+
+// 规划设备是地图基底；监控数据只叠加同一设备的运行字段，不能替换整套规划结果。
+const sortedPoints = computed<RoutePoint[]>(() => {
+  const merged: RoutePoint[] = []
   const selectedRoute = routeStore.selectedRoute
   if (selectedRoute && selectedRoute.points.length > 0) {
-    const mainPoints = selectedRoute.points.map((point) => {
+    const mainPoints: RoutePoint[] = selectedRoute.points.map((point) => {
       let mappedType = 'waypoint'
       if (point.type === 'landing') mappedType = 'landing'
       else if (point.type === 'repeater') mappedType = 'amplifier_e'
@@ -217,36 +228,41 @@ const sortedPoints = computed(() => {
         branchFrom: (point as any).branchFrom || null,
       }
     })
-    
-    // ★ 不再通过 branchTo 重复添加分支登陆站（它们已在 selectedRoute.points 中）
-    
-    // 合并 connectorStore 中的放大器/均衡器（系统规划应用配置后生成，接头盒不在地图显示）
-    const overlayTypes = ['ola', 'amplifier_e', 'amplifier_w', 'equalizer', 'joint']
-    const existingIds = new Set(mainPoints.map(p => p.id))
-    const overlayDevices = connectorStore.elements.filter(
-      e => overlayTypes.includes(e.type) && !existingIds.has(e.id)
-    )
-    overlayDevices.forEach(dev => {
-      mainPoints.push({
-        id: dev.id,
-        name: dev.name,
-        type: dev.type,
-        longitude: dev.longitude,
-        latitude: dev.latitude,
-        kp: dev.kp,
-        depth: dev.depth || 0,
-      } as any)
-    })
-    
-    return mainPoints
+    mergePointSource(merged, mainPoints)
   }
-  
-  // 最后使用 props
+
+  // props.routePoints 来自当前接线元表，包含后端布局生成和人工维护的设备。
   if (props.routePoints.length > 0) {
-    return [...props.routePoints].sort((a, b) => (a.kp || 0) - (b.kp || 0))
+    mergePointSource(merged, props.routePoints)
   }
-  return []
+
+  const monitoredPoints: RoutePoint[] = monitorStore.devices.map(device => ({
+    ...device,
+    id: device.id,
+    name: device.name,
+    type: device.type,
+    longitude: device.longitude,
+    latitude: device.latitude,
+    kp: device.kp,
+    depth: device.depth || 0,
+  }))
+  mergePointSource(merged, monitoredPoints, true)
+
+  return merged
+    .filter(point => Number.isFinite(Number(point.longitude)) && Number.isFinite(Number(point.latitude)))
+    .sort((left, right) => (Number(left.kp) || 0) - (Number(right.kp) || 0))
 })
+
+const pointRenderSignature = computed(() => sortedPoints.value.map(point => [
+  point.id,
+  point.type,
+  point.name,
+  Number(point.longitude),
+  Number(point.latitude),
+  Number(point.kp ?? 0),
+  Number(point.depth ?? 0),
+  Boolean(point.isBranchStation),
+].join(':')).join('|'))
 
 // 更新线路样式（根据选中的线段索引更新样式）
 const updateLineStyle = () => {
@@ -709,7 +725,7 @@ const drawPoints = () => {
 const flyToPoint = (pointId: string) => {
   if (!map) return
   
-  const point = props.routePoints.find(p => p.id === pointId)
+  const point = sortedPoints.value.find(candidate => candidate.id === pointId)
   if (!point) return
   
   map.getView().animate({
@@ -927,7 +943,6 @@ const initMap = () => {
 
 // 防抖重绘，避免 apply 时频繁刷新导致卡死
 let redrawTimer: ReturnType<typeof setTimeout> | null = null
-let lastDeviceCount = -1
 let lastRouteId: string | null = null
 // 累积标志：多个 watcher 在防抖窗口内触发时，取最大值而非覆盖
 let pendingFitView = false
@@ -960,17 +975,23 @@ const scheduleRedraw = (fitView = false, drawRoute = true) => {
   }, 200)
 }
 
-// 监听 monitorStore 设备数量变化 - 放大器添加后重绘
+// 监听完整点位签名；同数量设备被重新布放、改名或改型时也必须刷新。
 watch(
-  () => monitorStore.devices.length,
-  (newLen) => {
-    if (newLen !== lastDeviceCount && map) {
-      lastDeviceCount = newLen
-      // 设备变化仅重绘，避免频繁 fit 造成卡顿
-      // 设备变化只更新点位，不重绘线路
-      scheduleRedraw(false, false)
+  pointRenderSignature,
+  () => {
+    if (!map) return
+    scheduleRedraw(false, true)
+    if (props.draggableAmplifiers) {
+      setTimeout(() => setupTranslateInteraction(), 250)
     }
   }
+)
+
+watch(
+  () => props.selectedPointId,
+  () => {
+    if (map) scheduleRedraw(false, false)
+  },
 )
 
 // 监听 Pareto 选中路线变化
@@ -994,19 +1015,12 @@ watch(
   }
 )
 
-// 监听放大器变化 - 应用配置后重绘设备点位
-watch(
-  () => connectorStore.elements.filter(e => e.type === 'ola' || e.type === 'amplifier_e' || e.type === 'amplifier_w').length,
-  () => {
-    if (map) {
-      scheduleRedraw(false, false)
-    }
-  }
-)
-
 // 监听 placementRoutePoints 变化 - 重绘光纤线跟随新路由几何
 watch(
-  () => props.placementRoutePoints?.length,
+  () => (props.placementRoutePoints ?? []).map(point => [
+    point.id,
+    ...(Array.isArray(point.coordinates) ? point.coordinates : []),
+  ].join(':')).join('|'),
   () => {
     if (map && props.placementRoutePoints && props.placementRoutePoints.length > 0) {
       scheduleRedraw(false, true)

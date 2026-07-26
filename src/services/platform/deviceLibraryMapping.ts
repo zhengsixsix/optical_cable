@@ -201,13 +201,20 @@ export function connectorElementToDeviceEntity(
     || element.deviceTypeCd
   if (!deviceTypeCd) return null
   const libraryValues = deviceValueListToMap(library?.deviceValueList)
+  // `kp` is required by the legacy connector model, but a platform entity
+  // may only have the model's numeric fallback (0).  Do not serialise that
+  // fallback as an explicit position; retain a provenance marker instead so
+  // a subsequent restore can distinguish the two cases.
+  const hasExplicitKp = element.hasExplicitKp ?? true
   const bindFuncList = withLocalParams(
     cloneBindFuncList(library?.bindFuncList),
     LOCAL_DEVICE_ENTITY_PARAMS,
     {
       connectorId: element.id,
+      routePointId: element.routePointId,
       connectorType: element.type,
-      kp: element.kp,
+      kp: hasExplicitKp ? element.kp : undefined,
+      hasExplicitKp: element.hasExplicitKp,
       endKp: element.endKp,
       depth: element.depth,
       status: element.status,
@@ -223,6 +230,9 @@ export function connectorElementToDeviceEntity(
       buBranchTarget: element.buBranchTarget,
       buNextHopUpstream: element.buNextHopUpstream,
       buNextHopDownstream: element.buNextHopDownstream,
+      buNextHopBranch1: element.buNextHopBranch1,
+      buNextHopBranch2: element.buNextHopBranch2,
+      buNextHopBranch3: element.buNextHopBranch3,
       equalizerRole: element.equalizerRole,
       attenuationMode: element.attenuationMode,
       attenuationDb: element.attenuationDb,
@@ -267,14 +277,22 @@ export function platformDeviceEntityToConnectorElement(entity: PlanDeviceEntity)
   const isFiber = connectorType === 'fiber'
   const componentRefId = isFiber ? stringOrUndefined(params.componentRefId) : (stringOrUndefined(params.componentRefId) || libraryId)
   const fiberRefId = isFiber ? (stringOrUndefined(params.fiberRefId) || libraryId) : stringOrUndefined(params.fiberRefId)
+  const explicitKp = optionalNumber(params.kp) ?? optionalNumber(entity.positionKm)
+  const explicitKpMarker = params.hasExplicitKp === false || params.hasExplicitKp === 'false'
+    ? false
+    : params.hasExplicitKp === true || params.hasExplicitKp === 'true'
+      ? true
+      : undefined
 
   return {
     id: String(params.connectorId || entity.id || `platform-device-entity-${Date.now()}`),
     platformEntityId: entity.id,
+    routePointId: stringOrUndefined(params.routePointId),
     deviceTypeCd: entity.deviceTypeCd || undefined,
     name: String(entity.name || entity.libraryName || entity.id || '接线元'),
     type: connectorType,
-    kp: numeric(params.kp),
+    kp: explicitKp ?? 0,
+    hasExplicitKp: explicitKpMarker ?? (explicitKp != null),
     endKp: optionalNumber(params.endKp),
     longitude: numeric(entity.longitude),
     latitude: numeric(entity.latitude),
@@ -294,6 +312,9 @@ export function platformDeviceEntityToConnectorElement(entity: PlanDeviceEntity)
     buBranchTarget: stringOrUndefined(params.buBranchTarget),
     buNextHopUpstream: stringOrUndefined(params.buNextHopUpstream),
     buNextHopDownstream: stringOrUndefined(params.buNextHopDownstream),
+    buNextHopBranch1: stringOrUndefined(params.buNextHopBranch1),
+    buNextHopBranch2: stringOrUndefined(params.buNextHopBranch2),
+    buNextHopBranch3: stringOrUndefined(params.buNextHopBranch3),
     equalizerRole: params.equalizerRole === 'S' ? 'S' : params.equalizerRole === 'T' ? 'T' : undefined,
     attenuationMode: params.attenuationMode === 'fixed' ? 'fixed' : params.attenuationMode === 'adjustable' ? 'adjustable' : undefined,
     attenuationDb: optionalNumber(params.attenuationDb),

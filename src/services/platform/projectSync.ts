@@ -4,7 +4,7 @@ import type {
   PlanConfigChannel,
   PlanConfigOptimization,
   PlanDeviceEntity,
-  PlanPoint,
+  PlanPointSaveListItem,
   PlanProject,
 } from './types'
 
@@ -13,7 +13,7 @@ export interface SyncPlanningProjectInput {
   name: string
   remarks?: string
   isPublic?: 0 | 1
-  points?: Array<Pick<PlanPoint, 'name' | 'longitude' | 'latitude' | 'sortNum'>>
+  points?: Array<Pick<PlanPointSaveListItem, 'name' | 'longitude' | 'latitude' | 'sortNum'>>
   deviceEntities?: PlanDeviceEntity[]
   planConfig?: {
     scope?: {
@@ -51,7 +51,8 @@ export async function syncPlanningProjectToPlatform(input: SyncPlanningProjectIn
   }))
 
   if (pointList.length > 0) {
-    await platformPointApi.saveList(projectId, pointList)
+    const saved = await platformPointApi.saveList(projectId, pointList)
+    if (saved !== true) throw new Error('项目站点列表保存失败')
   }
 
   if (input.planConfig?.scope) {

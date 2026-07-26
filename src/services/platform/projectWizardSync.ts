@@ -1,9 +1,9 @@
 import { platformPlanConfigApi, platformPlanLayerApi, platformPointApi, platformProjectApi, platformUploadApi } from './api'
 import { uploadFileWithUppyTus } from './uppyUpload'
 import type { UppyTusUploadResult, UppyUploadProgress } from './uppyUpload'
-import type { Id, PlanConfigScope, PlanLayerTypeDic, PlanPoint, PlanProject } from './types'
+import type { Id, PlanConfigScope, PlanLayerTypeDic, PlanPointSaveListItem, PlanProject } from './types'
 
-type WizardPoint = Pick<PlanPoint, 'name' | 'longitude' | 'latitude' | 'sortNum'>
+type WizardPoint = Pick<PlanPointSaveListItem, 'name' | 'longitude' | 'latitude' | 'sortNum'>
 
 export interface ProjectWizardSyncState {
   projectId: Id | null
@@ -128,7 +128,8 @@ export async function saveProjectWizardStep(
 
     const pointList = buildPointList(payload).filter(point => point.longitude !== 0 || point.latitude !== 0)
     if (pointList.length > 0) {
-      await platformPointApi.saveList(projectId, pointList)
+      const saved = await platformPointApi.saveList(projectId, pointList)
+      if (saved !== true) throw new Error('项目站点列表保存失败')
     }
 
     if (payload.planConfig?.scope) {

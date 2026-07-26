@@ -96,11 +96,67 @@ export interface PlanRouteResult {
   'cost.txt'?: string | null
   'risk.txt'?: string | null
 }
-/**
- * Swagger 将 fixed / optimized / simulation 的 data 声明为 Object，
- * 没有公开内部字段。保留 unknown，等真实响应确认后再收紧类型。
- */
+
+/** 可由系统规划流程实际选择的物理仿真模式。 */
+export type PlanSimulationMode = 'fixed' | 'optimized'
+
+/** Swagger 还枚举了生成器占位值；保留在 wire 类型中用于契约兼容。 */
+export type PlanSimulationWireMode = PlanSimulationMode | 'LAYOUT_API_MODE'
+
+export interface PlanSimulationPayload {
+  id?: Id | null
+  mode?: PlanSimulationWireMode | null
+}
+
+export interface PlanFmmPathResult {
+  trace?: number[][]
+  real_trace?: number[][]
+  total_cost?: number
+  total_risk?: number
+  length?: number
+}
+
+export interface PlanResultSegment {
+  segment_id?: number
+  start_node_id?: number
+  end_node_id?: number
+  cable_type?: string
+  length_km?: number
+}
+
+export interface PlanResultRiskLevel {
+  level?: number
+  risk_min?: number
+  risk_max?: number
+}
+
+export interface PlanSegmentResultBase {
+  route_index?: number
+  segment_nodes?: number[][]
+  segments?: PlanResultSegment[]
+}
+
+export interface PlanSegmentResultBaseRisk extends PlanSegmentResultBase {
+  risk_level?: PlanResultRiskLevel[]
+}
+
+/** `/plan/project/saveResult` 保存手动调整后的路由规划结果。 */
+export interface PlanProjectSaveResultPayload {
+  id?: Id | null
+  'cost.txt'?: string
+  'risk.txt'?: string
+  'FMM_path_result.json'?: PlanFmmPathResult[]
+  'segment_result_base_FixSpacing.json'?: PlanSegmentResultBase
+  'segment_result_base_Risk.json'?: PlanSegmentResultBaseRisk
+}
+/** 算法布局和物理仿真的内部结果仍由各算法定义。 */
 export type PlanCalculationResult = unknown
+
+/** 固定模式和优化模式共享的布局生成响应。 */
+export interface PlanLayoutCalculationResponse {
+  layoutResult: PlanCalculationResult
+  deviceEntityList: PlanDeviceEntity[]
+}
 
 export interface PlatformPlanningResults {
   fixed: PlanCalculationResult | null
@@ -184,9 +240,32 @@ export interface PlanPoint {
   }
 }
 
-export interface PlanPointSaveListPayload {
+export interface PlanPointSearch extends PagedSearch {
+  id?: Id
   projectId?: Id | null
-  pointList?: PlanPoint[] | null
+  name?: string | null
+}
+
+export interface PlanPointSavePayload {
+  id?: Id
+  projectId?: Id | null
+  name?: string | null
+  longitude?: number | null
+  latitude?: number | null
+  sortNum?: number | null
+}
+
+export interface PlanPointSaveListItem {
+  id?: Id
+  name?: string | null
+  longitude?: number | null
+  latitude?: number | null
+  sortNum?: number | null
+}
+
+export interface PlanPointSaveListPayload {
+  projectId: Id | null
+  pointList?: PlanPointSaveListItem[] | null
 }
 
 export interface PlanConfigScope {
@@ -224,6 +303,27 @@ export interface PlanConfigOptimization {
   projectId: Id
   targetGsnrDb?: number | null
   targetOsnrDb?: number | null
+  osnrMarginDb?: number | null
+  spanMinKm?: number | null
+  spanMaxKm?: number | null
+  spanStepKm?: number | null
+  minSpanLimitKm?: number | null
+  maxSpanLimitKm?: number | null
+  optimizationTarget?: 'max_gsnr' | 'min_amp' | string | null
+}
+
+/** Swagger 的优化配置请求/响应将数值字段编码为 string。 */
+export interface PlanConfigOptimizationWire {
+  projectId: Id
+  targetGsnrDb?: string | null
+  targetOsnrDb?: string | null
+  osnrMarginDb?: string | null
+  spanMinKm?: string | null
+  spanMaxKm?: string | null
+  spanStepKm?: string | null
+  minSpanLimitKm?: string | null
+  maxSpanLimitKm?: string | null
+  optimizationTarget?: 'max_gsnr' | 'min_amp' | string | null
 }
 
 export interface PlanConfigSpanKm {
@@ -266,6 +366,28 @@ export interface SystemPlanningFormSnapshot {
     center: number
     upper: number
   }
+  buConfigs?: Array<{
+    connectorId: string
+    componentRefId: string
+    trunkLoss: number
+    branchLoss: number
+    nextHopUpstream: string
+    nextHopDownstream: string
+    nextHopBranch1: string
+    nextHopBranch2?: string
+    nextHopBranch3?: string
+  }>
+  equalizers?: Array<{
+    connectorId?: string
+    name: string
+    kp: number
+    componentRefId: string
+    equalizerRole: 'T' | 'S'
+    attenuationMode: 'adjustable' | 'fixed'
+    attenuationDb: number
+    specifications: string
+    remarks: string
+  }>
   savedAt: string
 }
 
@@ -410,6 +532,11 @@ export interface PlanDeviceLibrarySearch extends PagedSearch {
   isDefault?: 0 | 1 | number | null
 }
 
+export interface PlanDeviceLibrarySaveDefaultPayload {
+  id: Id
+  deviceTypeCd: string
+}
+
 export interface PlanDeviceEntity {
   id?: Id
   name?: string | null
@@ -427,10 +554,12 @@ export interface PlanDeviceEntity {
   latitude?: number | null
   projectId?: Id | null
   sortNum?: number | null
+  description?: string | null
   nodeId?: Id | null
   positionKm?: number | string | null
   mode?: string | null
   deviceValueList?: Array<PlanDeviceValueSave | PlanDeviceValueSimple> | null
+  defaultBindFunc?: PlatformBindFunc | null
 }
 
 export interface PlanDeviceEntitySearch extends PagedSearch {
@@ -441,4 +570,5 @@ export interface PlanDeviceEntitySearch extends PagedSearch {
   longitude?: number | null
   latitude?: number | null
   projectId?: Id | null
+  description?: string | null
 }

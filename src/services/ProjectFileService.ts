@@ -24,6 +24,7 @@ import type {
   USEAppExtensions,
   EDFASpecs,
   BUSpecs,
+  WDMConfig,
 } from '@/types/useFile'
 import { 
   generateUUID, 
@@ -32,6 +33,7 @@ import {
 import type { Id, PlanDeviceLibrary } from '@/services/platform/types'
 import { deviceLibraryItemToPlatform } from '@/services/platform/deviceLibraryMapping'
 import type { AlgorithmRouteBundleResult } from '@/services/RouteDataConverter'
+import type { WDMPlanningParams } from '@/types/systemPlanning'
 
 // Store 类型别名
 type SettingsStore = ReturnType<typeof useSettingsStore>
@@ -43,6 +45,63 @@ type ConnectorStore = ReturnType<typeof useConnectorStore>
 type RouteStore = ReturnType<typeof useRouteStore>
 
 type JSZipConstructor = typeof JSZip
+
+function cloneProjectValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  if (value == null || value === '') return fallback
+  const normalized = Number(value)
+  return Number.isFinite(normalized) ? normalized : fallback
+}
+
+function positiveChannelCount(value: unknown, fallback: number = 96): number {
+  const normalized = Math.trunc(finiteNumber(value, fallback))
+  return normalized > 0 ? normalized : fallback
+}
+
+function normalizedChannelVector(
+  value: unknown,
+  channelCount: number,
+  fallback: number,
+): number[] {
+  const source = Array.isArray(value) ? value : []
+  return Array.from({ length: channelCount }, (_, index) => finiteNumber(source[index], fallback))
+}
+
+function collectCurrentWDMConfig(settingsStore: SettingsStore): WDMConfig {
+  const current = settingsStore.systemPlanningConfig.wdmParams
+  const channelCount = positiveChannelCount(current.channelCount)
+  const launchPower = finiteNumber(current.launchPower, 0)
+
+  return {
+    channel_count: channelCount,
+    center_freq_thz: finiteNumber(current.centerFreqTHz, 193.1),
+    channel_spacing_ghz: finiteNumber(current.channelSpacingGHz, 50),
+    baud_rate_gbaud: finiteNumber(current.baudRateGbaud, 64),
+    launch_power_vector: normalizedChannelVector(
+      current.vectorParams?.launchPowerVector,
+      channelCount,
+      launchPower,
+    ),
+    initial_ase_vector: normalizedChannelVector(
+      current.vectorParams?.initialAseVector,
+      channelCount,
+      -90,
+    ),
+    initial_nli_vector: normalizedChannelVector(
+      current.vectorParams?.initialNliVector,
+      channelCount,
+      -90,
+    ),
+    modulation: current.modulation,
+    shaping_moments: {
+      moment4: finiteNumber(current.shapingMoments?.moment4, 1.32),
+      moment6: finiteNumber(current.shapingMoments?.moment6, 1.96),
+    },
+  }
+}
 
 /**
  * Load JSZip only when a project file operation actually needs it.
@@ -263,7 +322,20 @@ class ProjectFileService {
     // 0. 收集 project_settings (工程设置) -> 归入 _app_extensions
     projectData._app_extensions.project_settings = this.collectProjectSettings(settingsStore)
 
-    // 规范六大模块由后端或导入文件拥有；前端只更新显式 Store 快照。
+    // system_engineering 是 USE 的标准持久化位置，必须反映当前 Store，而不是初始模板。
+    const wdmConfig = collectCurrentWDMConfig(settingsStore)
+    const simulationCache = settingsStore.simulationCache
+      ? cloneProjectValue(settingsStore.simulationCache)
+      : null
+    const systemPlanningCache = settingsStore.systemPlanningCache
+      ? cloneProjectValue(settingsStore.systemPlanningCache)
+      : null
+    projectData.system_engineering = {
+      ...(projectData.system_engineering ?? {}),
+      wdm_config: cloneProjectValue(wdmConfig),
+      simulation_cache: simulationCache,
+      system_planning_cache: systemPlanningCache,
+    }
     
     // 6.1 保存 RPL 原始数据
     projectData._app_extensions.routePlanning = {
@@ -303,11 +375,14 @@ class ProjectFileService {
       linkCalcSummary: settingsStore.linkCalcSummaryCache
         ? JSON.parse(JSON.stringify(settingsStore.linkCalcSummaryCache))
         : null,
+      wdmConfig: cloneProjectValue(wdmConfig),
+      simulationCache: simulationCache ? cloneProjectValue(simulationCache) : null,
+      systemPlanningCache: systemPlanningCache ? cloneProjectValue(systemPlanningCache) : null,
       platformPlanningResults: settingsStore.platformPlanningResults
-        ? JSON.parse(JSON.stringify(settingsStore.platformPlanningResults))
+        ? cloneProjectValue(settingsStore.platformPlanningResults)
         : null,
       platformPlanConfigSnapshot: settingsStore.platformPlanConfigSnapshot
-        ? JSON.parse(JSON.stringify(settingsStore.platformPlanConfigSnapshot))
+        ? cloneProjectValue(settingsStore.platformPlanConfigSnapshot)
         : null,
     }
 
@@ -723,6 +798,89 @@ class ProjectFileService {
     return libraries
   }
 
+  private restoreWDMConfig(wdm: WDMConfig, settingsStore: SettingsStore, projectData: USEProjectData): void {
+    const channelCount = positiveChannelCount(wdm.channel_count)
+    const launchPowerVector = normalizedChannelVector(wdm.launch_power_vector, channelCount, 0)
+    const initialAseVector = normalizedChannelVector(wdm.initial_ase_vector, channelCount, -90)
+    const initialNliVector = normalizedChannelVector(wdm.initial_nli_vector, channelCount, -90)
+    const centerFrequencyThz = finiteNumber(wdm.center_freq_thz, 193.1)
+
+    settingsStore.setTransmissionConfig({
+      channelCount,
+      centerWavelength: 299792.458 / centerFrequencyThz,
+      channelBandwidth: finiteNumber(wdm.channel_spacing_ghz, 50),
+      calculationModels: projectData._app_extensions?.project_settings?.simulation_settings.calculation_models ?? [],
+    })
+    settingsStore.updateWDMPlanningParams({
+      channelCount,
+      centerFreqTHz: centerFrequencyThz,
+      channelSpacingGHz: finiteNumber(wdm.channel_spacing_ghz, 50),
+      baudRateGbaud: finiteNumber(wdm.baud_rate_gbaud, 64),
+      modulation: wdm.modulation as WDMPlanningParams['modulation'],
+      launchPower: launchPowerVector[0] ?? 0,
+      shapingMoments: {
+        moment4: finiteNumber(wdm.shaping_moments?.moment4, 1.32),
+        moment6: finiteNumber(wdm.shaping_moments?.moment6, 1.96),
+      },
+      vectorParams: {
+        launchPowerVector,
+        initialAseVector,
+        initialNliVector,
+      },
+    })
+  }
+
+  /** Recent legacy files could leave the standard WDM at defaults while saving the real channel form. */
+  private restoreLegacyWDMExtension(projectData: USEProjectData, settingsStore: SettingsStore): void {
+    const extensions = projectData._app_extensions
+    const designCache = extensions?.designCache
+    if (designCache?.wdmConfig) return
+
+    const channelConfig = designCache?.platformPlanConfigSnapshot?.channelConfig
+    if (channelConfig) {
+      const current = settingsStore.systemPlanningConfig.wdmParams
+      const channelCount = positiveChannelCount(channelConfig.channelCount, current.channelCount)
+      const launchPower = finiteNumber(channelConfig.launchPowerDbm?.[0], current.launchPower)
+      settingsStore.updateWDMPlanningParams({
+        channelCount,
+        centerFreqTHz: finiteNumber(channelConfig.centerFrequencyThz, current.centerFreqTHz),
+        channelSpacingGHz: finiteNumber(channelConfig.channelSpacingGhz, current.channelSpacingGHz),
+        baudRateGbaud: finiteNumber(channelConfig.baudRateGbaud, current.baudRateGbaud),
+        modulation: (channelConfig.modulationFormat ?? current.modulation) as WDMPlanningParams['modulation'],
+        launchPower,
+        vectorParams: {
+          launchPowerVector: normalizedChannelVector(channelConfig.launchPowerDbm, channelCount, launchPower),
+          initialAseVector: normalizedChannelVector(
+            null,
+            channelCount,
+            finiteNumber(channelConfig.initialAseNoiseDbm, -90),
+          ),
+          initialNliVector: normalizedChannelVector(
+            null,
+            channelCount,
+            finiteNumber(channelConfig.initialNliNoiseDbm, -90),
+          ),
+        },
+      })
+      settingsStore.updateTransmissionConfig({
+        channelCount,
+        channelBandwidth: finiteNumber(channelConfig.channelSpacingGhz, current.channelSpacingGHz),
+      })
+      return
+    }
+
+    const transmissionConfig = extensions?.transmissionPlanning?.transmissionConfig
+    if (!transmissionConfig || typeof transmissionConfig !== 'object') return
+    const current = settingsStore.systemPlanningConfig.wdmParams
+    const channelCount = positiveChannelCount(transmissionConfig.channelCount, current.channelCount)
+    const centerWavelength = finiteNumber(transmissionConfig.centerWavelength, 0)
+    settingsStore.updateWDMPlanningParams({
+      channelCount,
+      channelSpacingGHz: finiteNumber(transmissionConfig.channelBandwidth, current.channelSpacingGHz),
+      centerFreqTHz: centerWavelength > 0 ? 299792.458 / centerWavelength : current.centerFreqTHz,
+    })
+  }
+
   /**
    * 加载新版 USE 项目数据到 stores
    * 符合文档规范: 完整加载六大模块的所有字段
@@ -775,36 +933,28 @@ class ProjectFileService {
       settingsStore.clearPlatformDeviceConfigs()
     }
 
-    // 8. 恢复传输配置 (wdm_config)
-    if (projectData.system_engineering.wdm_config) {
-      const wdm = projectData.system_engineering.wdm_config
-      settingsStore.setTransmissionConfig({
-        channelCount: wdm.channel_count,
-        centerWavelength: 1550,
-        channelBandwidth: wdm.channel_spacing_ghz,
-        calculationModels: projectData._app_extensions?.project_settings?.simulation_settings.calculation_models ?? [],
-      })
-      // 存储完整 WDM 配置到扩展字段
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(settingsStore as any).wdmExtendedConfig = {
-        centerFreqThz: wdm.center_freq_thz,
-        baudRate: wdm.baud_rate_gbaud,
-        launchPowerVector: wdm.launch_power_vector,
-        initialAseVector: wdm.initial_ase_vector,
-        initialNliVector: wdm.initial_nli_vector,
-        modulation: wdm.modulation,
-        shapingMoments: wdm.shaping_moments,
-      }
-    }
+    const standardEngineering = projectData.system_engineering
+    const extensionCache = projectData._app_extensions?.designCache
+
+    // 8. 标准模块为权威来源；扩展镜像兼容曾只保存应用缓存的文件。
+    const wdm = standardEngineering?.wdm_config ?? extensionCache?.wdmConfig ?? null
+    if (wdm) this.restoreWDMConfig(cloneProjectValue(wdm), settingsStore, projectData)
+    this.restoreLegacyWDMExtension(projectData, settingsStore)
 
     // 9. 恢复仿真缓存 (simulation_cache)
-    if (projectData.system_engineering.simulation_cache) {
-      settingsStore.updateSimulationCache(projectData.system_engineering.simulation_cache)
+    const simulationCache = standardEngineering?.simulation_cache
+      ?? extensionCache?.simulationCache
+      ?? null
+    if (simulationCache) {
+      settingsStore.updateSimulationCache(cloneProjectValue(simulationCache))
     }
 
     // 10. 恢复系统规划缓存 (system_planning_cache)
-    if (projectData.system_engineering.system_planning_cache) {
-      settingsStore.updateSystemPlanningCache(projectData.system_engineering.system_planning_cache)
+    const systemPlanningCache = standardEngineering?.system_planning_cache
+      ?? extensionCache?.systemPlanningCache
+      ?? null
+    if (systemPlanningCache) {
+      settingsStore.updateSystemPlanningCache(cloneProjectValue(systemPlanningCache))
     }
 
     // 11. 恢复监控配置 (health_monitoring)

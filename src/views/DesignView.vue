@@ -22,6 +22,8 @@ import {
   getConnectorTypeForDeviceTypeCode,
   getDeviceTypeCodeForConnectorType,
 } from '@/services/platform/deviceTypeAdapter'
+import { normalizePlatformSimulationCache } from '@/services/SimulationApiService'
+import { selectPlanningLayoutResult } from '@/utils/systemPlanningLayout'
 
 const settingsStore = useSettingsStore()
 const dictionaryStore = useDictionaryStore()
@@ -76,13 +78,6 @@ const openNewProject = () => {
 }
 
 onMounted(async () => {
-  // 恢复结果不依赖平台字典或器件库，避免外围请求失败导致结果面板保持空白。
-  if (!linkCalcSummary.value && settingsStore.linkCalcSummaryCache) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    linkCalcSummary.value = settingsStore.linkCalcSummaryCache as any
-    currentLinkName.value = settingsStore.linkCalcSummaryCache.linkName || routeStore.selectedRoute?.name || '链路'
-  }
-
   try {
     await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.deviceType)
   } catch (error) {
@@ -167,28 +162,35 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
 })
 
-// 链路计算结果摘要（来自系统规划链路配置对话框）
-const linkCalcSummary = ref<{
+interface LinkMetricSummary {
+  min: number
+  max: number
+  avg: number
+}
+
+interface LinkCalculationSummary {
   layoutOnly?: boolean
   linkName: string
   totalLength?: number
   systemCapacityTbps?: number
+  calculatedAt?: string
+  status?: string
   metrics?: {
-    osnr: { min: number; max: number; avg: number }
-    gsnr: { min: number; max: number; avg: number }
-    power: { min: number; max: number; avg: number }
-    nli: { min: number; max: number; avg: number }
-    qFactor: { min: number; max: number; avg: number }
+    osnr: LinkMetricSummary
+    gsnr: LinkMetricSummary
+    power?: LinkMetricSummary
+    nli?: LinkMetricSummary
+    qFactor?: LinkMetricSummary
   }
   systemConfig?: {
-    amplifierCount: number
-    avgSpanLength: number
-    buCount: number
+    amplifierCount?: number
+    avgSpanLength?: number
+    buCount?: number
     equalizerCount?: number
-    totalBuLoss: number
+    totalBuLoss?: number
     totalEqualizerLoss?: number
-    channelCount: number
-    modulation: string
+    channelCount?: number
+    modulation?: string
   }
   margin?: {
     targetOsnr: number
@@ -204,7 +206,130 @@ const linkCalcSummary = ref<{
     totalCost: number
     costItems: Array<{ category: string; model: string; quantity: number | string; unit: string; unitPrice: number; subtotal: number }>
   }
-} | null>(null)
+}
+
+// 链路计算结果摘要（来自系统规划链路配置对话框或已恢复的平台缓存）
+const linkCalcSummary = ref<LinkCalculationSummary | null>(null)
+
+const finiteNumber = (value: unknown): number | null => {
+  if (value == null || typeof value === 'boolean' || (typeof value === 'string' && !value.trim())) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const summarizeFinalMatrixRow = (matrix: number[][] | null | undefined): LinkMetricSummary | null => {
+  if (!Array.isArray(matrix)) return null
+  for (let index = matrix.length - 1; index >= 0; index -= 1) {
+    const values = Array.isArray(matrix[index])
+      ? matrix[index].filter(value => Number.isFinite(value))
+      : []
+    if (values.length === 0) continue
+    return {
+      min: Math.min(...values),
+      max: Math.max(...values),
+      avg: values.reduce((total, value) => total + value, 0) / values.length,
+    }
+  }
+  return null
+}
+
+const normalizedPlanningSimulation = computed(() => {
+  const cached = settingsStore.simulationCache
+  if (cached?.is_valid) return cached
+  return normalizePlatformSimulationCache(settingsStore.platformPlanningResults?.simulation)
+})
+
+const restoredPlanningLayout = computed(() => {
+  const preferredMode = settingsStore.platformPlanConfigSnapshot?.form?.spanStrategy === 'fixed'
+    ? 'fixed'
+    : 'optimized'
+  return selectPlanningLayoutResult(settingsStore.platformPlanningResults, preferredMode)
+})
+
+const restoredPlanningSummary = computed<LinkCalculationSummary | null>(() => {
+  const legacy = settingsStore.linkCalcSummaryCache as Partial<LinkCalculationSummary> | null
+  const simulation = normalizedPlanningSimulation.value
+  const planning = settingsStore.systemPlanningCache?.is_valid
+    ? settingsStore.systemPlanningCache
+    : null
+  const layout = restoredPlanningLayout.value
+  if (!legacy && !simulation && !planning && !layout) return null
+
+  const gsnr = summarizeFinalMatrixRow(simulation?.metrics.gsnr_matrix_db)
+  const osnr = summarizeFinalMatrixRow(simulation?.metrics.osnr_matrix_db)
+  const power = summarizeFinalMatrixRow(simulation?.metrics.signal_power_matrix_dbm)
+  const nli = summarizeFinalMatrixRow(simulation?.metrics.nli_noise_power_matrix_dbm)
+  const restoredMetrics = gsnr && osnr
+    ? {
+        gsnr,
+        osnr,
+        ...(power ? { power } : {}),
+        ...(nli ? { nli } : {}),
+        ...(legacy?.metrics?.qFactor ? { qFactor: legacy.metrics.qFactor } : {}),
+      }
+    : legacy?.metrics
+
+  const finalPlan = planning?.final_plan_cache
+  const finalPlacement = finalPlan?.amplifier_placement
+  const finalNodePositions = (finalPlan?.node_metadata ?? [])
+    .map(node => finiteNumber(node.kp_km))
+    .filter((value): value is number => value != null)
+  const finalPlanLength = finalNodePositions.length > 0 ? Math.max(...finalNodePositions) : null
+  const totalLength = finiteNumber(simulation?.summary.total_length_km)
+    ?? finiteNumber(layout?.totalLengthKm)
+    ?? finalPlanLength
+    ?? finiteNumber(legacy?.totalLength)
+  const capacity = finiteNumber(simulation?.summary.system_capacity_tbps)
+    ?? finiteNumber(legacy?.systemCapacityTbps)
+  const amplifierCount = finiteNumber(layout?.amplifierCount)
+    ?? finiteNumber(finalPlacement?.total_edfa_count)
+    ?? finiteNumber(legacy?.systemConfig?.amplifierCount)
+  const buCount = finiteNumber(finalPlacement?.total_bu_count)
+    ?? finiteNumber(legacy?.systemConfig?.buCount)
+  const averageSpan = finiteNumber(layout?.spanKmUsed)
+    ?? finiteNumber(planning?.user_decision?.selected_span_km)
+    ?? finiteNumber(planning?.sweep_results.recommended_span_km)
+    ?? finiteNumber(legacy?.systemConfig?.avgSpanLength)
+  const channelCount = finiteNumber(simulation?.channels.count)
+    ?? finiteNumber(settingsStore.platformPlanConfigSnapshot?.channelConfig?.channelCount)
+    ?? finiteNumber(legacy?.systemConfig?.channelCount)
+    ?? finiteNumber(settingsStore.systemPlanningConfig.wdmParams.channelCount)
+  const modulation = settingsStore.platformPlanConfigSnapshot?.channelConfig?.modulationFormat
+    || legacy?.systemConfig?.modulation
+    || settingsStore.systemPlanningConfig.wdmParams.modulation
+    || undefined
+  const fromStation = simulation?.route_ref.from_station || planning?.route_ref.from_station
+  const toStation = simulation?.route_ref.to_station || planning?.route_ref.to_station
+  const cacheLinkName = fromStation && toStation ? `${fromStation} ⇄ ${toStation}` : ''
+  const linkName = cacheLinkName || legacy?.linkName || routeStore.selectedRoute?.name || '链路'
+  const systemConfig = {
+    ...(legacy?.systemConfig ?? {}),
+    ...(amplifierCount != null ? { amplifierCount } : {}),
+    ...(buCount != null ? { buCount } : {}),
+    ...(averageSpan != null ? { avgSpanLength: averageSpan } : {}),
+    ...(channelCount != null ? { channelCount } : {}),
+    ...(modulation ? { modulation } : {}),
+  }
+
+  return {
+    ...legacy,
+    layoutOnly: restoredMetrics ? false : legacy?.layoutOnly ?? Boolean(layout || planning),
+    linkName,
+    ...(totalLength != null ? { totalLength } : {}),
+    ...(capacity != null ? { systemCapacityTbps: capacity } : {}),
+    ...(simulation?.timestamp || planning?.timestamp || legacy?.calculatedAt
+      ? { calculatedAt: simulation?.timestamp || planning?.timestamp || legacy?.calculatedAt }
+      : {}),
+    ...(simulation ? { status: 'success' } : {}),
+    ...(restoredMetrics ? { metrics: restoredMetrics } : {}),
+    ...(Object.keys(systemConfig).length > 0 ? { systemConfig } : {}),
+  }
+})
+
+watch(restoredPlanningSummary, summary => {
+  linkCalcSummary.value = summary
+  currentLinkName.value = summary?.linkName || routeStore.selectedRoute?.name || ''
+}, { immediate: true })
 
 // 设备统计（优先使用计算结果，否则从接线元统计）
 const deviceStats = computed(() => {
@@ -394,12 +519,18 @@ const handleLinkConfigApplyResult = (payload: Record<string, any>) => {
   })
 }
 
-// 格式化成本
+// 平台成本响应当前没有币种字段；沿用系统规划既有的 USD 口径，不做汇率换算。
+const SYSTEM_PLANNING_COST_CURRENCY = 'USD'
+
 const formatCost = (cost: number) => {
-  if (cost >= 1000000) return `$${(cost / 1000000).toFixed(2)}M`
-  if (cost >= 1000) return `$${(cost / 1000).toFixed(0)}K`
-  return `$${cost.toFixed(0)}`
+  if (!Number.isFinite(cost)) return '-'
+  if (cost >= 1000000) return `${SYSTEM_PLANNING_COST_CURRENCY} ${(cost / 1000000).toFixed(2)}M`
+  if (cost >= 1000) return `${SYSTEM_PLANNING_COST_CURRENCY} ${(cost / 1000).toFixed(0)}K`
+  return `${SYSTEM_PLANNING_COST_CURRENCY} ${cost.toFixed(0)}`
 }
+
+const formatRouteCost = (costInThousands: number) =>
+  Number.isFinite(costInThousands) ? `CNY ${costInThousands.toFixed(0)}K` : '-'
 
 // 地图组件引用
 const systemDesignMapRef = ref<InstanceType<typeof SystemDesignMap> | null>(null)
@@ -647,24 +778,6 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                 <span class="font-mono font-medium">{{ formatCost(linkCalcSummary.costData.equalizerCost) }}</span>
               </div>
             </div>
-            <!-- ★ 海缆分段成本明细（来自路由规划的风险分段） -->
-            <div v-if="cableSegmentStore.summary" class="space-y-1">
-              <div class="text-[10px] text-gray-400">海缆分段明细（路由规划）</div>
-              <div class="divide-y rounded border text-[10px] overflow-hidden">
-                <div v-if="cableSegmentStore.summary.highRiskLength > 0" class="flex justify-between px-2 py-1 bg-red-50">
-                  <span class="text-red-700">{{ getRiskArmorLabel('high') }} {{ cableSegmentStore.summary.highRiskLength.toFixed(1) }}km</span>
-                  <span class="font-mono text-red-700">¥{{ (cableSegmentStore.summary.highRiskCost).toFixed(0) }}K</span>
-                </div>
-                <div v-if="cableSegmentStore.summary.mediumRiskLength > 0" class="flex justify-between px-2 py-1 bg-amber-50">
-                  <span class="text-amber-700">{{ getRiskArmorLabel('medium') }} {{ cableSegmentStore.summary.mediumRiskLength.toFixed(1) }}km</span>
-                  <span class="font-mono text-amber-700">¥{{ (cableSegmentStore.summary.mediumRiskCost).toFixed(0) }}K</span>
-                </div>
-                <div v-if="cableSegmentStore.summary.lowRiskLength > 0" class="flex justify-between px-2 py-1 bg-green-50">
-                  <span class="text-green-700">{{ getRiskArmorLabel('low') }} {{ cableSegmentStore.summary.lowRiskLength.toFixed(1) }}km</span>
-                  <span class="font-mono text-green-700">¥{{ (cableSegmentStore.summary.lowRiskCost).toFixed(0) }}K</span>
-                </div>
-              </div>
-            </div>
             <!-- 成本构成条 -->
             <div v-if="linkCalcSummary.costData.totalCost > 0" class="space-y-1">
               <div class="text-[10px] text-gray-400">成本构成</div>
@@ -686,20 +799,20 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
           <div v-else-if="cableSegmentStore.summary" class="space-y-2">
             <div class="p-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg border border-blue-200">
               <div class="text-[10px] text-blue-600 mb-0.5">海缆分段成本（路由规划）</div>
-              <div class="text-lg font-bold text-blue-800">¥{{ (cableSegmentStore.summary.totalCost).toFixed(0) }}K</div>
+              <div class="text-lg font-bold text-blue-800">{{ formatRouteCost(cableSegmentStore.summary.totalCost) }}</div>
             </div>
             <div class="divide-y rounded border text-xs overflow-hidden">
               <div v-if="cableSegmentStore.summary.highRiskLength > 0" class="flex justify-between px-2 py-1 bg-red-50">
                 <span class="text-red-700">{{ getRiskArmorLabel('high') }} {{ cableSegmentStore.summary.highRiskSegments }}段 {{ cableSegmentStore.summary.highRiskLength.toFixed(1) }}km</span>
-                <span class="font-mono text-red-700">¥{{ (cableSegmentStore.summary.highRiskCost).toFixed(0) }}K</span>
+                <span class="font-mono text-red-700">{{ formatRouteCost(cableSegmentStore.summary.highRiskCost) }}</span>
               </div>
               <div v-if="cableSegmentStore.summary.mediumRiskLength > 0" class="flex justify-between px-2 py-1 bg-amber-50">
                 <span class="text-amber-700">{{ getRiskArmorLabel('medium') }} {{ cableSegmentStore.summary.mediumRiskSegments }}段 {{ cableSegmentStore.summary.mediumRiskLength.toFixed(1) }}km</span>
-                <span class="font-mono text-amber-700">¥{{ (cableSegmentStore.summary.mediumRiskCost).toFixed(0) }}K</span>
+                <span class="font-mono text-amber-700">{{ formatRouteCost(cableSegmentStore.summary.mediumRiskCost) }}</span>
               </div>
               <div v-if="cableSegmentStore.summary.lowRiskLength > 0" class="flex justify-between px-2 py-1 bg-green-50">
                 <span class="text-green-700">{{ getRiskArmorLabel('low') }} {{ cableSegmentStore.summary.lowRiskSegments }}段 {{ cableSegmentStore.summary.lowRiskLength.toFixed(1) }}km</span>
-                <span class="font-mono text-green-700">¥{{ (cableSegmentStore.summary.lowRiskCost).toFixed(0) }}K</span>
+                <span class="font-mono text-green-700">{{ formatRouteCost(cableSegmentStore.summary.lowRiskCost) }}</span>
               </div>
             </div>
             <div class="text-[10px] text-gray-400 text-center">完成系统规划后将显示完整成本</div>
@@ -797,6 +910,9 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
             <div v-if="deviceStats.channelCount > 0" class="flex gap-3 px-1 text-[10px] text-gray-500">
               <span>{{ deviceStats.channelCount }} 波道</span>
               <span>{{ deviceStats.modulation }}</span>
+              <span v-if="linkCalcSummary.systemCapacityTbps != null">
+                {{ linkCalcSummary.systemCapacityTbps.toFixed(3) }} Tbps
+              </span>
             </div>
 
             <div v-if="linkCalcSummary.layoutOnly" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
@@ -873,7 +989,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
                   <span class="text-gray-500">平均余量</span>
                   <span class="font-mono">{{ linkCalcSummary.margin.avgMargin.toFixed(1) }} dB</span>
                 </div>
-                <div v-if="linkCalcSummary.metrics?.qFactor.avg && linkCalcSummary.metrics.qFactor.avg > 0" class="flex justify-between">
+                <div v-if="linkCalcSummary.metrics?.qFactor?.avg && linkCalcSummary.metrics.qFactor.avg > 0" class="flex justify-between">
                   <span class="text-gray-500">Q 因子</span>
                   <span class="font-mono">{{ linkCalcSummary.metrics.qFactor.avg.toFixed(1) }} dB</span>
                 </div>

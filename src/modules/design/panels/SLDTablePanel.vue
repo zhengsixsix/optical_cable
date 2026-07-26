@@ -291,7 +291,7 @@ const handleTemplateVersionChange = (event: Event) => {
                     {{ getEquipmentTypeLabel(eq) }}
                   </span>
                 </td>
-                <td class="px-2 py-1.5 text-right border-b font-mono">{{ eq.kp?.toFixed(1) ?? '-' }}</td>
+                <td class="px-2 py-1.5 text-right border-b font-mono">{{ eq.location === 'KP 未提供' ? '-' : eq.kp?.toFixed(1) ?? '-' }}</td>
                 <td class="px-2 py-1.5 text-right border-b">{{ eq.depth?.toFixed(0) ?? '-' }}</td>
                 <td class="px-2 py-1.5 border-b text-gray-600 text-xs">{{ getEquipmentSpecification(eq) }}</td>
                 <td class="px-2 py-1.5 text-center border-b">

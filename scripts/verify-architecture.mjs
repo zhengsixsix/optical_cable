@@ -57,6 +57,8 @@ const [
   header,
   importDialog,
   rplDialog,
+  sldDialog,
+  existingDataSync,
   projectFiles,
   rplExport,
   monitorStore,
@@ -70,6 +72,8 @@ const [
   read('src/components/layout/AppHeader.vue'),
   read('src/components/dialogs/ImportFileDialog.vue'),
   read('src/modules/design/dialogs/RPLManageDialog.vue'),
+  read('src/modules/design/dialogs/SLDManageDialog.vue'),
+  read('src/services/ExistingDataTableSyncService.ts'),
   read('src/services/ProjectFileService.ts'),
   read('src/services/RPLExportService.ts'),
   read('src/stores/monitor.ts'),
@@ -91,7 +95,13 @@ assert.doesNotMatch(projectFiles, /\$patch\s*\(\s*\{\s*devices/)
 assert.doesNotMatch(rplExport, /^import\s+ExcelJS\s+from\s+['"]exceljs['"]/m)
 assert.match(rplExport, /await import\(['"]exceljs['"]\)/)
 assert.match(importDialog, /readFirstWorksheetAsCsv\([^,]+,\s*fileName\)/)
-assert.match(rplDialog, /readFirstWorksheetAsCsv\([^,]+,\s*file\.name\)/)
+assert.doesNotMatch(rplDialog, /readFirstWorksheetAsCsv/)
+assert.doesNotMatch(rplDialog, /新建表格|导入 RPL/)
+assert.doesNotMatch(sldDialog, /新建表格/)
+assert.match(header, /ensureRplTableFromExistingData/)
+assert.match(header, /ensureSldTableFromExistingData/)
+assert.match(existingDataSync, /buildRplTableFromExistingData/)
+assert.match(existingDataSync, /buildSLDExistingDataDraft/)
 assert.match(settingsView, /transmission.*传输与仿真管理/s)
 assert.match(router, /requiresRoute/)
 assert.doesNotMatch(router, /requiresUSE/)

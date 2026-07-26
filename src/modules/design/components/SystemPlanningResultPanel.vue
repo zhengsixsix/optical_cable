@@ -19,11 +19,11 @@ interface MetricSummary {
 }
 
 interface ResultMetrics {
-  osnr: MetricSummary
-  gsnr: MetricSummary
-  power: MetricSummary
-  nli: MetricSummary
-  qFactor: MetricSummary
+  osnr?: MetricSummary | null
+  gsnr?: MetricSummary | null
+  power?: MetricSummary | null
+  nli?: MetricSummary | null
+  qFactor?: MetricSummary | null
 }
 
 interface ResultPerformanceData {
@@ -80,6 +80,12 @@ interface ResultCostData {
   costItems: CostItem[]
 }
 
+interface DisplayMetricRow {
+  key: 'osnr' | 'gsnr' | 'power' | 'nli' | 'qFactor'
+  label: string
+  value: MetricSummary
+}
+
 interface BackendMargin {
   targetOsnr?: number
   worstMargin?: number
@@ -98,6 +104,7 @@ const props = withDefaults(defineProps<{
   amplifiers: ResultAmplifier[]
   timeline: TimelineItem[]
   costData: ResultCostData | null
+  capacityTbps?: number | null
   margin: BackendMargin | null
   spanUsed: number | null
   tailSpan: number | null
@@ -121,6 +128,7 @@ const props = withDefaults(defineProps<{
   amplifiers: () => [],
   timeline: () => [],
   costData: null,
+  capacityTbps: null,
   margin: null,
   spanUsed: null,
   tailSpan: null,
@@ -181,10 +189,44 @@ const formatKm = (value: number | null | undefined, digits = 1): string => {
 
 const formatCost = (value: number): string => {
   if (!Number.isFinite(value)) return '-'
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`
-  return `$${value.toFixed(0)}`
+  if (value >= 1_000_000) return `USD ${(value / 1_000_000).toFixed(2)}M`
+  if (value >= 1_000) return `USD ${(value / 1_000).toFixed(0)}K`
+  return `USD ${value.toFixed(0)}`
 }
+
+const displayMetricRows = computed<DisplayMetricRow[]>(() => {
+  const fromLegacy: DisplayMetricRow[] = []
+  const candidates: Array<[
+    DisplayMetricRow['key'],
+    string,
+    MetricSummary | null | undefined,
+  ]> = props.metrics
+    ? [
+        ['osnr', 'OSNR (dB)', props.metrics.osnr],
+        ['gsnr', 'GSNR (dB)', props.metrics.gsnr],
+        ['power', '功率 (dBm)', props.metrics.power],
+        ['nli', 'NLI (dB)', props.metrics.nli],
+        ['qFactor', 'Q-Factor (dB)', props.metrics.qFactor],
+      ]
+    : []
+  for (const [key, label, value] of candidates) {
+    if (value && [value.min, value.max, value.avg].every(Number.isFinite)) {
+      fromLegacy.push({ key, label, value })
+    }
+  }
+  return fromLegacy
+})
+
+const displayOsnr = computed(() => displayMetricRows.value.find(row => row.key === 'osnr')?.value ?? null)
+const displayGsnr = computed(() => displayMetricRows.value.find(row => row.key === 'gsnr')?.value ?? null)
+const displayHasPerformanceMetrics = computed(() => Boolean(displayOsnr.value || displayGsnr.value))
+const displaySystemCapacityTbps = computed(() => {
+  if (typeof props.capacityTbps === 'number' && Number.isFinite(props.capacityTbps)) {
+    return props.capacityTbps
+  }
+  return null
+})
+const displayPerformanceData = computed(() => props.performanceData)
 
 const costPercent = (value: number): string => {
   const total = props.costData?.totalCost
@@ -210,9 +252,9 @@ const timelineMarkerClass = (kind: TimelineItem['kind']): string => {
 }
 
 const chartHasData = computed(() => {
-  const data = props.performanceData
+  const data = displayPerformanceData.value
   return Boolean(
-    props.hasPerformanceMetrics
+    displayHasPerformanceMetrics.value
     && data
     && data.positions.length > 1
     && data.osnrEvolution.length > 1
@@ -234,7 +276,7 @@ const chartPath = (values: number[], minValue: number, maxValue: number): string
 }
 
 const evolutionBounds = computed(() => {
-  const data = props.performanceData
+  const data = displayPerformanceData.value
   const values = data ? [...data.osnrEvolution, ...data.gsnrEvolution] : []
   const finite = values.filter(value => Number.isFinite(value))
   if (finite.length === 0) return { min: 0, max: 30 }
@@ -245,13 +287,13 @@ const evolutionBounds = computed(() => {
 })
 
 const osnrEvolutionPath = computed(() => {
-  const data = props.performanceData
+  const data = displayPerformanceData.value
   if (!data) return ''
   return chartPath(data.osnrEvolution, evolutionBounds.value.min, evolutionBounds.value.max)
 })
 
 const gsnrEvolutionPath = computed(() => {
-  const data = props.performanceData
+  const data = displayPerformanceData.value
   if (!data) return ''
   return chartPath(data.gsnrEvolution, evolutionBounds.value.min, evolutionBounds.value.max)
 })
@@ -262,7 +304,7 @@ const exportCostReport = (): void => {
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
   }
   const rows = [
-    ['类别', '器件型号', '数量', '单位', '单价', '小计'],
+    ['类别', '器件型号', '数量', '单位', '单价 (USD)', '小计 (USD)'],
     ...(props.costData?.costItems ?? []).map(item => [
       item.category,
       item.model,
@@ -314,7 +356,7 @@ const exportCostReport = (): void => {
     </div>
 
     <section v-if="activeTab === 'overview'" class="space-y-4">
-      <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div class="grid grid-cols-2 gap-3 md:grid-cols-5">
         <div class="border border-slate-200 bg-white p-3">
           <div class="text-xs text-slate-500">线路总长</div>
           <div class="mt-1 font-mono text-lg font-semibold text-slate-900">{{ formatKm(totalLength, 1) }}</div>
@@ -330,6 +372,12 @@ const exportCostReport = (): void => {
         <div class="border border-slate-200 bg-white p-3">
           <div class="text-xs text-slate-500">BU 数量</div>
           <div class="mt-1 font-mono text-lg font-semibold text-emerald-700">{{ buCount ?? '-' }}</div>
+        </div>
+        <div class="border border-slate-200 bg-white p-3">
+          <div class="text-xs text-slate-500">系统容量</div>
+          <div class="mt-1 font-mono text-lg font-semibold text-cyan-700">
+            {{ displaySystemCapacityTbps == null ? '-' : `${formatNumber(displaySystemCapacityTbps, 3)} Tbps` }}
+          </div>
         </div>
       </div>
 
@@ -356,7 +404,7 @@ const exportCostReport = (): void => {
         </div>
       </div>
 
-      <div v-if="metrics" class="border border-slate-200 bg-white">
+      <div v-if="displayMetricRows.length > 0" class="border border-slate-200 bg-white">
         <div class="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">末端性能指标</div>
         <div class="overflow-x-auto">
           <table class="w-full min-w-[520px] text-sm">
@@ -364,12 +412,7 @@ const exportCostReport = (): void => {
               <tr><th class="px-3 py-2 text-left">指标</th><th class="px-3 py-2 text-right">最小值</th><th class="px-3 py-2 text-right">最大值</th><th class="px-3 py-2 text-right">平均值</th></tr>
             </thead>
             <tbody>
-              <tr v-for="row in [
-                { label: 'OSNR (dB)', value: metrics.osnr },
-                { label: 'GSNR (dB)', value: metrics.gsnr },
-                { label: '功率 (dBm)', value: metrics.power },
-                { label: 'Q-Factor (dB)', value: metrics.qFactor },
-              ]" :key="row.label" class="border-t border-slate-100">
+              <tr v-for="row in displayMetricRows" :key="row.key" class="border-t border-slate-100">
                 <td class="px-3 py-2">{{ row.label }}</td><td class="px-3 py-2 text-right font-mono">{{ formatNumber(row.value.min) }}</td><td class="px-3 py-2 text-right font-mono">{{ formatNumber(row.value.max) }}</td><td class="px-3 py-2 text-right font-mono text-blue-700">{{ formatNumber(row.value.avg) }}</td>
               </tr>
             </tbody>
@@ -384,13 +427,13 @@ const exportCostReport = (): void => {
     <section v-else-if="activeTab === 'performance'" class="space-y-4">
       <div class="border border-slate-200 bg-white p-4">
         <div class="mb-3 text-sm font-semibold text-slate-800">后端性能指标</div>
-        <div v-if="!hasPerformanceMetrics || !metrics" class="border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <div v-if="!displayHasPerformanceMetrics" class="border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           后端未返回仿真指标，布局数据不会被当作性能计算结果。
         </div>
         <template v-else>
           <div class="grid grid-cols-2 gap-3">
-            <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">最小 OSNR</div><div class="mt-1 font-mono text-lg">{{ formatNumber(metrics.osnr.min) }} dB</div></div>
-            <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">最小 GSNR</div><div class="mt-1 font-mono text-lg">{{ formatNumber(metrics.gsnr.min) }} dB</div></div>
+            <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">最小 OSNR</div><div class="mt-1 font-mono text-lg">{{ formatNumber(displayOsnr?.min) }} dB</div></div>
+            <div class="border border-slate-200 p-3"><div class="text-xs text-slate-500">最小 GSNR</div><div class="mt-1 font-mono text-lg">{{ formatNumber(displayGsnr?.min) }} dB</div></div>
           </div>
         </template>
       </div>

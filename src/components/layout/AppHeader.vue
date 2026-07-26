@@ -4,9 +4,16 @@ import { useUserStore } from '@/stores/user'
 import { ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useConnectorStore } from '@/stores/connector'
 import { useRPLStore } from '@/stores/rpl'
+import { useRouteStore } from '@/stores/route'
 import { useSLDStore } from '@/stores/sld'
 import { useProjectManager } from '@/composables/useProjectManager'
+import {
+  ensureRplTableFromExistingData,
+  ensureSldTableFromExistingData,
+} from '@/services/ExistingDataTableSyncService'
 import { buildExportableRplTableSnapshot } from '@/services/RPLSyncService'
 import type { Projection } from '@/types'
 import {
@@ -19,9 +26,26 @@ const router = useRouter()
 const appStore = useAppStore()
 const userStore = useUserStore()
 const mapStore = useMapStore()
+const cableSegmentStore = useCableSegmentStore()
+const connectorStore = useConnectorStore()
 const rplStore = useRPLStore()
+const routeStore = useRouteStore()
 const sldStore = useSLDStore()
 const projectManager = useProjectManager()
+
+const activeRoute = computed(() => routeStore.selectedRoute || routeStore.currentRoute)
+const selectedRouteId = computed(() => routeStore.currentRouteId || activeRoute.value?.id || null)
+const activeConnectorTable = computed(() => connectorStore.getTableByRoute(selectedRouteId.value))
+const activeRouteId = computed(() => selectedRouteId.value || activeConnectorTable.value?.routeId || null)
+const activeConnectorElements = computed(() => activeConnectorTable.value?.elements || [])
+
+const existingDataSource = () => ({
+  route: activeRoute.value,
+  routeId: activeRouteId.value,
+  routeName: activeRoute.value?.name,
+  connectorElements: activeConnectorElements.value,
+  cableSegments: cableSegmentStore.segments,
+})
 
 // 坐标系选项
 const coordSystemOptions = [
@@ -96,7 +120,7 @@ const handleSaveAsProject = () => {
 }
 
 const buildCurrentRplSnapshot = () => {
-  const currentTable = rplStore.currentTable
+  const currentTable = ensureRplTableFromExistingData(rplStore, existingDataSource())
   if (!currentTable) return null
 
   return buildExportableRplTableSnapshot({
@@ -125,7 +149,7 @@ const handleExportRPL = async () => {
 
 // 导出 SLD 文件
 const handleExportSLD = async () => {
-  const currentTable = sldStore.currentTable
+  const currentTable = ensureSldTableFromExistingData(sldStore, existingDataSource())
   if (!currentTable) {
     appStore.showNotification({ type: 'warning', message: '没有可导出的 SLD 数据' })
     return

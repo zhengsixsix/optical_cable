@@ -8,6 +8,8 @@ import type {
   PlanCalculationResult,
   PlanConfigChannel,
   PlanConfigOptimization,
+  PlanDeviceEntity,
+  PlanLayoutCalculationResponse,
 } from '@/services/platform/types'
 
 // 导出类型供外部使用
@@ -31,6 +33,8 @@ export interface SimulationRequest {
   projectId: Id
   /** FMM_path_result.json 中的原始路线序号。 */
   fmmPathResultIndex: number
+  /** 是否同时删除此前手动添加的器件实例。 */
+  clearAll: boolean
   linkId: string
   linkName: string
   totalLengthKm: number
@@ -86,6 +90,15 @@ export interface SimulationRequest {
     attenuationMode?: 'adjustable' | 'fixed'
     attenuationDb?: number
   }>
+  /**
+   * The simulation endpoint accepts only project id and layout mode. Persist
+   * the selected device models and per-instance values after layout has
+   * generated its entities, but before physical simulation reads the project.
+   */
+  prepareSimulationDevices?: (context: {
+    mode: 'fixed' | 'optimized'
+    deviceEntityList: PlanDeviceEntity[]
+  }) => Promise<PlanDeviceEntity[] | void>
   onProgress?: (progress: SimulationProgressUpdate) => void
 }
 
@@ -118,6 +131,7 @@ export interface SimulationResponse {
   layoutResult: PlanCalculationResult
   fixedLayoutResult?: PlanCalculationResult
   optimizedLayoutResult?: PlanCalculationResult
+  deviceEntityList: PlanDeviceEntity[]
   effectiveSpanKm?: number
   constraintAdjusted?: boolean
   simulationCache?: SimulationCache
@@ -202,11 +216,12 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
   let layoutResult: PlanCalculationResult
   let fixedLayoutResult: PlanCalculationResult | undefined
   let optimizedLayoutResult: PlanCalculationResult | undefined
+  let deviceEntityList: PlanDeviceEntity[] = []
   let effectiveSpanKm: number | undefined
 
   if (request.spanStrategy.mode === 'fixed') {
-    const started = await platformProjectApi.fixedPlan(request.projectId)
-    fixedLayoutResult = await pollPlanningResult(
+    const started = await platformProjectApi.fixedPlan(request.projectId, request.clearAll)
+    const rawLayoutResult = await pollPlanningResult(
       () => platformProjectApi.queryFixed(request.projectId),
       started,
       attempt => request.onProgress?.({
@@ -215,11 +230,18 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
         message: '正在等待布局规划结果',
       }),
     )
+    const normalized = normalizeLayoutCalculationResponse(rawLayoutResult)
+    fixedLayoutResult = normalized.layoutResult
+    deviceEntityList = normalized.deviceEntityList
     layoutResult = fixedLayoutResult
     effectiveSpanKm = parsePlanningLayoutResult(fixedLayoutResult, 'fixed')?.spanKmUsed ?? undefined
   } else {
-    const started = await platformProjectApi.optimizedPlan(request.projectId, request.fmmPathResultIndex)
-    optimizedLayoutResult = await pollPlanningResult(
+    const started = await platformProjectApi.optimizedPlan(
+      request.projectId,
+      request.fmmPathResultIndex,
+      request.clearAll,
+    )
+    const rawLayoutResult = await pollPlanningResult(
       () => platformProjectApi.queryOptimized(request.projectId),
       started,
       attempt => request.onProgress?.({
@@ -228,18 +250,35 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
         message: '正在等待优化布局结果',
       }),
     )
+    const normalized = normalizeLayoutCalculationResponse(rawLayoutResult)
+    optimizedLayoutResult = normalized.layoutResult
+    deviceEntityList = normalized.deviceEntityList
     layoutResult = optimizedLayoutResult
     effectiveSpanKm = parsePlanningLayoutResult(optimizedLayoutResult, 'optimized')?.spanKmUsed ?? undefined
   }
 
   request.onProgress?.({
     stage: 'simulation-start',
+    progress: 46,
+    message: '布局已完成，正在同步器件实例',
+  })
+  const simulationMode = request.spanStrategy.mode === 'fixed' ? 'fixed' : 'optimized'
+  if (request.prepareSimulationDevices) {
+    const preparedEntities = await request.prepareSimulationDevices({
+      mode: simulationMode,
+      deviceEntityList,
+    })
+    if (preparedEntities) deviceEntityList = preparedEntities
+  }
+
+  request.onProgress?.({
+    stage: 'simulation-start',
     progress: 50,
-    message: '布局已完成，正在启动物理仿真',
+    message: '器件已同步，正在启动物理仿真',
   })
   const simulationStarted = await platformProjectApi.simulationPlan(
     request.projectId,
-    request.fmmPathResultIndex,
+    simulationMode,
   )
   // 物理仿真查询接口在部分平台版本中只返回 data: null，不能按布局结果
   // 的方式持续轮询，否则布局明明已经成功也会被拖到 30 秒超时。
@@ -270,6 +309,7 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
     layoutResult,
     fixedLayoutResult,
     optimizedLayoutResult,
+    deviceEntityList,
     effectiveSpanKm,
     constraintAdjusted: false,
     detailedResult,
@@ -280,6 +320,33 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
 
 const RESULT_POLL_INTERVAL_MS = 1000
 const RESULT_POLL_ATTEMPTS = 30
+
+function findLayoutCalculationEnvelope(value: unknown): Record<string, unknown> | null {
+  const parsed = parseJsonValue(value)
+  if (!isRecord(parsed)) return null
+  if ('layoutResult' in parsed) return parsed
+  for (const key of ['data', 'result', 'payload']) {
+    if (key in parsed) {
+      const envelope = findLayoutCalculationEnvelope(parsed[key])
+      if (envelope) return envelope
+    }
+  }
+  return null
+}
+
+function normalizeLayoutCalculationResponse(value: unknown): PlanLayoutCalculationResponse {
+  const parsed = parseJsonValue(value)
+  const envelope = findLayoutCalculationEnvelope(parsed)
+  if (!envelope) return { layoutResult: parsed, deviceEntityList: [] }
+
+  const entities = parseJsonValue(envelope.deviceEntityList)
+  return {
+    layoutResult: parseJsonValue(envelope.layoutResult),
+    deviceEntityList: Array.isArray(entities)
+      ? entities.filter((entity): entity is PlanDeviceEntity => isRecord(entity))
+      : [],
+  }
+}
 
 function hasPlanningResult(value: unknown): boolean {
   const parsed = parseJsonValue(value)
@@ -299,13 +366,14 @@ function hasPlanningResult(value: unknown): boolean {
   if (['pending', 'processing', 'running', 'accepted', 'queued'].includes(status)) return false
   if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) return true
 
-  for (const key of ['data', 'result', 'payload', 'fixed_result', 'optimized_result', 'simulation_result']) {
+  for (const key of ['data', 'result', 'payload', 'layoutResult', 'fixed_result', 'optimized_result', 'simulation_result']) {
     if (key in parsed && hasPlanningResult(parsed[key])) return true
   }
 
   const metadataKeys = new Set([
     'status', 'state', 'message', 'msg', 'code', 'success',
     'jobId', 'job_id', 'taskId', 'task_id', 'data', 'result', 'payload',
+    'layoutResult', 'deviceEntityList',
   ])
   return Object.keys(parsed).some(key => !metadataKeys.has(key))
 }
@@ -342,7 +410,7 @@ function throwIfPlanningFailed(value: unknown): void {
     const message = parsed.message ?? parsed.msg ?? parsed.error ?? '平台计算失败'
     throw new Error(String(message))
   }
-  for (const key of ['data', 'result', 'payload']) {
+  for (const key of ['data', 'result', 'payload', 'layoutResult']) {
     if (key in parsed) throwIfPlanningFailed(parsed[key])
   }
 }

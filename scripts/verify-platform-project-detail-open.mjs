@@ -62,13 +62,13 @@ const detail = normalizers.normalizePlanProjectDetail({
   optimization: {
     targetGsnrDb: '14',
     targetOsnrDb: '16',
-    osnrMarginDb: null,
-    spanMinKm: null,
-    spanMaxKm: null,
-    spanStepKm: null,
-    minSpanLimitKm: null,
-    maxSpanLimitKm: null,
-    optimizationTarget: null,
+    osnrMarginDb: '1.5',
+    spanMinKm: '40',
+    spanMaxKm: '120',
+    spanStepKm: '5',
+    minSpanLimitKm: '30',
+    maxSpanLimitKm: '100',
+    optimizationTarget: 'min_amp',
   },
   spanKm: '50.0',
   planResult: {
@@ -89,6 +89,14 @@ expect(detail.planConfig.channelConfig?.channelCount === 96, 'detail channel cou
 expect(detail.planConfig.channelConfig?.launchPowerDbm?.every(value => value === -1.5), 'launch powers were not normalized')
 expect(detail.planConfig.channelConfig?.channelFrequenciesThz?.every(value => typeof value === 'number'), 'channel frequencies were not normalized')
 expect(detail.planConfig.optimization?.targetGsnrDb === 14, 'optimization target GSNR was not normalized')
+expect(detail.planConfig.optimization?.targetOsnrDb === 16, 'optimization target OSNR was not normalized')
+expect(detail.planConfig.optimization?.osnrMarginDb === 1.5, 'optimization OSNR margin was not normalized')
+expect(detail.planConfig.optimization?.spanMinKm === 40, 'optimization scan minimum was not normalized')
+expect(detail.planConfig.optimization?.spanMaxKm === 120, 'optimization scan maximum was not normalized')
+expect(detail.planConfig.optimization?.spanStepKm === 5, 'optimization scan step was not normalized')
+expect(detail.planConfig.optimization?.minSpanLimitKm === 30, 'minimum span constraint was not normalized')
+expect(detail.planConfig.optimization?.maxSpanLimitKm === 100, 'maximum span constraint was not normalized')
+expect(detail.planConfig.optimization?.optimizationTarget === 'min_amp', 'optimization target mode was not normalized')
 expect(detail.planConfig.spanKm === 50, 'detail span length was not normalized')
 expect(detail.planningResults?.fixed?.layout === 'fixed', 'fixed result was not restored from project detail')
 expect(detail.planningResults?.optimized?.layout === 'optimized', 'serialized optimized result was not parsed')
@@ -108,6 +116,43 @@ expect(
   'null plan result fields were incorrectly treated as completed calculations',
 )
 
+const mergedConfig = normalizers.mergePlanConfigSnapshots(
+  normalizers.normalizePlanConfigSnapshot({
+    scope: null,
+    gridResolution: '250',
+    enableRedundancy: null,
+    channelConfig: { channelCount: '48', baudRateGbaud: null },
+    optimization: { targetGsnrDb: '15', spanMinKm: null },
+    spanKm: null,
+    errors: ['detail warning'],
+  }),
+  normalizers.normalizePlanConfigSnapshot({
+    scope: { topLeftLng: '100', topLeftLat: '40', bottomRightLng: '120', bottomRightLat: '20' },
+    gridResolution: '500',
+    enableRedundancy: 'true',
+    channelConfig: { channelCount: '96', baudRateGbaud: '64' },
+    optimization: { targetGsnrDb: '12', spanMinKm: '35' },
+    spanKm: '70',
+    errors: ['search warning'],
+  }),
+)
+expect(mergedConfig.gridResolution === 250, 'detail config must win over dedicated-query fallback')
+expect(mergedConfig.enableRedundancy === true, 'missing detail config was not filled from dedicated queries')
+expect(mergedConfig.channelConfig?.channelCount === 48, 'nested detail config was overwritten by fallback')
+expect(mergedConfig.channelConfig?.baudRateGbaud === 64, 'nested missing channel field was not filled')
+expect(mergedConfig.optimization?.targetGsnrDb === 15, 'nested detail optimization was overwritten')
+expect(mergedConfig.optimization?.spanMinKm === 35, 'nested missing optimization field was not filled')
+expect(mergedConfig.errors.length === 2, 'config query diagnostics were not merged')
+expect(normalizers.planConfigNeedsFallback(mergedConfig), 'partial merged config should still request missing fields')
+
+const mergedPlanningResults = normalizers.mergePlatformPlanningResults(
+  { fixed: { source: 'detail' }, optimized: null, simulation: null, errors: [] },
+  { fixed: null, optimized: { source: 'query' }, simulation: null, errors: ['simulation unavailable'] },
+)
+expect(mergedPlanningResults.fixed.source === 'detail', 'detail planning result fallback was discarded')
+expect(mergedPlanningResults.optimized.source === 'query', 'dedicated planning result was not restored')
+expect(mergedPlanningResults.errors[0] === 'simulation unavailable', 'planning query diagnostic was discarded')
+
 const managerSource = fs.readFileSync(path.join(root, 'src/composables/useProjectManager.ts'), 'utf8')
 const openStart = managerSource.indexOf('async function openPlatformProject')
 const openEnd = managerSource.indexOf('async function syncCurrentDeviceEntitiesToPlatform', openStart)
@@ -115,8 +160,11 @@ expect(openStart >= 0 && openEnd > openStart, 'openPlatformProject source block 
 const openSource = managerSource.slice(openStart, openEnd)
 expect(openSource.includes('platformProjectApi.detail(projectId)'), 'platform project opening does not load project detail')
 expect(openSource.includes('normalizePlanProjectDetail(project)'), 'platform project detail is not normalized before hydration')
-expect(!openSource.includes('queryPlanningResults'), 'platform project opening still queries fixed/optimized/simulation separately')
-expect(!openSource.includes('platformPlanConfigApi.searchAll'), 'platform project opening still queries plan config separately')
+expect(openSource.includes('platformProjectApi.queryPlanningResults(projectId)'), 'platform project opening does not query persisted planning results')
+expect(openSource.includes('mergePlatformPlanningResults('), 'detail and dedicated planning results are not merged')
+expect(openSource.includes('planConfigNeedsFallback(detailPlanConfig)'), 'detail completeness is not checked before config fallback')
+expect(openSource.includes('platformPlanConfigApi.searchAll(projectId)'), 'missing detail config does not fall back to dedicated queries')
+expect(openSource.includes(".catch(error => ({ data: null"), 'optional project queries can still block project opening')
 expect(openSource.includes('redundancyConfig:'), 'detail redundancy flag is not restored into route planning settings')
 
 const dialogSource = fs.readFileSync(path.join(root, 'src/components/dialogs/ProjectDialog.vue'), 'utf8')

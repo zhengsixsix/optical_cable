@@ -65,8 +65,21 @@ export const useConnectorStore = defineStore('connector', () => {
   }
 
   function getTableByRoute(routeId?: string | null) {
-    if (routeId) {
-      return tables.value.find(t => t.routeId === routeId) || null
+    if (routeId != null && String(routeId).trim()) {
+      const requestedRouteId = String(routeId)
+      const exactMatch = tables.value.find(table =>
+        table.routeId != null && String(table.routeId) === requestedRouteId,
+      )
+      if (exactMatch) return exactMatch
+
+      // Projects saved before route ids were persisted can still contain a
+      // perfectly valid connector table with no routeId. Reuse that table
+      // when it is unambiguous (or when it is the table the user currently
+      // selected) instead of hiding its elements from RPL/SLD.
+      const unscopedTables = tables.value.filter(table => !table.routeId)
+      if (currentTable.value && !currentTable.value.routeId) return currentTable.value
+      if (unscopedTables.length === 1) return unscopedTables[0]
+      return null
     }
     return currentTable.value || tables.value[0] || null
   }

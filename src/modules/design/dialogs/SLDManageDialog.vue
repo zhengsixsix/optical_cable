@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Network, Plus, Trash2, X } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { Network, Trash2, X } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
+import { useCableSegmentStore } from '@/stores/cableSegment'
+import { useConnectorStore } from '@/stores/connector'
 import { useRouteStore } from '@/stores/route'
 import { useSLDStore } from '@/stores/sld'
-import { Button, Card, CardContent, CardHeader } from '@/shared/components/base'
+import { ensureSldTableFromExistingData } from '@/services/ExistingDataTableSyncService'
+import { Button } from '@/shared/components/base'
 import SLDTablePanel from '@/modules/design/panels/SLDTablePanel.vue'
 import SLDEquipmentDialog from './SLDEquipmentDialog.vue'
 import SLDSegmentDialog from './SLDSegmentDialog.vue'
 
-defineProps<{
+const props = defineProps<{
   visible: boolean
 }>()
 
@@ -18,6 +21,8 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const cableSegmentStore = useCableSegmentStore()
+const connectorStore = useConnectorStore()
 const routeStore = useRouteStore()
 const sldStore = useSLDStore()
 
@@ -25,11 +30,20 @@ const showEquipmentDialog = ref(false)
 const showSegmentDialog = ref(false)
 const editingEquipmentId = ref<string | undefined>()
 const editingSegmentId = ref<string | undefined>()
-const showCreateDialog = ref(false)
-const newTableName = ref('')
 
 const tables = computed(() => sldStore.tables)
 const currentTable = computed(() => sldStore.currentTable)
+const activeRoute = computed(() => routeStore.selectedRoute || routeStore.currentRoute)
+const selectedRouteId = computed(() => routeStore.currentRouteId || activeRoute.value?.id || null)
+const activeConnectorTable = computed(() => connectorStore.getTableByRoute(selectedRouteId.value))
+const activeRouteId = computed(() => selectedRouteId.value || activeConnectorTable.value?.routeId || null)
+const activeConnectorElements = computed(() => activeConnectorTable.value?.elements || [])
+const activeConnectorCount = computed(() => activeConnectorElements.value.length)
+const activeConnectorUpdatedAt = computed(() => activeConnectorTable.value?.updatedAt || '')
+const cableSegmentCount = computed(() => cableSegmentStore.segments.length)
+const activeRoutePointCount = computed(() => activeRoute.value?.points?.length || 0)
+const activeRouteSegmentCount = computed(() => activeRoute.value?.segments?.length || 0)
+const activeRouteUpdatedAt = computed(() => activeRoute.value?.updatedAt?.valueOf?.() || 0)
 
 function handleEditEquipment(equipmentId: string) {
   editingEquipmentId.value = equipmentId || undefined
@@ -41,23 +55,35 @@ function handleEditSegment(segmentId: string) {
   showSegmentDialog.value = true
 }
 
-function handleCreateTable() {
-  const name = newTableName.value.trim()
-  if (!name) {
-    appStore.showNotification({ type: 'warning', message: '请输入表格名称' })
-    return
-  }
-
-  sldStore.createTable(name, routeStore.currentRouteId || undefined)
-  appStore.showNotification({ type: 'success', message: 'SLD 表格创建成功' })
-  newTableName.value = ''
-  showCreateDialog.value = false
-}
-
 function handleDeleteTable(tableId: string) {
   sldStore.deleteTable(tableId)
   appStore.showNotification({ type: 'success', message: '表格已删除' })
 }
+
+function ensureCurrentRouteTable() {
+  if (!props.visible) return
+  ensureSldTableFromExistingData(sldStore, {
+    route: activeRoute.value,
+    routeId: activeRouteId.value,
+    connectorElements: activeConnectorElements.value,
+    cableSegments: cableSegmentStore.segments,
+  })
+}
+
+watch(
+  [
+    () => props.visible,
+    activeRouteId,
+    activeConnectorCount,
+    activeConnectorUpdatedAt,
+    cableSegmentCount,
+    activeRoutePointCount,
+    activeRouteSegmentCount,
+    activeRouteUpdatedAt,
+  ],
+  ensureCurrentRouteTable,
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -74,10 +100,6 @@ function handleDeleteTable(tableId: string) {
             <span class="text-lg font-semibold">SLD 系统布局图管理</span>
           </div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" @click="showCreateDialog = true">
-              <Plus class="mr-1 h-4 w-4" />
-              新建表格
-            </Button>
             <Button variant="ghost" size="sm" title="关闭" @click="emit('close')">
               <X class="h-5 w-5" />
             </Button>
@@ -126,44 +148,13 @@ function handleDeleteTable(tableId: string) {
             <div v-else class="flex h-full items-center justify-center text-gray-400">
               <div class="text-center">
                 <Network class="mx-auto mb-4 h-16 w-16 opacity-30" />
-                <p class="text-lg">暂无 SLD 表格</p>
+                <p class="text-lg">暂无可用的 SLD 数据</p>
+                <p class="mt-2 text-sm">完成路由规划或系统设备配置后将自动生成</p>
               </div>
             </div>
           </main>
         </div>
       </div>
-    </div>
-
-    <div
-      v-if="showCreateDialog"
-      class="fixed inset-0 z-[60] flex items-center justify-center bg-black/30"
-      @click.self="showCreateDialog = false"
-    >
-      <Card class="w-[400px] shadow-xl">
-        <CardHeader>
-          <span class="font-semibold">新建 SLD 表格</span>
-          <Button variant="ghost" size="sm" title="关闭" @click="showCreateDialog = false">
-            <X class="h-4 w-4" />
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <div class="space-y-4">
-            <div>
-              <label class="mb-1 block text-sm font-medium text-gray-700">表格名称</label>
-              <input
-                v-model="newTableName"
-                type="text"
-                class="w-full rounded border px-3 py-2 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500/50"
-                @keyup.enter="handleCreateTable"
-              />
-            </div>
-            <div class="flex justify-end gap-2">
-              <Button variant="outline" @click="showCreateDialog = false">取消</Button>
-              <Button @click="handleCreateTable">创建</Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
 
     <SLDEquipmentDialog

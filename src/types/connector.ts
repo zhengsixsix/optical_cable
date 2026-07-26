@@ -23,10 +23,18 @@ export type ConnectorStatus = 'active' | 'standby' | 'fault' | 'planned'
 export interface ConnectorElement {
   id: string
   platformEntityId?: string | number
+  routePointId?: string
   deviceTypeCd?: string
   name: string
   type: ConnectorType
   kp: number
+  /**
+   * Whether `kp` came from an explicit source value.  Older local connector
+   * records do not carry this marker and are treated as explicit for
+   * backwards compatibility; platform-generated fallback positions can set
+   * it to false so they do not participate in inferred SLD spans.
+   */
+  hasExplicitKp?: boolean
   endKp?: number
   longitude: number
   latitude: number
@@ -44,6 +52,9 @@ export interface ConnectorElement {
   buBranchTarget?: string
   buNextHopUpstream?: string
   buNextHopDownstream?: string
+  buNextHopBranch1?: string
+  buNextHopBranch2?: string
+  buNextHopBranch3?: string
   equalizerRole?: 'T' | 'S'
   attenuationMode?: 'adjustable' | 'fixed'
   attenuationDb?: number

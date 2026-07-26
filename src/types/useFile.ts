@@ -798,6 +798,10 @@ export interface DesignCacheExtension {
       costItems: Array<{ category: string; model: string; quantity: number | string; unit: string; unitPrice: number; subtotal: number }>
     }
   } | null
+  /** 标准 system_engineering 的镜像；标准模块缺失时作为兼容回退。 */
+  wdmConfig?: WDMConfig | null
+  simulationCache?: SimulationCache | null
+  systemPlanningCache?: SystemPlanningCache | null
   platformPlanningResults?: PlatformPlanningResults | null
   platformPlanConfigSnapshot?: PlanConfigSnapshot | null
 }

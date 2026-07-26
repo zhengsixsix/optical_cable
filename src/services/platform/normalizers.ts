@@ -86,6 +86,16 @@ function normalizeNumberArray(value: unknown): number[] | null {
   return numbers.some(item => item === undefined) ? null : numbers as number[]
 }
 
+function normalizeNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function normalizeErrors(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+}
+
 function firstOwnValue(source: Record<string, unknown>, keys: string[]): unknown {
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(source, key)) return parseJsonValue(source[key])
@@ -134,10 +144,134 @@ export function normalizePlanProject(project: PlanProject): NormalizedPlanProjec
   }
 }
 
+/** Normalize both project-detail fields and the six dedicated plan-config query responses. */
+export function normalizePlanConfigSnapshot(value: unknown): PlanConfigSnapshot {
+  const snapshot = asRecord(value) ?? {}
+  const scope = asRecord(snapshot.scope)
+  const channelConfig = asRecord(snapshot.channelConfig)
+  const optimization = asRecord(snapshot.optimization)
+  const form = asRecord(snapshot.form)
+
+  return {
+    scope: scope ? {
+      topLeftLng: normalizeNullableNumber(scope.topLeftLng),
+      topLeftLat: normalizeNullableNumber(scope.topLeftLat),
+      bottomRightLng: normalizeNullableNumber(scope.bottomRightLng),
+      bottomRightLat: normalizeNullableNumber(scope.bottomRightLat),
+    } : null,
+    gridResolution: normalizeNullableNumber(snapshot.gridResolution),
+    enableRedundancy: normalizeNullableBoolean(snapshot.enableRedundancy),
+    channelConfig: channelConfig ? {
+      channelCount: normalizeNullableNumber(channelConfig.channelCount),
+      baudRateGbaud: normalizeNullableNumber(channelConfig.baudRateGbaud),
+      modulationFormat: normalizeNullableString(channelConfig.modulationFormat),
+      launchPowerDbm: normalizeNumberArray(channelConfig.launchPowerDbm),
+      channelFrequenciesThz: normalizeNumberArray(channelConfig.channelFrequenciesThz),
+      initialAseNoiseDbm: normalizeNullableNumber(channelConfig.initialAseNoiseDbm),
+      initialNliNoiseDbm: normalizeNullableNumber(channelConfig.initialNliNoiseDbm),
+      centerFrequencyThz: normalizeNullableNumber(channelConfig.centerFrequencyThz),
+      channelSpacingGhz: normalizeNullableNumber(channelConfig.channelSpacingGhz),
+    } : null,
+    optimization: optimization ? {
+      targetGsnrDb: normalizeNullableNumber(optimization.targetGsnrDb),
+      targetOsnrDb: normalizeNullableNumber(optimization.targetOsnrDb),
+      osnrMarginDb: normalizeNullableNumber(optimization.osnrMarginDb),
+      spanMinKm: normalizeNullableNumber(optimization.spanMinKm),
+      spanMaxKm: normalizeNullableNumber(optimization.spanMaxKm),
+      spanStepKm: normalizeNullableNumber(optimization.spanStepKm),
+      minSpanLimitKm: normalizeNullableNumber(optimization.minSpanLimitKm),
+      maxSpanLimitKm: normalizeNullableNumber(optimization.maxSpanLimitKm),
+      optimizationTarget: normalizeNullableString(optimization.optimizationTarget),
+    } : null,
+    spanKm: normalizeNullableNumber(snapshot.spanKm),
+    errors: normalizeErrors(snapshot.errors),
+    form: form ? form as unknown as NonNullable<PlanConfigSnapshot['form']> : null,
+  }
+}
+
+function mergeNullableConfig<T extends object>(primary: T | null, fallback: T | null): T | null {
+  if (!primary) return fallback ? { ...fallback } : null
+  if (!fallback) return { ...primary }
+
+  const merged = { ...primary } as Record<string, unknown>
+  for (const [key, value] of Object.entries(fallback)) {
+    if (merged[key] == null && value != null) merged[key] = value
+  }
+  return merged as T
+}
+
+/** Detail is authoritative; dedicated queries only fill fields omitted from detail. */
+export function mergePlanConfigSnapshots(
+  detail: PlanConfigSnapshot,
+  fallback: PlanConfigSnapshot | null,
+): PlanConfigSnapshot {
+  if (!fallback) return detail
+
+  return {
+    scope: mergeNullableConfig(detail.scope, fallback.scope),
+    gridResolution: detail.gridResolution ?? fallback.gridResolution,
+    enableRedundancy: detail.enableRedundancy ?? fallback.enableRedundancy,
+    channelConfig: mergeNullableConfig(detail.channelConfig, fallback.channelConfig),
+    optimization: mergeNullableConfig(detail.optimization, fallback.optimization),
+    spanKm: detail.spanKm ?? fallback.spanKm,
+    errors: [...new Set([...detail.errors, ...fallback.errors])],
+    form: detail.form ?? fallback.form ?? null,
+  }
+}
+
+const SCOPE_FIELDS = ['topLeftLng', 'topLeftLat', 'bottomRightLng', 'bottomRightLat'] as const
+const CHANNEL_FIELDS = [
+  'channelCount',
+  'baudRateGbaud',
+  'modulationFormat',
+  'launchPowerDbm',
+  'channelFrequenciesThz',
+  'initialAseNoiseDbm',
+  'initialNliNoiseDbm',
+  'centerFrequencyThz',
+  'channelSpacingGhz',
+] as const
+const OPTIMIZATION_FIELDS = [
+  'targetGsnrDb',
+  'targetOsnrDb',
+  'osnrMarginDb',
+  'spanMinKm',
+  'spanMaxKm',
+  'spanStepKm',
+  'minSpanLimitKm',
+  'maxSpanLimitKm',
+  'optimizationTarget',
+] as const
+
+function hasMissingConfigField<T extends object>(value: T | null, fields: readonly (keyof T)[]): boolean {
+  return !value || fields.some(field => value[field] == null)
+}
+
+export function planConfigNeedsFallback(config: PlanConfigSnapshot): boolean {
+  return hasMissingConfigField(config.scope, SCOPE_FIELDS)
+    || config.gridResolution == null
+    || config.enableRedundancy == null
+    || hasMissingConfigField(config.channelConfig, CHANNEL_FIELDS)
+    || hasMissingConfigField(config.optimization, OPTIMIZATION_FIELDS)
+    || config.spanKm == null
+}
+
+/** Dedicated result endpoints are freshest; detail fields remain a compatibility fallback. */
+export function mergePlatformPlanningResults(
+  detail: PlatformPlanningResults | null,
+  queried: PlatformPlanningResults | null,
+): PlatformPlanningResults | null {
+  const fixed = queried?.fixed ?? detail?.fixed ?? null
+  const optimized = queried?.optimized ?? detail?.optimized ?? null
+  const simulation = queried?.simulation ?? detail?.simulation ?? null
+  const errors = [...new Set([...(detail?.errors ?? []), ...(queried?.errors ?? [])])]
+
+  return fixed != null || optimized != null || simulation != null || errors.length > 0
+    ? { fixed, optimized, simulation, errors }
+    : null
+}
+
 export function normalizePlanProjectDetail(project: PlanProjectDetail): NormalizedPlanProjectDetail {
-  const scope = asRecord(project.scope)
-  const channelConfig = asRecord(project.channelConfig)
-  const optimization = asRecord(project.optimization)
   const planResult = asRecord(project.planResult)
   const fixedKeys = ['fixedResult', 'fixed', 'fixedPlanResult', 'fixed_result']
   const optimizedKeys = ['optimizedResult', 'optimized', 'optimizedPlanResult', 'optimized_result']
@@ -150,35 +284,7 @@ export function normalizePlanProjectDetail(project: PlanProjectDetail): Normaliz
 
   return {
     project: normalizePlanProject(project),
-    planConfig: {
-      scope: scope ? {
-        topLeftLng: normalizeNullableNumber(scope.topLeftLng),
-        topLeftLat: normalizeNullableNumber(scope.topLeftLat),
-        bottomRightLng: normalizeNullableNumber(scope.bottomRightLng),
-        bottomRightLat: normalizeNullableNumber(scope.bottomRightLat),
-      } : null,
-      gridResolution: normalizeNullableNumber(project.gridResolution),
-      enableRedundancy: normalizeNullableBoolean(project.enableRedundancy),
-      channelConfig: channelConfig ? {
-        channelCount: normalizeNullableNumber(channelConfig.channelCount),
-        baudRateGbaud: normalizeNullableNumber(channelConfig.baudRateGbaud),
-        modulationFormat: typeof channelConfig.modulationFormat === 'string'
-          ? channelConfig.modulationFormat
-          : null,
-        launchPowerDbm: normalizeNumberArray(channelConfig.launchPowerDbm),
-        channelFrequenciesThz: normalizeNumberArray(channelConfig.channelFrequenciesThz),
-        initialAseNoiseDbm: normalizeNullableNumber(channelConfig.initialAseNoiseDbm),
-        initialNliNoiseDbm: normalizeNullableNumber(channelConfig.initialNliNoiseDbm),
-        centerFrequencyThz: normalizeNullableNumber(channelConfig.centerFrequencyThz),
-        channelSpacingGhz: normalizeNullableNumber(channelConfig.channelSpacingGhz),
-      } : null,
-      optimization: optimization ? {
-        targetGsnrDb: normalizeNullableNumber(optimization.targetGsnrDb),
-        targetOsnrDb: normalizeNullableNumber(optimization.targetOsnrDb),
-      } : null,
-      spanKm: normalizeNullableNumber(project.spanKm),
-      errors: [],
-    },
+    planConfig: normalizePlanConfigSnapshot(project),
     planningResults: hasPlanningResults ? {
       fixed: fixedResult,
       optimized: optimizedResult,

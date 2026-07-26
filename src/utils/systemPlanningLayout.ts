@@ -114,8 +114,18 @@ export function parsePlanningLayoutResult(
   value: unknown,
   fallbackMode = 'optimized',
 ): PlanningLayoutResult | null {
-  const parsed = parseMaybeJson(value)
-  const payload = isRecord(parsed) && 'data' in parsed ? parseMaybeJson(parsed.data) : parsed
+  let payload = parseMaybeJson(value)
+  const visited = new Set<unknown>()
+  while (isRecord(payload) && !visited.has(payload)) {
+    visited.add(payload)
+    const nested = 'layoutResult' in payload
+      ? payload.layoutResult
+      : 'data' in payload
+        ? payload.data
+        : undefined
+    if (nested == null) break
+    payload = parseMaybeJson(nested)
+  }
   if (!isRecord(payload)) return null
 
   const nodesSource = parseMaybeJson(readFirst(payload, ['nodes', 'nodeList', 'node_metadata']))
