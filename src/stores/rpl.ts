@@ -60,11 +60,33 @@ export const useRPLStore = defineStore('rpl', () => {
     minDepth: 0,
   })
 
+  const normalizeTables = (source: RPLTable[]): RPLTable[] => {
+    const byKey = new Map<string, RPLTable>()
+    source.forEach(table => {
+      const routeId = String(table.routeId ?? '').trim()
+      const key = routeId ? `route:${routeId}` : `table:${table.id}`
+      const existing = byKey.get(key)
+      if (!existing || table.id === currentTableId.value) {
+        byKey.set(key, table)
+      }
+    })
+    return Array.from(byKey.values())
+  }
+
   function createTable(name: string, routeId: string): RPLTable {
+    const normalizedRouteId = String(routeId ?? '').trim()
+    const existing = normalizedRouteId
+      ? tables.value.find(table => String(table.routeId ?? '').trim() === normalizedRouteId)
+      : null
+    if (existing) {
+      selectTable(existing.id)
+      return existing
+    }
+
     const newTable: RPLTable = {
       id: `rpl-${Date.now()}`,
       name,
-      routeId,
+      routeId: normalizedRouteId,
       records: [],
       metadata: createEmptyMetadata(),
       createdAt: new Date(),
@@ -81,7 +103,10 @@ export const useRPLStore = defineStore('rpl', () => {
   }
 
   function replaceTables(nextTables: RPLTable[]) {
-    tables.value = nextTables
+    tables.value = normalizeTables(nextTables)
+    if (!tables.value.some(table => table.id === currentTableId.value)) {
+      currentTableId.value = tables.value[0]?.id ?? null
+    }
   }
 
   function setCurrentTableId(tableId: string | null) {
@@ -148,6 +173,34 @@ export const useRPLStore = defineStore('rpl', () => {
 
   function updateMetadata() {
     if (!currentTable.value) return
+    const records = currentTable.value.records
+    const depths = records.map(record => Number(record.depth)).filter(Number.isFinite)
+    const totalLength = records.reduce(
+      (max, record) => Math.max(max, Number(record.cumulativeLength) || Number(record.kp) || 0),
+      0,
+    )
+    const explicitCableLengths = records
+      .map(record => Number(record.cableDistanceCumulative))
+      .filter(Number.isFinite)
+    const totalCableLength = explicitCableLengths.length > 0
+      ? Math.max(...explicitCableLengths)
+      : records.reduce((total, record) => {
+          const length = Number(record.segmentLength) || 0
+          const slack = Number(record.slack) || 0
+          return total + length * (1 + Math.max(0, slack) / 100)
+        }, 0)
+
+    currentTable.value.metadata = {
+      totalLength,
+      totalCableLength,
+      landingStations: records.filter(record => record.pointType === 'landing').length,
+      repeaters: records.filter(record => record.pointType === 'repeater').length,
+      branchingUnits: records.filter(record => record.pointType === 'branching').length,
+      joints: records.filter(record => record.pointType === 'joint').length,
+      averageDepth: depths.length > 0 ? depths.reduce((sum, depth) => sum + depth, 0) / depths.length : 0,
+      maxDepth: depths.length > 0 ? Math.max(...depths) : 0,
+      minDepth: depths.length > 0 ? Math.min(...depths) : 0,
+    }
     currentTable.value.updatedAt = new Date()
   }
 

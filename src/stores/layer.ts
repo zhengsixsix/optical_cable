@@ -80,6 +80,11 @@ export const useLayerStore = defineStore('layer', () => {
     layers.value.push(config)
   }
 
+  function removeLayer(id: string) {
+    layers.value = layers.value.filter(layer => layer.id !== id)
+    layerDataMap.value.delete(id)
+  }
+
   function syncDictionaryLayers() {
     for (const item of dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType)) {
       const id = getLocalLayerIdForDictionaryCode(item.code)
@@ -291,6 +296,7 @@ export const useLayerStore = defineStore('layer', () => {
     setLayerLoading,
     setLayerVisible,
     upsertLayer,
+    removeLayer,
     getLayerVisible,
     getLayerById,
     setLayerData,

@@ -53,6 +53,8 @@ export interface RouteSegment {
   cableType?: string
   riskLevel?: RiskLevel
   cost?: number
+  geometryStartIndex?: number
+  geometryEndIndex?: number
 }
 
 // 成本明细结构

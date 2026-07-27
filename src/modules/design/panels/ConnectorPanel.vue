@@ -252,38 +252,29 @@ watch(currentProjectId, () => {
 </script>
 
 <template>
-  <Card class="flex-1 flex flex-col">
-    <CardHeader class="pb-2 flex-shrink-0">
-      <span class="font-semibold text-sm flex items-center gap-2">
-        <Link2 class="w-4 h-4 text-purple-500" />
+  <Card class="flex-1 flex flex-col overflow-hidden">
+    <CardHeader class="flex-shrink-0 px-3 py-2">
+      <span class="font-semibold text-sm flex items-center gap-2 text-gray-800">
+        <Link2 class="w-4 h-4 text-violet-500" />
         接线元管理
       </span>
       <div class="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-7 px-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700"
-          :disabled="loadingPlatformEntities || dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.deviceType)"
-          title="刷新器件类型字典和平台器件实例"
-          @click="refreshPanelData"
-        >
-          <RefreshCw class="w-4 h-4" :class="loadingPlatformEntities || dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.deviceType) ? 'animate-spin' : ''" />
-        </Button>
-        <Button variant="ghost" size="sm" class="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50" @click="emit('add')">
+        <Button variant="ghost" size="sm" class="h-8 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50" @click="emit('add')">
           <Plus class="w-4 h-4 mr-1" /> 添加
         </Button>
       </div>
     </CardHeader>
 
-    <CardContent class="flex-1 overflow-hidden flex flex-col pt-0">
-      <div class="flex gap-2 mb-3 flex-wrap border-b border-gray-100 pb-2">
+    <CardContent class="flex-1 overflow-hidden flex flex-col p-0">
+      <div class="flex gap-x-5 gap-y-1 flex-wrap border-b border-gray-100 px-3 py-2">
         <button
           :class="[
-            'px-2.5 py-1 text-xs font-medium transition-colors border-b-2',
+            'py-1 text-xs font-medium transition-colors',
             filterType === 'all'
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700',
+              ? 'text-blue-600'
+              : 'text-gray-500 hover:text-gray-800',
           ]"
+          :aria-pressed="filterType === 'all'"
           @click="handleFilterChange('all')"
         >
           全部
@@ -292,11 +283,12 @@ watch(currentProjectId, () => {
           v-for="option in filterOptions"
           :key="option.key"
           :class="[
-            'px-2.5 py-1 text-xs font-medium transition-colors border-b-2',
+            'py-1 text-xs font-medium transition-colors',
             normalizeCode(filterType) === normalizeCode(option.code)
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700',
+              ? 'text-blue-600'
+              : 'text-gray-500 hover:text-gray-800',
           ]"
+          :aria-pressed="normalizeCode(filterType) === normalizeCode(option.code)"
           @click="handleFilterChange(option.code)"
         >
           {{ option.label }}
@@ -304,7 +296,7 @@ watch(currentProjectId, () => {
         <span v-if="dictionaryStore.isLoading(PLATFORM_DICTIONARY_TYPES.deviceType)" class="px-2.5 py-1 text-xs text-gray-400">加载中...</span>
       </div>
 
-      <div class="flex-1 overflow-auto pr-1">
+      <div class="flex-1 overflow-auto px-3 py-2.5">
         <div v-if="loadingPlatformEntities" class="text-center py-8 text-gray-400 text-xs">
           <RefreshCw class="mx-auto mb-2 h-5 w-5 animate-spin text-blue-500" />
           <p>正在加载器件实例...</p>
@@ -317,50 +309,53 @@ watch(currentProjectId, () => {
           <div
             v-for="entity in filteredEntities"
             :key="entity.localElementId"
-            class="p-2.5 border border-gray-200 rounded-md hover:border-blue-300 transition-colors bg-white group"
+            class="rounded-md border border-gray-200 bg-white px-3 py-2.5 transition-colors hover:border-gray-300 group"
           >
             <div class="flex items-start justify-between gap-2">
               <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1.5">
-                  <span class="font-bold text-sm text-gray-800 truncate">{{ entity.name || entity.id || '未命名器件实例' }}</span>
+                <div class="flex items-start gap-2">
+                  <span class="min-w-0 flex-1 font-semibold text-sm leading-5 text-gray-900 break-words">{{ entity.name || entity.id || '未命名器件实例' }}</span>
                   <span
-                    class="text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0"
+                    class="mt-0.5 text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 leading-4"
                     :class="typeBadgeClass(entity.deviceTypeCd)"
                   >
                     {{ deviceTypeLabel(entity) }}
                   </span>
                 </div>
 
-                <div class="grid grid-cols-2 gap-x-3 gap-y-1 pl-0 text-xs text-gray-500">
-                  <div>
-                    器件库：
-                    <span class="font-medium text-blue-600">{{ libraryLabel(entity) }}</span>
+                <div class="mt-2 flex items-center gap-1.5 text-xs leading-5 text-gray-600">
+                  <span class="shrink-0 text-gray-400">器件库</span>
+                  <span class="min-w-0 font-medium text-blue-600 break-all">{{ libraryLabel(entity) }}</span>
+                </div>
+
+                <div class="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs leading-5 text-gray-600">
+                  <div class="min-w-0">
+                    <span class="text-gray-400">经度</span>
+                    <span class="ml-1 font-mono text-gray-800">{{ formatCoordinate(entity.longitude) }}</span>
                   </div>
-                  <div>
-                    经度：
-                    <span class="font-medium text-gray-700">{{ formatCoordinate(entity.longitude) }}</span>
-                  </div>
-                  <div>
-                    纬度：
-                    <span class="font-medium text-gray-700">{{ formatCoordinate(entity.latitude) }}</span>
+                  <div class="min-w-0">
+                    <span class="text-gray-400">纬度</span>
+                    <span class="ml-1 font-mono text-gray-800">{{ formatCoordinate(entity.latitude) }}</span>
                   </div>
                 </div>
               </div>
 
               <div class="flex gap-1 flex-shrink-0">
                 <button
-                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100"
+                  class="h-8 w-8 p-0 flex items-center justify-center rounded text-gray-500 hover:bg-blue-50 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                  aria-label="编辑器件实例"
                   title="编辑"
                   @click="handleEdit(entity)"
                 >
-                  <Edit2 class="w-3.5 h-3.5 text-gray-500 hover:text-blue-600" />
+                  <Edit2 class="w-4 h-4" />
                 </button>
                 <button
-                  class="h-6 w-6 p-0 flex items-center justify-center rounded hover:bg-gray-100"
+                  class="h-8 w-8 p-0 flex items-center justify-center rounded text-gray-500 hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30"
+                  aria-label="删除器件实例"
                   title="删除"
                   @click="deleteConnector(entity)"
                 >
-                  <Trash2 class="w-3.5 h-3.5 text-gray-500 hover:text-red-600" />
+                  <Trash2 class="w-4 h-4" />
                 </button>
               </div>
             </div>

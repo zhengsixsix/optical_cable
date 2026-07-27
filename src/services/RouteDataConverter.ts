@@ -1,4 +1,4 @@
-import type { CableSegment, Route, RoutePoint } from '@/types'
+import type { CableSegment, RiskLevel, Route, RoutePoint, RouteSegment } from '@/types'
 
 export type RouteCoordinateOrder = 'longitude-latitude' | 'latitude-longitude'
 
@@ -50,6 +50,14 @@ export interface NumericSeriesStats {
   columns?: number
 }
 
+export interface NumericGridData {
+  values: number[][]
+  rows: number
+  columns: number
+  min: number
+  max: number
+}
+
 export interface SegmentValueSummary {
   value: string | null
   segmentCount: number
@@ -95,12 +103,13 @@ export interface AlgorithmRouteBundle {
 
 export interface AlgorithmRouteBundleResult {
   routes: Route[]
-  /** Segment side files are retained for analysis, but never turned into project cable segments here. */
   segmentsByRouteId: Record<string, CableSegment[]>
   rawResultFiles: RoutePlanningRawResultFiles
   analysis: {
     costSamples?: NumericSeriesStats
     riskSamples?: NumericSeriesStats
+    costGrid?: NumericGridData
+    riskGrid?: NumericGridData
     segmentResults: SegmentResultAnalysis[]
   }
   diagnostics: {
@@ -215,6 +224,52 @@ export function summarizeNumericSeries(text?: string): NumericSeriesStats | unde
     average: sum / sampleCount,
     shape: rectangular ? 'matrix' : 'flat',
     ...(rectangular ? { rows: rowCounts.length, columns: rowCounts[0] } : {}),
+  }
+}
+
+export function parseNumericGrid(text?: string): NumericGridData | undefined {
+  if (!text?.trim()) return undefined
+
+  const numberPattern = /[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?/g
+  const values: number[][] = []
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+
+  for (const sourceRow of text.split(/\r?\n/)) {
+    const row: number[] = []
+    for (const match of sourceRow.matchAll(numberPattern)) {
+      const value = Number(match[0])
+      if (!Number.isFinite(value)) continue
+      row.push(value)
+      min = Math.min(min, value)
+      max = Math.max(max, value)
+    }
+    if (row.length > 0) values.push(row)
+  }
+
+  if (values.length === 0) return undefined
+  const columns = values[0].length
+  if (columns === 0 || !values.every(row => row.length === columns)) return undefined
+
+  let gridValues = values
+  let gridColumns = columns
+  if (values.length === 1) {
+    const squareSide = Math.sqrt(columns)
+    if (Number.isInteger(squareSide) && squareSide > 1) {
+      gridColumns = squareSide
+      gridValues = Array.from(
+        { length: squareSide },
+        (_, rowIndex) => values[0].slice(rowIndex * squareSide, (rowIndex + 1) * squareSide),
+      )
+    }
+  }
+
+  return {
+    values: gridValues,
+    rows: gridValues.length,
+    columns: gridColumns,
+    min,
+    max,
   }
 }
 
@@ -356,6 +411,133 @@ export function convertPathResultToRoute(
   }
 }
 
+function normalizeRiskLevel(value: unknown): RiskLevel | undefined {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (['high', 'h', '3'].includes(normalized)) return 'high'
+  if (['medium', 'mid', 'm', '2'].includes(normalized)) return 'medium'
+  if (['low', 'l', '1'].includes(normalized)) return 'low'
+  return undefined
+}
+
+function segmentNodeMap(result: RawSegmentResult): Map<string, [number, number]> {
+  const nodes = Array.isArray(result.segment_nodes) ? result.segment_nodes : []
+  const order = inferCoordinateOrder(nodes)
+  const mapped = new Map<string, [number, number]>()
+
+  nodes.forEach((node, index) => {
+    const pair = coordinatePair(node)
+    if (!pair) return
+    const coordinate: [number, number] = order === 'latitude-longitude'
+      ? [pair[1], pair[0]]
+      : pair
+    if (!isValidLongitude(coordinate[0]) || !isValidLatitude(coordinate[1])) return
+    const nodeId = node.length >= 3 ? node[0] : index + 1
+    mapped.set(String(nodeId), coordinate)
+  })
+
+  return mapped
+}
+
+function nearestCoordinateIndex(
+  coordinates: [number, number][],
+  target: [number, number] | undefined,
+  fallbackNodeId: unknown,
+): number | undefined {
+  if (target) {
+    let nearestIndex = -1
+    let nearestDistance = Number.POSITIVE_INFINITY
+    coordinates.forEach((coordinate, index) => {
+      const distance = (coordinate[0] - target[0]) ** 2 + (coordinate[1] - target[1]) ** 2
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestIndex = index
+      }
+    })
+    if (nearestIndex >= 0) return nearestIndex
+  }
+
+  const numericId = toFiniteNumber(fallbackNodeId)
+  if (numericId !== undefined) {
+    const zeroBased = Math.trunc(numericId) - 1
+    if (zeroBased >= 0 && zeroBased < coordinates.length) return zeroBased
+  }
+  return undefined
+}
+
+function applySegmentResultToRoute(
+  route: Route,
+  result: RawSegmentResult,
+  warnings: string[],
+): CableSegment[] {
+  const rawSegments = Array.isArray(result.segments) ? result.segments : []
+  const riskLevels = Array.isArray(result.risk_level) ? result.risk_level : []
+  const coordinates = route.rawTrunkCoordinates ?? route.points.map(point => point.coordinates)
+  const nodes = segmentNodeMap(result)
+  const routeSegments: RouteSegment[] = []
+  const cableSegments: CableSegment[] = []
+  let cumulativeKp = 0
+  const templateLengths = rawSegments.map(segment => Math.max(0, toFiniteNumber(segment.length_km) ?? 0))
+
+  rawSegments.forEach((segment, index) => {
+    const templateLength = templateLengths[index]
+    const startIndex = nearestCoordinateIndex(
+      coordinates,
+      nodes.get(String(segment.start_node_id ?? '')),
+      segment.start_node_id,
+    )
+    const endIndex = nearestCoordinateIndex(
+      coordinates,
+      nodes.get(String(segment.end_node_id ?? '')),
+      segment.end_node_id,
+    )
+    if (startIndex === undefined || endIndex === undefined || startIndex === endIndex) {
+      warnings.push(`路由 ${route.name} 的分段 ${index + 1} 无法匹配 real_trace 节点`)
+      return
+    }
+
+    const geometryStartIndex = Math.min(startIndex, endIndex)
+    const geometryEndIndex = Math.max(startIndex, endIndex)
+    const startPoint = route.points[geometryStartIndex]
+    const endPoint = route.points[geometryEndIndex]
+    if (!startPoint || !endPoint) return
+
+    const length = templateLength
+    const sourceSegmentId = String(segment.segment_id ?? index + 1)
+    const id = `${route.id}-segment-${sourceSegmentId}`
+    const cableType = typeof segment.cable_type === 'string' && segment.cable_type.trim()
+      ? segment.cable_type.trim()
+      : undefined
+    const riskLevel = normalizeRiskLevel(riskLevels[index]?.level)
+    const endKp = cumulativeKp + Math.max(0, length)
+
+    routeSegments.push({
+      id,
+      startPointId: startPoint.id,
+      endPointId: endPoint.id,
+      length,
+      ...(cableType ? { cableType } : {}),
+      ...(riskLevel ? { riskLevel } : {}),
+      geometryStartIndex,
+      geometryEndIndex,
+    })
+    cableSegments.push({
+      id,
+      routeId: route.id,
+      startKp: cumulativeKp,
+      endKp,
+      length,
+      ...(riskLevel ? { riskLevel } : {}),
+      ...(cableType ? { cableTypeId: cableType, cableTypeName: cableType } : {}),
+      geometryStartIndex,
+      geometryEndIndex,
+    })
+    cumulativeKp = endKp
+  })
+
+  route.segments = routeSegments
+  return cableSegments
+}
+
 export function convertAlgorithmRouteBundle(bundle: AlgorithmRouteBundle): AlgorithmRouteBundleResult {
   const warnings: string[] = []
   const paths = bundle.fmmPaths ?? []
@@ -381,9 +563,27 @@ export function convertAlgorithmRouteBundle(bundle: AlgorithmRouteBundle): Algor
     result.warnings.forEach(warning => warnings.push(`${result.sourceFile}: ${warning}`))
   })
 
-  const segmentsByRouteId = Object.fromEntries(
-    routes.map(route => [route.id, [] as CableSegment[]]),
+  const segmentsByRouteId: Record<string, CableSegment[]> = Object.fromEntries(
+    routes.map(route => [route.id, []]),
   )
+  routes.forEach((route, routeIndex) => {
+    const matchingRiskResult = bundle.riskBased
+      && (toFiniteNumber(bundle.riskBased.route_index) ?? 0) === routeIndex
+      ? bundle.riskBased
+      : undefined
+    const matchingFixedResult = bundle.fixedSpacing
+      && (toFiniteNumber(bundle.fixedSpacing.route_index) ?? 0) === routeIndex
+      ? bundle.fixedSpacing
+      : undefined
+    const selectedResult = matchingRiskResult ?? matchingFixedResult
+    if (selectedResult) {
+      segmentsByRouteId[route.id] = applySegmentResultToRoute(
+        route,
+        selectedResult,
+        warnings,
+      )
+    }
+  })
   const rawResultFiles: RoutePlanningRawResultFiles = {}
   if (bundle.stationPoints !== undefined) rawResultFiles.pointList = bundle.stationPoints
   if (bundle.fmmPaths !== undefined) rawResultFiles['FMM_path_result.json'] = bundle.fmmPaths
@@ -399,6 +599,8 @@ export function convertAlgorithmRouteBundle(bundle: AlgorithmRouteBundle): Algor
     analysis: {
       costSamples: summarizeNumericSeries(bundle.costText),
       riskSamples: summarizeNumericSeries(bundle.riskText),
+      costGrid: parseNumericGrid(bundle.costText),
+      riskGrid: parseNumericGrid(bundle.riskText),
       segmentResults,
     },
     diagnostics: {

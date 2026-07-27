@@ -1,54 +1,77 @@
 ﻿﻿<script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useRPLStore } from '@/stores/rpl'
 import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { exportRPLFile } from '@/services/RPLExportService'
 import { buildExportableRplTableSnapshot } from '@/services/RPLSyncService'
-import { Card, CardHeader, CardContent, Button, Select } from '@/shared/components/base'
-import { 
-  Plus, 
-  Trash2, 
-  Download, 
-  FileSpreadsheet,
-  CheckCircle,
-  X,
-  Filter,
-  RotateCcw,
-  Edit3
-} from 'lucide-vue-next'
-import type { RPLPointType, RPLCableCode } from '@/types'
+import { Card, CardContent, Button } from '@/shared/components/base'
+import { Download, FileSpreadsheet, Edit3 } from 'lucide-vue-next'
+import type { RPLPointType, RPLCableCode, RPLRecord } from '@/types'
 import { pointTypeOptions } from '@/config/uiOptions'
 
-const props = defineProps<{
-  visible?: boolean
-}>()
-
 const emit = defineEmits<{
-  (e: 'close'): void
   (e: 'edit-record', recordId: string): void
 }>()
 
 const rplStore = useRPLStore()
 const appStore = useAppStore()
 const dictionaryStore = useDictionaryStore()
-const cableTypeOptions = computed(() => dictionaryStore.getOptions(PLATFORM_DICTIONARY_TYPES.armoringType))
-
-const showFilterPanel = ref(false)
-const filterPointType = ref<RPLPointType[]>([])
-const filterCableType = ref<RPLCableCode[]>([])
 
 const currentTable = computed(() => rplStore.currentTable)
-const filteredRecords = computed(() => rplStore.filteredRecords)
-const selectedRecordIds = computed(() => rplStore.selectedRecordIds)
+const records = computed(() => currentTable.value?.records ?? [])
 const metadata = computed(() => currentTable.value?.metadata)
 
-const tableOptions = computed(() => 
-  rplStore.tables.map(t => ({ value: t.id, label: t.name }))
-)
+const hasMeaningfulNumber = (value: number | null | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) && value !== 0
+
+const hasMeaningfulText = (value: string | null | undefined) => {
+  const normalized = value?.trim()
+  return Boolean(normalized && normalized !== '-' && normalized !== '未提供')
+}
+
+const normalizeMeaningfulText = (value: string | null | undefined) =>
+  hasMeaningfulText(value) ? value!.trim() : ''
+
+const getSlack = (record: RPLRecord) => record.slackPercent ?? record.slack
+const getDepth = (record: RPLRecord) => record.approxDepth ?? record.depth
+const getBurialDepth = (record: RPLRecord) => record.targetBurialDepth ?? record.burialDepth
+const getAdditionalFeatures = (record: RPLRecord) =>
+  normalizeMeaningfulText(record.additionalFeatures) || normalizeMeaningfulText(record.remarks)
+
+const showSlackColumn = computed(() => records.value.some(record => hasMeaningfulNumber(getSlack(record))))
+const showDepthColumn = computed(() => records.value.some(record => hasMeaningfulNumber(getDepth(record))))
+const showBurialDepthColumn = computed(() => records.value.some(record => hasMeaningfulNumber(getBurialDepth(record))))
+const showAdditionalFeaturesColumn = computed(() => records.value.some(record => hasMeaningfulText(getAdditionalFeatures(record))))
+const visibleColumnCount = computed(() => 8
+  + Number(showSlackColumn.value)
+  + Number(showDepthColumn.value)
+  + Number(showBurialDepthColumn.value)
+  + Number(showAdditionalFeaturesColumn.value))
+
+const eventLabels: Record<string, string> = {
+  landing: '登陆站',
+  repeater: '放大器',
+  branching: '分支器',
+  joint: '接头',
+  waypoint: '路径点',
+  Start: '起点',
+  End: '终点',
+  'Alter Course': '转向点',
+  Repeater: '放大器',
+  'Branching Unit': '分支器',
+  Joint: '接头',
+  'Landing Station': '登陆站',
+  Waypoint: '路径点',
+}
 
 const getPointTypeLabel = (type: RPLPointType) => {
-  return pointTypeOptions.find(o => o.value === type)?.label || type
+  return eventLabels[type] || pointTypeOptions.find(o => o.value === type)?.label || type
+}
+
+const getEventLabel = (record: RPLRecord) => {
+  const event = normalizeMeaningfulText(record.event)
+  return eventLabels[event] || event || getPointTypeLabel(record.pointType)
 }
 
 const getCableTypeLabel = (type: RPLCableCode) =>
@@ -65,42 +88,6 @@ const getPointTypeClass = (type: RPLPointType) => {
   return classes[type] || 'bg-gray-100 text-gray-600'
 }
 
-const isSelected = (recordId: string) => selectedRecordIds.value.includes(recordId)
-
-const handleSelectAll = (checked: boolean) => {
-  if (checked) {
-    rplStore.selectAllRecords()
-  } else {
-    rplStore.clearSelection()
-  }
-}
-
-const handleRowClick = (recordId: string, event: MouseEvent) => {
-  if (event.ctrlKey || event.metaKey) {
-    rplStore.toggleRecordSelection(recordId)
-  } else {
-    rplStore.selectRecords([recordId])
-  }
-}
-
-const handleDeleteSelected = () => {
-  if (selectedRecordIds.value.length === 0) return
-  rplStore.deleteRecords(selectedRecordIds.value)
-  appStore.showNotification({ type: 'success', message: `已删除 ${selectedRecordIds.value.length} 条记录` })
-}
-
-const handleValidate = () => {
-  const result = rplStore.validateTable()
-  if (result.valid) {
-    appStore.showNotification({ type: 'success', message: '表格验证通过' })
-  } else {
-    appStore.showNotification({ 
-      type: 'warning', 
-      message: `发现 ${result.errors.length} 个错误, ${result.warnings.length} 个警告` 
-    })
-  }
-}
-
 const handleExportRPL = async () => {
   if (!currentTable.value) return
   try {
@@ -115,30 +102,6 @@ const handleExportRPL = async () => {
 }
 
 
-const applyFilter = () => {
-  rplStore.setFilter({
-    pointType: filterPointType.value.length ? filterPointType.value : undefined,
-    cableType: filterCableType.value.length ? filterCableType.value : undefined,
-  })
-  showFilterPanel.value = false
-}
-
-const resetFilter = () => {
-  filterPointType.value = []
-  filterCableType.value = []
-  rplStore.clearFilter()
-  showFilterPanel.value = false
-}
-
-const allSelected = computed(() => 
-  filteredRecords.value.length > 0 && 
-  filteredRecords.value.every(r => selectedRecordIds.value.includes(r.id))
-)
-
-const someSelected = computed(() => 
-  selectedRecordIds.value.length > 0 && !allSelected.value
-)
-
 onMounted(async () => {
   try {
     await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.armoringType)
@@ -149,36 +112,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Card class="h-full flex flex-col overflow-hidden">
-    <CardHeader class="shrink-0 border-b">
-      <div class="flex items-center gap-2">
-        <FileSpreadsheet class="w-5 h-5 text-blue-600" />
-        <span class="font-semibold">RPL 表格管理</span>
-      </div>
-      <Button v-if="props.visible !== undefined" variant="ghost" size="sm" @click="emit('close')">
-        <X class="w-4 h-4" />
-      </Button>
-    </CardHeader>
-
+  <Card class="h-full flex flex-col overflow-hidden rounded-none border-0 shadow-none">
     <CardContent class="flex-1 flex flex-col overflow-hidden p-0">
-      <!-- 表格选择和统计信息 -->
-      <div class="px-4 py-3 bg-gray-50 border-b space-y-3">
-        <!-- 表格选择 -->
-        <div class="flex items-center gap-4">
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-gray-600">当前表格:</span>
-            <Select 
-              v-if="tableOptions.length > 0"
-              :model-value="rplStore.currentTableId || ''"
-              :options="tableOptions"
-              class="w-48"
-              @update:model-value="rplStore.selectTable($event)"
-            />
-            <span v-else class="text-sm text-gray-400">暂无表格</span>
-          </div>
-        </div>
-
-        <!-- 统计信息 -->
+      <!-- 统计信息 -->
+      <div class="px-4 py-3 bg-gray-50 border-b">
         <div v-if="metadata" class="grid grid-cols-6 gap-4 text-sm">
           <div class="text-center">
             <div class="font-semibold text-blue-600">{{ metadata.totalLength.toFixed(1) }}</div>
@@ -208,86 +145,11 @@ onMounted(async () => {
       </div>
 
       <!-- 工具栏 -->
-      <div class="px-4 py-2 border-b flex items-center justify-between bg-white">
-        <div class="flex items-center gap-2">
-          <Button variant="outline" size="sm" @click="emit('edit-record', '')">
-            <Plus class="w-4 h-4 mr-1" />
-            添加
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            :disabled="selectedRecordIds.length === 0"
-            @click="handleDeleteSelected"
-          >
-            <Trash2 class="w-4 h-4 mr-1" />
-            删除
-          </Button>
-          <div class="w-px h-5 bg-gray-300" />
-          <Button variant="outline" size="sm" @click="showFilterPanel = !showFilterPanel">
-            <Filter class="w-4 h-4 mr-1" />
-            筛选
-          </Button>
-          <Button variant="outline" size="sm" @click="handleValidate">
-            <CheckCircle class="w-4 h-4 mr-1" />
-            验证
-          </Button>
-        </div>
+      <div class="px-4 py-2 border-b flex items-center justify-end bg-white">
         <Button variant="outline" size="sm" @click="handleExportRPL">
           <Download class="w-4 h-4 mr-1" />
           导出 RPL
         </Button>
-      </div>
-
-      <!-- 筛选面板 -->
-      <div v-if="showFilterPanel" class="px-4 py-3 border-b bg-blue-50 space-y-3">
-        <div class="flex items-center gap-4">
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-gray-600">点类型:</span>
-            <div class="flex gap-1">
-              <label 
-                v-for="opt in pointTypeOptions" 
-                :key="opt.value"
-                class="flex items-center gap-1 px-2 py-1 bg-white border rounded cursor-pointer hover:bg-gray-50"
-              >
-                <input 
-                  type="checkbox" 
-                  :value="opt.value"
-                  v-model="filterPointType"
-                  class="w-3 h-3"
-                />
-                <span class="text-xs">{{ opt.label }}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="flex items-center gap-4">
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-gray-600">电缆类型:</span>
-            <div class="flex gap-1">
-              <label 
-                v-for="opt in cableTypeOptions" 
-                :key="opt.value"
-                class="flex items-center gap-1 px-2 py-1 bg-white border rounded cursor-pointer hover:bg-gray-50"
-              >
-                <input 
-                  type="checkbox" 
-                  :value="opt.value"
-                  v-model="filterCableType"
-                  class="w-3 h-3"
-                />
-                <span class="text-xs">{{ opt.label }}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="flex gap-2">
-          <Button size="sm" @click="applyFilter">应用筛选</Button>
-          <Button variant="outline" size="sm" @click="resetFilter">
-            <RotateCcw class="w-3 h-3 mr-1" />
-            重置
-          </Button>
-        </div>
       </div>
 
       <!-- 表格内容 -->
@@ -295,63 +157,42 @@ onMounted(async () => {
         <table class="w-full text-sm border-collapse">
           <thead class="bg-gray-100 sticky top-0 z-10">
             <tr>
-              <th class="px-2 py-2 text-center w-10 border-b">
-                <input 
-                  type="checkbox"
-                  :checked="allSelected"
-                  :indeterminate="someSelected"
-                  class="w-4 h-4"
-                  @change="handleSelectAll(($event.target as HTMLInputElement).checked)"
-                />
-              </th>
               <th class="px-2 py-2 text-center w-12 border-b font-medium text-gray-600" title="Pos No.">Pos</th>
               <th class="px-2 py-2 text-center w-20 border-b font-medium text-gray-600" title="Event">事件</th>
               <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Latitude">纬度</th>
               <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Longitude">经度</th>
               <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Distance (km) Between Positions">距离(km)</th>
               <th class="px-2 py-2 text-right w-24 border-b font-medium text-gray-600" title="Distance (km) Cumulative Total">累计(km)</th>
-              <th class="px-2 py-2 text-right w-16 border-b font-medium text-gray-600" title="Slack %">Slack%</th>
+              <th v-if="showSlackColumn" class="px-2 py-2 text-right w-16 border-b font-medium text-gray-600" title="Slack %">Slack%</th>
               <th class="px-2 py-2 text-center w-16 border-b font-medium text-gray-600" title="Cable Type">电缆</th>
-              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600" title="Approx Depth (m)">水深(m)</th>
-              <th class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600" title="Target Burial Depth (m)">埋深(m)</th>
-              <th class="px-2 py-2 text-left border-b font-medium text-gray-600" title="Planned Additional Route Features">附加特征</th>
+              <th v-if="showDepthColumn" class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600" title="Approx Depth (m)">水深(m)</th>
+              <th v-if="showBurialDepthColumn" class="px-2 py-2 text-right w-20 border-b font-medium text-gray-600" title="Target Burial Depth (m)">埋深(m)</th>
+              <th v-if="showAdditionalFeaturesColumn" class="px-2 py-2 text-left border-b font-medium text-gray-600" title="Planned Additional Route Features">附加特征</th>
               <th class="px-2 py-2 text-center w-16 border-b font-medium text-gray-600">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr 
-              v-for="record in filteredRecords"
+              v-for="record in records"
               :key="record.id"
-              :class="[
-                'hover:bg-blue-50 cursor-pointer transition-colors',
-                isSelected(record.id) ? 'bg-blue-100' : ''
-              ]"
-              @click="handleRowClick(record.id, $event)"
+              class="hover:bg-blue-50 transition-colors"
             >
-              <td class="px-2 py-1.5 text-center border-b" @click.stop>
-                <input 
-                  type="checkbox"
-                  :checked="isSelected(record.id)"
-                  class="w-4 h-4"
-                  @change="rplStore.toggleRecordSelection(record.id)"
-                />
-              </td>
               <td class="px-2 py-1.5 text-center border-b text-gray-500">{{ record.sequence }}</td>
               <td class="px-2 py-1.5 text-center border-b">
                 <span :class="['text-xs px-1.5 py-0.5 rounded', getPointTypeClass(record.pointType)]">
-                  {{ getPointTypeLabel(record.pointType) }}
+                  {{ getEventLabel(record) }}
                 </span>
               </td>
               <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.latitude?.toFixed(6) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-right border-b font-mono">{{ record.longitude?.toFixed(6) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-right border-b">{{ record.segmentLength?.toFixed(3) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-right border-b font-medium">{{ record.cumulativeLength?.toFixed(3) ?? '-' }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.slack?.toFixed(1) ?? '-' }}</td>
+              <td v-if="showSlackColumn" class="px-2 py-1.5 text-right border-b">{{ getSlack(record)?.toFixed(1) ?? '-' }}</td>
               <td class="px-2 py-1.5 text-center border-b text-xs">{{ getCableTypeLabel(record.cableType) || '-' }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.depth?.toFixed(1) ?? '-' }}</td>
-              <td class="px-2 py-1.5 text-right border-b">{{ record.burialDepth?.toFixed(2) ?? '-' }}</td>
-              <td class="px-2 py-1.5 text-left border-b text-gray-600 truncate max-w-[120px]" :title="record.remarks">
-                {{ record.remarks }}
+              <td v-if="showDepthColumn" class="px-2 py-1.5 text-right border-b">{{ getDepth(record)?.toFixed(1) ?? '-' }}</td>
+              <td v-if="showBurialDepthColumn" class="px-2 py-1.5 text-right border-b">{{ getBurialDepth(record)?.toFixed(2) ?? '-' }}</td>
+              <td v-if="showAdditionalFeaturesColumn" class="px-2 py-1.5 text-left border-b text-gray-600 truncate max-w-[120px]" :title="getAdditionalFeatures(record)">
+                {{ getAdditionalFeatures(record) || '-' }}
               </td>
               <td class="px-2 py-1.5 text-center border-b" @click.stop>
                 <button 
@@ -363,8 +204,8 @@ onMounted(async () => {
                 </button>
               </td>
             </tr>
-            <tr v-if="filteredRecords.length === 0">
-              <td colspan="13" class="px-4 py-8 text-center text-gray-400">
+            <tr v-if="records.length === 0">
+              <td :colspan="visibleColumnCount" class="px-4 py-8 text-center text-gray-400">
                 <FileSpreadsheet class="w-10 h-10 mx-auto mb-2 opacity-50" />
                 <p>暂无数据</p>
               </td>
@@ -374,9 +215,8 @@ onMounted(async () => {
       </div>
 
       <!-- 底部状态栏 -->
-      <div class="px-4 py-2 border-t bg-gray-50 flex items-center justify-between text-xs text-gray-500">
-        <span>共 {{ filteredRecords.length }} 条记录</span>
-        <span v-if="selectedRecordIds.length > 0">已选择 {{ selectedRecordIds.length }} 条</span>
+      <div class="px-4 py-2 border-t bg-gray-50 text-xs text-gray-500">
+        <span>共 {{ records.length }} 条记录</span>
       </div>
     </CardContent>
   </Card>

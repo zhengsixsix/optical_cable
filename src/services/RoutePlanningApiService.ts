@@ -33,9 +33,39 @@ function hasResultValue(value: unknown): boolean {
   return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0)
 }
 
-function hasBackendRoutePlanningData(data: unknown): boolean {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+function unwrapBackendRoutePlanningData(data: unknown, depth = 0): Record<string, unknown> | null {
+  if (depth > 4 || data === null || data === undefined) return null
+
+  if (typeof data === 'string') {
+    const trimmed = data.trim()
+    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return null
+    try {
+      return unwrapBackendRoutePlanningData(JSON.parse(trimmed), depth + 1)
+    } catch {
+      return null
+    }
+  }
+
+  if (Array.isArray(data)) {
+    return data.length === 1 ? unwrapBackendRoutePlanningData(data[0], depth + 1) : null
+  }
+  if (typeof data !== 'object') return null
+
   const record = data as Record<string, unknown>
+  if (ROUTE_RESULT_FILES.some(filename => filename in record)) return record
+  if ('data' in record) {
+    const unwrapped = unwrapBackendRoutePlanningData(record.data, depth + 1)
+    if (unwrapped) return unwrapped
+  }
+  if (typeof record.text === 'string') {
+    return unwrapBackendRoutePlanningData(record.text, depth + 1)
+  }
+  return null
+}
+
+function hasBackendRoutePlanningData(data: unknown): boolean {
+  const record = unwrapBackendRoutePlanningData(data)
+  if (!record) return false
   return ROUTE_RESULT_FILES.some(filename => hasResultValue(record[filename]))
 }
 
@@ -43,11 +73,8 @@ export function convertBackendRoutePlanningData(
   data: unknown,
   source = 'backend-route-plan',
 ): AlgorithmRouteBundleResult {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('后端路由规划结果格式错误：data 不是文件映射对象')
-  }
-
-  const record = data as Record<string, unknown>
+  const record = unwrapBackendRoutePlanningData(data)
+  if (!record) throw new Error('后端路由规划结果格式错误：未找到结果文件映射')
   const fileMap: RoutePlanningResultFileMap = {}
   for (const filename of ROUTE_RESULT_FILES) {
     if (!(filename in record)) continue

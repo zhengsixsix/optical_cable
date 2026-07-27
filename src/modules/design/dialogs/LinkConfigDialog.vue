@@ -3497,76 +3497,7 @@ watch(() => props.visible, async (visible) => {
               </div>
               
               <!-- Step 2: 计算模型选择 -->
-                <div v-if="activeStep === 'link'" class="planning-section planning-equalizer-section space-y-4">
-                  <div class="flex items-start justify-between gap-4">
-                    <div>
-                      <div class="text-sm font-medium text-gray-700">均衡器落位</div>
-                      <div class="text-xs text-gray-500 mt-1">系统规划地图显示均衡器。接头盒只在接线元和 SLD 中维护，不在这里落位。</div>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      :disabled="platformEqualizerLibraries.length === 0"
-                      @click="addPlannedEqualizer"
-                    >
-                      <Plus class="w-4 h-4 mr-1" />
-                      添加均衡器
-                    </Button>
-                  </div>
-
-                  <div v-if="platformEqualizerLibraries.length === 0" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                    器件库里还没有均衡器型号，请先到器件库管理补充型号。
-                  </div>
-
-                  <div v-else-if="plannedEqualizers.length === 0" class="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-sm text-gray-500 text-center">
-                    当前链路未配置均衡器。
-                  </div>
-
-                  <div v-else class="space-y-3">
-                    <div
-                      v-for="(eq, index) in plannedEqualizers"
-                      :key="eq.tempId"
-                      class="rounded-lg border bg-white p-3"
-                    >
-                      <div class="grid grid-cols-12 gap-3 items-end">
-                        <div class="col-span-2">
-                          <label class="block text-xs text-gray-500 mb-1">名称</label>
-                          <Input v-model="eq.name" class="w-full" />
-                        </div>
-                        <div class="col-span-2">
-                          <label class="block text-xs text-gray-500 mb-1">KP (km)</label>
-                          <Input v-model.number="eq.kp" type="number" min="0" step="0.1" class="w-full" />
-                        </div>
-                        <div class="col-span-3">
-                          <label class="block text-xs text-gray-500 mb-1">型号</label>
-                          <Select v-model="eq.componentRefId" :options="equalizerTypeOptions" class="w-full" />
-                        </div>
-                        <div class="col-span-1">
-                          <label class="block text-xs text-gray-500 mb-1">位号</label>
-                          <Select v-model="eq.equalizerRole" :options="equalizerRoleOptions" class="w-full" />
-                        </div>
-                        <div class="col-span-2">
-                          <label class="block text-xs text-gray-500 mb-1">模式</label>
-                          <Select v-model="eq.attenuationMode" :options="equalizerModeOptions" class="w-full" />
-                        </div>
-                        <div class="col-span-1">
-                          <label class="block text-xs text-gray-500 mb-1">dB</label>
-                          <Input v-model.number="eq.attenuationDb" type="number" min="0" step="0.1" class="w-full" />
-                        </div>
-                        <div class="col-span-1 flex justify-end">
-                          <Button variant="ghost" size="sm" class="text-red-600 hover:bg-red-50" @click="removePlannedEqualizer(eq.tempId)">
-                            <Trash2 class="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div class="mt-2 text-xs text-gray-400">
-                        均衡器 {{ index + 1 }} 会在应用配置后写入接线元，并同步到 SLD。
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-              <div v-else-if="activeStep === 'model'" class="planning-section space-y-5">
+              <div v-if="activeStep === 'model'" class="planning-section space-y-5">
                 <h3 class="text-base font-semibold text-gray-800">计算模型选择</h3>
                 
                 <div>
@@ -4480,7 +4411,6 @@ watch(() => props.visible, async (visible) => {
 .planning-route-select,
 .planning-info-panel,
 .planning-topology-panel,
-.planning-equalizer-section,
 .planning-section > .bg-gray-50.rounded-lg {
   background: #ffffff;
   border: 1px solid #e1e6eb;
@@ -4638,7 +4568,6 @@ watch(() => props.visible, async (visible) => {
   .planning-route-select,
   .planning-info-panel,
   .planning-topology-panel,
-  .planning-equalizer-section,
   .planning-section > .bg-gray-50.rounded-lg {
     padding: 16px;
   }

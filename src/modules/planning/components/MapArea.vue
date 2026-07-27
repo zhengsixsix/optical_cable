@@ -4,11 +4,12 @@ import { useLayerStore } from '@/stores/layer'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouteStore } from '@/stores/route'
 import { useSettingsStore } from '@/stores/settings'
+import { useCableSegmentStore } from '@/stores/cableSegment'
 import { ref, onMounted, onUnmounted, watch, toRef } from 'vue'
 import { useMapStore } from '@/stores/map'
 import {Button, Tooltip} from '@/shared/components/base'
 import {
-  Square, Play, Pause, Loader2, FileSpreadsheet
+  Square, Play, Pause, Loader2, FileSpreadsheet, MapPinned, Move3d, Trash2
 } from 'lucide-vue-next'
 
 // 新增组件导入
@@ -26,10 +27,11 @@ import VectorSource from 'ol/source/Vector'
 import GeoTIFFSource from 'ol/source/GeoTIFF'
 import GeoJSONFormat from 'ol/format/GeoJSON'
 import { createBaseTileSource } from '@/utils/mapTileSource'
-import {DragBox} from 'ol/interaction'
+import {DragBox, Modify} from 'ol/interaction'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
+import { fromExtent as polygonFromExtent } from 'ol/geom/Polygon'
 import {Style, Stroke, Fill, Icon, Circle as CircleStyle, Text} from 'ol/style'
 import Heatmap from 'ol/layer/Heatmap'
 import { transform, transformExtent } from 'ol/proj'
@@ -44,7 +46,8 @@ import shp from 'shpjs'
 import volcanoIconUrl from '@/assets/volcano.svg'
 
 import { fetchRoutePlanningByProjectId } from '@/services/RoutePlanningApiService'
-import type { AlgorithmRouteBundleResult } from '@/services/RouteDataConverter'
+import type { AlgorithmRouteBundleResult, NumericGridData } from '@/services/RouteDataConverter'
+import { platformPlanConfigApi } from '@/services/platform/api'
 import { getSharedRoutePointRenderKey } from '@/utils/routePointRenderKey'
 import {
   DATA_PROJECTION,
@@ -69,6 +72,7 @@ const mapStore = useMapStore()
 const layerStore = useLayerStore()
 const appStore = useAppStore()
 const routeStore = useRouteStore()
+const cableSegmentStore = useCableSegmentStore()
 const monitorStore = useMonitorStore()
 const defaultElevationGeoTiffUrl = '/data/output2_cog.tif'
 
@@ -84,6 +88,10 @@ const loading = ref(false)
 const coordinates = ref({lon: 0, lat: 0})
 const isPlanning = ref(false)
 const settingsStore = useSettingsStore()
+const selectedAreaLonLatExtent = ref<LonLatExtent | null>(null)
+const activePlanningLonLatExtent = ref<LonLatExtent | null>(null)
+const areaContextMenu = ref({ visible: false, x: 0, y: 0 })
+const isAdjustingRoute = ref(false)
 
 // 新增弹窗状态
 const showParetoFrontierDialog = ref(false)
@@ -356,6 +364,14 @@ let elevationLayers: WebGLTileLayer[] = []  // 海洋高程 GeoTIFF 图层
 let activeElevationSourceKey = ''
 let routeLayer: VectorLayer<VectorSource> | null = null
 let routeSource: VectorSource | null = null
+let segmentNodeLayer: VectorLayer<VectorSource> | null = null
+let segmentNodeSource: VectorSource | null = null
+let routeModify: Modify | null = null
+let adjustingPointGeometry: Point | null = null
+let adjustingPointGeometryChangeHandler: (() => void) | null = null
+let costResultLayer: Heatmap | null = null
+let riskResultLayer: Heatmap | null = null
+let mapContextMenuHandler: ((event: MouseEvent) => void) | null = null
 let elevationNativeMaxZoom = 18
 let elevationFallbackApplied = false
 
@@ -375,6 +391,9 @@ const fromCurrentMapCoordinates = (coordinates: [number, number][]) =>
 
 const fromCurrentMapExtent = (extent: [number, number, number, number]) =>
   fromMapExtent(extent, getMapProjection()) as [number, number, number, number]
+
+const toCurrentMapExtent = (extent: [number, number, number, number]) =>
+  toMapExtent(extent, getMapProjection()) as [number, number, number, number]
 
 const isFiniteCoordinate = (coordinate: [number, number]) =>
   Number.isFinite(coordinate[0]) && Number.isFinite(coordinate[1])
@@ -419,12 +438,246 @@ const toggleBoxSelect = () => {
   }
 }
 
-const clearSelection = () => {
+const resetAreaSelection = () => {
   mapStore.clearSelection()
+  selectedAreaLonLatExtent.value = null
+  areaContextMenu.value.visible = false
   if (selectionSource) {
     selectionSource.clear()
   }
+}
+
+const clearSelection = () => {
+  resetAreaSelection()
   appStore.showNotification({type: 'info', message: '已清除区域选择'})
+}
+
+const coordinateInsideExtent = (coordinate: [number, number], extent: LonLatExtent) =>
+  coordinate[0] >= extent[0] && coordinate[0] <= extent[2]
+  && coordinate[1] >= extent[1] && coordinate[1] <= extent[3]
+
+const configuredPointsOutsideExtent = (extent: LonLatExtent) => {
+  const config = settingsStore.routePlanningConfig
+  if (!config.isConfigured) return []
+  const points = [
+    { name: config.startPoint.name || '起点', coordinate: [config.startPoint.lon, config.startPoint.lat] as [number, number] },
+    ...(config.waypoints ?? []).map((point, index) => ({
+      name: point.name || `途经点 ${index + 1}`,
+      coordinate: [point.lon, point.lat] as [number, number],
+    })),
+    { name: config.endPoint.name || '终点', coordinate: [config.endPoint.lon, config.endPoint.lat] as [number, number] },
+  ]
+  return points.filter(point => !coordinateInsideExtent(point.coordinate, extent)).map(point => point.name)
+}
+
+const applyPlanningRangeToMap = (extent: LonLatExtent, fit = true) => {
+  if (!map) return
+  const currentView = map.getView()
+  const projection = currentView.getProjection()
+  const mapExtent = toMapExtent(extent, projection)
+  const nextView = new View({
+    projection,
+    center: currentView.getCenter(),
+    resolution: currentView.getResolution(),
+    minZoom: currentView.getMinZoom(),
+    maxZoom: currentView.getMaxZoom(),
+    extent: mapExtent,
+    showFullExtent: true,
+  })
+  map.setView(nextView)
+  if (fit) {
+    nextView.fit(mapExtent, { padding: [36, 36, 36, 36], duration: 350, maxZoom: 10 })
+  }
+}
+
+const releasePlanningRangeConstraint = () => {
+  if (!map) return
+  const currentView = map.getView()
+  const center = currentView.getCenter()
+  const resolution = currentView.getResolution()
+  if (!center || resolution === undefined) return
+  map.setView(new View({
+    projection: currentView.getProjection(),
+    center,
+    resolution,
+    minZoom: currentView.getMinZoom(),
+    maxZoom: currentView.getMaxZoom(),
+  }))
+}
+
+const renderPlanningRangeSelection = (extent: LonLatExtent | null) => {
+  if (!selectionSource) return
+  selectionSource.clear()
+  if (!extent) return
+  selectedAreaLonLatExtent.value = extent
+  mapStore.setSelectedExtent(toMapExtent(extent, MAP_DISPLAY_PROJECTION))
+  const geometry = polygonFromExtent(toMapExtent(extent, getMapProjection()))
+  selectionSource.addFeature(new Feature({ geometry, isPlanningRange: true }))
+}
+
+const getResultGridExtent = (): LonLatExtent => {
+  if (activePlanningLonLatExtent.value) return activePlanningLonLatExtent.value
+
+  const coordinates = routeStore.paretoRoutes.flatMap(route => route.rawTrunkCoordinates ?? [])
+  if (coordinates.length > 0) {
+    const longitudes = coordinates.map(item => item[0]).filter(Number.isFinite)
+    const latitudes = coordinates.map(item => item[1]).filter(Number.isFinite)
+    if (longitudes.length && latitudes.length) {
+      const west = Math.min(...longitudes)
+      const east = Math.max(...longitudes)
+      const south = Math.min(...latitudes)
+      const north = Math.max(...latitudes)
+      const lonPadding = Math.max((east - west) * 0.05, 0.05)
+      const latPadding = Math.max((north - south) * 0.05, 0.05)
+      return [west - lonPadding, south - latPadding, east + lonPadding, north + latPadding]
+    }
+  }
+  return DEFAULT_CHINA_LON_LAT_EXTENT
+}
+
+const buildResultHeatmap = (
+  grid: NumericGridData,
+  gradient: string[],
+  visible: boolean,
+) => {
+  const source = new VectorSource()
+  const [west, south, east, north] = getResultGridExtent()
+  const sampleStep = Math.max(1, Math.ceil(Math.sqrt((grid.rows * grid.columns) / 10000)))
+  const span = grid.max - grid.min
+
+  for (let row = 0; row < grid.rows; row += sampleStep) {
+    for (let column = 0; column < grid.columns; column += sampleStep) {
+      const value = grid.values[row]?.[column]
+      if (!Number.isFinite(value)) continue
+      const longitude = grid.columns === 1 ? (west + east) / 2 : west + (column / (grid.columns - 1)) * (east - west)
+      const latitude = grid.rows === 1 ? (south + north) / 2 : north - (row / (grid.rows - 1)) * (north - south)
+      const feature = new Feature({
+        geometry: new Point(toCurrentMapCoordinate([longitude, latitude])),
+        value,
+        weight: span > 0 ? Math.max(0.05, (value - grid.min) / span) : 1,
+      })
+      source.addFeature(feature)
+    }
+  }
+
+  const layer = new Heatmap({
+    source,
+    blur: 22,
+    radius: 14,
+    gradient,
+    weight: 'weight',
+    opacity: 0.68,
+    visible,
+  })
+  layer.setZIndex(120)
+  return layer
+}
+
+const clearAlgorithmResultLayers = () => {
+  if (map && costResultLayer) map.removeLayer(costResultLayer)
+  if (map && riskResultLayer) map.removeLayer(riskResultLayer)
+  costResultLayer = null
+  riskResultLayer = null
+  layerStore.removeLayer('algorithm-cost')
+  layerStore.removeLayer('algorithm-risk')
+}
+
+const refreshAlgorithmResultLayers = () => {
+  if (!map) return
+  if (costResultLayer) map.removeLayer(costResultLayer)
+  if (riskResultLayer) map.removeLayer(riskResultLayer)
+  costResultLayer = null
+  riskResultLayer = null
+
+  const result = routeStore.algorithmRouteResult
+  const definitions = [
+    {
+      id: 'algorithm-cost',
+      name: '成本底图',
+      grid: result?.analysis.costGrid,
+      gradient: ['rgba(255,255,204,0)', '#fed976', '#fd8d3c', '#d94701', '#7f0000'],
+    },
+    {
+      id: 'algorithm-risk',
+      name: '风险底图',
+      grid: result?.analysis.riskGrid,
+      gradient: ['rgba(236,253,245,0)', '#86efac', '#facc15', '#f97316', '#b91c1c'],
+    },
+  ] as const
+
+  definitions.forEach(definition => {
+    if (!definition.grid) {
+      layerStore.removeLayer(definition.id)
+      return
+    }
+    const visible = layerStore.getLayerById(definition.id)?.visible ?? true
+    layerStore.upsertLayer({
+      id: definition.id,
+      name: definition.name,
+      type: 'heatmap',
+      visible,
+      loaded: true,
+      loading: false,
+      opacity: 0.68,
+      zIndex: 120,
+    })
+    const layer = buildResultHeatmap(definition.grid, [...definition.gradient], visible)
+    map!.addLayer(layer)
+    if (definition.id === 'algorithm-cost') costResultLayer = layer
+    else riskResultLayer = layer
+  })
+}
+
+const saveSelectedAreaAsBaseMap = async () => {
+  const extent = selectedAreaLonLatExtent.value
+  if (!extent) return
+  const outsidePoints = configuredPointsOutsideExtent(extent)
+  if (outsidePoints.length > 0) {
+    appStore.showNotification({
+      type: 'warning',
+      message: `区域未包含：${outsidePoints.join('、')}`,
+      duration: 5000,
+    })
+    return
+  }
+
+  const [west, south, east, north] = extent
+  settingsStore.updateRoutePlanningConfig({
+    rangeMode: 'manual',
+    planningRange: {
+      northwest: { lon: west, lat: north },
+      southeast: { lon: east, lat: south },
+    },
+  })
+  activePlanningLonLatExtent.value = extent
+  appStore.setProjectDirty(true)
+  areaContextMenu.value.visible = false
+  applyPlanningRangeToMap(extent)
+  refreshAlgorithmResultLayers()
+  resetAreaSelection()
+
+  const platformProjectId = appStore.projectState.currentProject?.platformProjectId
+  if (platformProjectId !== null && platformProjectId !== undefined && platformProjectId !== '') {
+    try {
+      await platformPlanConfigApi.saveScope({
+        projectId: platformProjectId,
+        topLeftLng: west,
+        topLeftLat: north,
+        bottomRightLng: east,
+        bottomRightLat: south,
+      })
+    } catch (error) {
+      appStore.showNotification({
+        type: 'warning',
+        message: `局部底图已写入当前工程，平台范围同步失败：${(error as Error).message}`,
+        duration: 5000,
+      })
+      return
+    }
+  }
+
+  appStore.showNotification({ type: 'success', message: '局部区域已设为工程底图' })
+  appStore.addLog('INFO', `工程底图范围已更新: [${west}, ${south}, ${east}, ${north}]`)
 }
 
 // 切换地图投影
@@ -444,6 +697,8 @@ const switchProjection = (newProjection: string) => {
 
   // 转换中心点到新投影
   const newCenter = transform(center, oldProjection, newProjection)
+  const planningExtent = activePlanningLonLatExtent.value
+  const constrainedExtent = planningExtent ? toMapExtent(planningExtent, newProjection) : undefined
 
   // 创建新视图
   const newView = new View({
@@ -452,11 +707,17 @@ const switchProjection = (newProjection: string) => {
     zoom: zoom,
     minZoom: 0,
     maxZoom: 18,
+    ...(constrainedExtent ? { extent: constrainedExtent, showFullExtent: true } : {}),
   })
 
   map.setView(newView)
+  if (constrainedExtent) {
+    newView.fit(constrainedExtent, { padding: [36, 36, 36, 36], maxZoom: 10 })
+    renderPlanningRangeSelection(selectedAreaLonLatExtent.value)
+  }
 
   drawParetoRoutes()
+  refreshAlgorithmResultLayers()
 
   appStore.addLog('INFO', `地图投影已切换为 ${newProjection}`)
 }
@@ -473,9 +734,95 @@ const handleViewParetoChart = () => {
 
 // 选择路径事件
 const handleSelectRoute = (routeId: string) => {
+  if (isAdjustingRoute.value && routeStore.selectedRoute?.id !== routeId) {
+    disableRouteAdjustment()
+  }
   // 重绘路径以更新选中状态
   routeStore.selectRoute(routeId)
   drawParetoRoutes()
+}
+
+const clearRouteAdjustmentPreviewListener = () => {
+  if (adjustingPointGeometry && adjustingPointGeometryChangeHandler) {
+    adjustingPointGeometry.un('change', adjustingPointGeometryChangeHandler)
+  }
+  adjustingPointGeometry = null
+  adjustingPointGeometryChangeHandler = null
+}
+
+const disableRouteAdjustment = () => {
+  clearRouteAdjustmentPreviewListener()
+  if (map && routeModify) map.removeInteraction(routeModify)
+  isAdjustingRoute.value = false
+  segmentNodeLayer?.changed()
+}
+
+const updateRouteAdjustmentPreview = (feature: Feature) => {
+  if (!routeSource) return
+  const geometry = feature.getGeometry()
+  const routeId = String(feature.get('routeId') ?? '')
+  const pointId = String(feature.get('pointId') ?? '')
+  if (!(geometry instanceof Point) || !routeId || !pointId) return
+
+  const coordinate = geometry.getCoordinates() as [number, number]
+  const route = routeStore.paretoRoutes.find(item => item.id === routeId)
+  if (!route) return
+
+  const segmentsById = new globalThis.Map(route.segments.map(segment => [segment.id, segment]))
+  routeSource.getFeatures().forEach(segmentFeature => {
+    if (segmentFeature.get('routeId') !== routeId) return
+    const segment = segmentsById.get(String(segmentFeature.get('segmentId') ?? ''))
+    const segmentGeometry = segmentFeature.getGeometry()
+    if (!segment || !(segmentGeometry instanceof LineString)) return
+
+    const segmentCoordinates = segmentGeometry.getCoordinates()
+    if (segment.startPointId === pointId) segmentCoordinates[0] = coordinate
+    if (segment.endPointId === pointId) segmentCoordinates[segmentCoordinates.length - 1] = coordinate
+    segmentGeometry.setCoordinates(segmentCoordinates)
+  })
+}
+
+const toggleRouteAdjustment = () => {
+  if (!map || !segmentNodeSource) return
+  if (isAdjustingRoute.value) {
+    disableRouteAdjustment()
+    return
+  }
+  if (!routeStore.selectedRoute?.segments.length) {
+    appStore.showNotification({ type: 'warning', message: '当前路由没有可调整的分段点' })
+    return
+  }
+
+  routeModify = new Modify({ source: segmentNodeSource })
+  routeModify.on('modifystart', (event) => {
+    clearRouteAdjustmentPreviewListener()
+    const feature = event.features.item(0)
+    const geometry = feature?.getGeometry()
+    if (!(geometry instanceof Point) || !feature) return
+    adjustingPointGeometry = geometry
+    adjustingPointGeometryChangeHandler = () => updateRouteAdjustmentPreview(feature)
+    geometry.on('change', adjustingPointGeometryChangeHandler)
+  })
+  routeModify.on('modifyend', (event) => {
+    clearRouteAdjustmentPreviewListener()
+    let changed = false
+    event.features.forEach(feature => {
+      const geometry = feature.getGeometry()
+      const routeId = String(feature.get('routeId') ?? '')
+      const pointId = String(feature.get('pointId') ?? '')
+      if (!(geometry instanceof Point) || !routeId || !pointId) return
+      const coordinate = fromCurrentMapCoordinate(geometry.getCoordinates() as [number, number])
+      changed = routeStore.updateRoutePoint(routeId, pointId, coordinate) || changed
+    })
+    if (changed) {
+      appStore.setProjectDirty(true)
+      void drawParetoRoutes()
+      appStore.showNotification({ type: 'success', message: '路由分段点已更新' })
+    }
+  })
+  map.addInteraction(routeModify)
+  isAdjustingRoute.value = true
+  segmentNodeLayer?.changed()
 }
 
 const ensureSelectedRoute = () => {
@@ -488,6 +835,7 @@ const ensureSelectedRoute = () => {
 const applyAlgorithmRouteResult = (result: AlgorithmRouteBundleResult, sourceLabel: string) => {
   const previousRouteId = routeStore.currentRouteId
   routeStore.setAlgorithmRouteResult(result)
+  cableSegmentStore.setSegments(Object.values(result.segmentsByRouteId).flat())
   const selectedRoute = result.routes.find(route => route.id === previousRouteId)
     ?? result.routes[0]
     ?? null
@@ -496,6 +844,7 @@ const applyAlgorithmRouteResult = (result: AlgorithmRouteBundleResult, sourceLab
     routeStore.selectRoute(selectedRoute.id)
   }
   drawParetoRoutes()
+  refreshAlgorithmResultLayers()
   appStore.addLog(
     'INFO',
     `${sourceLabel}: ${result.routes.length} 条可见路线，原始候选 ${result.diagnostics.fmmPathCount} 条`,
@@ -733,12 +1082,39 @@ const initMap = () => {
   selectionSource = new VectorSource()
   const selectionLayer = new VectorLayer({
     source: selectionSource,
+    zIndex: 220,
     style: new Style({
       stroke: new Stroke({color: '#165DFF', width: 2, lineDash: [5, 5]}),
       fill: new Fill({color: 'rgba(22, 93, 255, 0.1)'}),
     }),
   })
   map.addLayer(selectionLayer)
+
+  segmentNodeSource = new VectorSource()
+  segmentNodeLayer = new VectorLayer({
+    source: segmentNodeSource,
+    zIndex: 230,
+    style: feature => new Style({
+      image: new CircleStyle({
+        radius: isAdjustingRoute.value ? 7 : 5,
+        fill: new Fill({ color: isAdjustingRoute.value ? '#f59e0b' : '#ffffff' }),
+        stroke: new Stroke({ color: feature.get('selected') ? '#ef4444' : '#2563eb', width: 2 }),
+      }),
+    }),
+  })
+  map.addLayer(segmentNodeLayer)
+
+  mapContextMenuHandler = (event: MouseEvent) => {
+    if (!selectedAreaLonLatExtent.value || !mapContainer.value) return
+    event.preventDefault()
+    const rect = mapContainer.value.getBoundingClientRect()
+    areaContextMenu.value = {
+      visible: true,
+      x: Math.max(8, Math.min(event.clientX - rect.left, rect.width - 190)),
+      y: Math.max(8, Math.min(event.clientY - rect.top, rect.height - 96)),
+    }
+  }
+  map.getViewport().addEventListener('contextmenu', mapContextMenuHandler)
 
   dragBox = new DragBox({condition: () => true})
 
@@ -748,6 +1124,8 @@ const initMap = () => {
 
     const extent = dragBox!.getGeometry().getExtent() as [number, number, number, number]
     const lonLatExtent = fromCurrentMapExtent(extent)
+    selectedAreaLonLatExtent.value = lonLatExtent
+    areaContextMenu.value.visible = false
     const boxGeom = dragBox!.getGeometry()
     selectionSource.addFeature(new Feature({geometry: boxGeom}))
 
@@ -1258,15 +1636,8 @@ const getConfiguredProjectStations = (): ProjectStationMarker[] => {
 
 const getConfiguredPlanningRangeExtent = (): number[] | null => {
   if (!map || !appStore.hasOpenProject) return null
-  const range = settingsStore.routePlanningConfig.planningRange
-  const west = Number(range?.northwest?.lon)
-  const north = Number(range?.northwest?.lat)
-  const east = Number(range?.southeast?.lon)
-  const south = Number(range?.southeast?.lat)
-  if (![west, north, east, south].every(Number.isFinite)
-    || west >= east || south >= north
-    || (west === 0 && north === 0 && east === 0 && south === 0)) return null
-  return toMapExtent([west, south, east, north])
+  const extent = activePlanningLonLatExtent.value
+  return extent ? toCurrentMapExtent(extent) : null
 }
 
 const drawConfiguredProjectStations = (fitView = true): boolean => {
@@ -1329,10 +1700,16 @@ const drawParetoRoutes = async () => {
     })
     map.addLayer(routeLayer)
   }
+  segmentNodeSource?.clear()
 
   // 优先使用 paretoRoutes 绘制多条路线（路由规划模式）
   if (routeStore.paretoRoutes.length > 0) {
     const routes = routeStore.paretoRoutes
+    const orderedRoutes = routes
+      .map((route, routeIndex) => ({ route, routeIndex }))
+      .sort((left, right) =>
+        Number(left.route.id === routeStore.selectedRoute?.id)
+        - Number(right.route.id === routeStore.selectedRoute?.id))
     const renderedSharedRoutePointKeys = new Set<string>()
     const selectedSharedRoutePointKeys = new Set<string>()
     routeStore.selectedRoute?.points.forEach(point => {
@@ -1340,13 +1717,11 @@ const drawParetoRoutes = async () => {
       if (key) selectedSharedRoutePointKeys.add(key)
     })
 
-    for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
-      const route = routes[routeIndex]
+    for (const { route, routeIndex } of orderedRoutes) {
       const baseColor = routeColors[routeIndex % routeColors.length]
       const isRouteSelected = routeStore.selectedRoute?.id === route.id
-      // 选中路线使用更粗的实线，非选中路线用虚线
+      // 所有后端路线均保持实线；选中状态只通过颜色和粗细区分。
       const lineWidth = isRouteSelected ? 5 : 3
-      const lineDash = isRouteSelected ? undefined : [8, 4]
       const lineColor = isRouteSelected ? '#ef4444' : baseColor
 
       // 构建点 ID 到坐标的映射
@@ -1355,17 +1730,22 @@ const drawParetoRoutes = async () => {
         pointMap[p.id] = p.coordinates
       }
 
-      const hasBranching = route.points.some(p => p.type === 'branching')
       const rawTrunkCoords = (route.rawTrunkCoordinates || [])
         .filter(isFiniteCoordinate)
 
-      if (hasBranching && route.segments.length > 0) {
+      if (route.segments.length > 0) {
         route.segments.forEach((segment, segmentIndex) => {
           const start = pointMap[segment.startPointId]
           const end = pointMap[segment.endPointId]
           if (!start || !end) return
+          const segmentCoordinates = segment.geometryStartIndex !== undefined
+            && segment.geometryEndIndex !== undefined
+            && rawTrunkCoords.length > segment.geometryEndIndex
+            ? rawTrunkCoords.slice(segment.geometryStartIndex, segment.geometryEndIndex + 1)
+            : [start, end]
+          const isSegmentSelected = routeStore.selectedSegmentInfo?.id === segment.id
           const segmentFeature = new Feature({
-            geometry: new LineString(toCurrentMapCoordinates([start, end])),
+            geometry: new LineString(toCurrentMapCoordinates(segmentCoordinates)),
             routeId: route.id,
             isRouteLine: true,
             segmentIndex,
@@ -1376,7 +1756,10 @@ const drawParetoRoutes = async () => {
             segmentRiskLevel: segment.riskLevel,
           })
           segmentFeature.setStyle(new Style({
-            stroke: new Stroke({ color: lineColor, width: lineWidth, lineDash }),
+            stroke: new Stroke({
+              color: isSegmentSelected ? '#f59e0b' : lineColor,
+              width: isSegmentSelected ? lineWidth + 3 : lineWidth,
+            }),
           }))
           routeSource!.addFeature(segmentFeature)
         })
@@ -1391,10 +1774,26 @@ const drawParetoRoutes = async () => {
             isRouteLine: true,
           })
           routeLineFeature.setStyle(new Style({
-            stroke: new Stroke({ color: lineColor, width: lineWidth, lineDash }),
+            stroke: new Stroke({ color: lineColor, width: lineWidth }),
           }))
           routeSource!.addFeature(routeLineFeature)
         }
+      }
+
+      if (isRouteSelected && segmentNodeSource && route.segments.length > 0) {
+        const boundaryIds = new Set(route.segments.flatMap(segment => [segment.startPointId, segment.endPointId]))
+        route.points.forEach(point => {
+          if (!boundaryIds.has(point.id) || point.type === 'landing') return
+          segmentNodeSource!.addFeature(new Feature({
+            geometry: new Point(toCurrentMapCoordinate(point.coordinates)),
+            routeId: route.id,
+            pointId: point.id,
+            isSegmentBoundary: true,
+            selected: route.segments.some(segment =>
+              segment.id === routeStore.selectedSegmentInfo?.id
+              && (segment.startPointId === point.id || segment.endPointId === point.id)),
+          }))
+        })
       }
 
       // ====== 仅绘制 landing / branching 节点（隐藏 waypoint） ======
@@ -1509,7 +1908,13 @@ const drawParetoRoutes = async () => {
     return  // paretoRoutes 已绘制，直接返回
   }
 
-  // 没有算法路线时，保持规划范围视图，并叠加项目起点、终点或多站点。
+  // 没有算法路线时，优先恢复已有设备线路。
+  if (monitorStore.devices.length > 1) {
+    drawMonitorDevices()
+    return
+  }
+
+  // 尚未生成算法路线时，显示项目配置的待规划连线与站点。
   const planningRangeExtent = getConfiguredPlanningRangeExtent()
   const hasStations = drawConfiguredProjectStations(false)
   if (planningRangeExtent || hasStations) {
@@ -1521,7 +1926,7 @@ const drawParetoRoutes = async () => {
     return
   }
 
-  // Fallback: 如果没有项目站点，使用 monitorStore 设备数据
+  // Fallback: 只有一个设备且没有项目站点时，仍显示该设备。
   if (monitorStore.devices.length > 0) {
     drawMonitorDevices()
   }
@@ -1702,7 +2107,7 @@ const drawMonitorDevices = () => {
 }
 
 // 监听选中路径变化，更新样式
-watch(() => routeStore.selectedRoute?.id, () => {
+watch(() => [routeStore.selectedRoute?.id, routeStore.selectedSegmentInfo?.id], () => {
   if (routeSource && routeStore.paretoRoutes.length > 0) {
     drawParetoRoutes()
   }
@@ -1765,12 +2170,41 @@ watch(() => settingsStore.routePlanningConfig, () => {
   }
 }, { deep: true })
 
+watch(
+  () => appStore.projectState.currentProject?.uuid
+    ?? appStore.projectState.currentProject?.platformProjectId
+    ?? '',
+  (projectKey, previousProjectKey) => {
+    if (projectKey === previousProjectKey || !activePlanningLonLatExtent.value) return
+    activePlanningLonLatExtent.value = null
+    resetAreaSelection()
+    releasePlanningRangeConstraint()
+  },
+)
+
+watch(
+  () => routeStore.algorithmRouteResult,
+  () => refreshAlgorithmResultLayers(),
+)
+
+watch(
+  () => [
+    layerStore.getLayerVisible('algorithm-cost'),
+    layerStore.getLayerVisible('algorithm-risk'),
+  ],
+  ([costVisible, riskVisible]) => {
+    costResultLayer?.setVisible(costVisible)
+    riskResultLayer?.setVisible(riskVisible)
+  },
+)
+
 // 清除地图上的路径
 const clearRoutes = () => {
   if (routeSource) {
     routeSource.clear()
     drawConfiguredProjectStations()
   }
+  segmentNodeSource?.clear()
 }
 
 // 停止规划
@@ -1780,6 +2214,8 @@ const handleStopPlanning = () => {
 
   // 清除 store 中的路径数据
   routeStore.clearParetoRoutes()
+  cableSegmentStore.clearSegments()
+  clearAlgorithmResultLayers()
 
   // 关闭 Pareto 分析面板（已用新组件替代）
   // appStore.setPanelVisible('paretoAnalysisPanel', false)
@@ -1804,6 +2240,9 @@ const togglePlanning = () => {
 const isPlanningLoading = ref(false)
 
 const getCurrentRoutePlanningRectRange = (): RoutePlanningRectRange => {
+  if (activePlanningLonLatExtent.value) {
+    return createRoutePlanningRectRangeFromExtent(activePlanningLonLatExtent.value)
+  }
   if (!map) {
     return createRoutePlanningRectRangeFromExtent(DEFAULT_CHINA_LON_LAT_EXTENT)
   }
@@ -1834,10 +2273,24 @@ const handleRunPlanning = async () => {
     return
   }
 
+  if (activePlanningLonLatExtent.value) {
+    const outsidePoints = configuredPointsOutsideExtent(activePlanningLonLatExtent.value)
+    if (outsidePoints.length > 0) {
+      appStore.showNotification({
+        type: 'error',
+        message: `以下规划点不在工程底图范围内：${outsidePoints.join('、')}`,
+        duration: 5000,
+      })
+      return
+    }
+  }
+
   const loadingKey = `route-planning:${projectId}`
   appStore.showGlobalLoading('正在调用后端路由规划服务', '等待后端返回规划结果', loadingKey)
 
   routeStore.clearParetoRoutes()
+  cableSegmentStore.clearSegments()
+  clearAlgorithmResultLayers()
   clearRoutes()
   isPlanning.value = false
   isPlanningLoading.value = true
@@ -1897,9 +2350,14 @@ onMounted(() => {
 onUnmounted(() => {
   appStore.hideGlobalLoading()
   if (map) {
+    disableRouteAdjustment()
+    if (mapContextMenuHandler) {
+      map.getViewport().removeEventListener('contextmenu', mapContextMenuHandler)
+    }
     map.setTarget(undefined)
     map = null
   }
+  mapContextMenuHandler = null
 })
 </script>
 
@@ -1915,6 +2373,17 @@ onUnmounted(() => {
                   @click="toggleBoxSelect">
             <Square class="w-4 h-4 mr-1"/>
             {{ mapStore.hasSelection ? '清除选择' : '区域选择' }}
+          </Button>
+        </Tooltip>
+        <Tooltip content="拖动当前路由的分段点">
+          <Button
+            :variant="isAdjustingRoute ? 'default' : 'outline'"
+            size="sm"
+            :disabled="!routeStore.selectedRoute?.segments.length || isPlanningLoading"
+            @click="toggleRouteAdjustment"
+          >
+            <Move3d class="w-4 h-4 mr-1" />
+            路由调整
           </Button>
         </Tooltip>
       </div>
@@ -1938,8 +2407,30 @@ onUnmounted(() => {
     </div>
 
     <!-- 地图视口 -->
-    <div class="flex-1 relative overflow-hidden">
+    <div class="flex-1 relative overflow-hidden" @click="areaContextMenu.visible = false">
       <div ref="mapContainer" class="w-full h-full"/>
+
+      <div
+        v-if="areaContextMenu.visible"
+        class="absolute z-30 w-44 overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg"
+        :style="{ left: `${areaContextMenu.x}px`, top: `${areaContextMenu.y}px` }"
+        @click.stop
+      >
+        <button
+          class="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+          @click="saveSelectedAreaAsBaseMap"
+        >
+          <MapPinned class="w-4 h-4" />
+          设置为工程底图
+        </button>
+        <button
+          class="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50"
+          @click="clearSelection"
+        >
+          <Trash2 class="w-4 h-4" />
+          清除选区
+        </button>
+      </div>
 
       <!-- 加载状态 -->
       <div v-if="loading && appStore.hasOpenProject" class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center gap-3 z-50">

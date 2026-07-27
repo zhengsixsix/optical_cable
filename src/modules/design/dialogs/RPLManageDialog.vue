@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { FileSpreadsheet, Trash2, X } from 'lucide-vue-next'
-import { useAppStore } from '@/stores/app'
+import { FileSpreadsheet, X } from 'lucide-vue-next'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { useConnectorStore } from '@/stores/connector'
 import { useRouteStore } from '@/stores/route'
@@ -19,7 +18,6 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const appStore = useAppStore()
 const cableSegmentStore = useCableSegmentStore()
 const connectorStore = useConnectorStore()
 const routeStore = useRouteStore()
@@ -28,7 +26,6 @@ const rplStore = useRPLStore()
 const showRecordDialog = ref(false)
 const editingRecordId = ref<string | undefined>()
 
-const tables = computed(() => rplStore.tables)
 const currentTable = computed(() => rplStore.currentTable)
 const activeRoute = computed(() => routeStore.selectedRoute || routeStore.currentRoute)
 const selectedRouteId = computed(() => routeStore.currentRouteId || activeRoute.value?.id || null)
@@ -78,10 +75,6 @@ function handleRecordSaved() {
   editingRecordId.value = undefined
 }
 
-function handleDeleteTable(tableId: string) {
-  rplStore.deleteTable(tableId)
-  appStore.showNotification({ type: 'success', message: '表格已删除' })
-}
 </script>
 
 <template>
@@ -103,42 +96,6 @@ function handleDeleteTable(tableId: string) {
         </div>
 
         <div class="flex-1 flex overflow-hidden">
-          <div class="w-64 border-r bg-gray-50 flex flex-col shrink-0">
-            <div class="p-3 border-b bg-white">
-              <h3 class="font-medium text-sm text-gray-700">表格列表</h3>
-            </div>
-            <div class="flex-1 overflow-auto p-2 space-y-1">
-              <div
-                v-for="table in tables"
-                :key="table.id"
-                :class="[
-                  'p-3 rounded-lg cursor-pointer transition-colors',
-                  currentTable?.id === table.id
-                    ? 'bg-blue-100 border border-blue-300'
-                    : 'bg-white border border-gray-200 hover:border-blue-200'
-                ]"
-                @click="rplStore.selectTable(table.id)"
-              >
-                <div class="flex items-center justify-between mb-1">
-                  <span class="font-medium text-sm truncate">{{ table.name }}</span>
-                  <button
-                    class="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-500"
-                    @click.stop="handleDeleteTable(table.id)"
-                  >
-                    <Trash2 class="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div class="text-xs text-gray-500">
-                  {{ table.records.length }} 条记录 · {{ table.metadata.totalLength.toFixed(1) }}km
-                </div>
-              </div>
-
-              <div v-if="tables.length === 0" class="p-4 text-center text-gray-400 text-sm">
-                暂无表格
-              </div>
-            </div>
-          </div>
-
           <div class="flex-1 overflow-hidden">
             <RPLTablePanel
               v-if="currentTable"

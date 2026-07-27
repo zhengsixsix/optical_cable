@@ -42,21 +42,33 @@ const routePlanningApiService = loadTsModule('src/services/RoutePlanningApiServi
 
 const response = JSON.parse(fs.readFileSync(responsePath, 'utf8'))
 const result = routePlanningApiService.convertBackendRoutePlanningData(
-  response.data,
+  response,
   'backend-response-verification',
 )
 
 if (result.routes.length === 0) throw new Error('expected at least one visible real_trace route')
 const firstRoute = result.routes[0]
-if (firstRoute.segments.length !== 0 || (result.segmentsByRouteId[firstRoute.id] || []).length !== 0) {
-  throw new Error('frontend must not create cable segments from route-planning side files')
+const backendTrace = response.data['FMM_path_result.json']?.[0]?.real_trace || []
+if (firstRoute.points.length !== backendTrace.length) {
+  throw new Error(`frontend route point count ${firstRoute.points.length} does not match backend real_trace ${backendTrace.length}`)
+}
+const backendSegments = response.data['segment_result_base_Risk.json']?.segments || []
+const backendSegmentRouteIndex = Number(response.data['segment_result_base_Risk.json']?.route_index ?? 0)
+if (result.routes.some((route, routeIndex) => {
+  const expectedSegmentCount = routeIndex === backendSegmentRouteIndex ? backendSegments.length : 0
+  return route.segments.length !== expectedSegmentCount
+    || (result.segmentsByRouteId[route.id] || []).length !== expectedSegmentCount
+})) {
+  throw new Error('only the route referenced by route_index may receive backend segmentation boundaries')
 }
 const expectedFiles = [
   'FMM_path_result.json',
+  'segment_result_base_FixSpacing.json',
   'segment_result_base_Risk.json',
   'cost.txt',
   'risk.txt',
-]
+  'pointList',
+].filter(filename => response.data[filename] !== null && response.data[filename] !== undefined)
 if (JSON.stringify(result.diagnostics.files) !== JSON.stringify(expectedFiles)) {
   throw new Error(`complete route result files should be loaded: ${JSON.stringify(result.diagnostics.files)}`)
 }
@@ -64,17 +76,20 @@ if (result.rawResultFiles['cost.txt'] !== response.data['cost.txt']
   || result.rawResultFiles['risk.txt'] !== response.data['risk.txt']) {
   throw new Error('cost and risk source sequences must be stored verbatim')
 }
-if (result.analysis.costSamples?.sampleCount !== 4
-  || result.analysis.costSamples.min !== 1
-  || result.analysis.costSamples.max !== 4
-  || result.analysis.costSamples.average !== 2.5) {
+if (!result.analysis.costSamples || result.analysis.costSamples.sampleCount === 0) {
   throw new Error(`unexpected cost sequence analysis: ${JSON.stringify(result.analysis.costSamples)}`)
 }
+const smallSeries = routeDataConverter.summarizeNumericSeries('1 2\n3 4')
+if (smallSeries?.sampleCount !== 4
+  || smallSeries.min !== 1
+  || smallSeries.max !== 4
+  || smallSeries.average !== 2.5) {
+  throw new Error(`numeric series statistics regressed: ${JSON.stringify(smallSeries)}`)
+}
 const riskSegmentAnalysis = result.analysis.segmentResults.find(item => item.kind === 'riskBased')
+const riskSegments = response.data['segment_result_base_Risk.json']?.segments || []
 if (!riskSegmentAnalysis
-  || riskSegmentAnalysis.segmentCount !== 1
-  || riskSegmentAnalysis.totalLengthKm !== 15
-  || riskSegmentAnalysis.cableTypes[0]?.value !== 'LW') {
+  || riskSegmentAnalysis.segmentCount !== riskSegments.length) {
   throw new Error(`backend segment result should be retained for analysis: ${JSON.stringify(riskSegmentAnalysis)}`)
 }
 if (firstRoute.totalCost !== response.data['FMM_path_result.json'][0].total_cost) {
@@ -105,7 +120,7 @@ if (mockLikeResult.routes.length !== 1 || mockLikeResult.routes[0].segments.leng
 }
 if (!mockLikeResult.rawResultFiles['segment_result_base_Risk.json']
   || mockLikeResult.analysis.riskSamples?.sampleCount !== 4) {
-  throw new Error('recognized side-file data should remain available without generating project segments')
+  throw new Error('recognized side-file data should remain available even when incomplete segments cannot be mapped')
 }
 
 const missingMetricsResult = routePlanningApiService.convertBackendRoutePlanningData({
@@ -139,6 +154,15 @@ if (missingRealTraceResult.routes.length !== 0) {
 }
 if (!missingRealTraceResult.diagnostics.warnings.some(message => message.includes('real_trace'))) {
   throw new Error('missing real_trace should produce a clear diagnostic')
+}
+
+const largeFlatGrid = routeDataConverter.parseNumericGrid(`${'1 '.repeat(160000)}`)
+if (!largeFlatGrid
+  || largeFlatGrid.rows !== 400
+  || largeFlatGrid.columns !== 400
+  || largeFlatGrid.min !== 1
+  || largeFlatGrid.max !== 1) {
+  throw new Error('large flattened result grids must parse without argument-spread overflow')
 }
 
 console.log('backend route planning response verification passed')

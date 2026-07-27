@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouteStore } from '@/stores/route'
 import { cn } from '@/shared/utils'
+import { getParetoFront, getValidParetoCandidates } from '@/services/ParetoAnalysisService'
 
 /**
  * ParetoPanel Pareto 路径列表面板
@@ -20,9 +21,9 @@ const { paretoRoutes } = storeToRefs(routeStore)
 
 // 当前选中的路径ID
 const selectedRouteId = computed(() => routeStore.selectedRoute?.id)
-const hasParetoMetrics = computed(() => paretoRoutes.value.some(route =>
-  Number.isFinite(route.cost.total) && Number.isFinite(route.risk.overall)
-))
+const validRoutes = computed(() => getValidParetoCandidates(paretoRoutes.value))
+const paretoFrontIds = computed(() => new Set(getParetoFront(validRoutes.value).map(route => route.id)))
+const hasParetoMetrics = computed(() => validRoutes.value.length > 0)
 
 // 选择路径（单选）
 const handleSelectRoute = (routeId: string) => {
@@ -53,7 +54,7 @@ const formatMetric = (value: number | undefined) =>
   >
     <!-- 头部标题 -->
     <div class="px-3 py-2 border-b bg-gray-50">
-      <span class="text-sm font-medium text-gray-700">Pareto路径列表</span>
+      <span class="text-sm font-medium text-gray-700">候选路径列表</span>
     </div>
 
     <!-- 路径列表 -->
@@ -83,9 +84,21 @@ const formatMetric = (value: number | undefined) =>
             @click.stop
             @change="handleSelectRoute(route.id)"
           />
-          <span class="min-w-0 text-gray-700">
-            <span class="block truncate text-sm">路径{{ index + 1 }}</span>
-            <span class="block truncate text-[11px] text-gray-500">
+          <span class="min-w-0 flex-1 text-gray-700">
+            <span class="flex items-center gap-1.5">
+              <span class="min-w-0 flex-1 truncate text-sm">{{ route.name || `路径${index + 1}` }}</span>
+              <span
+                v-if="Number.isFinite(route.cost.total) && Number.isFinite(route.risk.overall)"
+                class="shrink-0 text-[10px] font-medium"
+                :class="paretoFrontIds.has(route.id) ? 'text-blue-700' : 'text-gray-400'"
+              >
+                {{ paretoFrontIds.has(route.id) ? '前沿' : '被支配' }}
+              </span>
+            </span>
+            <span
+              v-if="Number.isFinite(route.cost.total) && Number.isFinite(route.risk.overall)"
+              class="block truncate text-[11px] text-gray-500"
+            >
               成本 {{ formatMetric(route.cost.total) }} · 风险 {{ formatMetric(route.risk.overall) }}
             </span>
           </span>
@@ -99,8 +112,11 @@ const formatMetric = (value: number | undefined) =>
         class="w-full px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded transition-colors"
         @click="handleViewParetoChart"
       >
-        查看Pareto前沿图
+        查看成本-风险图
       </button>
+    </div>
+    <div v-else-if="paretoRoutes.length > 0" class="border-t bg-gray-50 px-3 py-2 text-center text-xs text-gray-500">
+      暂无有效成本 / 风险指标
     </div>
   </div>
 </template>

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Network, Trash2, X } from 'lucide-vue-next'
-import { useAppStore } from '@/stores/app'
+import { Network, X } from 'lucide-vue-next'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { useConnectorStore } from '@/stores/connector'
 import { useRouteStore } from '@/stores/route'
@@ -20,7 +19,6 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const appStore = useAppStore()
 const cableSegmentStore = useCableSegmentStore()
 const connectorStore = useConnectorStore()
 const routeStore = useRouteStore()
@@ -31,7 +29,6 @@ const showSegmentDialog = ref(false)
 const editingEquipmentId = ref<string | undefined>()
 const editingSegmentId = ref<string | undefined>()
 
-const tables = computed(() => sldStore.tables)
 const currentTable = computed(() => sldStore.currentTable)
 const activeRoute = computed(() => routeStore.selectedRoute || routeStore.currentRoute)
 const selectedRouteId = computed(() => routeStore.currentRouteId || activeRoute.value?.id || null)
@@ -53,11 +50,6 @@ function handleEditEquipment(equipmentId: string) {
 function handleEditSegment(segmentId: string) {
   editingSegmentId.value = segmentId || undefined
   showSegmentDialog.value = true
-}
-
-function handleDeleteTable(tableId: string) {
-  sldStore.deleteTable(tableId)
-  appStore.showNotification({ type: 'success', message: '表格已删除' })
 }
 
 function ensureCurrentRouteTable() {
@@ -107,38 +99,6 @@ watch(
         </div>
 
         <div class="flex flex-1 overflow-hidden">
-          <aside class="flex w-64 shrink-0 flex-col border-r bg-gray-50">
-            <div class="border-b bg-white p-3">
-              <h3 class="text-sm font-medium text-gray-700">SLD 表格列表</h3>
-            </div>
-            <div class="flex-1 space-y-1 overflow-auto p-2">
-              <div
-                v-for="table in tables"
-                :key="table.id"
-                class="cursor-pointer border p-3 transition-colors"
-                :class="currentTable?.id === table.id ? 'border-purple-300 bg-purple-100' : 'border-gray-200 bg-white hover:border-purple-200'"
-                @click="sldStore.selectTable(table.id)"
-              >
-                <div class="mb-1 flex items-center justify-between">
-                  <span class="truncate text-sm font-medium">{{ table.name }}</span>
-                  <button
-                    class="p-1 text-gray-400 hover:bg-red-100 hover:text-red-500"
-                    title="删除表格"
-                    @click.stop="handleDeleteTable(table.id)"
-                  >
-                    <Trash2 class="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div class="text-xs text-gray-500">
-                  {{ table.equipments.length }} 设备 · {{ table.metadata.totalLength.toFixed(1) }} km
-                </div>
-              </div>
-              <div v-if="tables.length === 0" class="p-4 text-center text-sm text-gray-400">
-                暂无 SLD 表格
-              </div>
-            </div>
-          </aside>
-
           <main class="flex-1 overflow-hidden">
             <SLDTablePanel
               v-if="currentTable"

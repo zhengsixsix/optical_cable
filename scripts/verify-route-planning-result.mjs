@@ -67,8 +67,17 @@ if (first.totalLength !== firstRawPath.length
   || first.risk.overall !== firstRawPath.total_risk) {
   throw new Error('backend route totals must be preserved without frontend calculation')
 }
-if (first.segments.length !== 0 || (result.segmentsByRouteId[first.id] || []).length !== 0) {
-  throw new Error('route conversion must leave cable segments empty')
+const rawSegments = response.data['segment_result_base_Risk.json']?.segments || []
+if (first.segments.length !== rawSegments.length
+  || (result.segmentsByRouteId[first.id] || []).length !== rawSegments.length) {
+  throw new Error('backend segment results must populate route and cable-segment state')
+}
+if (rawSegments.length > 0) {
+  const segment = first.segments[0]
+  if (!segment.startPointId || !segment.endPointId
+    || segment.geometryStartIndex !== 0 || segment.geometryEndIndex !== 1) {
+    throw new Error('backend segment nodes must map to visible real_trace point boundaries')
+  }
 }
 if (Object.hasOwn(first, 'rawMatrixTraceCoordinates')) {
   throw new Error('matrix trace coordinates must not be retained as display geometry')
@@ -86,7 +95,7 @@ if (result.rawResultFiles['cost.txt'] !== response.data['cost.txt']
   throw new Error('raw cost and risk sequences must survive conversion')
 }
 if (!result.analysis.segmentResults.some(item => item.sourceFile === 'segment_result_base_Risk.json')) {
-  throw new Error('segment side files should be analyzed without generating cable segments')
+  throw new Error('segment side files should remain available for analysis')
 }
 if (response.data['segment_result_base_FixSpacing.json']
   && !result.analysis.segmentResults.some(item => item.sourceFile === 'segment_result_base_FixSpacing.json')) {
@@ -104,6 +113,10 @@ for (const relativePath of forbiddenFiles) {
   if (fs.existsSync(path.join(root, relativePath))) {
     throw new Error(`removed frontend algorithm file returned: ${relativePath}`)
   }
+}
+if (result.analysis.costGrid?.rows !== 2 || result.analysis.costGrid?.columns !== 2
+  || result.analysis.riskGrid?.rows !== 2 || result.analysis.riskGrid?.columns !== 2) {
+  throw new Error('cost and risk matrices must retain their drawable grid shape')
 }
 
 console.log('route planning backend result verification passed')

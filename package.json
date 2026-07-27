@@ -13,6 +13,8 @@
     "test:rpl-export": "node scripts/verify-rpl-export.mjs",
     "test:sld-export": "node scripts/verify-sld-explicit-total-loss.mjs",
     "test:route-results": "node scripts/verify-backend-route-planning-response.mjs && node scripts/verify-route-planning-result.mjs",
+    "test:interface-optimizations": "node scripts/verify-interface-optimizations.mjs",
+    "test:pareto-analysis": "node scripts/verify-pareto-analysis.mjs",
     "test:platform-project-open": "node scripts/verify-platform-project-detail-open.mjs",
     "test:planning-devices": "node scripts/verify-system-planning-device-entity-flow.mjs",
     "test:site-management": "node scripts/verify-platform-point-management.mjs",
@@ -20,7 +22,7 @@
     "test:project-import": "node scripts/verify-project-import-isolation.mjs",
     "test:lifecycle": "node scripts/verify-alarm-websocket-lifecycle.mjs",
     "test:dictionary-source": "node scripts/verify-platform-dictionary-source.mjs",
-    "test:regression": "npm run test:architecture && npm run test:cycles && npm run test:excel-import && npm run test:rpl-export && npm run test:sld-export && npm run test:route-results && npm run test:platform-project-open && npm run test:system-planning && npm run test:project-import && npm run test:lifecycle && npm run test:dictionary-source"
+    "test:regression": "npm run test:architecture && npm run test:cycles && npm run test:excel-import && npm run test:rpl-export && npm run test:sld-export && npm run test:route-results && npm run test:interface-optimizations && npm run test:pareto-analysis && npm run test:platform-project-open && npm run test:system-planning && npm run test:project-import && npm run test:lifecycle && npm run test:dictionary-source"
   },
   "dependencies": {
     "@uppy/core": "^5.2.0",

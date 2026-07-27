@@ -62,6 +62,7 @@ export const useRouteStore = defineStore('route', () => {
    */
   function selectSegmentInfo(segmentInfo: SelectedSegmentInfo | null) {
     selectedSegmentInfo.value = segmentInfo
+    selectedSegmentId.value = segmentInfo?.id ?? null
   }
 
   /**
@@ -69,6 +70,7 @@ export const useRouteStore = defineStore('route', () => {
    */
   function clearSelectedSegmentInfo() {
     selectedSegmentInfo.value = null
+    selectedSegmentId.value = null
   }
 
   /**
@@ -99,8 +101,7 @@ export const useRouteStore = defineStore('route', () => {
     return newRoutes.map(route => applyConfiguredStationNames(route, config))
   }
 
-  function setParetoRoutes(newRoutes: Route[]) {
-    const normalizedRoutes = withConfiguredStationNames(newRoutes)
+  const assignParetoRoutes = (normalizedRoutes: Route[]) => {
     routes.value = [...normalizedRoutes]
     paretoRoutes.value = [...normalizedRoutes]
     if (normalizedRoutes.length > 0) {
@@ -114,6 +115,11 @@ export const useRouteStore = defineStore('route', () => {
     selectedSegmentInfo.value = null
   }
 
+  function setParetoRoutes(newRoutes: Route[]) {
+    const normalizedRoutes = withConfiguredStationNames(newRoutes)
+    assignParetoRoutes(normalizedRoutes)
+  }
+
   function setAlgorithmRouteResult(result: AlgorithmRouteBundleResult | null) {
     if (!result) {
       algorithmRouteResult.value = null
@@ -122,7 +128,21 @@ export const useRouteStore = defineStore('route', () => {
     }
     const normalizedRoutes = withConfiguredStationNames(result.routes)
     algorithmRouteResult.value = { ...result, routes: normalizedRoutes }
-    setParetoRoutes(normalizedRoutes)
+    assignParetoRoutes(normalizedRoutes)
+  }
+
+  function updateRoutePoint(routeId: string, pointId: string, coordinates: [number, number]) {
+    const route = paretoRoutes.value.find(item => item.id === routeId)
+    const point = route?.points.find(item => item.id === pointId)
+    if (!route || !point) return false
+
+    point.coordinates = coordinates
+    const pointIndex = route.points.findIndex(item => item.id === pointId)
+    if (route.rawTrunkCoordinates && pointIndex >= 0 && pointIndex < route.rawTrunkCoordinates.length) {
+      route.rawTrunkCoordinates[pointIndex] = coordinates
+    }
+    route.updatedAt = new Date()
+    return true
   }
 
   function syncConfiguredStationNames() {
@@ -156,6 +176,7 @@ export const useRouteStore = defineStore('route', () => {
     clearParetoRoutes,
     setParetoRoutes,
     setAlgorithmRouteResult,
+    updateRoutePoint,
     syncConfiguredStationNames,
   }
 })

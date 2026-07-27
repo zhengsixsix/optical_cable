@@ -4,7 +4,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useLayerStore } from '@/stores/layer'
 import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { Select } from '@/shared/components/base'
-import { RefreshCw, Download, Maximize2, X, Settings } from 'lucide-vue-next'
+import { RefreshCw, Download, Maximize2, X, Settings, CircleDollarSign, ShieldAlert } from 'lucide-vue-next'
 import { detectGisFormat, getPlanLayerFileName } from '@/utils/gisFormat'
 import { getLocalLayerIdForDictionaryCode } from '@/services/platform/layerTypeAdapter'
 
@@ -73,12 +73,31 @@ const layers = computed<PlatformLayerRow[]>(() => {
   return allLayers.filter(l => l.type === layerType.value)
 })
 
+const algorithmLayers = computed(() => [
+  { id: 'algorithm-cost', name: '成本底图', typeName: 'COST', icon: CircleDollarSign, color: '#d97706' },
+  { id: 'algorithm-risk', name: '风险底图', typeName: 'RISK', icon: ShieldAlert, color: '#dc2626' },
+].flatMap(item => {
+  const layer = layerStore.getLayerById(item.id)
+  return layer?.loaded ? [{ ...item, visible: layer.visible }] : []
+}))
+
+const visibleAlgorithmLayers = computed(() =>
+  layerType.value === 'all' ? algorithmLayers.value : [])
+
+function handleAlgorithmLayerVisible(id: string, visible: boolean) {
+  layerStore.toggleLayer(id, visible)
+}
+
 // 全选状态
 const uploadedLayers = computed(() => layers.value.filter(l => l.uploaded))
-const allChecked = computed(() => uploadedLayers.value.length > 0 && uploadedLayers.value.every(l => l.visible))
-const someChecked = computed(() => uploadedLayers.value.some(l => l.visible) && !allChecked.value)
+const selectableLayers = computed(() => [...visibleAlgorithmLayers.value, ...uploadedLayers.value])
+const allChecked = computed(() => selectableLayers.value.length > 0 && selectableLayers.value.every(l => l.visible))
+const someChecked = computed(() => selectableLayers.value.some(l => l.visible) && !allChecked.value)
 
 async function handleSelectAll(checked: boolean) {
+  for (const layer of visibleAlgorithmLayers.value) {
+    handleAlgorithmLayerVisible(layer.id, checked)
+  }
   for (const layer of layers.value) {
     if (layer.uploaded) {
       await handleVisibleChange(layer, checked)
@@ -220,10 +239,6 @@ watch(currentPlatformProjectId, () => {
         <div class="font-medium text-[#606266] mb-1">尚未打开项目</div>
         <div>请先新建或打开项目后查看图层信息</div>
       </div>
-      <div v-else-if="!hasPlatformProjectId" class="h-full min-h-[180px] flex flex-col items-center justify-center text-center text-xs text-[#909399] px-6">
-        <div class="font-medium text-[#606266] mb-1">暂无平台项目ID</div>
-        <div>当前项目还未同步到平台，暂不能加载图层信息</div>
-      </div>
       <template v-else>
       <!-- 图层类型筛选 -->
       <div class="mb-2">
@@ -251,6 +266,38 @@ watch(currentPlatformProjectId, () => {
           <span class="w-[40px] text-center">类型</span>
           <span class="w-[52px] text-center">状态</span>
           <span class="w-[44px] text-center">操作</span>
+        </div>
+
+        <!-- Algorithm result layers use the same table as platform layers. -->
+        <div
+          v-for="layer in visibleAlgorithmLayers"
+          :key="layer.id"
+          class="flex items-center py-2 border-b border-dashed border-[#ebeef5] hover:bg-gray-50"
+        >
+          <div class="w-[24px] flex justify-center">
+            <input
+              type="checkbox"
+              :checked="layer.visible"
+              class="w-3.5 h-3.5 accent-blue-500"
+              @change="handleAlgorithmLayerVisible(layer.id, ($event.target as HTMLInputElement).checked)"
+            >
+          </div>
+          <div class="flex flex-1 min-w-0 items-center gap-1.5 pl-1">
+            <div class="truncate text-[#606266]">{{ layer.name }}</div>
+          </div>
+          <span class="w-[40px] text-center text-[#909399]">{{ layer.typeName }}</span>
+          <div class="w-[52px] flex justify-center">
+            <span class="text-[10px] text-green-600">已生成</span>
+          </div>
+          <div class="w-[44px] flex justify-center gap-0.5">
+            <button
+              class="p-0.5 hover:text-blue-500 text-gray-400 transition-colors"
+              title="设置"
+              @click="handleLayerSettings(layer.id)"
+            >
+              <Settings class="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
         <!-- Layer Rows -->
@@ -297,7 +344,7 @@ watch(currentPlatformProjectId, () => {
         <div v-if="layerStore.platformLayersLoading && layers.length === 0" class="py-10 text-center text-xs text-[#909399]">
           正在加载图层列表...
         </div>
-        <div v-else-if="!layerStore.platformLayersLoading && layers.length === 0" class="py-10 text-center text-xs text-[#909399]">
+        <div v-else-if="!layerStore.platformLayersLoading && layers.length === 0 && visibleAlgorithmLayers.length === 0" class="py-10 text-center text-xs text-[#909399]">
           暂无上传图层
         </div>
       </div>
