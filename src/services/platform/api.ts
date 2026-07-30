@@ -258,7 +258,7 @@ export const platformPointApi = {
     latitude: payload.latitude,
     sortNum: payload.sortNum,
   }),
-  saveList: (
+  saveList: async (
     projectIdOrPayload: PlanPointSaveListPayload['projectId'] | PlanPointSaveListPayload,
     pointList?: PlanPointSaveListItem[],
   ) => {
@@ -276,7 +276,8 @@ export const platformPointApi = {
       })) ?? source.pointList,
     }
 
-    return platformClient.post<boolean>('/plan/point/saveList', payload)
+    const saved = await platformClient.post<boolean | string>('/plan/point/saveList', payload)
+    return saved === true || saved === 'true'
   },
   detail: (id: Id) => platformClient.post<PlanPoint>('/plan/point/detail', { id }),
   remove: (id: Id) => platformClient.post<boolean>('/plan/point/remove', { id }),
