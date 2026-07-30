@@ -7,9 +7,9 @@ import type {
   Id,
   PlanCalculationResult,
   PlanConfigChannel,
-  PlanConfigOptimization,
   PlanDeviceEntity,
   PlanLayoutCalculationResponse,
+  PlanSimulationMode,
 } from '@/services/platform/types'
 
 // 导出类型供外部使用
@@ -17,94 +17,19 @@ export type { SpanScanResult }
 
 // ========== 请求类型 ==========
 
-/** Span 策略 */
-interface SpanStrategyPayload {
-  mode: 'fixed' | 'scan'
-  scanRange?: {
-    min: number
-    max: number
-    step: number
-  }
-}
-
 /** 仿真计算请求 */
 export interface SimulationRequest {
-  /** 平台规划项目 ID。Swagger 的仿真接口按项目关联数据。 */
   projectId: Id
-  /** FMM_path_result.json 中的原始路线序号。 */
-  fmmPathResultIndex: number
-  /** 是否同时删除此前手动添加的器件实例。 */
-  clearAll: boolean
+  /** 物理仿真直接读取此前生成的 fixed / optimized 布局。 */
+  mode: PlanSimulationMode
   linkId: string
   linkName: string
-  totalLengthKm: number
-  fiberModel: string
-  amplifierModel: string
-  fiberParams: {
-    attenuation: number
-    effectiveArea: number
-    dispersion: number
-    dispersionSlope: number
-    nonlinearIndex: number
-    nonlinearCoeff: number
-    fiberName?: string
-    /** SSFM 模型专用参数 */
-    ssfmParams?: {
-      stepSize: number
-      samplePoints: number
-      maxIterations: number
-    }
-  }
-  amplifierParams: {
-    gain: number
-    noiseFigure: number
-    maxOutputPower: number
-    saturationPower: number
-    unitPrice?: number
-    equalizerUnitPrice?: number
-    amplifierName?: string
-  }
-  channelConfig: Omit<PlanConfigChannel, 'projectId'>
-  optimizationConfig: Omit<PlanConfigOptimization, 'projectId'>
-  spanKm: number
-  spanStrategy: SpanStrategyPayload
-  constraints: {
-    maxSpanLength: number
-    minSpanLength: number
-    osnrMargin: number
-  }
-  buConfigs: Array<{
-    id: string
-    name: string
-    kp: number
-    portCount: number
-    trunkLoss: number
-    branchLoss: number
-  }>
-  deviceSequence: Array<{
-    id: string
-    name: string
-    type: string
-    kp: number
-    equalizerRole?: 'T' | 'S'
-    attenuationMode?: 'adjustable' | 'fixed'
-    attenuationDb?: number
-  }>
-  /**
-   * The simulation endpoint accepts only project id and layout mode. Persist
-   * the selected device models and per-instance values after layout has
-   * generated its entities, but before physical simulation reads the project.
-   */
-  prepareSimulationDevices?: (context: {
-    mode: 'fixed' | 'optimized'
-    deviceEntityList: PlanDeviceEntity[]
-  }) => Promise<PlanDeviceEntity[] | void>
+  fiberModel?: string
+  amplifierModel?: string
   onProgress?: (progress: SimulationProgressUpdate) => void
 }
 
 type SimulationProgressStage =
-  | 'layout-start'
-  | 'layout-poll'
   | 'simulation-start'
   | 'simulation-poll'
   | 'complete'
@@ -128,13 +53,25 @@ export interface SimulationResponse {
     channelFrequencies?: number[]
   }
   detailedResult: PlanCalculationResult
+  simulationCache?: SimulationCache
+}
+
+export interface LayoutPlanningResponse {
+  mode: PlanSimulationMode
   layoutResult: PlanCalculationResult
-  fixedLayoutResult?: PlanCalculationResult
-  optimizedLayoutResult?: PlanCalculationResult
   deviceEntityList: PlanDeviceEntity[]
   effectiveSpanKm?: number
-  constraintAdjusted?: boolean
-  simulationCache?: SimulationCache
+  spanScanResult?: SimulationResponse['spanScanResult']
+}
+
+interface LayoutPlanningRequest {
+  projectId: Id
+  clearAll: boolean
+  onProgress?: (attempt: number) => void
+}
+
+interface OptimizedPlanningRequest extends LayoutPlanningRequest {
+  fmmPathResultIndex: number
 }
 
 // ========== API 调用 ==========
@@ -180,20 +117,42 @@ export async function saveAndVerifyPlanningChannelConfig(
   )
 }
 
-async function syncPlanningPrerequisites(request: SimulationRequest): Promise<void> {
-  await saveAndVerifyPlanningChannelConfig(request.projectId, request.channelConfig)
+export async function runFixedPlanning(request: LayoutPlanningRequest): Promise<LayoutPlanningResponse> {
+  const started = await platformProjectApi.fixedPlan(request.projectId, request.clearAll)
+  const rawLayoutResult = await pollPlanningResult(
+    () => platformProjectApi.queryFixed(request.projectId),
+    started,
+    request.onProgress,
+  )
+  return buildLayoutPlanningResponse(rawLayoutResult, 'fixed')
+}
 
-  const optimizationSaved = await platformPlanConfigApi.saveOptimization({
-    projectId: request.projectId,
-    ...request.optimizationConfig,
-  })
-  if (optimizationSaved === false) throw new Error('优化目标保存失败')
+export async function runOptimizedPlanning(request: OptimizedPlanningRequest): Promise<LayoutPlanningResponse> {
+  const started = await platformProjectApi.optimizedPlan(
+    request.projectId,
+    request.fmmPathResultIndex,
+    request.clearAll,
+  )
+  const rawLayoutResult = await pollPlanningResult(
+    () => platformProjectApi.queryOptimized(request.projectId),
+    started,
+    request.onProgress,
+  )
+  return buildLayoutPlanningResponse(rawLayoutResult, 'optimized')
+}
 
-  const spanSaved = await platformPlanConfigApi.saveSpanKm({
-    projectId: request.projectId,
-    spanKm: request.spanKm,
-  })
-  if (spanSaved === false) throw new Error('跨段参数保存失败')
+function buildLayoutPlanningResponse(
+  value: PlanCalculationResult,
+  mode: PlanSimulationMode,
+): LayoutPlanningResponse {
+  const normalized = normalizeLayoutCalculationResponse(value)
+  return {
+    mode,
+    layoutResult: normalized.layoutResult,
+    deviceEntityList: normalized.deviceEntityList,
+    effectiveSpanKm: parsePlanningLayoutResult(normalized.layoutResult, mode)?.spanKmUsed ?? undefined,
+    spanScanResult: extractSpanScanResult(normalized.layoutResult),
+  }
 }
 
 /**
@@ -201,84 +160,13 @@ async function syncPlanningPrerequisites(request: SimulationRequest): Promise<vo
  */
 export async function runSimulation(request: SimulationRequest): Promise<SimulationResponse> {
   request.onProgress?.({
-    stage: 'layout-start',
-    progress: 5,
-    message: '正在同步 WDM 与布局配置',
-  })
-  await syncPlanningPrerequisites(request)
-
-  request.onProgress?.({
-    stage: 'layout-start',
+    stage: 'simulation-start',
     progress: 10,
-    message: request.spanStrategy.mode === 'fixed' ? '正在生成固定跨距布局' : '正在生成优化布局',
-  })
-
-  let layoutResult: PlanCalculationResult
-  let fixedLayoutResult: PlanCalculationResult | undefined
-  let optimizedLayoutResult: PlanCalculationResult | undefined
-  let deviceEntityList: PlanDeviceEntity[] = []
-  let effectiveSpanKm: number | undefined
-
-  if (request.spanStrategy.mode === 'fixed') {
-    const started = await platformProjectApi.fixedPlan(request.projectId, request.clearAll)
-    const rawLayoutResult = await pollPlanningResult(
-      () => platformProjectApi.queryFixed(request.projectId),
-      started,
-      attempt => request.onProgress?.({
-        stage: 'layout-poll',
-        progress: Math.min(42, 18 + attempt),
-        message: '正在等待布局规划结果',
-      }),
-    )
-    const normalized = normalizeLayoutCalculationResponse(rawLayoutResult)
-    fixedLayoutResult = normalized.layoutResult
-    deviceEntityList = normalized.deviceEntityList
-    layoutResult = fixedLayoutResult
-    effectiveSpanKm = parsePlanningLayoutResult(fixedLayoutResult, 'fixed')?.spanKmUsed ?? undefined
-  } else {
-    const started = await platformProjectApi.optimizedPlan(
-      request.projectId,
-      request.fmmPathResultIndex,
-      request.clearAll,
-    )
-    const rawLayoutResult = await pollPlanningResult(
-      () => platformProjectApi.queryOptimized(request.projectId),
-      started,
-      attempt => request.onProgress?.({
-        stage: 'layout-poll',
-        progress: Math.min(42, 18 + attempt),
-        message: '正在等待优化布局结果',
-      }),
-    )
-    const normalized = normalizeLayoutCalculationResponse(rawLayoutResult)
-    optimizedLayoutResult = normalized.layoutResult
-    deviceEntityList = normalized.deviceEntityList
-    layoutResult = optimizedLayoutResult
-    effectiveSpanKm = parsePlanningLayoutResult(optimizedLayoutResult, 'optimized')?.spanKmUsed ?? undefined
-  }
-
-  request.onProgress?.({
-    stage: 'simulation-start',
-    progress: 46,
-    message: '布局已完成，正在同步器件实例',
-  })
-  const simulationMode = request.spanStrategy.mode === 'fixed' ? 'fixed' : 'optimized'
-  if (request.prepareSimulationDevices) {
-    const preparedEntities = await request.prepareSimulationDevices({
-      mode: simulationMode,
-      deviceEntityList,
-    })
-    if (preparedEntities) deviceEntityList = preparedEntities
-  }
-
-  request.onProgress?.({
-    stage: 'simulation-start',
-    progress: 50,
-    message: '器件已同步，正在启动物理仿真',
+    message: '正在启动物理仿真',
   })
   const simulationStarted = await platformProjectApi.simulationPlan(
     request.projectId,
-    simulationMode,
+    request.mode,
   )
   // 物理仿真查询接口在部分平台版本中只返回 data: null，不能按布局结果
   // 的方式持续轮询，否则布局明明已经成功也会被拖到 30 秒超时。
@@ -288,7 +176,7 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
   if (!hasPlanningResult(rawDetailedResult)) {
     request.onProgress?.({
       stage: 'simulation-poll',
-      progress: 78,
+      progress: 75,
       message: '正在读取物理仿真结果',
     })
     rawDetailedResult = await platformProjectApi.querySimulation(request.projectId)
@@ -301,19 +189,13 @@ export async function runSimulation(request: SimulationRequest): Promise<Simulat
   request.onProgress?.({
     stage: 'complete',
     progress: 100,
-    message: '系统规划计算完成',
+    message: '物理仿真完成',
   })
 
   return {
     success: true,
-    layoutResult,
-    fixedLayoutResult,
-    optimizedLayoutResult,
-    deviceEntityList,
-    effectiveSpanKm,
-    constraintAdjusted: false,
     detailedResult,
-    spanScanResult: extractSpanScanResult(detailedResult) ?? extractSpanScanResult(layoutResult),
+    spanScanResult: extractSpanScanResult(detailedResult),
     simulationCache: simulationCache ?? undefined,
   }
 }

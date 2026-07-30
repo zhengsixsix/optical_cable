@@ -4,9 +4,9 @@
  * 
  * 按甲方需求实现统一的链路配置界面：
  * 1. 选择规划链路
- * 2. 选择性能计算模型
- * 3. 配置光纤器件与模型参数
- * 4. 配置放大器器件与模型参数
+ * 2. 选择 Span 布局策略
+ * 3. 配置默认光纤器件、功能模型与参数
+ * 4. 配置默认放大器器件、功能模型与参数
  * 5. WDM / 规划参数配置
  * 6. BU参数配置
  */
@@ -15,7 +15,6 @@ import { useBUConfigStore, type BUConfigData } from '@/stores/buConfig'
 import { useConnectorStore } from '@/stores/connector'
 import { useRouteStore } from '@/stores/route'
 import { useSettingsStore } from '@/stores/settings'
-import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { Button, Select, Input } from '@/shared/components/base'
 import DeviceDynamicValueForm from '@/components/settings/DeviceDynamicValueForm.vue'
@@ -42,20 +41,21 @@ import {
   type PlanningLayoutResult,
 } from '@/utils/systemPlanningLayout'
 import {
-  isSpanWithinBounds,
   resolvePlanningSpanBounds,
 } from '@/utils/systemPlanningConstraints'
 import { normalizeEqualizerConfig, validateEqualizerConfig } from '@/utils/equalizer'
 import {
   isPlatformChannelConfigComplete,
   normalizePlatformSimulationCache,
+  runFixedPlanning,
+  runOptimizedPlanning,
   runSimulation,
   saveAndVerifyPlanningChannelConfig,
 } from '@/services/SimulationApiService'
-import type { SpanScanResult, ScanPoint } from '@/services/SimulationApiService'
+import type { LayoutPlanningResponse, SpanScanResult, ScanPoint } from '@/services/SimulationApiService'
 import {
   platformDeviceConfigApi,
-  platformDeviceEntityApi,
+  platformDeviceLibraryApi,
   platformPlanConfigApi,
 } from '@/services/platform/api'
 import type {
@@ -63,19 +63,19 @@ import type {
   PlanConfigOptimization,
   PlanDeviceConfig,
   PlanDeviceEntity,
-  PlatformDictionary,
+  PlanDeviceLibrary,
+  PlatformBindFunc,
   SystemPlanningFormSnapshot,
 } from '@/services/platform/types'
 import {
+  buildDeviceValueList,
   deviceValueListToMap,
   normalizeDeviceConfigs,
   resolveDeviceAttributeRows,
 } from '@/services/platform/deviceAttributes'
 import { platformDeviceEntityToConnectorElement } from '@/services/platform/deviceLibraryMapping'
 import {
-  applyPlanningTemplateToEntity,
   buildPlanningConnectorEntity,
-  buildPlanningTemplateEntity,
   mergePlanningDeviceEntities,
 } from '@/services/SystemPlanningDeviceService'
 import { getDeviceTypeCodeForCategory } from '@/services/platform/deviceTypeAdapter'
@@ -151,7 +151,6 @@ interface PlannedEqualizer {
 
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
-const dictionaryStore = useDictionaryStore()
 const routeStore = useRouteStore()
 const connectorStore = useConnectorStore()
 const buConfigStore = useBUConfigStore()  // 使用共享的 BU 配置 store
@@ -174,6 +173,13 @@ const platformEqualizerLibraries = computed(() =>
     .map(toRuntimeEqualizerLibrary)
     .filter((item): item is RuntimeEqualizerLibrary => Boolean(item)),
 )
+
+// 布局算法在计算模型步骤选择。fixed 在该步骤立即执行；optimized
+// 在默认器件库和 WDM 参数配置完成后执行。
+const spanStrategy = ref<'auto' | 'fixed'>('auto')
+const spanKm = ref(70)
+const spanScanConfig = reactive({ min: 40, max: 120, step: 5 })
+
 // 当前活动步骤
 const activeStep = ref<'link' | 'model' | 'fiber' | 'amplifier' | 'wdm' | 'bu' | 'result'>('link')
 
@@ -194,9 +200,9 @@ const baseStepOrder: PlanningStepId[] = ['link', 'model', 'fiber', 'amplifier', 
 
 const stepDescriptions: Record<PlanningStepId, string> = {
   link: '确认路由与站点拓扑',
-  model: '选择性能计算模型',
-  fiber: '匹配光纤模型参数',
-  amplifier: '配置放大器与跨段策略',
+  model: '选择 Span 布局算法',
+  fiber: '配置默认光纤器件库与功能模型',
+  amplifier: '配置默认放大器器件库与功能模型',
   wdm: '设置 WDM 与信号参数',
   bu: '校验分支单元路径',
   result: '查看布局与性能结果',
@@ -204,6 +210,9 @@ const stepDescriptions: Record<PlanningStepId, string> = {
 
 // 动态步骤配置 - 点对点规划时隐藏 BU 配置
 const steps = computed(() => {
+  if (spanStrategy.value === 'fixed') {
+    return baseSteps.filter(step => step.id === 'link' || step.id === 'model' || step.id === 'result')
+  }
   if (!linkInfo.value || linkInfo.value.buCount === 0) {
     return baseSteps.filter(s => s.id !== 'bu')
   }
@@ -556,7 +565,7 @@ const topologyTrackWidth = computed(() =>
   `${Math.max(520, linkTopologyNodes.value.length * 150)}px`,
 )
 
-// ============ Step 2: 计算模型选择 ============
+// ============ 计算模型选择 ============
 const selectedFiberModel = ref('')
 const selectedAmplifierModel = ref('')
 const hydratingPlanningForm = ref(false)
@@ -568,84 +577,51 @@ const ssfmParams = reactive({
   maxIterations: 1000, // 最大迭代次数
 })
 
-type CalculationModelOption = { value: string; label: string; desc: string }
+type CalculationModelOption = { value: string; label: string }
 
-const toCalculationModelOptions = (items: PlatformDictionary[]): CalculationModelOption[] =>
-  items
-    .filter(item => item.isValidCd !== '0')
-    .map(item => {
-      const value = String(item.code ?? '').trim()
-      return {
-        value,
-        label: item.name?.trim() || value,
-        desc: item.detail?.trim() || '',
-        sortNum: Number(item.sortNum ?? Number.MAX_SAFE_INTEGER),
-      }
-    })
-    .filter(item => item.value)
-    .sort((left, right) => left.sortNum - right.sortNum || left.value.localeCompare(right.value))
-    .map(({ value, label, desc }) => ({ value, label, desc }))
-
-const fiberModelOptions = ref<CalculationModelOption[]>([])
-const fiberModelLoading = ref(false)
-const fiberModelLoaded = ref(false)
-const fiberModelError = ref('')
-let fiberModelRequestSequence = 0
-
-const amplifierModelOptions = ref<CalculationModelOption[]>([])
-const amplifierModelLoading = ref(false)
-const amplifierModelLoaded = ref(false)
-const amplifierModelError = ref('')
-let amplifierModelRequestSequence = 0
-
-const loadFiberCalculationModels = async (): Promise<void> => {
-  const requestSequence = ++fiberModelRequestSequence
-  fiberModelLoading.value = true
-  fiberModelLoaded.value = false
-  fiberModelError.value = ''
-  fiberModelOptions.value = []
-
-  try {
-    const response = await dictionaryStore.searchDictionary({
-      pageNumber: 1,
-      pageSize: 10,
-      type: PLATFORM_DICTIONARY_TYPES.fiberCalculationModel,
-    })
-    if (requestSequence !== fiberModelRequestSequence || !props.visible) return
-
-    fiberModelOptions.value = toCalculationModelOptions(response.data ?? [])
-    fiberModelLoaded.value = true
-  } catch (error) {
-    if (requestSequence !== fiberModelRequestSequence) return
-    fiberModelError.value = error instanceof Error ? error.message : '光纤计算模型加载失败'
-  } finally {
-    if (requestSequence === fiberModelRequestSequence) fiberModelLoading.value = false
-  }
+const calculationModelOptionsFromLibrary = (
+  library: PlanDeviceLibrary | null,
+): CalculationModelOption[] => {
+  const names = new Set<string>()
+  return (library?.bindFuncList ?? []).flatMap(item => {
+    const name = item.name?.trim() || ''
+    if (!name || names.has(name)) return []
+    names.add(name)
+    return [{ value: name, label: name }]
+  })
 }
 
-const loadAmplifierCalculationModels = async (): Promise<void> => {
-  const requestSequence = ++amplifierModelRequestSequence
-  amplifierModelLoading.value = true
-  amplifierModelLoaded.value = false
-  amplifierModelError.value = ''
-  amplifierModelOptions.value = []
+const defaultCalculationModel = (library: PlanDeviceLibrary | null): string => {
+  const bindFunctions = library?.bindFuncList?.filter(item => item.name?.trim()) ?? []
+  return bindFunctions.find(item => Number(item.isDefault) === 1)?.name?.trim()
+    || bindFunctions[0]?.name?.trim()
+    || ''
+}
 
-  try {
-    const response = await dictionaryStore.searchDictionary({
-      pageNumber: 1,
-      pageSize: 10,
-      type: PLATFORM_DICTIONARY_TYPES.amplifierCalculationModel,
-    })
-    if (requestSequence !== amplifierModelRequestSequence || !props.visible) return
+const resolveCalculationModel = (
+  library: PlanDeviceLibrary | null,
+  preferredModel: string,
+): string => {
+  const options = calculationModelOptionsFromLibrary(library)
+  return options.some(option => option.value === preferredModel)
+    ? preferredModel
+    : defaultCalculationModel(library)
+}
 
-    amplifierModelOptions.value = toCalculationModelOptions(response.data ?? [])
-    amplifierModelLoaded.value = true
-  } catch (error) {
-    if (requestSequence !== amplifierModelRequestSequence) return
-    amplifierModelError.value = error instanceof Error ? error.message : '放大器计算模型加载失败'
-  } finally {
-    if (requestSequence === amplifierModelRequestSequence) amplifierModelLoading.value = false
+const bindFuncListWithSelectedModel = (
+  library: PlanDeviceLibrary,
+  selectedModel: string,
+): PlatformBindFunc[] => {
+  const model = selectedModel.trim()
+  const functions = library.bindFuncList ?? []
+  const selectedIndex = functions.findIndex(item => item.name?.trim() === model)
+  if (selectedIndex < 0) {
+    throw new Error(`${library.name || '默认器件库'}中不存在所选功能 ${model || '-'}`)
   }
+  return functions.map((item, index) => ({
+    ...item,
+    isDefault: index === selectedIndex ? 1 : 0,
+  }))
 }
 
 // ============ Step 3: 光纤配置 ============
@@ -659,8 +635,8 @@ const planningDeviceTypeCode: Record<PlanningDeviceKind, string> = {
 
 const selectedFiberTypeId = ref('')
 const selectedAmplifierTypeId = ref('')
-const fiberDeviceEntities = ref<PlanDeviceEntity[]>([])
-const amplifierDeviceEntities = ref<PlanDeviceEntity[]>([])
+const fiberDeviceEntities = ref<PlanDeviceLibrary[]>([])
+const amplifierDeviceEntities = ref<PlanDeviceLibrary[]>([])
 const fiberDeviceConfigs = ref<PlanDeviceConfig[]>([])
 const amplifierDeviceConfigs = ref<PlanDeviceConfig[]>([])
 const fiberDeviceValues = ref<DynamicDeviceValues>({})
@@ -674,7 +650,7 @@ const deviceConfigRequestSequence: Record<PlanningDeviceKind, number> = { fiber:
 const initializingPlanningDevices = ref(false)
 let planningDeviceInitializationSequence = 0
 
-// 兼容现有仿真请求结构；数值只从动态属性定义及实体值中映射，不提供前端默认值。
+// 保留到项目快照的兼容字段；数值只从默认器件库动态属性映射。
 const fiberParams = reactive<Record<string, number>>({
   attenuation: Number.NaN,
   effectiveArea: Number.NaN,
@@ -755,18 +731,12 @@ const syncLegacyParams = (
   })
 }
 
-const sortPlanningDeviceEntities = (entities: PlanDeviceEntity[]): PlanDeviceEntity[] =>
-  [...entities].sort((left, right) => {
-    const sortDifference = Number(left.sortNum ?? Number.MAX_SAFE_INTEGER)
-      - Number(right.sortNum ?? Number.MAX_SAFE_INTEGER)
-    if (Number.isFinite(sortDifference) && sortDifference !== 0) return sortDifference
-    return String(left.id ?? '').localeCompare(String(right.id ?? ''))
-  })
+const sortPlanningDeviceEntities = (libraries: PlanDeviceLibrary[]): PlanDeviceLibrary[] =>
+  [...libraries].sort((left, right) => String(left.id ?? '').localeCompare(String(right.id ?? '')))
 
-const planningDeviceOptionLabel = (entity: PlanDeviceEntity): string => {
-  const name = String(entity.name || entity.typeName || entity.id || '未命名器件')
-  const position = Number(entity.positionKm)
-  return Number.isFinite(position) ? `${name} · KP ${position} km` : name
+const planningDeviceOptionLabel = (library: PlanDeviceLibrary): string => {
+  const name = String(library.name || library.typeName || library.id || '未命名器件库')
+  return `${name}（默认）`
 }
 
 const fiberTypeOptions = computed(() =>
@@ -789,36 +759,45 @@ const selectedAmplifierEntity = computed(() =>
   amplifierDeviceEntities.value.find(entity => String(entity.id) === selectedAmplifierTypeId.value) ?? null,
 )
 
-const replacePlanningDeviceEntities = (type: PlanningDeviceKind, entities: PlanDeviceEntity[]): void => {
-  if (type === 'fiber') fiberDeviceEntities.value = sortPlanningDeviceEntities(entities)
-  else amplifierDeviceEntities.value = sortPlanningDeviceEntities(entities)
+const fiberCalculationModelOptions = computed(() =>
+  calculationModelOptionsFromLibrary(selectedFiberEntity.value),
+)
+
+const amplifierCalculationModelOptions = computed(() =>
+  calculationModelOptionsFromLibrary(selectedAmplifierEntity.value),
+)
+
+const replacePlanningDeviceEntities = (type: PlanningDeviceKind, libraries: PlanDeviceLibrary[]): void => {
+  if (type === 'fiber') fiberDeviceEntities.value = sortPlanningDeviceEntities(libraries)
+  else amplifierDeviceEntities.value = sortPlanningDeviceEntities(libraries)
 }
 
 const loadPlanningDeviceEntities = async (type: PlanningDeviceKind): Promise<void> => {
-  const projectId = platformProjectId.value
   const requestSequence = ++deviceEntityRequestSequence[type]
   deviceEntityLoading[type] = true
   deviceEntityErrors[type] = ''
   replacePlanningDeviceEntities(type, [])
 
-  if (projectId == null || projectId === '') {
-    deviceEntityErrors[type] = '当前工程未关联平台项目，无法读取项目器件'
-    deviceEntityLoading[type] = false
-    return
-  }
-
   try {
-    const response = await platformDeviceEntityApi.search({
+    const response = await platformDeviceLibraryApi.search({
       pageNumber: 1,
       pageSize: 1000,
-      projectId,
       deviceTypeCd: planningDeviceTypeCode[type],
+      isDefault: 1,
     })
     if (requestSequence !== deviceEntityRequestSequence[type]) return
-    replacePlanningDeviceEntities(type, response.data ?? [])
+    const defaultLibraries = (response.data ?? [])
+      .filter(library => Number(library.isDefault) === 1)
+    const detailedLibraries = await Promise.all(defaultLibraries.map(async library => {
+      if (library.id == null || library.id === '') return library
+      const detail = await platformDeviceLibraryApi.detail(library.id)
+      return { ...library, ...detail }
+    }))
+    if (requestSequence !== deviceEntityRequestSequence[type]) return
+    replacePlanningDeviceEntities(type, detailedLibraries)
   } catch (error) {
     if (requestSequence !== deviceEntityRequestSequence[type]) return
-    deviceEntityErrors[type] = error instanceof Error ? error.message : '项目器件加载失败'
+    deviceEntityErrors[type] = error instanceof Error ? error.message : '默认器件库加载失败'
   } finally {
     if (requestSequence === deviceEntityRequestSequence[type]) deviceEntityLoading[type] = false
   }
@@ -831,9 +810,9 @@ const loadPlanningDeviceConfigs = async (
 ): Promise<void> => {
   const requestSequence = ++deviceConfigRequestSequence[type]
   const entities = type === 'fiber' ? fiberDeviceEntities.value : amplifierDeviceEntities.value
-  const entity = entities.find(item => String(item.id) === selectedEntityId)
-  const initialValues = entity
-    ? { ...deviceValueListToMap(entity.deviceValueList), ...restoredValues }
+  const library = entities.find(item => String(item.id) === selectedEntityId)
+  const initialValues = library
+    ? { ...deviceValueListToMap(library.deviceValueList), ...restoredValues }
     : {}
 
   if (type === 'fiber') {
@@ -844,7 +823,7 @@ const loadPlanningDeviceConfigs = async (
     amplifierDeviceValues.value = initialValues
   }
   deviceConfigErrors[type] = ''
-  if (!selectedEntityId || !entity) {
+  if (!selectedEntityId || !library) {
     deviceConfigLoading[type] = false
     syncLegacyParams(type, [], initialValues)
     return
@@ -882,26 +861,17 @@ const updateAmplifierDeviceValues = (values: DynamicDeviceValues): void => {
 
 watch(selectedFiberTypeId, selectedEntityId => {
   if (!props.visible || initializingPlanningDevices.value || hydratingPlanningForm.value) return
+  selectedFiberModel.value = resolveCalculationModel(selectedFiberEntity.value, selectedFiberModel.value)
   void loadPlanningDeviceConfigs('fiber', selectedEntityId)
 })
 
 watch(selectedAmplifierTypeId, selectedEntityId => {
   if (!props.visible || initializingPlanningDevices.value || hydratingPlanningForm.value) return
+  selectedAmplifierModel.value = resolveCalculationModel(selectedAmplifierEntity.value, selectedAmplifierModel.value)
   void loadPlanningDeviceConfigs('amplifier', selectedEntityId)
 })
 
 // ============ Step 4: 放大器配置 ============
-
-// Span 布局策略
-const spanStrategy = ref<'auto' | 'fixed'>('auto')
-const spanKm = ref(70)
-
-// Span 扫描范围配置（auto 模式）
-const spanScanConfig = reactive({
-  min: 40,
-  max: 120,
-  step: 5
-})
 
 // 优化目标
 const optimizationTarget = ref<'min_amplifiers' | 'max_gsnr'>('min_amplifiers')
@@ -1157,22 +1127,12 @@ function buildPlatformOptimizationConfig(): Omit<PlanConfigOptimization, 'projec
 }
 
 function resetLinkConfig(): void {
-  fiberModelRequestSequence += 1
-  amplifierModelRequestSequence += 1
   deviceEntityRequestSequence.fiber += 1
   deviceEntityRequestSequence.amplifier += 1
   deviceConfigRequestSequence.fiber += 1
   deviceConfigRequestSequence.amplifier += 1
   selectedFiberModel.value = ''
   selectedAmplifierModel.value = ''
-  fiberModelOptions.value = []
-  fiberModelLoading.value = false
-  fiberModelLoaded.value = false
-  fiberModelError.value = ''
-  amplifierModelOptions.value = []
-  amplifierModelLoading.value = false
-  amplifierModelLoaded.value = false
-  amplifierModelError.value = ''
   selectedFiberTypeId.value = ''
   selectedAmplifierTypeId.value = ''
   fiberDeviceEntities.value = []
@@ -1229,7 +1189,7 @@ function resetLinkConfig(): void {
   setOptimizationConfig(snapshot?.optimization ?? null)
   if (snapshot?.spanKm != null) {
     spanKm.value = snapshot.spanKm
-    spanStrategy.value = 'fixed'
+    spanStrategy.value = snapshot.form?.spanStrategy === 'fixed' ? 'fixed' : 'auto'
   }
 
   spanScanData.value = null
@@ -1280,7 +1240,7 @@ async function savePlatformWdmConfig(projectId: string | number): Promise<void> 
   }
 }
 
-async function savePlatformAmplifierConfig(projectId: string | number): Promise<void> {
+async function savePlatformOptimizationConfig(projectId: string | number): Promise<void> {
   try {
     await platformPlanConfigApi.saveOptimization({
       projectId,
@@ -1289,7 +1249,9 @@ async function savePlatformAmplifierConfig(projectId: string | number): Promise<
   } catch (error) {
     throw new Error(`优化配置保存失败：${error instanceof Error ? error.message : String(error)}`)
   }
+}
 
+async function savePlatformSpanConfig(projectId: string | number): Promise<void> {
   try {
     await platformPlanConfigApi.saveSpanKm({
       projectId,
@@ -1383,51 +1345,36 @@ const buConfigs = computed(() => {
     })
 })
 
-interface PersistedPlanningTemplates {
-  fiber: PlanDeviceEntity
-  amplifier: PlanDeviceEntity
-}
-
 const replaceLocalPlanningEntity = (
   type: PlanningDeviceKind,
   originalId: string,
-  entity: PlanDeviceEntity,
+  library: PlanDeviceLibrary,
 ): void => {
   const source = type === 'fiber' ? fiberDeviceEntities.value : amplifierDeviceEntities.value
-  const next = source.map(item => String(item.id) === originalId ? entity : item)
+  const next = source.map(item => String(item.id) === originalId ? library : item)
   replacePlanningDeviceEntities(type, next)
-  if (type === 'fiber') selectedFiberTypeId.value = String(entity.id ?? originalId)
-  else selectedAmplifierTypeId.value = String(entity.id ?? originalId)
+  if (type === 'fiber') selectedFiberTypeId.value = String(library.id ?? originalId)
+  else selectedAmplifierTypeId.value = String(library.id ?? originalId)
 }
 
-const persistPlanningTemplate = async (
+const persistPlanningLibrary = async (
   type: PlanningDeviceKind,
-  projectId: string | number,
-): Promise<PlanDeviceEntity> => {
-  const entity = type === 'fiber' ? selectedFiberEntity.value : selectedAmplifierEntity.value
-  if (!entity) throw new Error(type === 'fiber' ? '请选择光纤器件' : '请选择放大器器件')
-  const entityId = String(entity.id ?? '')
-  const payload = buildPlanningTemplateEntity({
-    kind: type,
-    entity,
-    projectId,
-    values: type === 'fiber' ? fiberDeviceValues.value : amplifierDeviceValues.value,
-    configs: type === 'fiber' ? fiberDeviceConfigs.value : amplifierDeviceConfigs.value,
-    calculationModel: type === 'fiber' ? selectedFiberModel.value : selectedAmplifierModel.value,
-    ...(type === 'fiber' ? { ssfmParams: { ...ssfmParams } } : {}),
-  })
-  const savedId = await settingsStore.savePlatformDeviceEntity(payload)
+): Promise<PlanDeviceLibrary> => {
+  const library = type === 'fiber' ? selectedFiberEntity.value : selectedAmplifierEntity.value
+  if (!library) throw new Error(type === 'fiber' ? '未定义默认光纤器件库' : '未定义默认放大器器件库')
+  const libraryId = String(library.id ?? '')
+  const values = type === 'fiber' ? fiberDeviceValues.value : amplifierDeviceValues.value
+  const selectedModel = type === 'fiber' ? selectedFiberModel.value : selectedAmplifierModel.value
+  const payload: PlanDeviceLibrary = {
+    ...library,
+    isDefault: 1,
+    bindFuncList: bindFuncListWithSelectedModel(library, selectedModel),
+    deviceValueList: buildDeviceValueList(values),
+  }
+  const savedId = await settingsStore.savePlatformDeviceLibrary(payload)
   const saved = { ...payload, id: savedId }
-  replaceLocalPlanningEntity(type, entityId, saved)
+  replaceLocalPlanningEntity(type, libraryId, saved)
   return saved
-}
-
-const persistPlanningTemplates = async (
-  projectId: string | number,
-): Promise<PersistedPlanningTemplates> => {
-  const fiber = await persistPlanningTemplate('fiber', projectId)
-  const amplifier = await persistPlanningTemplate('amplifier', projectId)
-  return { fiber, amplifier }
 }
 
 const persistConnectorEntity = async (
@@ -1540,54 +1487,6 @@ const syncBuEntities = async (
     }))
   }
   return saved
-}
-
-const persistPlanningTopologyEntities = async (
-  projectId: string | number,
-): Promise<PlanDeviceEntity[]> => {
-  ensureRouteTopologyConnectorElements()
-  const equalizers = await syncPlannedEqualizerEntities(projectId)
-  const branchingUnits = await syncBuEntities(projectId)
-  return [...equalizers, ...branchingUnits]
-}
-
-const prepareLayoutEntitiesForSimulation = async (
-  context: { mode: 'fixed' | 'optimized'; deviceEntityList: PlanDeviceEntity[] },
-  projectId: string | number,
-  templates: PersistedPlanningTemplates,
-): Promise<PlanDeviceEntity[]> => {
-  const generated = context.deviceEntityList.length > 0
-    ? context.deviceEntityList
-    : settingsStore.platformDeviceEntities
-  const configured: PlanDeviceEntity[] = []
-  let fiberApplied = false
-  let amplifierApplied = false
-  for (const entity of generated) {
-    const typeCode = String(entity.deviceTypeCd ?? '').trim().toUpperCase()
-    let payload = entity
-    if (typeCode === planningDeviceTypeCode.fiber) {
-      payload = applyPlanningTemplateToEntity(entity, templates.fiber)
-      fiberApplied = true
-    } else if (typeCode === planningDeviceTypeCode.amplifier) {
-      payload = applyPlanningTemplateToEntity(entity, templates.amplifier)
-      amplifierApplied = true
-    } else {
-      configured.push(entity)
-      continue
-    }
-    const savedId = await settingsStore.savePlatformDeviceEntity({
-      ...payload,
-      projectId,
-      mode: context.mode,
-    })
-    configured.push({ ...payload, id: savedId, projectId, mode: context.mode })
-  }
-  if (!fiberApplied) configured.push(templates.fiber)
-  if (!amplifierApplied) configured.push(templates.amplifier)
-  const topology = await persistPlanningTopologyEntities(projectId)
-  const merged = mergePlanningDeviceEntities(configured, topology)
-  settingsStore.replacePlatformDeviceEntities(merged)
-  return merged
 }
 
 const buildPlanningFormSnapshot = (): SystemPlanningFormSnapshot => ({
@@ -1850,27 +1749,32 @@ const stepValidation = computed(() => {
   const link = !selectedRouteId.value ? '请选择规划链路' : null
 
   let model: string | null = null
-  if (!selectedFiberModel.value || !selectedAmplifierModel.value) {
-    model = '请选择光纤和放大器计算模型'
-  } else if (selectedFiberModel.value === 'SSFM' && (
-    !isFiniteNumber(ssfmParams.stepSize) || ssfmParams.stepSize <= 0
-    || !Number.isInteger(ssfmParams.samplePoints) || ssfmParams.samplePoints <= 0
-    || !Number.isInteger(ssfmParams.maxIterations) || ssfmParams.maxIterations <= 0
+  if (spanStrategy.value === 'fixed' && (!isFiniteNumber(spanKm.value) || spanKm.value <= 0)) {
+    model = '固定 Span 长度必须大于 0'
+  } else if (spanStrategy.value === 'auto' && (
+    !isFiniteNumber(spanScanConfig.min) || spanScanConfig.min <= 0
+    || !isFiniteNumber(spanScanConfig.max)
+    || finiteNumberValue(spanScanConfig.max, 0) < finiteNumberValue(spanScanConfig.min, 0)
+    || !isFiniteNumber(spanScanConfig.step) || spanScanConfig.step <= 0
   )) {
-    model = 'SSFM 步长、采样点数和迭代次数必须为正数'
+    model = 'Span 扫描范围或步长无效'
   }
 
   let fiber: string | null = null
   if (deviceEntityLoading.fiber) {
     fiber = '正在加载项目光纤器件'
   } else if (deviceEntityErrors.fiber) {
-    fiber = `光纤器件加载失败：${deviceEntityErrors.fiber}`
+    fiber = `默认光纤器件库加载失败：${deviceEntityErrors.fiber}`
   } else if (fiberDeviceEntities.value.length === 0) {
-    fiber = '当前项目没有 FIB 光纤器件'
+    fiber = '器件库未定义默认 FIB 光纤'
   } else if (!selectedFiberTypeId.value) {
-    fiber = '请选择光纤器件'
+    fiber = '未找到默认光纤器件库'
   } else if (!selectedFiberEntity.value) {
-    fiber = '所选光纤器件已不存在，请重新选择'
+    fiber = '默认光纤器件库已不存在，请刷新后重试'
+  } else if (fiberCalculationModelOptions.value.length === 0) {
+    fiber = '默认光纤器件库未配置功能'
+  } else if (!fiberCalculationModelOptions.value.some(option => option.value === selectedFiberModel.value)) {
+    fiber = '请选择光纤性能计算模型'
   } else if (deviceConfigLoading.fiber) {
     fiber = '正在加载光纤动态属性'
   } else if (deviceConfigErrors.fiber) {
@@ -1884,13 +1788,17 @@ const stepValidation = computed(() => {
   if (deviceEntityLoading.amplifier) {
     amplifier = '正在加载项目放大器器件'
   } else if (deviceEntityErrors.amplifier) {
-    amplifier = `放大器器件加载失败：${deviceEntityErrors.amplifier}`
+    amplifier = `默认放大器器件库加载失败：${deviceEntityErrors.amplifier}`
   } else if (amplifierDeviceEntities.value.length === 0) {
-    amplifier = '当前项目没有 AMP 放大器器件'
+    amplifier = '器件库未定义默认 AMP 放大器'
   } else if (!selectedAmplifierTypeId.value) {
-    amplifier = '请选择放大器器件'
+    amplifier = '未找到默认放大器器件库'
   } else if (!selectedAmplifierEntity.value) {
-    amplifier = '所选放大器器件已不存在，请重新选择'
+    amplifier = '默认放大器器件库已不存在，请刷新后重试'
+  } else if (amplifierCalculationModelOptions.value.length === 0) {
+    amplifier = '默认放大器器件库未配置功能'
+  } else if (!amplifierCalculationModelOptions.value.some(option => option.value === selectedAmplifierModel.value)) {
+    amplifier = '请选择放大器性能计算模型'
   } else if (deviceConfigLoading.amplifier) {
     amplifier = '正在加载放大器动态属性'
   } else if (deviceConfigErrors.amplifier) {
@@ -1910,23 +1818,9 @@ const stepValidation = computed(() => {
     amplifier = '最大 Span 长度不能小于最小 Span 长度'
   } else if (!isFiniteNumber(constraints.osnrMargin) || constraints.osnrMargin < 0) {
     amplifier = 'OSNR 裕量必须是大于等于 0 的数值'
-  } else if (spanStrategy.value === 'fixed' && (
-    !isFiniteNumber(spanKm.value) || spanKm.value <= 0
-  )) {
-    amplifier = '固定 Span 长度必须大于 0'
-  } else if (spanStrategy.value === 'auto' && (
-    !isFiniteNumber(spanScanConfig.min) || spanScanConfig.min <= 0
-    || !isFiniteNumber(spanScanConfig.max)
-    || finiteNumberValue(spanScanConfig.max, 0) < finiteNumberValue(spanScanConfig.min, 0)
-    || !isFiniteNumber(spanScanConfig.step) || spanScanConfig.step <= 0
-  )) {
-    amplifier = 'Span 扫描范围或步长无效'
   } else {
     try {
-      const bounds = resolveCurrentSpanBounds()
-      if (spanStrategy.value === 'fixed' && !isSpanWithinBounds(finiteNumberValue(spanKm.value, 0), bounds)) {
-        amplifier = `固定 Span ${spanKm.value} km 超出约束范围 ${bounds.minKm}-${bounds.maxKm} km`
-      }
+      resolveCurrentSpanBounds()
     } catch (error) {
       amplifier = error instanceof Error ? error.message : 'Span 扫描范围与约束无有效交集'
     }
@@ -1988,9 +1882,9 @@ const completionPercentage = computed(() => {
 })
 
 const canStartCalculation = computed(() => {
-  return stepStatus.value.link && stepStatus.value.model && 
-         stepStatus.value.fiber && stepStatus.value.amplifier && stepStatus.value.wdm &&
-         stepStatus.value.bu
+  return stepOrder.value
+    .filter((step): step is ConfigStepId => step !== 'result')
+    .every(step => stepStatus.value[step])
 })
 
 const currentStepValidationMessage = computed(() => {
@@ -2016,22 +1910,21 @@ const planningStepFingerprint = (step: ConfigStepId): string => {
       })
     case 'model':
       return JSON.stringify({
-        fiberModel: selectedFiberModel.value,
-        amplifierModel: selectedAmplifierModel.value,
-        ssfm: ssfmParams,
+        spanStrategy: spanStrategy.value,
+        spanKm: spanKm.value,
+        spanScan: spanScanConfig,
       })
     case 'fiber':
       return JSON.stringify({
         typeId: selectedFiberTypeId.value,
+        calculationModel: selectedFiberModel.value,
         deviceValues: fiberDeviceValues.value,
       })
     case 'amplifier':
       return JSON.stringify({
         typeId: selectedAmplifierTypeId.value,
+        calculationModel: selectedAmplifierModel.value,
         deviceValues: amplifierDeviceValues.value,
-        spanStrategy: spanStrategy.value,
-        spanKm: spanKm.value,
-        spanScan: spanScanConfig,
         optimizationTarget: optimizationTarget.value,
         optimization: optimizationConfig,
         constraints,
@@ -2140,12 +2033,15 @@ const savePlanningStep = async (step: ConfigStepId): Promise<void> => {
       ensureRouteTopologyConnectorElements()
       await syncPlannedEqualizerEntities(projectId)
     }
+    if (step === 'model' && spanStrategy.value === 'fixed') {
+      await savePlatformSpanConfig(projectId)
+    }
     if (step === 'fiber') {
-      await persistPlanningTemplate('fiber', projectId)
+      await persistPlanningLibrary('fiber')
     }
     if (step === 'amplifier') {
-      await persistPlanningTemplate('amplifier', projectId)
-      await savePlatformAmplifierConfig(projectId)
+      await persistPlanningLibrary('amplifier')
+      await savePlatformOptimizationConfig(projectId)
     }
     if (step === 'wdm') {
       await savePlatformWdmConfig(projectId)
@@ -2164,6 +2060,7 @@ const savePlanningStep = async (step: ConfigStepId): Promise<void> => {
 
 // 动态步骤顺序 - 点对点规划时跳过 BU
 const stepOrder = computed(() => {
+  if (spanStrategy.value === 'fixed') return ['link', 'model', 'result'] as PlanningStepId[]
   if (!linkInfo.value || linkInfo.value.buCount === 0) {
     return baseStepOrder.filter(s => s !== 'bu')
   }
@@ -2176,7 +2073,14 @@ const goToNextStep = async () => {
 
   try {
     await savePlanningStep(activeStep.value)
-    activeStep.value = stepOrder.value[currentIndex + 1]
+    const shouldGenerateLayout = (activeStep.value === 'model' && spanStrategy.value === 'fixed')
+      || (spanStrategy.value === 'auto' && activeStep.value === lastConfigStep.value)
+    if (shouldGenerateLayout) {
+      await runSelectedLayoutPlanning(false)
+      activeStep.value = 'result'
+    } else {
+      activeStep.value = stepOrder.value[currentIndex + 1]
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : '当前步骤保存失败'
     appStore.showNotification({ type: 'error', message })
@@ -2339,9 +2243,6 @@ const spanScanData = ref<SpanScanResult | null>(null)
 const calculationError = ref('')
 const platformCalculationCompleted = ref(false)
 const calculationProgress = reactive({ value: 0, message: '正在准备计算' })
-const recalculationConfirmationVisible = ref(false)
-const recalculationConfirmationDialog = ref<HTMLElement | null>(null)
-let recalculationReturnFocus: HTMLElement | null = null
 
 const responseDeviceEntities = (response: unknown): PlanDeviceEntity[] | null => {
   if (!response || typeof response !== 'object' || Array.isArray(response)) return null
@@ -2433,250 +2334,145 @@ const syncCalculatedDeviceEntities = async (
   syncConnectorStoreFromDeviceEntities(entities)
 }
 
-// 执行计算并跳转到结果页
-const startCalculation = async (clearAll: boolean = false) => {
-  recalculationConfirmationVisible.value = false
-  const invalidStep = stepOrder.value
-    .filter((step): step is Exclude<typeof step, 'result'> => step !== 'result')
-    .find(step => !stepStatus.value[step])
-  if (invalidStep) {
-    const message = stepValidation.value[invalidStep] || '请先完成当前系统规划配置'
-    activeStep.value = invalidStep
-    calculationError.value = message
-    appStore.showNotification({ type: 'error', message })
-    return
+const storeSpanScanResult = (result: LayoutPlanningResponse['spanScanResult']): void => {
+  if (!result) return
+  spanScanData.value = {
+    linkId: selectedRouteId.value,
+    scannedAt: new Date(),
+    model: selectedFiberModel.value,
+    gsnrPerSpanDb: result.scanPoints.map(point => point.gsnrPerChannelDb),
+    osnrPerSpanDb: result.scanPoints.map(point => point.osnrPerChannelDb),
+    ...result,
   }
+}
 
-  const equalizerValidationMessage = validatePlannedEqualizers()
-  if (equalizerValidationMessage) {
-    calculationError.value = equalizerValidationMessage
-    appStore.showNotification({ type: 'error', message: equalizerValidationMessage })
-    activeStep.value = 'link'
-    return
-  }
-
-  const pendingStep = stepOrder.value
-    .filter((step): step is ConfigStepId => step !== 'result')
-    .find(step => !isPlanningStepSaved(step) && step !== lastConfigStep.value)
-  if (pendingStep) {
-    activeStep.value = pendingStep
-    const message = `请先保存“${steps.value.find(step => step.id === pendingStep)?.label || pendingStep}”步骤`
-    calculationError.value = message
-    appStore.showNotification({ type: 'error', message })
-    return
-  }
-
-  if (platformConfigSaving.value) return
+const runSelectedLayoutPlanning = async (clearAll = false): Promise<void> => {
   const projectId = platformProjectId.value
-  if (projectId == null) {
-    calculationError.value = '当前工程未关联平台项目，无法调用系统规划接口'
-    appStore.showNotification({ type: 'error', message: calculationError.value })
-    return
-  }
-  const fiberModel = selectedFiberModel.value
-  if (!fiberModel) {
-    calculationError.value = '当前没有可用的光纤计算模型，无法计算'
-    appStore.showNotification({ type: 'error', message: calculationError.value })
-    return
-  }
-  const amplifierModel = selectedAmplifierModel.value
-  if (!amplifierModel) {
-    calculationError.value = '当前没有可用的放大器计算模型，无法计算'
-    appStore.showNotification({ type: 'error', message: calculationError.value })
-    return
-  }
-
-  try {
-    // 最后一个配置页的主按钮就是“开始计算”，先提交该页的最后一次保存。
-    await savePlanningStep(lastConfigStep.value as ConfigStepId)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '保存链路配置失败'
-    calculationError.value = message
-    appStore.showNotification({ type: 'error', message })
-    return
-  }
+  if (projectId == null) throw new Error('当前工程未关联平台项目，无法调用布局算法')
 
   isCalculating.value = true
   calculationError.value = ''
   calculationResult.value = null
   platformLayoutResult.value = null
   platformCalculationCompleted.value = false
-  calculationProgress.value = 5
-  calculationProgress.message = '正在提交系统规划任务'
-  calculationProgress.value = 8
-  activeStep.value = 'result'
+  settingsStore.updateSimulationCache(null)
+  calculationProgress.value = 10
+  calculationProgress.message = spanStrategy.value === 'fixed'
+    ? '正在生成固定跨距布局'
+    : '正在生成优化布局'
+
   try {
-    const devices: Array<{
-      id: string
-      name: string
-      type: string
-      kp: number
-      equalizerRole?: 'T' | 'S'
-      attenuationMode?: 'adjustable' | 'fixed'
-      attenuationDb?: number
-    }> = []
-    const info = linkInfo.value
-    routeConnectorElements.value
-      .filter(element => (element.type === 'landing'
-        || element.type === 'underwater'
-        || element.type === 'bu')
-        && Number.isFinite(element.kp))
-      .forEach(element => devices.push({
-        id: element.id,
-        name: element.name,
-        type: element.type,
-        kp: element.kp,
-      }))
-
-    plannedEqualizers.value
-      .map(equalizer => normalizeEqualizerConfig(equalizer))
-      .sort((a, b) => a.kp - b.kp)
-      .forEach(eq => {
-        devices.push({
-          id: eq.id || eq.tempId,
-          name: eq.name,
-          type: 'equalizer',
-          kp: eq.kp,
-          equalizerRole: eq.equalizerRole,
-          attenuationMode: eq.attenuationMode,
-          attenuationDb: eq.attenuationDb,
-        })
-      })
-    devices.sort((a, b) => a.kp - b.kp)
-
-    const spanStrategyPayload = spanStrategy.value === 'fixed'
-      ? { mode: 'fixed' as const }
-      : {
-          mode: 'scan' as const,
-          scanRange: {
-            min: finiteNumberValue(spanScanConfig.min, 40),
-            max: finiteNumberValue(spanScanConfig.max, 120),
-            step: finiteNumberValue(spanScanConfig.step, 5),
+    const response = spanStrategy.value === 'fixed'
+      ? await runFixedPlanning({
+          projectId,
+          clearAll,
+          onProgress: attempt => {
+            calculationProgress.value = Math.min(90, 20 + attempt * 2)
+            calculationProgress.message = '正在等待固定跨距布局结果'
           },
-        }
+        })
+      : await runOptimizedPlanning({
+          projectId,
+          fmmPathResultIndex: selectedFmmPathResultIndex.value,
+          clearAll,
+          onProgress: attempt => {
+            calculationProgress.value = Math.min(90, 20 + attempt * 2)
+            calculationProgress.message = '正在等待优化布局结果'
+          },
+        })
 
-    const fiberType = selectedFiberEntity.value
-    const ampType = selectedAmplifierEntity.value
-    calculationProgress.value = 9
-    calculationProgress.message = '正在保存光纤与放大器模板'
-    const persistedTemplates = await persistPlanningTemplates(projectId)
-    const totalLengthKm = info?.trunkLength || info?.totalLength || 0
-    if (!Number.isFinite(totalLengthKm) || totalLengthKm <= 0) {
-      throw new Error('后端仿真缺少有效链路总长度')
-    }
+    if (response.effectiveSpanKm != null) spanKm.value = response.effectiveSpanKm
+    platformLayoutResult.value = parsePlatformLayoutResult(response.layoutResult)
+    storeSpanScanResult(response.spanScanResult)
 
+    const current = settingsStore.platformPlanningResults
+    settingsStore.updatePlatformPlanningResults({
+      fixed: response.mode === 'fixed' ? response.layoutResult : current?.fixed ?? null,
+      optimized: response.mode === 'optimized' ? response.layoutResult : current?.optimized ?? null,
+      simulation: null,
+      errors: [],
+    })
+    await syncCalculatedDeviceEntities(response, projectId, clearAll)
+    platformCalculationCompleted.value = true
+    calculationProgress.value = 100
+    calculationProgress.message = '布局生成完成'
+    settingsStore.updateSystemPlanningCache(buildSystemPlanningCache())
+    appStore.showNotification({
+      type: 'success',
+      message: spanStrategy.value === 'fixed' ? '固定跨距布局已生成' : '优化布局已生成',
+    })
+  } catch (error) {
+    calculationError.value = error instanceof Error ? error.message : '布局生成失败'
+    throw error
+  } finally {
+    isCalculating.value = false
+  }
+}
+
+// 结果页只执行物理仿真；布局必须已在前面的配置步骤生成。
+const startCalculation = async () => {
+  if (!platformLayoutResult.value || !platformCalculationCompleted.value) {
+    calculationError.value = '请先完成布局规划'
+    appStore.showNotification({ type: 'error', message: calculationError.value })
+    return
+  }
+  const projectId = platformProjectId.value
+  if (projectId == null) {
+    calculationError.value = '当前工程未关联平台项目，无法调用物理仿真接口'
+    appStore.showNotification({ type: 'error', message: calculationError.value })
+    return
+  }
+
+  const info = linkInfo.value
+  isCalculating.value = true
+  calculationError.value = ''
+  calculationResult.value = null
+  calculationProgress.value = 5
+  calculationProgress.message = '正在提交物理仿真任务'
+  activeStep.value = 'result'
+
+  try {
     const response = await runSimulation({
       projectId,
-      clearAll,
-      fmmPathResultIndex: selectedFmmPathResultIndex.value,
+      mode: spanStrategy.value === 'fixed' ? 'fixed' : 'optimized',
       linkId: selectedRouteId.value,
       linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
-      totalLengthKm,
-      fiberModel,
-      amplifierModel,
-      fiberParams: {
-        attenuation: fiberParams.attenuation,
-        effectiveArea: fiberParams.effectiveArea,
-        dispersion: fiberParams.dispersion,
-        dispersionSlope: fiberParams.dispersionSlope,
-        nonlinearIndex: fiberParams.nonlinearIndex,
-        nonlinearCoeff: fiberParams.nonlinearCoeff,
-        fiberName: fiberType?.name ?? undefined,
-        ...(fiberModel === 'SSFM' ? {
-          ssfmParams: {
-            stepSize: ssfmParams.stepSize,
-            samplePoints: ssfmParams.samplePoints,
-            maxIterations: ssfmParams.maxIterations,
-          }
-        } : {}),
-      },
-      amplifierParams: {
-        gain: amplifierParams.gain,
-        noiseFigure: amplifierParams.noiseFigure,
-        maxOutputPower: amplifierParams.maxOutputPower,
-        saturationPower: amplifierParams.saturationPower,
-        equalizerUnitPrice: settingsStore.costFactors.equalizerCost,
-        amplifierName: ampType?.name ?? undefined,
-      },
-      channelConfig: { ...channelConfig },
-      optimizationConfig: buildPlatformOptimizationConfig(),
-      spanKm: finiteNumberValue(spanKm.value, 70),
-      spanStrategy: spanStrategyPayload,
-      constraints: {
-        minSpanLength: finiteNumberValue(constraints.minSpanLength, 30),
-        maxSpanLength: finiteNumberValue(constraints.maxSpanLength, 100),
-        osnrMargin: finiteNumberValue(constraints.osnrMargin, 1),
-      },
-      buConfigs: buConfigs.value.map(bu => ({
-        id: bu.id,
-        name: bu.name,
-        kp: bu.kp,
-        portCount: bu.portCount,
-        trunkLoss: bu.trunkLoss,
-        branchLoss: bu.branchLoss,
-      })),
-      deviceSequence: devices,
-      prepareSimulationDevices: context => prepareLayoutEntitiesForSimulation(
-        context,
-        projectId,
-        persistedTemplates,
-      ),
+      fiberModel: selectedFiberModel.value,
+      amplifierModel: selectedAmplifierModel.value,
       onProgress: update => {
         calculationProgress.value = update.progress
         calculationProgress.message = update.message
       },
     })
 
-    if (response.spanScanResult) {
-      spanScanData.value = {
-        linkId: selectedRouteId.value,
-        scannedAt: new Date(),
-        model: selectedFiberModel.value,
-        gsnrPerSpanDb: response.spanScanResult.scanPoints.map(point => point.gsnrPerChannelDb),
-        osnrPerSpanDb: response.spanScanResult.scanPoints.map(point => point.osnrPerChannelDb),
-        ...response.spanScanResult,
-      }
-    }
-
-    if (response.effectiveSpanKm != null) spanKm.value = response.effectiveSpanKm
-    platformLayoutResult.value = parsePlatformLayoutResult(response.layoutResult)
-
-    if (response.simulationCache) {
-      settingsStore.updateSimulationCache(response.simulationCache)
-    }
-
-    const currentPlanningResults = settingsStore.platformPlanningResults
+    storeSpanScanResult(response.spanScanResult)
+    if (response.simulationCache) settingsStore.updateSimulationCache(response.simulationCache)
+    const current = settingsStore.platformPlanningResults
     settingsStore.updatePlatformPlanningResults({
-      fixed: response.fixedLayoutResult
-        ?? (spanStrategy.value === 'fixed' ? response.layoutResult : currentPlanningResults?.fixed ?? null),
-      optimized: response.optimizedLayoutResult
-        ?? (spanStrategy.value === 'auto' ? response.layoutResult : currentPlanningResults?.optimized ?? null),
+      fixed: current?.fixed ?? null,
+      optimized: current?.optimized ?? null,
       simulation: response.detailedResult,
       errors: [],
     })
-    await syncCalculatedDeviceEntities(response, projectId, clearAll)
-    platformCalculationCompleted.value = true
 
     const detailedResult = unwrapPlatformSimulationResult(response.detailedResult)
-    if (isCalculationResult(detailedResult)) {
-      calculationResult.value = {
-        ...detailedResult,
-        linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
-      }
-    } else {
-      calculationResult.value = null
-      const layout = platformLayoutResult.value
+    calculationResult.value = isCalculationResult(detailedResult)
+      ? {
+          ...detailedResult,
+          linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
+        }
+      : null
+    if (!calculationResult.value) {
       appStore.showNotification({
         type: 'success',
-        message: layout
-          ? `平台布局规划已完成：${layout.amplifierCount} 个放大器，${layout.spans.length} 个跨段；性能指标尚未返回，暂不能判定目标是否满足`
-          : '后端规划已完成，结果已保存；暂未收到可识别的性能图表数据',
+        message: '物理仿真已完成，后端暂未返回可识别的性能图表数据',
         duration: 5000,
       })
     }
     settingsStore.updateSystemPlanningCache(buildSystemPlanningCache())
-  } catch (err: unknown) {
-    calculationError.value = err instanceof Error ? err.message : '仿真计算失败，请检查后端服务是否启动'
+  } catch (error) {
+    calculationError.value = error instanceof Error ? error.message : '物理仿真失败，请检查后端服务是否启动'
+    appStore.showNotification({ type: 'error', message: calculationError.value })
   } finally {
     isCalculating.value = false
   }
@@ -3197,61 +2993,6 @@ const closeWithResult = () => {
   emit('close')
 }
 
-// 重新计算
-const dismissRecalculationConfirmation = (restoreFocus = true) => {
-  recalculationConfirmationVisible.value = false
-  if (!restoreFocus || !recalculationReturnFocus) return
-  const returnFocus = recalculationReturnFocus
-  void nextTick(() => returnFocus.focus())
-}
-
-const recalculate = () => {
-  if (isCalculating.value || platformConfigSaving.value) return
-  recalculationReturnFocus = document.activeElement instanceof HTMLElement
-    ? document.activeElement
-    : null
-  recalculationConfirmationVisible.value = true
-  void nextTick(() => {
-    recalculationConfirmationDialog.value
-      ?.querySelector<HTMLButtonElement>('[data-recalculation-cancel]')
-      ?.focus()
-  })
-}
-
-const confirmRecalculation = (clearAll: boolean) => {
-  dismissRecalculationConfirmation(false)
-  void startCalculation(clearAll)
-}
-
-const handleRecalculationConfirmationKeydown = (event: KeyboardEvent) => {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    event.stopPropagation()
-    dismissRecalculationConfirmation()
-    return
-  }
-  if (event.key !== 'Tab') return
-
-  const focusable = Array.from(
-    recalculationConfirmationDialog.value?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [],
-  )
-  if (focusable.length === 0) return
-  const first = focusable[0]
-  const last = focusable[focusable.length - 1]
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first.focus()
-  }
-}
-
-watch([() => props.visible, isCalculating], ([visible, calculating]) => {
-  if (!visible || calculating) dismissRecalculationConfirmation(false)
-})
-
-
 // 初始化
 watch(() => props.visible, async (visible) => {
   const initializationSequence = ++planningDeviceInitializationSequence
@@ -3261,10 +3002,8 @@ watch(() => props.visible, async (visible) => {
       resetLinkConfig()
       routeStore.syncConfiguredStationNames()
 
-      // FIB/AMP 下拉只读取当前项目的器件实体；计算模型来自对应字典。
+      // 优化规划阶段没有光纤/放大器实例，只读取平台定义的默认器件库。
       await Promise.all([
-        loadFiberCalculationModels(),
-        loadAmplifierCalculationModels(),
         loadPlanningDeviceEntities('fiber'),
         loadPlanningDeviceEntities('amplifier'),
       ])
@@ -3273,28 +3012,17 @@ watch(() => props.visible, async (visible) => {
       // 加载当前选中的路由规划结果及本地表单快照。
       selectedRouteId.value = routeStore.currentRouteId || ''
       await restorePlanningFormSnapshot()
-      if (fiberModelLoaded.value
-        && selectedFiberModel.value
-        && !fiberModelOptions.value.some(item => item.value === selectedFiberModel.value)) {
-        selectedFiberModel.value = ''
-      }
-      if (amplifierModelLoaded.value
-        && selectedAmplifierModel.value
-        && !amplifierModelOptions.value.some(item => item.value === selectedAmplifierModel.value)) {
-        selectedAmplifierModel.value = ''
-      }
       const restoredFiberTypeId = selectedFiberTypeId.value
       const restoredAmplifierTypeId = selectedAmplifierTypeId.value
+      const restoredFiberModel = selectedFiberModel.value
+      const restoredAmplifierModel = selectedAmplifierModel.value
       const restoredFiberValues = { ...fiberDeviceValues.value }
       const restoredAmplifierValues = { ...amplifierDeviceValues.value }
 
-      // 缓存器件已被删除时回退到当前项目同类型器件首项。
-      if (fiberDeviceEntities.value.length > 0 && !selectedFiberEntity.value) {
-        selectedFiberTypeId.value = String(fiberDeviceEntities.value[0].id)
-      }
-      if (amplifierDeviceEntities.value.length > 0 && !selectedAmplifierEntity.value) {
-        selectedAmplifierTypeId.value = String(amplifierDeviceEntities.value[0].id)
-      }
+      selectedFiberTypeId.value = String(fiberDeviceEntities.value[0]?.id ?? '')
+      selectedAmplifierTypeId.value = String(amplifierDeviceEntities.value[0]?.id ?? '')
+      selectedFiberModel.value = resolveCalculationModel(selectedFiberEntity.value, restoredFiberModel)
+      selectedAmplifierModel.value = resolveCalculationModel(selectedAmplifierEntity.value, restoredAmplifierModel)
 
       await Promise.all([
         loadPlanningDeviceConfigs(
@@ -3323,14 +3051,10 @@ watch(() => props.visible, async (visible) => {
       }
     }
   } else {
-    fiberModelRequestSequence += 1
-    amplifierModelRequestSequence += 1
     deviceEntityRequestSequence.fiber += 1
     deviceEntityRequestSequence.amplifier += 1
     deviceConfigRequestSequence.fiber += 1
     deviceConfigRequestSequence.amplifier += 1
-    fiberModelLoading.value = false
-    amplifierModelLoading.value = false
     initializingPlanningDevices.value = false
   }
 }, { immediate: true })
@@ -3496,110 +3220,108 @@ watch(() => props.visible, async (visible) => {
                 </div>
               </div>
               
-              <!-- Step 2: 计算模型选择 -->
+              <!-- Step 2: 布局算法选择 -->
               <div v-if="activeStep === 'model'" class="planning-section space-y-5">
-                <h3 class="text-base font-semibold text-gray-800">计算模型选择</h3>
-                
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-2">光纤性能计算模型：</label>
-                  <Select 
-                    v-model="selectedFiberModel" 
-                    :options="fiberModelOptions.map(o => ({ value: o.value, label: o.label }))"
-                    :disabled="fiberModelLoading"
-                    class="w-full"
-                  />
-                  <div v-if="fiberModelLoading" class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-                    正在加载光纤计算模型...
-                  </div>
-                  <div v-else-if="fiberModelError" class="mt-2 p-3 bg-red-50 rounded-lg text-sm text-red-700">
-                    {{ fiberModelError }}
-                  </div>
-                  <div v-else-if="selectedFiberModel" class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-                    {{ fiberModelOptions.find(o => o.value === selectedFiberModel)?.desc }}
-                  </div>
-                </div>
-                
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-2">放大器性能计算模型：</label>
-                  <Select 
-                    v-model="selectedAmplifierModel" 
-                    :options="amplifierModelOptions.map(o => ({ value: o.value, label: o.label }))"
-                    :disabled="amplifierModelLoading"
-                    class="w-full"
-                  />
-                  <div v-if="amplifierModelLoading" class="mt-2 p-3 bg-purple-50 rounded-lg text-sm text-purple-700">
-                    正在加载放大器计算模型...
-                  </div>
-                  <div v-else-if="amplifierModelError" class="mt-2 p-3 bg-red-50 rounded-lg text-sm text-red-700">
-                    {{ amplifierModelError }}
-                  </div>
-                  <div v-else-if="selectedAmplifierModel" class="mt-2 p-3 bg-purple-50 rounded-lg text-sm text-purple-700">
-                    {{ amplifierModelOptions.find(o => o.value === selectedAmplifierModel)?.desc }}
-                  </div>
-                </div>
-                
-                <!-- SSFM 专属参数面板 -->
-                <div v-if="selectedFiberModel === 'SSFM'" class="bg-orange-50 rounded-lg p-4 border border-orange-200">
-                  <div class="text-sm font-medium text-orange-800 mb-3">⚡ SSFM 仿真参数</div>
-                  <div class="grid grid-cols-3 gap-4">
-                    <div>
-                      <label class="block text-xs text-gray-600 mb-1">步长 (m)</label>
-                      <Input v-model.number="ssfmParams.stepSize" type="number" class="w-full" />
-                      <p class="text-xs text-gray-400 mt-1">越小越精确，计算越慢</p>
-                    </div>
-                    <div>
-                      <label class="block text-xs text-gray-600 mb-1">采样点数</label>
-                      <select v-model.number="ssfmParams.samplePoints" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg">
-                        <option :value="2048">2048</option>
-                        <option :value="4096">4096 (推荐)</option>
-                        <option :value="8192">8192 (高精度)</option>
-                        <option :value="16384">16384</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label class="block text-xs text-gray-600 mb-1">最大迭代次数</label>
-                      <Input v-model.number="ssfmParams.maxIterations" type="number" class="w-full" />
-                    </div>
-                  </div>
-                  <div class="mt-3 p-2 bg-orange-100 rounded text-xs text-orange-700">
-                    ⚠️ SSFM 计算量较大，长链路可能需要 10-60 秒。采样点数和步长影响精度与速度的平衡。
-                  </div>
-                </div>
+                <h3 class="text-base font-semibold text-gray-800">计算模型</h3>
 
-                <div class="p-3 bg-amber-50 rounded-lg text-sm text-amber-700 flex items-start gap-2">
-                  <AlertCircle class="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>💡 模型决定参数需求；器件仅用于匹配并回填已有参数</span>
+                <div class="bg-gray-50 rounded-lg p-4">
+                  <div class="text-sm font-medium text-gray-700 mb-3">Span 布局策略</div>
+                  <div class="space-y-4">
+                    <label class="flex items-start gap-2 cursor-pointer">
+                      <input v-model="spanStrategy" type="radio" value="fixed" class="mt-1 text-blue-600" />
+                      <span>
+                        <span class="block text-sm font-medium text-gray-800">固定间距</span>
+                        <span v-if="spanStrategy === 'fixed'" class="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                          Span 长度
+                          <Input v-model.number="spanKm" type="number" class="w-24" />
+                          km
+                        </span>
+                      </span>
+                    </label>
+
+                    <label class="flex items-start gap-2 cursor-pointer border-t pt-4">
+                      <input v-model="spanStrategy" type="radio" value="auto" class="mt-1 text-blue-600" />
+                      <span class="min-w-0 flex-1">
+                        <span class="block text-sm font-medium text-gray-800">优化算法</span>
+                        <span v-if="spanStrategy === 'auto'" class="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                          <span class="flex items-center gap-1">最小 <Input v-model.number="spanScanConfig.min" type="number" class="w-20" /> km</span>
+                          <span class="flex items-center gap-1">最大 <Input v-model.number="spanScanConfig.max" type="number" class="w-20" /> km</span>
+                          <span class="flex items-center gap-1">步长 <Input v-model.number="spanScanConfig.step" type="number" class="w-20" /> km</span>
+                        </span>
+                      </span>
+                    </label>
+                  </div>
                 </div>
               </div>
-              
+
               <!-- Step 3: 光纤配置 -->
               <div v-else-if="activeStep === 'fiber'" class="planning-section space-y-5">
                 <h3 class="text-base font-semibold text-gray-800">光纤配置</h3>
                 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-2">当前光纤器件：</label>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">默认光纤器件库：</label>
                   <Select
                     v-model="selectedFiberTypeId"
                     :options="fiberTypeOptions"
-                    :disabled="deviceEntityLoading.fiber"
-                    placeholder="从当前项目选择光纤器件..."
+                    disabled
+                    placeholder="未定义默认光纤器件库"
                     class="w-full"
                   />
                   <div v-if="deviceEntityLoading.fiber" class="mt-2 text-xs text-gray-500">
-                    正在读取当前项目的 FIB 器件...
+                    正在读取默认 FIB 器件库...
                   </div>
                   <div v-else-if="deviceEntityErrors.fiber" class="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                     {{ deviceEntityErrors.fiber }}
                   </div>
                   <div v-else-if="fiberDeviceEntities.length === 0" class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                    当前项目没有 FIB 光纤器件
+                    器件库中没有设为默认的 FIB 光纤
+                  </div>
+                </div>
+
+                <div class="bg-gray-50 rounded-lg p-4">
+                  <label class="mb-2 block text-sm font-medium text-gray-700">光纤性能计算模型：</label>
+                  <Select
+                    v-model="selectedFiberModel"
+                    :options="fiberCalculationModelOptions"
+                    :disabled="!selectedFiberEntity || fiberCalculationModelOptions.length === 0"
+                    placeholder="请选择光纤性能计算模型"
+                    class="w-full"
+                  />
+                  <div v-if="selectedFiberEntity && fiberCalculationModelOptions.length === 0" class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                    当前默认光纤器件库没有功能配置，请先在器件库中添加功能
+                  </div>
+                  <div v-else class="mt-2 text-xs text-gray-500">
+                    可选值来自当前默认光纤器件库的功能配置
+                  </div>
+                </div>
+
+                <div v-if="selectedFiberModel.trim().toUpperCase() === 'SSFM'" class="rounded-lg border border-orange-200 bg-orange-50 p-4">
+                  <div class="mb-3 text-sm font-medium text-orange-800">SSFM 仿真参数</div>
+                  <div class="grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <label class="mb-1 block text-xs text-gray-600">步长 (m)</label>
+                      <Input v-model.number="ssfmParams.stepSize" type="number" class="w-full" />
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs text-gray-600">采样点数</label>
+                      <select v-model.number="ssfmParams.samplePoints" class="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm">
+                        <option :value="2048">2048</option>
+                        <option :value="4096">4096（推荐）</option>
+                        <option :value="8192">8192（高精度）</option>
+                        <option :value="16384">16384</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs text-gray-600">最大迭代次数</label>
+                      <Input v-model.number="ssfmParams.maxIterations" type="number" class="w-full" />
+                    </div>
                   </div>
                 </div>
                 
                 <div class="bg-gray-50 rounded-lg p-4">
                   <div class="mb-3 text-sm font-medium text-gray-700">器件动态属性</div>
                   <div v-if="!selectedFiberTypeId" class="rounded-md border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-400">
-                    请先选择光纤器件
+                    请先在器件库中设置默认光纤
                   </div>
                   <div v-else-if="deviceConfigLoading.fiber" class="flex items-center justify-center gap-2 py-8 text-sm text-gray-500">
                     <RefreshCw class="h-4 w-4 animate-spin" />
@@ -3612,7 +3334,7 @@ watch(() => props.visible, async (visible) => {
                     v-else
                     :configs="fiberDeviceConfigs"
                     :model-value="fiberDeviceValues"
-                    value-scope="entity"
+                    value-scope="library"
                     @update:model-value="updateFiberDeviceValues"
                   />
                 </div>
@@ -3623,29 +3345,46 @@ watch(() => props.visible, async (visible) => {
                 <h3 class="text-base font-semibold text-gray-800">放大器配置</h3>
                 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-2">当前放大器器件：</label>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">默认放大器器件库：</label>
                   <Select
                     v-model="selectedAmplifierTypeId"
                     :options="amplifierTypeOptions"
-                    :disabled="deviceEntityLoading.amplifier"
-                    placeholder="从当前项目选择放大器器件..."
+                    disabled
+                    placeholder="未定义默认放大器器件库"
                     class="w-full"
                   />
                   <div v-if="deviceEntityLoading.amplifier" class="mt-2 text-xs text-gray-500">
-                    正在读取当前项目的 AMP 器件...
+                    正在读取默认 AMP 器件库...
                   </div>
                   <div v-else-if="deviceEntityErrors.amplifier" class="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                     {{ deviceEntityErrors.amplifier }}
                   </div>
                   <div v-else-if="amplifierDeviceEntities.length === 0" class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                    当前项目没有 AMP 放大器器件
+                    器件库中没有设为默认的 AMP 放大器
+                  </div>
+                </div>
+
+                <div class="bg-gray-50 rounded-lg p-4">
+                  <label class="mb-2 block text-sm font-medium text-gray-700">放大器性能计算模型：</label>
+                  <Select
+                    v-model="selectedAmplifierModel"
+                    :options="amplifierCalculationModelOptions"
+                    :disabled="!selectedAmplifierEntity || amplifierCalculationModelOptions.length === 0"
+                    placeholder="请选择放大器性能计算模型"
+                    class="w-full"
+                  />
+                  <div v-if="selectedAmplifierEntity && amplifierCalculationModelOptions.length === 0" class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                    当前默认放大器器件库没有功能配置，请先在器件库中添加功能
+                  </div>
+                  <div v-else class="mt-2 text-xs text-gray-500">
+                    可选值来自当前默认放大器器件库的功能配置
                   </div>
                 </div>
                 
                 <div class="bg-gray-50 rounded-lg p-4">
                   <div class="mb-3 text-sm font-medium text-gray-700">器件动态属性</div>
                   <div v-if="!selectedAmplifierTypeId" class="rounded-md border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-400">
-                    请先选择放大器器件
+                    请先在器件库中设置默认放大器
                   </div>
                   <div v-else-if="deviceConfigLoading.amplifier" class="flex items-center justify-center gap-2 py-8 text-sm text-gray-500">
                     <RefreshCw class="h-4 w-4 animate-spin" />
@@ -3658,63 +3397,9 @@ watch(() => props.visible, async (visible) => {
                     v-else
                     :configs="amplifierDeviceConfigs"
                     :model-value="amplifierDeviceValues"
-                    value-scope="entity"
+                    value-scope="library"
                     @update:model-value="updateAmplifierDeviceValues"
                   />
-                </div>
-                
-                <!-- Span 布局策略 -->
-                <div class="bg-gray-50 rounded-lg p-4">
-                  <div class="text-sm font-medium text-gray-700 mb-3">Span 布局策略</div>
-                  <div class="space-y-3">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                      <input 
-                        type="radio" 
-                        v-model="spanStrategy" 
-                        value="auto"
-                        class="text-blue-600"
-                      />
-                      <span class="text-sm">自动优化（推荐）</span>
-                    </label>
-                    <div v-if="spanStrategy === 'auto'" class="ml-6 space-y-2">
-                      <p class="text-xs text-gray-500">系统在指定范围内迭代求解最优 span 长度</p>
-                      <div class="flex items-center gap-3">
-                        <div class="flex items-center gap-1">
-                          <span class="text-xs text-gray-500">最小:</span>
-                          <Input v-model.number="spanScanConfig.min" type="number" class="w-16" />
-                          <span class="text-xs text-gray-500">km</span>
-                        </div>
-                        <div class="flex items-center gap-1">
-                          <span class="text-xs text-gray-500">最大:</span>
-                          <Input v-model.number="spanScanConfig.max" type="number" class="w-16" />
-                          <span class="text-xs text-gray-500">km</span>
-                        </div>
-                        <div class="flex items-center gap-1">
-                          <span class="text-xs text-gray-500">步长:</span>
-                          <Input v-model.number="spanScanConfig.step" type="number" class="w-16" />
-                          <span class="text-xs text-gray-500">km</span>
-                        </div>
-                      </div>
-                      <p class="text-xs text-gray-400">
-                        共 {{ Math.floor((spanScanConfig.max - spanScanConfig.min) / spanScanConfig.step) + 1 }} 个扫描点
-                      </p>
-                    </div>
-                    
-                    <label class="flex items-center gap-2 cursor-pointer">
-                      <input 
-                        type="radio" 
-                        v-model="spanStrategy" 
-                        value="fixed"
-                        class="text-blue-600"
-                      />
-                      <span class="text-sm">固定间距</span>
-                    </label>
-                    <div v-if="spanStrategy === 'fixed'" class="flex items-center gap-2 ml-6">
-                      <span class="text-xs text-gray-500">所有 span 使用固定长度：</span>
-                      <Input v-model.number="spanKm" type="number" class="w-20" />
-                      <span class="text-xs text-gray-500">km</span>
-                    </div>
-                  </div>
                 </div>
                 
                 <!-- 优化目标与约束 -->
@@ -4232,6 +3917,10 @@ watch(() => props.visible, async (visible) => {
                   <BarChart2 class="w-12 h-12 mx-auto mb-4 text-gray-300" />
                   <p class="text-gray-500">请点击"开始计算"执行性能仿真</p>
                 </div>
+                <div v-if="calculationError && !isCalculating" class="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <AlertCircle class="mt-0.5 h-4 w-4 flex-none" />
+                  <span>{{ calculationError }}</span>
+                </div>
               </div>
             </div>
 
@@ -4261,26 +3950,27 @@ watch(() => props.visible, async (visible) => {
                 </Button>
               </div>
               
-              <!-- 最终配置页：在下一步位置启动系统规划计算 -->
+              <!-- 最终配置页：保存后生成所选布局。 -->
               <div v-else-if="isLastConfigStep" class="flex gap-2">
                 <Button 
                   :disabled="!canStartCalculation || isCalculating || platformConfigSaving"
-                  @click="startCalculation(false)"
+                  @click="goToNextStep"
                 >
                   <PlayCircle class="w-4 h-4 mr-1" />
-                  {{ platformConfigSaving ? '保存中...' : (isCalculating ? '计算中...' : '下一步：开始计算') }}
+                  {{ platformConfigSaving ? '保存中...' : (isCalculating ? '生成中...' : (spanStrategy === 'fixed' ? '生成固定布局' : '生成优化布局')) }}
                   <ChevronRight class="w-4 h-4 ml-1" />
                 </Button>
               </div>
               
-              <!-- 结果页：算法生成的设备已同步，这里保留重算和完成操作。 -->
+              <!-- 结果页只启动 simulation，不再调用布局算法。 -->
               <div v-else-if="activeStep === 'result'" class="flex gap-2">
                 <Button 
-                  variant="outline"
-                  :disabled="isCalculating || platformConfigSaving"
-                  @click="recalculate"
+                  :disabled="!hasPlanningResult || isCalculating || platformConfigSaving"
+                  @click="startCalculation"
                 >
-                  <RefreshCw class="w-4 h-4 mr-1" /> 重新计算
+                  <PlayCircle v-if="!calculationResult" class="w-4 h-4 mr-1" />
+                  <RefreshCw v-else class="w-4 h-4 mr-1" />
+                  {{ calculationResult ? '重新物理仿真' : '开始物理仿真' }}
                 </Button>
                 <Button 
                   :disabled="!hasPlanningResult"
@@ -4296,61 +3986,6 @@ watch(() => props.visible, async (visible) => {
     </div>
   </Teleport>
 
-  <Teleport to="body">
-    <div
-      v-if="visible && recalculationConfirmationVisible"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4"
-      @click.self="dismissRecalculationConfirmation()"
-    >
-      <div
-        ref="recalculationConfirmationDialog"
-        class="w-full max-w-[560px] rounded-lg border border-gray-200 bg-white shadow-2xl"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="recalculation-confirmation-title"
-        aria-describedby="recalculation-confirmation-description"
-        @keydown="handleRecalculationConfirmationKeydown"
-      >
-        <div class="flex items-start gap-3 px-5 pb-4 pt-5 sm:px-6 sm:pt-6">
-          <div class="flex h-9 w-9 flex-none items-center justify-center rounded-md bg-amber-50 text-amber-600">
-            <AlertCircle class="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div class="min-w-0">
-            <h2 id="recalculation-confirmation-title" class="text-base font-semibold text-gray-900">
-              重新计算
-            </h2>
-            <p id="recalculation-confirmation-description" class="mt-2 text-sm leading-6 text-gray-600">
-              重新计算会删除之前生成的设备实例，是否要同时删除手动添加的设备？
-            </p>
-          </div>
-        </div>
-        <div class="flex flex-wrap justify-end gap-2 border-t bg-gray-50 px-5 py-4 sm:px-6">
-          <button
-            type="button"
-            data-recalculation-cancel
-            class="min-h-9 rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            @click="dismissRecalculationConfirmation()"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            class="min-h-9 rounded-md border border-blue-200 bg-white px-4 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            @click="confirmRecalculation(false)"
-          >
-            保留手动添加
-          </button>
-          <button
-            type="button"
-            class="min-h-9 rounded-md bg-red-600 px-4 text-sm font-medium text-white transition-colors hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-            @click="confirmRecalculation(true)"
-          >
-            同时删除
-          </button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped>

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const root = process.cwd()
+const read = relativePath => fs.readFileSync(path.join(root, relativePath), 'utf8')
 
 function expect(condition, label) {
   if (!condition) throw new Error(label)
@@ -14,72 +15,34 @@ function block(source, startMarker, endMarker) {
   return source.slice(start, end)
 }
 
-const dialogPath = path.join(root, 'src/modules/design/dialogs/LinkConfigDialog.vue')
-const dialogSource = fs.readFileSync(dialogPath, 'utf8')
-const dictionaryStorePath = path.join(root, 'src/stores/dictionary.ts')
-const dictionaryStoreSource = fs.readFileSync(dictionaryStorePath, 'utf8')
-const platformApiSource = fs.readFileSync(path.join(root, 'src/services/platform/api.ts'), 'utf8')
+const dialogSource = read('src/modules/design/dialogs/LinkConfigDialog.vue')
+const platformApiSource = read('src/services/platform/api.ts')
+const simulationSource = read('src/services/SimulationApiService.ts')
 
 expect(
-  dialogSource.includes('platformDeviceEntityApi')
+  dialogSource.includes('platformDeviceLibraryApi')
     && dialogSource.includes('platformDeviceConfigApi')
     && dialogSource.includes('DeviceDynamicValueForm'),
-  'system planning dialog is missing project-device or dynamic-form dependencies',
+  'system planning dialog is missing default-library or dynamic-form dependencies',
 )
 
-const fiberModelLoadSource = block(
-  dialogSource,
-  'const loadFiberCalculationModels = async',
-  'const loadAmplifierCalculationModels = async',
-)
-const amplifierModelLoadSource = block(
-  dialogSource,
-  'const loadAmplifierCalculationModels = async',
-  '// ============ Step 3: 光纤配置 ============',
-)
-expect(
-  dictionaryStoreSource.includes("fiberCalculationModel: 'FIBER_CALC_MODEL'")
-    && platformApiSource.includes("'/sys/dic/search/list'")
-    && fiberModelLoadSource.includes('dictionaryStore.searchDictionary({')
-    && fiberModelLoadSource.includes('pageNumber: 1')
-    && fiberModelLoadSource.includes('pageSize: 10')
-    && fiberModelLoadSource.includes('type: PLATFORM_DICTIONARY_TYPES.fiberCalculationModel'),
-  'fiber calculation models must use the FIBER_CALC_MODEL dictionary search contract',
-)
-expect(
-  dictionaryStoreSource.includes("amplifierCalculationModel: 'AMP_CALC_MODEL'")
-    && platformApiSource.includes("'/sys/dic/search/list'")
-    && amplifierModelLoadSource.includes('dictionaryStore.searchDictionary({')
-    && amplifierModelLoadSource.includes('pageNumber: 1')
-    && amplifierModelLoadSource.includes('pageSize: 10')
-    && amplifierModelLoadSource.includes('type: PLATFORM_DICTIONARY_TYPES.amplifierCalculationModel'),
-  'amplifier calculation models must use AMP_CALC_MODEL dictionary search with name labels and code values',
-)
-expect(
-  dialogSource.includes('toCalculationModelOptions')
-    && dialogSource.includes("const value = String(item.code ?? '').trim()")
-    && dialogSource.includes('label: item.name?.trim() || value')
-    && dialogSource.includes('loadFiberCalculationModels()')
-    && dialogSource.includes(':disabled="fiberModelLoading"')
-    && dialogSource.includes('fiberModelError')
-    && dialogSource.includes('loadAmplifierCalculationModels()')
-    && dialogSource.includes(':disabled="amplifierModelLoading"')
-    && dialogSource.includes('amplifierModelError'),
-  'calculation model loading states are not wired into the system planning dialog',
-)
-
-const entityLoadSource = block(
+const libraryLoadSource = block(
   dialogSource,
   'const loadPlanningDeviceEntities = async',
   'const loadPlanningDeviceConfigs = async',
 )
 expect(
-  entityLoadSource.includes('platformDeviceEntityApi.search({')
-    && entityLoadSource.includes('pageNumber: 1')
-    && entityLoadSource.includes('pageSize: 1000')
-    && entityLoadSource.includes('projectId,')
-    && entityLoadSource.includes('deviceTypeCd: planningDeviceTypeCode[type]'),
-  'deviceEntity/search payload does not include the required project and device type filters',
+  libraryLoadSource.includes('platformDeviceLibraryApi.search({')
+    && libraryLoadSource.includes('deviceTypeCd: planningDeviceTypeCode[type]')
+    && libraryLoadSource.includes('isDefault: 1')
+    && libraryLoadSource.includes('Number(library.isDefault) === 1')
+    && libraryLoadSource.includes('platformDeviceLibraryApi.detail(library.id)'),
+  'optimization configuration does not load the explicitly default device library',
+)
+expect(
+  !libraryLoadSource.includes('platformDeviceEntityApi.search')
+    && !libraryLoadSource.includes('projectId,'),
+  'pre-layout fiber/amplifier configuration still depends on project device instances',
 )
 
 const configLoadSource = block(
@@ -89,87 +52,87 @@ const configLoadSource = block(
 )
 expect(
   configLoadSource.includes('platformDeviceConfigApi.search({')
-    && configLoadSource.includes('pageNumber: 1')
-    && configLoadSource.includes('pageSize: 1000')
-    && configLoadSource.includes('deviceTypeCd: planningDeviceTypeCode[type]'),
-  'deviceConfig/search payload does not match the type-based dynamic configuration contract',
-)
-expect(
-  configLoadSource.includes('deviceValueListToMap(entity.deviceValueList)')
+    && configLoadSource.includes('deviceTypeCd: planningDeviceTypeCode[type]')
+    && configLoadSource.includes('deviceValueListToMap(library.deviceValueList)')
     && configLoadSource.includes('normalizeDeviceConfigs(response.data ?? [])'),
-  'entity values and dynamic configuration definitions are not combined for rendering',
+  'default library values and dynamic configuration definitions are not combined',
 )
 
-expect(
-  dialogSource.includes("getDeviceTypeCodeForCategory('fiber')")
-    && dialogSource.includes("getDeviceTypeCodeForCategory('amplifier')")
-    && dialogSource.includes("loadPlanningDeviceEntities('fiber')")
-    && dialogSource.includes("loadPlanningDeviceEntities('amplifier')")
-    && dialogSource.includes("loadPlanningDeviceConfigs('fiber', selectedEntityId)")
-    && dialogSource.includes("loadPlanningDeviceConfigs('amplifier', selectedEntityId)"),
-  'FIB and AMP do not both follow entity-search then config-search selection flow',
-)
-
-expect(
-  dialogSource.includes(':options="fiberTypeOptions"')
-    && dialogSource.includes(':configs="fiberDeviceConfigs"')
-    && dialogSource.includes(':options="amplifierTypeOptions"')
-    && dialogSource.includes(':configs="amplifierDeviceConfigs"'),
-  'fiber or amplifier UI is not bound to project entities and dynamic configs',
-)
-expect(
-  !dialogSource.includes('platformFiberLibraries')
-    && !dialogSource.includes('platformAmplifierLibraries')
-    && !dialogSource.includes('saveFiberParamsToLibrary')
-    && !dialogSource.includes('saveAmplifierParamsToLibrary'),
-  'fiber or amplifier planning still depends on the platform model library',
-)
-
-const topologySource = block(
+const persistLibrarySource = block(
   dialogSource,
-  'const planningRouteBus = computed',
-  'const formatRouteCreatedAt =',
+  'const persistPlanningLibrary = async',
+  'const persistConnectorEntity = async',
 )
 expect(
-  topologySource.includes("point.type === 'branching'")
-    && !topologySource.includes('routeConnectorElements'),
-  'link topology BU nodes are not strictly sourced from route planning',
+  persistLibrarySource.includes('isDefault: 1')
+    && persistLibrarySource.includes('bindFuncList: bindFuncListWithSelectedModel(library, selectedModel)')
+    && persistLibrarySource.includes('deviceValueList: buildDeviceValueList(values)')
+    && persistLibrarySource.includes('settingsStore.savePlatformDeviceLibrary(payload)'),
+  'edited planning parameters or selected functions are not saved back to the default device library',
 )
 expect(
-  dialogSource.includes("kind: 'station'")
-    && dialogSource.includes("kind: 'bu' as const")
-    && !dialogSource.includes('linkTopologyDevices'),
-  'link topology is not limited to stations and explicit route BU nodes',
+  dialogSource.includes('value-scope="library"')
+    && dialogSource.includes('默认光纤器件库')
+    && dialogSource.includes('默认放大器器件库')
+    && !dialogSource.includes('value-scope="entity"'),
+  'fiber/amplifier forms do not expose default-library scope',
 )
 
 expect(
-  dialogSource.includes('planningDeviceInitializationSequence')
-    && dialogSource.includes('initializationSequence !== planningDeviceInitializationSequence || !props.visible'),
-  'dialog close/reopen does not invalidate stale asynchronous device initialization',
+  dialogSource.includes('Span 布局策略')
+    && dialogSource.includes('生成固定布局')
+    && dialogSource.includes('生成优化布局')
+    && dialogSource.includes("activeStep.value === 'model' && spanStrategy.value === 'fixed'")
+    && dialogSource.includes("spanStrategy.value === 'auto' && activeStep.value === lastConfigStep.value"),
+  'fixed and optimized layout algorithms are not attached to their required wizard stages',
+)
+
+const modelOptionSource = block(
+  dialogSource,
+  'const calculationModelOptionsFromLibrary =',
+  '// ============ Step 3: 光纤配置 ============',
+)
+expect(
+  modelOptionSource.includes('library?.bindFuncList')
+    && modelOptionSource.includes('item.name?.trim()')
+    && modelOptionSource.includes('Number(item.isDefault) === 1')
+    && modelOptionSource.includes('bindFuncListWithSelectedModel'),
+  'calculation-model options are not derived from device-library function configuration',
+)
+
+const modelStepSource = block(dialogSource, '<!-- Step 2: 布局算法选择 -->', '<!-- Step 3: 光纤配置 -->')
+const fiberStepSource = block(dialogSource, '<!-- Step 3: 光纤配置 -->', '<!-- Step 4: 放大器配置 -->')
+const amplifierStepSource = block(dialogSource, '<!-- Step 4: 放大器配置 -->', '<!-- Step 5: WDM 参数配置 -->')
+expect(
+  !modelStepSource.includes('光纤性能计算模型：')
+    && !modelStepSource.includes('放大器性能计算模型：')
+    && fiberStepSource.includes('光纤性能计算模型：')
+    && fiberStepSource.includes(':options="fiberCalculationModelOptions"')
+    && amplifierStepSource.includes('放大器性能计算模型：')
+    && amplifierStepSource.includes(':options="amplifierCalculationModelOptions"'),
+  'calculation-model selectors are not placed in their matching device configuration steps',
+)
+
+const simulationBlock = block(simulationSource, 'export async function runSimulation', 'const RESULT_POLL_INTERVAL_MS')
+expect(
+  simulationBlock.includes('platformProjectApi.simulationPlan')
+    && !simulationBlock.includes('fixedPlan(')
+    && !simulationBlock.includes('optimizedPlan('),
+  'physical simulation is not isolated from layout generation',
 )
 
 expect(
   dialogSource.includes('deviceEntityList')
     && dialogSource.includes('settingsStore.loadPlatformDeviceEntities({')
     && dialogSource.includes('syncConnectorStoreFromDeviceEntities(entities)')
-    && dialogSource.includes('platformDeviceEntityToConnectorElement')
-    && dialogSource.includes('replacePlatformElements: true'),
-  'generated deviceEntityList is not synchronized into the platform and connector stores',
+    && dialogSource.includes('platformDeviceEntityToConnectorElement'),
+  'layout-generated device entities are not synchronized after planning',
 )
 expect(
-  platformApiSource.includes("'/plan/deviceEntity/search'")
-    && platformApiSource.includes("'/plan/deviceEntity/save'")
-    && platformApiSource.includes("'/plan/deviceEntity/detail'")
-    && platformApiSource.includes("'/plan/deviceEntity/remove'"),
-  'device entity search/save/detail/remove APIs are not all connected',
+  platformApiSource.includes("'/plan/deviceLibrary/search'")
+    && platformApiSource.includes("'/plan/deviceLibrary/save'")
+    && platformApiSource.includes("'/plan/deviceEntity/search'"),
+  'required library and generated-entity platform APIs are not connected',
 )
 
-const typesSource = fs.readFileSync(path.join(root, 'src/services/platform/types.ts'), 'utf8')
-expect(
-  typesSource.includes('positionKm?: number | string | null')
-    && typesSource.includes('fiberDeviceValues?: Record<string, string>')
-    && typesSource.includes('amplifierDeviceValues?: Record<string, string>'),
-  'platform entity or planning snapshot types do not preserve the new device flow',
-)
-
-console.log('system planning project-device flow verification passed')
+console.log('system planning default-library flow verification passed')

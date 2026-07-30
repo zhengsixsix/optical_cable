@@ -118,6 +118,7 @@ expect(
 
 const request = {
   projectId: 123,
+  mode: 'optimized',
   fmmPathResultIndex: 2,
   clearAll: false,
   linkId: 'route-1',
@@ -280,17 +281,24 @@ apiState.simulation = {
   },
 }
 const fixedPlansBeforeOptimized = fixedPlanCalls
-const response = await service.runSimulation({
-  ...request,
-  spanStrategy: { mode: 'scan', scanRange: { min: 70, max: 90, step: 10 } },
+const optimizedResponse = await service.runOptimizedPlanning({
+  projectId: request.projectId,
+  fmmPathResultIndex: request.fmmPathResultIndex,
+  clearAll: false,
 })
 expect(
-  planningCallOrder.indexOf('saveChannelConfig') >= 0
-    && planningCallOrder.indexOf('searchChannelConfig') > planningCallOrder.indexOf('saveChannelConfig')
-    && planningCallOrder.indexOf('searchChannelConfig') < planningCallOrder.indexOf('optimizedPlan')
-    && planningCallOrder.indexOf('saveChannelConfig') < planningCallOrder.indexOf('optimizedPlan'),
-  'optimized layout started before WDM channel config was saved and verified',
+  planningCallOrder.includes('optimizedPlan'),
+  'optimized layout endpoint was not called',
 )
+expect(optimizedResponse.layoutResult === apiState.layout, 'optimized layout response envelope was not unpacked')
+expect(optimizedResponse.deviceEntityList[0]?.id === 901, 'generated device entities were not returned')
+expect(
+  layoutPlanCalls.some(call => call.mode === 'optimized' && call.clearAll === false),
+  'optimized layout did not receive clearAll=false',
+)
+
+const layoutCallsBeforeSimulation = layoutPlanCalls.length
+const response = await service.runSimulation(request)
 expect(response.spanScanResult?.recommendedSpanKm === 80, 'backend recommended Span was not preserved')
 expect(
   JSON.stringify(response.spanScanResult?.feasibleRange) === JSON.stringify([70, 80]),
@@ -298,19 +306,9 @@ expect(
 )
 expect(simulationQueryCalls === 0, 'direct simulation result should not trigger a query')
 expect(fixedPlanCalls === fixedPlansBeforeOptimized, 'optimized layout unexpectedly triggered a frontend fixed-plan retry')
-expect(response.constraintAdjusted === false, 'frontend reported a locally adjusted optimized layout')
 expect(
-  JSON.stringify(savedOptimizationConfig) === JSON.stringify({
-    projectId: request.projectId,
-    ...request.optimizationConfig,
-  }),
-  'complete optimization config was not forwarded to planConfig/saveOptimization',
-)
-expect(response.layoutResult === apiState.layout, 'optimized layout response envelope was not unpacked')
-expect(response.deviceEntityList[0]?.id === 901, 'generated device entities were not returned')
-expect(
-  layoutPlanCalls.some(call => call.mode === 'optimized' && call.clearAll === false),
-  'optimized layout did not receive clearAll=false',
+  layoutPlanCalls.length === layoutCallsBeforeSimulation,
+  'physical simulation unexpectedly invoked a layout endpoint',
 )
 
 const nestedLayout = layoutUtils.parsePlanningLayoutResult({
@@ -324,20 +322,26 @@ expect(nestedLayout?.totalLengthKm === 160, 'nested layoutResult envelope was no
 apiState.simulation = null
 apiState.fixedStart = { layoutResult: null, deviceEntityList: [] }
 const fixedQueryCallsBefore = fixedQueryCalls
-const withoutSimulation = await service.runSimulation({
-  ...request,
+const fixedResponse = await service.runFixedPlanning({
+  projectId: request.projectId,
   clearAll: true,
-  spanStrategy: { mode: 'fixed' },
 })
-expect(withoutSimulation.success === true, 'layout should succeed when simulation data is null')
-expect(withoutSimulation.detailedResult == null, 'null simulation data should remain unavailable')
-expect(simulationQueryCalls === 1, 'null simulation data should trigger only one fallback query')
 expect(fixedQueryCalls === fixedQueryCallsBefore + 1, 'empty fixed envelope did not query the bare layout result')
-expect(withoutSimulation.layoutResult === apiState.layout, 'bare fixed query result was not preserved')
-expect(withoutSimulation.deviceEntityList.length === 0, 'bare fixed query result created device entities')
+expect(fixedResponse.layoutResult === apiState.layout, 'bare fixed query result was not preserved')
+expect(fixedResponse.deviceEntityList.length === 0, 'bare fixed query result created device entities')
 expect(
   layoutPlanCalls.some(call => call.mode === 'fixed' && call.clearAll === true),
   'fixed layout did not receive clearAll=true',
+)
+
+const layoutCallsBeforeEmptySimulation = layoutPlanCalls.length
+const withoutSimulation = await service.runSimulation({ ...request, mode: 'fixed' })
+expect(withoutSimulation.success === true, 'physical simulation should complete when result data is null')
+expect(withoutSimulation.detailedResult == null, 'null simulation data should remain unavailable')
+expect(simulationQueryCalls === 1, 'null simulation data should trigger only one fallback query')
+expect(
+  layoutPlanCalls.length === layoutCallsBeforeEmptySimulation,
+  'empty physical simulation unexpectedly retried fixed planning',
 )
 
 const analysisSource = fs.readFileSync(
