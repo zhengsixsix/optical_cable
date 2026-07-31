@@ -2077,6 +2077,7 @@ const goToNextStep = async () => {
       || (spanStrategy.value === 'auto' && activeStep.value === lastConfigStep.value)
     if (shouldGenerateLayout) {
       await runSelectedLayoutPlanning(false)
+      await startCalculation()
       activeStep.value = 'result'
     } else {
       activeStep.value = stepOrder.value[currentIndex + 1]
@@ -2163,23 +2164,23 @@ interface CalculationResult {
   
   // 关键性能指标
   metrics: {
-    osnr: { min: number; max: number; avg: number }
-    gsnr: { min: number; max: number; avg: number }
-    power: { min: number; max: number; avg: number }
-    nli: { min: number; max: number; avg: number }
-    qFactor: { min: number; max: number; avg: number }
+    osnr?: { min: number; max: number; avg: number }
+    gsnr?: { min: number; max: number; avg: number }
+    power?: { min: number; max: number; avg: number }
+    nli?: { min: number; max: number; avg: number }
+    qFactor?: { min: number; max: number; avg: number }
   }
   
   // 系统配置摘要
   systemConfig: {
-    amplifierCount: number
-    avgSpanLength: number
-    buCount: number
-    totalBuLoss: number
-    equalizerCount: number
-    totalEqualizerLoss: number
-    channelCount: number
-    modulation: string
+    amplifierCount?: number
+    avgSpanLength?: number
+    buCount?: number
+    totalBuLoss?: number
+    equalizerCount?: number
+    totalEqualizerLoss?: number
+    channelCount?: number
+    modulation?: string
   }
   
   // 裕量评估
@@ -2409,7 +2410,7 @@ const runSelectedLayoutPlanning = async (clearAll = false): Promise<void> => {
   }
 }
 
-// 结果页只执行物理仿真；布局必须已在前面的配置步骤生成。
+// 布局完成后会自动执行；结果页按钮仅用于手动重新仿真。
 const startCalculation = async () => {
   if (!platformLayoutResult.value || !platformCalculationCompleted.value) {
     calculationError.value = '请先完成布局规划'
@@ -2439,6 +2440,11 @@ const startCalculation = async () => {
       linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
       fiberModel: selectedFiberModel.value,
       amplifierModel: selectedAmplifierModel.value,
+      channelFrequenciesThz: Array.isArray(channelConfig.channelFrequenciesThz)
+        ? [...channelConfig.channelFrequenciesThz]
+        : undefined,
+      channelCenterFrequencyThz: channelConfig.centerFrequencyThz,
+      channelSpacingGhz: channelConfig.channelSpacingGhz,
       onProgress: update => {
         calculationProgress.value = update.progress
         calculationProgress.message = update.message
@@ -2456,9 +2462,12 @@ const startCalculation = async () => {
     })
 
     const detailedResult = unwrapPlatformSimulationResult(response.detailedResult)
-    calculationResult.value = isCalculationResult(detailedResult)
+    const compatibleCalculationResult = isCalculationResult(detailedResult)
+      ? detailedResult
+      : buildCalculationResultFromPlatformSimulation(detailedResult)
+    calculationResult.value = compatibleCalculationResult
       ? {
-          ...detailedResult,
+          ...compatibleCalculationResult,
           linkName: `${info?.startStation || '起点'} ⇄ ${info?.endStation || '终点'}`,
         }
       : null
@@ -2543,6 +2552,259 @@ const readStrictNumberArray = (value: unknown): number[] | null => {
   if (!Array.isArray(value) || value.length === 0) return null
   const values = value.map(item => readNumber(item))
   return values.some(item => item == null) ? null : values as number[]
+}
+
+const readStrictNumberMatrix = (value: unknown): number[][] | null => {
+  if (!Array.isArray(value) || value.length === 0) return null
+  const rows = value.map(row => readStrictNumberArray(row))
+  if (rows.some(row => !row)) return null
+  const matrix = rows as number[][]
+  const columnCount = matrix[0]?.length ?? 0
+  if (columnCount === 0 || matrix.some(row => row.length !== columnCount)) return null
+  return matrix
+}
+
+const readRecordValue = (value: unknown): Record<string, unknown> | null => {
+  const parsed = parseMaybeJson(value)
+  return isRecordValue(parsed) ? parsed : null
+}
+
+const summarizeValues = (values: number[]): ResultMetricSummary | null => {
+  const filtered = values.filter(value => Number.isFinite(value))
+  if (filtered.length === 0) return null
+  return {
+    min: Math.min(...filtered),
+    max: Math.max(...filtered),
+    avg: filtered.reduce((sum, value) => sum + value, 0) / filtered.length,
+  }
+}
+
+const readMetricSummary = (
+  source: Record<string, unknown> | null,
+  prefix: string,
+  fallback: number[],
+): ResultMetricSummary | null => {
+  const min = readNumber(readValue(source ?? {}, [`${prefix}_min_db`, `${prefix}MinDb`, `${prefix}_min_dbm`, `${prefix}MinDbm`]))
+  const max = readNumber(readValue(source ?? {}, [`${prefix}_max_db`, `${prefix}MaxDb`, `${prefix}_max_dbm`, `${prefix}MaxDbm`]))
+  const avg = readNumber(readValue(source ?? {}, [`${prefix}_avg_db`, `${prefix}AvgDb`, `${prefix}_avg_dbm`, `${prefix}AvgDbm`]))
+  return min != null && max != null && avg != null
+    ? { min, max, avg }
+    : summarizeValues(fallback)
+}
+
+const matricesHaveSameShape = (left: number[][], right: number[][]): boolean =>
+  left.length === right.length && left.every((row, index) => row.length === right[index]?.length)
+
+const buildOsnrMatrix = (
+  explicit: number[][] | null,
+  signalPower: number[][] | null,
+  aseNoisePower: number[][] | null,
+): number[][] | null => {
+  if (explicit) return explicit
+  if (!signalPower || !aseNoisePower || !matricesHaveSameShape(signalPower, aseNoisePower)) return null
+  return signalPower.map((row, rowIndex) =>
+    row.map((signal, channelIndex) => signal - aseNoisePower[rowIndex][channelIndex]))
+}
+
+const buildGsnrMatrix = (
+  explicit: number[][] | null,
+  signalPower: number[][] | null,
+  aseNoisePower: number[][] | null,
+  nliNoisePower: number[][] | null,
+): number[][] | null => {
+  if (explicit) return explicit
+  if (!signalPower || !aseNoisePower || !nliNoisePower
+    || !matricesHaveSameShape(signalPower, aseNoisePower)
+    || !matricesHaveSameShape(signalPower, nliNoisePower)) return null
+  return signalPower.map((row, rowIndex) => row.map((signal, channelIndex) => {
+    const aseLinear = 10 ** (aseNoisePower[rowIndex][channelIndex] / 10)
+    const nliLinear = 10 ** (nliNoisePower[rowIndex][channelIndex] / 10)
+    return signal - 10 * Math.log10(aseLinear + nliLinear)
+  }))
+}
+
+const buildChannelFrequencies = (channelCount: number): number[] => {
+  if (Array.isArray(channelConfig.channelFrequenciesThz)
+    && channelConfig.channelFrequenciesThz.length === channelCount
+    && channelConfig.channelFrequenciesThz.every(value => Number.isFinite(value))) {
+    return [...channelConfig.channelFrequenciesThz]
+  }
+  const center = finiteNumberValue(channelConfig.centerFrequencyThz, 193.1)
+  const spacingThz = finiteNumberValue(channelConfig.channelSpacingGhz, 50) / 1000
+  const start = center - ((channelCount - 1) / 2) * spacingThz
+  return Array.from({ length: channelCount }, (_, index) => start + index * spacingThz)
+}
+
+const buildCalculationResultFromPlatformSimulation = (value: unknown): CalculationResult | null => {
+  const root = readRecordValue(value)
+  if (!root) return null
+  const matrices = readRecordValue(readValue(root, ['performance_matrices', 'performanceMatrices', 'metrics'])) ?? root
+  const statistics = readRecordValue(readValue(root, ['end_statistics', 'endStatistics', 'summary']))
+
+  const signalPower = readStrictNumberMatrix(readValue(matrices, [
+    'signal_power_dbm', 'signalPowerDbm', 'signal_power_matrix_dbm', 'signalPowerMatrixDbm',
+  ]))
+  const aseNoisePower = readStrictNumberMatrix(readValue(matrices, [
+    'ase_noise_power_dbm', 'aseNoisePowerDbm', 'ase_noise_power_matrix_dbm', 'aseNoisePowerMatrixDbm',
+  ]))
+  const nliNoisePower = readStrictNumberMatrix(readValue(matrices, [
+    'nli_noise_power_dbm', 'nliNoisePowerDbm', 'nli_noise_power_matrix_dbm', 'nliNoisePowerMatrixDbm',
+  ]))
+  const osnrMatrix = buildOsnrMatrix(
+    readStrictNumberMatrix(readValue(matrices, [
+      'osnr_matrix_db', 'osnrMatrixDb', 'osnr_per_channel_per_node_db', 'osnrPerChannelPerNodeDb',
+    ])),
+    signalPower,
+    aseNoisePower,
+  )
+  const gsnrMatrix = buildGsnrMatrix(
+    readStrictNumberMatrix(readValue(matrices, [
+      'gsnr_matrix_db', 'gsnrMatrixDb', 'gsnr_per_channel_per_node_db', 'gsnrPerChannelPerNodeDb',
+    ])),
+    signalPower,
+    aseNoisePower,
+    nliNoisePower,
+  )
+  if (!osnrMatrix || !gsnrMatrix || !matricesHaveSameShape(osnrMatrix, gsnrMatrix)) return null
+
+  const rowCount = gsnrMatrix.length
+  const channelCount = gsnrMatrix[0]?.length ?? 0
+  if (rowCount === 0 || channelCount === 0) return null
+
+  const nodeMetadataValue = parseMaybeJson(readValue(root, ['node_metadata', 'nodeMetadata', 'nodes']))
+  const nodeMetadata = Array.isArray(nodeMetadataValue)
+    ? nodeMetadataValue.map(item => readRecordValue(item)).filter((item): item is Record<string, unknown> => Boolean(item))
+    : []
+  if (nodeMetadata.length !== rowCount) return null
+  const positions = nodeMetadata.map(node => readNumber(readValue(node, [
+    'position_km', 'positionKm', 'kp_km', 'kpKm', 'kp',
+  ])))
+  if (positions.some(value => value == null)) return null
+  const positionNames = nodeMetadata.map((node, index) => {
+    const name = readValue(node, ['node_name', 'nodeName', 'name', 'event_id', 'eventId'])
+    return name == null || String(name).trim() === '' ? `节点 ${index + 1}` : String(name)
+  })
+
+  const endRowIndex = rowCount - 1
+  const endOsnrSpectrum = [...osnrMatrix[endRowIndex]]
+  const endGsnrSpectrum = [...gsnrMatrix[endRowIndex]]
+  const endPowerSpectrum = signalPower?.[endRowIndex] ? [...signalPower[endRowIndex]] : []
+  const endNliSpectrum = nliNoisePower?.[endRowIndex] ? [...nliNoisePower[endRowIndex]] : []
+
+  const osnr = readMetricSummary(statistics, 'osnr', endOsnrSpectrum)
+  const gsnr = readMetricSummary(statistics, 'gsnr', endGsnrSpectrum)
+  const power = readMetricSummary(statistics, 'signal_power', endPowerSpectrum)
+  const qFactor = readMetricSummary(statistics, 'q_factor', [])
+  if (!osnr || !gsnr) return null
+
+  const metrics: CalculationResult['metrics'] = { osnr, gsnr }
+  if (power) metrics.power = power
+  if (qFactor) metrics.qFactor = qFactor
+
+  const explicitWorstChannelIndex = readNumber(readValue(statistics ?? {}, [
+    'worst_channel_gsnr', 'worstChannelGsnr', 'worst_channel_index', 'worstChannelIndex',
+  ]))
+  const computedWorstChannelIndex = endGsnrSpectrum.reduce(
+    (worstIndex, current, index, values) => current < values[worstIndex] ? index : worstIndex,
+    0,
+  )
+  const worstChannelIndex = explicitWorstChannelIndex != null
+    && explicitWorstChannelIndex >= 0
+    && explicitWorstChannelIndex < channelCount
+    ? Math.trunc(explicitWorstChannelIndex)
+    : computedWorstChannelIndex
+
+  const placementValue = parseMaybeJson(readValue(root, ['amplifier_placement', 'amplifierPlacement', 'amplifiers']))
+  const placements = Array.isArray(placementValue)
+    ? placementValue.map(item => readRecordValue(item)).filter((item): item is Record<string, unknown> => Boolean(item))
+    : []
+  const placementByNodeIndex = new Map<number, Record<string, unknown>>()
+  const placementByAmplifierIndex = new Map<number, Record<string, unknown>>()
+  placements.forEach(item => {
+    const nodeIndex = readNumber(readValue(item, ['node_index', 'nodeIndex']))
+    if (nodeIndex != null) placementByNodeIndex.set(Math.trunc(nodeIndex), item)
+    const amplifierIndex = readNumber(readValue(item, ['amplifier_index', 'amplifierIndex']))
+    if (amplifierIndex != null) placementByAmplifierIndex.set(Math.trunc(amplifierIndex), item)
+  })
+
+  let amplifierSequence = 0
+  const amplifiers = nodeMetadata.flatMap((node): AmplifierInfo[] => {
+    const nodeType = String(readValue(node, ['node_type', 'nodeType', 'type']) ?? '').trim().toLowerCase()
+    if (nodeType !== 'amplifier') return []
+    amplifierSequence += 1
+    const nodeIndex = readNumber(readValue(node, ['node_index', 'nodeIndex']))
+    const explicitAmplifierIndex = readNumber(readValue(node, ['amplifier_index', 'amplifierIndex']))
+    const placement = (nodeIndex == null ? null : placementByNodeIndex.get(Math.trunc(nodeIndex)))
+      ?? (explicitAmplifierIndex == null ? null : placementByAmplifierIndex.get(Math.trunc(explicitAmplifierIndex)))
+      ?? placementByAmplifierIndex.get(amplifierSequence)
+      ?? null
+    const params = readRecordValue(readValue(node, ['amplifier_params', 'amplifierParams']))
+    const fallbackName = `AMP-${amplifierSequence}`
+    const name = String(readValue(node, ['node_name', 'nodeName', 'name']) ?? fallbackName)
+    const stableId = readValue(node, ['node_id', 'nodeId', 'event_id', 'eventId'])
+      ?? readValue(placement ?? {}, ['amplifier_id', 'amplifierId', 'id', 'amplifier_index', 'amplifierIndex'])
+      ?? name
+    return [{
+      id: String(stableId),
+      name,
+      position: readNumber(readValue(node, ['position_km', 'positionKm', 'kp_km', 'kpKm', 'kp'])) ?? 0,
+      precedingSpan: readNumber(readValue(placement ?? {}, ['preceding_span_km', 'precedingSpanKm'])),
+      gain: readNumber(readValue(params ?? {}, ['gain_db', 'gainDb'])),
+      noiseFigure: readNumber(readValue(params ?? {}, ['noise_figure_db', 'noiseFigureDb', 'nf_db', 'nfDb'])),
+      outputPower: readNumber(readValue(params ?? {}, ['output_power_dbm', 'outputPowerDbm'])),
+      inputPower: readNumber(readValue(params ?? {}, ['input_power_dbm', 'inputPowerDbm'])),
+      gainFlatness: readNumber(readValue(params ?? {}, ['gain_flatness_db', 'gainFlatnessDb', 'flatness_db', 'flatnessDb'])),
+      deviceModel: selectedAmplifierTypeId.value || selectedAmplifierModel.value || undefined,
+    }]
+  })
+
+  const spanLengths = placements
+    .map(item => readNumber(readValue(item, ['preceding_span_km', 'precedingSpanKm'])))
+    .filter((value): value is number => value != null)
+  const averageSpan = spanLengths.length > 0
+    ? spanLengths.reduce((sum, value) => sum + value, 0) / spanLengths.length
+    : null
+  const targetOsnr = finiteNumberValue(optimizationConfig.targetOsnrDb, 16)
+  const totalLength = (positions as number[])[positions.length - 1] ?? 0
+
+  return {
+    linkName: `${linkInfo.value?.startStation || '起点'} ⇄ ${linkInfo.value?.endStation || '终点'}`,
+    totalLength,
+    calculatedAt: String(readValue(root, ['timestamp', 'calculated_at', 'calculatedAt']) ?? new Date().toISOString()),
+    calculationTime: readNumber(readValue(root, ['calculation_time_s', 'calculationTime', 'elapsed_seconds', 'elapsedSeconds'])) ?? 0,
+    status: 'success',
+    systemCapacityTbps: readNumber(readValue(statistics ?? {}, ['system_capacity_tbps', 'systemCapacityTbps'])) ?? undefined,
+    metrics,
+    systemConfig: {
+      amplifierCount: amplifiers.length,
+      avgSpanLength: averageSpan ?? undefined,
+      buCount: nodeMetadata.filter(node => {
+        const type = String(readValue(node, ['node_type', 'nodeType', 'type']) ?? '').trim().toLowerCase()
+        return ['bu', 'branching', 'branching_unit'].includes(type)
+      }).length,
+      channelCount,
+      modulation: channelConfig.modulationFormat,
+    },
+    margin: {
+      targetOsnr,
+      worstMargin: osnr.min - targetOsnr,
+      avgMargin: osnr.avg - targetOsnr,
+      meetsRequirement: osnr.min >= targetOsnr,
+    },
+    performanceData: {
+      channelFrequencies: buildChannelFrequencies(channelCount),
+      endOsnrSpectrum,
+      endGsnrSpectrum,
+      endPowerSpectrum,
+      endNliSpectrum,
+      positions: positions as number[],
+      positionNames,
+      osnrEvolution: osnrMatrix.map(row => row[worstChannelIndex]),
+      gsnrEvolution: gsnrMatrix.map(row => row[worstChannelIndex]),
+      worstChannelIndex,
+    },
+    amplifiers,
+  }
 }
 
 const readBooleanValue = (value: unknown): boolean | null => {
@@ -2659,7 +2921,7 @@ const restoreCachedPlanningResult = (): boolean => {
   }
   const restoredCalculation = isCalculationResult(restoredSimulation)
     ? restoredSimulation
-    : null
+    : buildCalculationResultFromPlatformSimulation(restoredSimulation)
   const restoredSpanScan = normalizeSpanScanResult(restoredSimulation)
     ?? normalizeSpanScanResult(results?.simulation)
 
@@ -2783,11 +3045,11 @@ interface ResultMetricSummary {
 }
 
 interface ResultMetrics {
-  osnr: ResultMetricSummary
-  gsnr: ResultMetricSummary
-  power: ResultMetricSummary
-  nli: ResultMetricSummary
-  qFactor: ResultMetricSummary
+  osnr?: ResultMetricSummary
+  gsnr?: ResultMetricSummary
+  power?: ResultMetricSummary
+  nli?: ResultMetricSummary
+  qFactor?: ResultMetricSummary
 }
 
 interface ResultPerformanceData {
@@ -2819,21 +3081,14 @@ const hasFiniteMetricSummary = (summary: ResultMetricSummary | undefined): summa
 
 const resultMetrics = computed<ResultMetrics | null>(() => {
   const metrics = calculationResult.value?.metrics
-  if (!metrics
-    || !hasFiniteMetricSummary(metrics.osnr)
-    || !hasFiniteMetricSummary(metrics.gsnr)
-    || !hasFiniteMetricSummary(metrics.power)
-    || !hasFiniteMetricSummary(metrics.nli)
-    || !hasFiniteMetricSummary(metrics.qFactor)) {
-    return null
-  }
-  return {
-    osnr: { ...metrics.osnr },
-    gsnr: { ...metrics.gsnr },
-    power: { ...metrics.power },
-    nli: { ...metrics.nli },
-    qFactor: { ...metrics.qFactor },
-  }
+  if (!metrics) return null
+  const result: ResultMetrics = {}
+  if (hasFiniteMetricSummary(metrics.osnr)) result.osnr = { ...metrics.osnr }
+  if (hasFiniteMetricSummary(metrics.gsnr)) result.gsnr = { ...metrics.gsnr }
+  if (hasFiniteMetricSummary(metrics.power)) result.power = { ...metrics.power }
+  if (hasFiniteMetricSummary(metrics.nli)) result.nli = { ...metrics.nli }
+  if (hasFiniteMetricSummary(metrics.qFactor)) result.qFactor = { ...metrics.qFactor }
+  return Object.keys(result).length > 0 ? result : null
 })
 
 const resultPerformanceData = computed<ResultPerformanceData | null>(() => {
@@ -2853,7 +3108,9 @@ const resultPerformanceData = computed<ResultPerformanceData | null>(() => {
   }
 })
 
-const resultHasPerformanceMetrics = computed(() => resultMetrics.value !== null)
+const resultHasPerformanceMetrics = computed(() => Boolean(
+  resultMetrics.value?.osnr || resultMetrics.value?.gsnr,
+))
 
 const resultTotalLength = computed(() => {
   const fromLayout = platformLayoutResult.value?.totalLengthKm

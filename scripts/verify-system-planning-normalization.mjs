@@ -220,7 +220,46 @@ const fromPower = service.normalizePlatformSimulationCache({
     nli_noise_power_dbm: [[-25, -26], [-23, -24]],
   },
 }, request)
-expect(fromPower === null, 'power matrices were still converted into frontend-derived GSNR/OSNR metrics')
+expect(fromPower === null, 'incomplete simulation data without node positions was accepted')
+
+const platformSimulation = service.normalizePlatformSimulationCache({
+  data: {
+    node_metadata: [
+      { node_index: '0', node_type: 'Tx', node_name: 'Tx', position_km: '0.0' },
+      { node_index: '1', node_type: 'Rx', node_name: 'Rx', position_km: '160.0' },
+    ],
+    performance_matrices: {
+      signal_power_dbm: [[0, -1], [-2, -3]],
+      ase_noise_power_dbm: [[-30, -31], [-28, -29]],
+      nli_noise_power_dbm: [[-35, -36], [-33, -34]],
+      osnr_per_channel_per_node_db: [[30, 30], [26, 26]],
+      gsnr_per_channel_per_node_db: [[28.8, 28.8], [24.8, 24.8]],
+    },
+    end_statistics: {
+      osnr_min_db: '26.0',
+      osnr_max_db: '26.0',
+      osnr_avg_db: '26.0',
+      gsnr_min_db: '24.8',
+      gsnr_max_db: '24.8',
+      gsnr_avg_db: '24.8',
+    },
+  },
+}, {
+  ...request,
+  channelFrequenciesThz: request.channelConfig.channelFrequenciesThz,
+  channelCenterFrequencyThz: request.channelConfig.centerFrequencyThz,
+  channelSpacingGhz: request.channelConfig.channelSpacingGhz,
+})
+expect(platformSimulation?.metrics.gsnr_matrix_db[1][0] === 24.8, 'platform GSNR matrix alias was not normalized')
+expect(platformSimulation?.metrics.osnr_matrix_db[1][0] === 26, 'platform OSNR matrix alias was not normalized')
+expect(Number.isFinite(platformSimulation?.metrics.snr_ase_matrix_db[1][0]), 'ASE SNR was not derived from power matrices')
+expect(Number.isFinite(platformSimulation?.metrics.snr_nli_matrix_db[1][0]), 'NLI SNR was not derived from power matrices')
+expect(platformSimulation?.positions.distances_km[1] === 160, 'node_metadata positions were not normalized')
+expect(platformSimulation?.positions.span_ids.length === 1, 'missing span IDs were not derived from adjacent nodes')
+expect(platformSimulation?.channels.ids[0] === 'CH-001', 'missing channel IDs were not generated')
+expect(platformSimulation?.channels.frequencies_thz[1] === 193.125, 'configured WDM frequencies were not preserved')
+expect(platformSimulation?.summary.final_gsnr?.avg_db === 24.8, 'end_statistics GSNR summary was not normalized')
+expect(platformSimulation?.summary.final_osnr?.min_db === 26, 'end_statistics OSNR summary was not normalized')
 
 apiState.layout = {
   total_length_km: '160.0',
@@ -347,6 +386,19 @@ expect(
 const analysisSource = fs.readFileSync(
   path.join(root, 'src/modules/design/dialogs/SimulationAnalysisDialog.vue'),
   'utf8',
+)
+const linkConfigSource = fs.readFileSync(
+  path.join(root, 'src/modules/design/dialogs/LinkConfigDialog.vue'),
+  'utf8',
+)
+const nextStepStart = linkConfigSource.indexOf('const goToNextStep = async () => {')
+const nextStepEnd = linkConfigSource.indexOf('const goToPrevStep = () => {', nextStepStart)
+const nextStepSource = linkConfigSource.slice(nextStepStart, nextStepEnd)
+expect(
+  nextStepSource.includes('await runSelectedLayoutPlanning(false)')
+    && nextStepSource.includes('await startCalculation()')
+    && nextStepSource.indexOf('await runSelectedLayoutPlanning(false)') < nextStepSource.indexOf('await startCalculation()'),
+  'the original planning action does not automatically continue with physical simulation',
 )
 expect(!analysisSource.includes('simulationDataBuilder'), 'simulation analysis still imports the frontend simulator')
 expect(!analysisSource.includes('const runSimulation'), 'simulation analysis still exposes a frontend recalculation path')

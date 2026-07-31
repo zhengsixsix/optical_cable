@@ -26,6 +26,9 @@ export interface SimulationRequest {
   linkName: string
   fiberModel?: string
   amplifierModel?: string
+  channelFrequenciesThz?: number[]
+  channelCenterFrequencyThz?: number
+  channelSpacingGhz?: number
   onProgress?: (progress: SimulationProgressUpdate) => void
 }
 
@@ -474,10 +477,16 @@ function hasMatrixShape(
 
 function buildMetrics(root: Record<string, unknown>): SimulationMetricsMatrix | null {
   const metrics = recordValue(readFirst(root, ['metrics', 'performance_matrices', 'performanceMatrices'])) ?? root
-  const gsnr = numberMatrix(readFirst(metrics, ['gsnr_matrix_db', 'gsnrMatrixDb', 'gsnr_db']))
-  const osnr = numberMatrix(readFirst(metrics, ['osnr_matrix_db', 'osnrMatrixDb', 'osnr_db']))
-  const snrAse = numberMatrix(readFirst(metrics, ['snr_ase_matrix_db', 'snrAseMatrixDb', 'snr_ase_db']))
-  const snrNli = numberMatrix(readFirst(metrics, ['snr_nli_matrix_db', 'snrNliMatrixDb', 'snr_nli_db']))
+  let gsnr = numberMatrix(readFirst(metrics, [
+    'gsnr_matrix_db', 'gsnrMatrixDb', 'gsnr_db',
+    'gsnr_per_channel_per_node_db', 'gsnrPerChannelPerNodeDb',
+  ]))
+  let osnr = numberMatrix(readFirst(metrics, [
+    'osnr_matrix_db', 'osnrMatrixDb', 'osnr_db',
+    'osnr_per_channel_per_node_db', 'osnrPerChannelPerNodeDb',
+  ]))
+  let snrAse = numberMatrix(readFirst(metrics, ['snr_ase_matrix_db', 'snrAseMatrixDb', 'snr_ase_db']))
+  let snrNli = numberMatrix(readFirst(metrics, ['snr_nli_matrix_db', 'snrNliMatrixDb', 'snr_nli_db']))
   const powers = recordValue(readFirst(root, ['power_matrices', 'powerMatrices', 'powers'])) ?? metrics
   const signalPower = numberMatrix(readFirst(powers, [
     'signal_power_dbm', 'signalPowerDbm', 'signal_matrix_dbm', 'signalMatrixDbm', 'signal_power_matrix_dbm',
@@ -488,6 +497,32 @@ function buildMetrics(root: Record<string, unknown>): SimulationMetricsMatrix | 
   const nliPower = numberMatrix(readFirst(powers, [
     'nli_noise_power_dbm', 'nliNoisePowerDbm', 'nli_matrix_dbm', 'nliMatrixDbm', 'nli_noise_power_matrix_dbm',
   ]))
+
+  const powerRowCount = signalPower.length
+  const powerColumnCount = signalPower[0]?.length ?? 0
+  const hasCompletePowerMatrices = powerRowCount > 0
+    && powerColumnCount > 0
+    && hasMatrixShape(signalPower, powerRowCount, powerColumnCount)
+    && hasMatrixShape(asePower, powerRowCount, powerColumnCount)
+    && hasMatrixShape(nliPower, powerRowCount, powerColumnCount)
+  if (hasCompletePowerMatrices) {
+    if (osnr.length === 0) {
+      osnr = signalPower.map((row, rowIndex) =>
+        row.map((signal, channelIndex) => signal - asePower[rowIndex][channelIndex]))
+    }
+    if (gsnr.length === 0) {
+      gsnr = signalPower.map((row, rowIndex) => row.map((signal, channelIndex) => {
+        const aseLinear = 10 ** (asePower[rowIndex][channelIndex] / 10)
+        const nliLinear = 10 ** (nliPower[rowIndex][channelIndex] / 10)
+        return signal - 10 * Math.log10(aseLinear + nliLinear)
+      }))
+    }
+    if (snrAse.length === 0) snrAse = osnr.map(row => [...row])
+    if (snrNli.length === 0) {
+      snrNli = signalPower.map((row, rowIndex) =>
+        row.map((signal, channelIndex) => signal - nliPower[rowIndex][channelIndex]))
+    }
+  }
 
   const rowCount = gsnr.length
   const columnCount = gsnr[0]?.length ?? 0
@@ -525,7 +560,7 @@ function buildPositions(
     ? stringArray(readFirst(positions, ['names', 'node_names', 'node_ids', 'nodeIds']))
     : []
   const distances = positions ? numberArray(readFirst(positions, ['distances_km', 'distancesKm'])) : []
-  const spanIds = positions ? stringArray(readFirst(positions, ['span_ids', 'spanIds'])) : []
+  let spanIds = positions ? stringArray(readFirst(positions, ['span_ids', 'spanIds'])) : []
 
   for (const [index, rawNode] of metadata.entries()) {
     const node = recordValue(rawNode)
@@ -534,6 +569,11 @@ function buildPositions(
     const distance = finiteNumber(readFirst(node, ['position_km', 'positionKm', 'kp_km', 'kpKm', 'kp']))
     if (name != null && String(name).trim()) names[index] = String(name)
     if (distance != null) distances[index] = distance
+  }
+
+  if (spanIds.length === 0 && names.length === rowCount) {
+    spanIds = Array.from({ length: Math.max(0, rowCount - 1) }, (_, index) =>
+      `${names[index]} -> ${names[index + 1]}`)
   }
 
   if (names.length !== rowCount
@@ -559,14 +599,33 @@ function stringArray(value: unknown): string[] {
 function buildChannels(
   root: Record<string, unknown>,
   columnCount: number,
+  request?: SimulationRequest,
 ): SimulationCache['channels'] | null {
   const channels = recordValue(readFirst(root, ['channels']))
-  const ids = channels
+  let ids = channels
     ? stringArray(readFirst(channels, ['ids', 'channel_ids', 'channelIds']))
     : stringArray(readFirst(root, ['channel_ids', 'channelIds']))
-  const frequencies = channels
+  let frequencies = channels
     ? numberArray(readFirst(channels, ['frequencies_thz', 'frequenciesThz']))
     : numberArray(readFirst(root, ['channel_frequencies_thz', 'channelFrequenciesThz', 'channelFrequencies']))
+  if (ids.length === 0) {
+    ids = Array.from({ length: columnCount }, (_, index) => `CH-${String(index + 1).padStart(3, '0')}`)
+  }
+  if (frequencies.length === 0
+    && Array.isArray(request?.channelFrequenciesThz)
+    && request.channelFrequenciesThz.length === columnCount
+    && request.channelFrequenciesThz.every(Number.isFinite)) {
+    frequencies = [...request.channelFrequenciesThz]
+  }
+  if (frequencies.length === 0) {
+    const center = finiteNumber(request?.channelCenterFrequencyThz)
+    const spacingGhz = finiteNumber(request?.channelSpacingGhz)
+    if (center != null && spacingGhz != null && spacingGhz > 0) {
+      const start = center - ((columnCount - 1) / 2) * (spacingGhz / 1000)
+      frequencies = Array.from({ length: columnCount }, (_, index) =>
+        start + index * (spacingGhz / 1000))
+    }
+  }
   if (ids.length !== columnCount
     || frequencies.length !== columnCount
     || ids.some(id => !id.trim())) return null
@@ -579,7 +638,7 @@ function buildChannels(
 }
 
 function buildSimulationSummary(root: Record<string, unknown>): SimulationCache['summary'] {
-  const source = recordValue(readFirst(root, ['summary'])) ?? {}
+  const source = recordValue(readFirst(root, ['summary', 'end_statistics', 'endStatistics'])) ?? {}
   const gsnrSource = recordValue(readFirst(source, ['final_gsnr', 'finalGsnr'])) ?? {}
   const osnrSource = recordValue(readFirst(source, ['final_osnr', 'finalOsnr'])) ?? {}
   const result: SimulationCache['summary'] = {}
@@ -592,10 +651,11 @@ function buildSimulationSummary(root: Record<string, unknown>): SimulationCache[
 
   const finalGsnr: NonNullable<SimulationCache['summary']['final_gsnr']> = {}
   const gsnrAvg = finiteNumber(readFirst(gsnrSource, ['avg_db', 'avgDb'])
-    ?? readFirst(source, ['final_gsnr_avg_db', 'finalGsnrAvgDb']))
+    ?? readFirst(source, ['final_gsnr_avg_db', 'finalGsnrAvgDb', 'gsnr_avg_db', 'gsnrAvgDb']))
   const gsnrMin = finiteNumber(readFirst(gsnrSource, ['min_db', 'minDb'])
-    ?? readFirst(source, ['final_gsnr_min_db', 'finalGsnrMinDb']))
-  const gsnrMax = finiteNumber(readFirst(gsnrSource, ['max_db', 'maxDb']))
+    ?? readFirst(source, ['final_gsnr_min_db', 'finalGsnrMinDb', 'gsnr_min_db', 'gsnrMinDb']))
+  const gsnrMax = finiteNumber(readFirst(gsnrSource, ['max_db', 'maxDb'])
+    ?? readFirst(source, ['gsnr_max_db', 'gsnrMaxDb']))
   const worstChannel = readFirst(gsnrSource, ['worst_channel', 'worstChannel'])
   const bestChannel = readFirst(gsnrSource, ['best_channel', 'bestChannel'])
   if (gsnrAvg != null) finalGsnr.avg_db = gsnrAvg
@@ -607,8 +667,9 @@ function buildSimulationSummary(root: Record<string, unknown>): SimulationCache[
 
   const finalOsnr: NonNullable<SimulationCache['summary']['final_osnr']> = {}
   const osnrAvg = finiteNumber(readFirst(osnrSource, ['avg_db', 'avgDb'])
-    ?? readFirst(source, ['final_osnr_avg_db', 'finalOsnrAvgDb']))
-  const osnrMin = finiteNumber(readFirst(osnrSource, ['min_db', 'minDb']))
+    ?? readFirst(source, ['final_osnr_avg_db', 'finalOsnrAvgDb', 'osnr_avg_db', 'osnrAvgDb']))
+  const osnrMin = finiteNumber(readFirst(osnrSource, ['min_db', 'minDb'])
+    ?? readFirst(source, ['osnr_min_db', 'osnrMinDb']))
   if (osnrAvg != null) finalOsnr.avg_db = osnrAvg
   if (osnrMin != null) finalOsnr.min_db = osnrMin
   if (Object.keys(finalOsnr).length > 0) result.final_osnr = finalOsnr
@@ -637,7 +698,7 @@ export function normalizePlatformSimulationCache(
   if (rowCount === 0 || columnCount === 0) return null
 
   const positions = buildPositions(parsed, rowCount)
-  const channels = buildChannels(parsed, columnCount)
+  const channels = buildChannels(parsed, columnCount, request)
   if (!positions || !channels) return null
   const routeParts = request?.linkName.split(/\s*[⇄↔]\s*/) ?? []
   const routeRef = recordValue(readFirst(parsed, ['route_ref', 'routeRef']))
