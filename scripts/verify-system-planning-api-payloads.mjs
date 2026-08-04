@@ -193,6 +193,13 @@ if (!dialogSource.includes("@click=\"optimizationTarget = 'min_amplifiers'\"")
   throw new Error('optimized planning target is not selectable in the planning dialog')
 }
 
+const wdmSaveStart = dialogSource.indexOf('async function savePlatformWdmConfig')
+const wdmSaveEnd = dialogSource.indexOf('\n}\n', wdmSaveStart)
+const wdmSaveSource = dialogSource.slice(wdmSaveStart, wdmSaveEnd)
+if (!wdmSaveSource.includes('channelFrequenciesThz: buildChannelFrequencies(channelCount)')) {
+  throw new Error('planConfig/saveChannelConfig payload does not include the displayed channel frequencies')
+}
+
 const simulationStart = dialogSource.indexOf('const startCalculation = async () => {')
 const simulationEnd = dialogSource.indexOf('\nconst isCalculationResult', simulationStart)
 const simulationSource = dialogSource.slice(simulationStart, simulationEnd)

@@ -1240,9 +1240,13 @@ function persistPlatformPlanningSnapshot(): void {
 }
 
 async function savePlatformWdmConfig(projectId: string | number): Promise<void> {
+  const channelCount = normalizeChannelCount(channelConfig.channelCount)
+  if (channelCount == null) throw new Error('信道数量必须是 1 到 4096 之间的整数')
+
   const channelPayload: PlanConfigChannel = {
     projectId,
     ...channelConfig,
+    channelFrequenciesThz: buildChannelFrequencies(channelCount),
   }
 
   try {
