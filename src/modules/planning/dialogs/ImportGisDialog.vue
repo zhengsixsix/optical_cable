@@ -9,6 +9,7 @@ import { Button } from '@/shared/components/base'
 import shp from 'shpjs'
 import { detectGisFormat } from '@/utils/gisFormat'
 import { getLocalLayerIdForDictionaryCode } from '@/services/platform/layerTypeAdapter'
+import { parseShapefileAttachment } from '@/services/GisAttachmentParser'
 
 interface Props {
   visible: boolean
@@ -154,6 +155,14 @@ async function buildLayerDataFromLocalFile(layer: GisLayerItem, file: File) {
     }
   }
 
+  if (formatInfo.loadStrategy === 'shapefile-component') {
+    return {
+      id: layer.id,
+      features: await parseShapefileAttachment(file, file.name) as any,
+      metadata,
+    }
+  }
+
   if (formatInfo.loadStrategy === 'geotiff-raster') {
     return {
       id: layer.id,
@@ -226,7 +235,7 @@ function removeDroppedFile(index: number) {
 function handleBrowse(layer: GisLayerItem) {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.tif,.tiff,.geotiff,.zip,.geojson,.json'
+  input.accept = '.tif,.tiff,.geotiff,.zip,.shp,.geojson,.json'
   input.onchange = (e) => {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (file) {

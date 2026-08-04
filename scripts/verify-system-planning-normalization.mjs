@@ -49,6 +49,26 @@ let savedOptimizationConfig = null
 
 const layoutUtils = loadTsModule('src/utils/systemPlanningLayout.ts')
 const constraintUtils = loadTsModule('src/utils/systemPlanningConstraints.ts')
+const amplifierValueUtils = loadTsModule('src/utils/backendAmplifierValues.ts')
+const analysisDialogSource = fs.readFileSync(
+  path.join(root, 'src/modules/design/dialogs/SimulationAnalysisDialog.vue'),
+  'utf8',
+)
+const designViewSource = fs.readFileSync(path.join(root, 'src/views/DesignView.vue'), 'utf8')
+
+expect(
+  analysisDialogSource.includes('linkCalcSummary?: LinkCalculationSummaryInput | null')
+    && analysisDialogSource.includes('props.linkCalcSummary?.totalLength')
+    && analysisDialogSource.includes('props.linkCalcSummary?.systemConfig?.spanCount')
+    && analysisDialogSource.includes("source: '规划结果'")
+    && analysisDialogSource.includes("source: '规划配置'"),
+  'simulation analysis dialog does not expose planning values with explicit provenance',
+)
+expect(
+  designViewSource.includes('spanCount?: number')
+    && designViewSource.includes('(layout?.spans.length ? layout.spans.length : null)'),
+  'design summary does not preserve the backend layout Span count',
+)
 
 const service = loadTsModule('src/services/SimulationApiService.ts', {
   '@/utils/systemPlanningLayout': layoutUtils,
@@ -212,6 +232,11 @@ expect(
   snakeWrapped?.summary.final_gsnr === undefined && snakeWrapped?.summary.final_osnr === undefined,
   'summary values were derived from metric matrices instead of explicit backend fields',
 )
+expect(
+  snakeWrapped?.model_selection.fiber_model_id === ''
+    && snakeWrapped?.model_selection.edfa_model_id === '',
+  'missing backend model_selection was hidden by request-side model values',
+)
 
 const fromPower = service.normalizePlatformSimulationCache({
   power_matrices: {
@@ -243,6 +268,14 @@ const platformSimulation = service.normalizePlatformSimulationCache({
       gsnr_max_db: '24.8',
       gsnr_avg_db: '24.8',
     },
+    total_length_km: '160.0',
+    span_count: '1',
+    capacity_tbps: '38.4',
+    model_selection: {
+      fiber_model_id: 'fiber_segment',
+      edfa_model_id: 'edfa_segment',
+      bu_model_id: null,
+    },
   },
 }, {
   ...request,
@@ -260,6 +293,32 @@ expect(platformSimulation?.channels.ids[0] === 'CH-001', 'missing channel IDs we
 expect(platformSimulation?.channels.frequencies_thz[1] === 193.125, 'configured WDM frequencies were not preserved')
 expect(platformSimulation?.summary.final_gsnr?.avg_db === 24.8, 'end_statistics GSNR summary was not normalized')
 expect(platformSimulation?.summary.final_osnr?.min_db === 26, 'end_statistics OSNR summary was not normalized')
+expect(platformSimulation?.summary.total_length_km === 160, 'root total_length_km was not mapped')
+expect(platformSimulation?.summary.total_span_count === 1, 'root span_count was not mapped')
+expect(platformSimulation?.summary.system_capacity_tbps === 38.4, 'root capacity_tbps was not mapped')
+expect(platformSimulation?.model_selection.fiber_model_id === 'fiber_segment', 'backend fiber model was not mapped')
+expect(platformSimulation?.model_selection.edfa_model_id === 'edfa_segment', 'backend EDFA model was not mapped')
+expect(platformSimulation?.model_selection.bu_model_id === null, 'absent backend BU model did not remain null')
+
+const backendAmplifierValues = amplifierValueUtils.readBackendAmplifierValues({
+  id: 901,
+  nodeId: '1',
+  libraryId: 77,
+  libraryName: 'Hybrid-CL',
+  deviceValueList: [
+    { configCode: 'amplifier_type', value: 'EDFA-C' },
+    { configCode: 'nominal_gain_db', value: '20.0' },
+    { configCode: 'noise_figure_db', value: '5.5' },
+    { configCode: 'max_output_power_dbm', value: '17.0' },
+  ],
+})
+expect(backendAmplifierValues?.deviceModel === 'Hybrid-CL', 'backend amplifier library model was not mapped')
+expect(backendAmplifierValues?.amplifierType === 'EDFA-C', 'backend amplifier_type was not mapped')
+expect(backendAmplifierValues?.nominalGainDb === 20, 'backend nominal_gain_db was not mapped')
+expect(backendAmplifierValues?.noiseFigureDb === 5.5, 'backend noise_figure_db was not mapped')
+expect(backendAmplifierValues?.maxOutputPowerDbm === 17, 'backend max_output_power_dbm was not mapped')
+expect(backendAmplifierValues?.gainDb === null, 'nominal gain was incorrectly treated as actual gain')
+expect(backendAmplifierValues?.outputPowerDbm === null, 'maximum output power was incorrectly treated as actual output')
 
 apiState.layout = {
   total_length_km: '160.0',
@@ -278,7 +337,19 @@ apiState.layout = {
   ],
   meta: { status: 'success', node_count: '3', amplifier_count: '1' },
 }
-apiState.deviceEntityList = [{ id: 901, name: 'AMP-01', deviceTypeCd: 'AMP' }]
+apiState.deviceEntityList = [{
+  id: 901,
+  name: 'AMP-01',
+  deviceTypeCd: 'AMP',
+  nodeId: '1',
+  libraryId: 77,
+  libraryName: 'Hybrid-CL',
+  deviceValueList: [
+    { configCode: 'nominal_gain_db', value: '20.0' },
+    { configCode: 'noise_figure_db', value: '5.5' },
+    { configCode: 'max_output_power_dbm', value: '17.0' },
+  ],
+}]
 apiState.simulation = {
   span_scan_result: {
     target_gsnr_db: 14,

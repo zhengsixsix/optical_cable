@@ -13,7 +13,14 @@ declare module 'shpjs' {
     features: GeoJSONFeature[]
   }
 
-  function shp(input: ArrayBuffer | string): Promise<GeoJSONFeatureCollection | GeoJSONFeatureCollection[]>
+  interface ShapefileComponents {
+    shp: ArrayBuffer | Uint8Array
+    dbf?: ArrayBuffer | Uint8Array
+    prj?: string
+    cpg?: string
+  }
+
+  function shp(input: ArrayBuffer | Uint8Array | string | ShapefileComponents): Promise<GeoJSONFeatureCollection | GeoJSONFeatureCollection[]>
   
   export default shp
 }

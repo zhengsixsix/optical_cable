@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>海底光缆智能规划软件｜候选路径决策</title>
+  <style>
+    :root {
+      --navy: #073b66;
+      --navy-2: #0a4a7e;
+      --blue: #1769e0;
+      --blue-2: #eaf2ff;
+      --ink: #162638;
+      --muted: #65788c;
+      --line: #dbe4ed;
+      --line-2: #e8eef4;
+      --surface: #ffffff;
+      --canvas: #eef3f7;
+      --danger: #d94343;
+      --danger-bg: #fff4f3;
+      --green: #12966f;
+      --amber: #e4a317;
+      --cyan: #12b6aa;
+      --magenta: #e84770;
+      --shadow: 0 10px 30px rgba(26, 55, 83, .08);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      font-family: "Microsoft YaHei UI", "Noto Sans SC", sans-serif;
+      color: var(--ink);
+      background: var(--canvas);
+      font-size: 13px;
+    }
+    button, input { font: inherit; }
+
+    .app { width: 100vw; height: 100vh; min-width: 1500px; min-height: 760px; display: grid; grid-template-rows: 52px 48px 1fr 28px; }
+
+    .topbar {
+      background: var(--navy);
+      color: #fff;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      padding: 0 20px;
+      box-shadow: 0 2px 8px rgba(0, 28, 52, .22);
+      z-index: 20;
+    }
+    .brand { display: flex; align-items: center; gap: 18px; }
+    .brand-mark { width: 28px; height: 28px; border: 1px solid rgba(255,255,255,.35); border-radius: 7px; display: grid; place-items: center; font-weight: 700; letter-spacing: -.08em; }
+    .main-nav { display: flex; height: 52px; align-items: stretch; gap: 6px; }
+    .main-nav button { border: 0; background: transparent; color: #cfe1f1; padding: 0 14px; position: relative; cursor: pointer; }
+    .main-nav button.active { color: #fff; font-weight: 700; }
+    .main-nav button.active::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px; background: #51a4ff; border-radius: 3px 3px 0 0; }
+    .product-title { font-size: 17px; font-weight: 700; letter-spacing: .04em; }
+    .top-actions { justify-self: end; display: flex; align-items: center; gap: 8px; }
+    .select-pill, .user-pill { height: 32px; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; display: flex; align-items: center; padding: 0 11px; color: #e9f5ff; background: rgba(255,255,255,.08); }
+    .user-pill { background: #1763bb; min-width: 86px; justify-content: center; }
+
+    .workflow {
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 260px 1fr 388px;
+      align-items: center;
+      z-index: 12;
+    }
+    .project-meta { height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-right: 1px solid var(--line); }
+    .project-meta strong { font-size: 14px; }
+    .project-code { color: var(--muted); font-size: 11px; }
+    .stepper { justify-self: center; display: flex; align-items: center; color: #718498; }
+    .step { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+    .step + .step::before { content: ""; width: 54px; height: 1px; margin: 0 10px; background: #cfd9e3; }
+    .step-dot { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; border: 1px solid #b8c7d5; background: #fff; font-size: 11px; }
+    .step.done { color: var(--green); }
+    .step.done .step-dot { border-color: var(--green); background: #eaf8f4; }
+    .step.current { color: var(--blue); font-weight: 700; }
+    .step.current .step-dot { color: #fff; border-color: var(--blue); background: var(--blue); box-shadow: 0 0 0 4px rgba(23,105,224,.11); }
+    .workflow-actions { height: 100%; border-left: 1px solid var(--line); display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 14px; }
+    .ghost { border: 1px solid var(--line); background: #fff; color: #34495e; border-radius: 6px; padding: 7px 13px; cursor: pointer; }
+    .ghost:hover { border-color: #9eb4c8; }
+    .running { color: var(--green); display: flex; align-items: center; gap: 7px; margin-right: 8px; }
+    .running i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(18,150,111,.12); }
+
+    .workspace { min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr) 388px; gap: 8px; padding: 8px; }
+    .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); min-height: 0; overflow: hidden; }
+
+    .left-panel { display: grid; grid-template-rows: auto auto 1fr auto; }
+    .panel-head { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--line); }
+    .panel-head h2 { margin: 0; font-size: 14px; }
+    .head-sub { color: var(--muted); font-size: 11px; }
+    .layer-filter { margin: 10px 12px 8px; height: 34px; border: 1px solid var(--line); border-radius: 6px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: #42576b; }
+    .layers { padding: 0 10px 8px; overflow: auto; }
+    .layer-group-title { margin: 10px 6px 5px; color: #8091a3; font-size: 11px; letter-spacing: .08em; }
+    .layer-row { min-height: 38px; display: grid; grid-template-columns: 20px 1fr auto; align-items: center; border-bottom: 1px solid var(--line-2); padding: 0 6px; }
+    .layer-row input { width: 15px; height: 15px; accent-color: var(--blue); }
+    .layer-main { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .swatch { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+    .layer-tag { color: var(--green); background: #eaf8f4; border-radius: 10px; padding: 2px 6px; font-size: 10px; }
+    .layer-tag.muted { color: #7b8c9c; background: #f1f4f7; }
+    .project-card { margin: 8px 10px 10px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: #f8fafc; }
+    .project-card-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .project-card-title strong { font-size: 13px; }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+    .metric small { display: block; color: var(--muted); margin-bottom: 2px; }
+    .metric b { font-size: 14px; }
+
+    .center-panel { position: relative; background: #dcebf2; }
+    .map-img { position: absolute; width: 2371px; height: 1185px; max-width: none; left: -390px; top: -130px; user-select: none; pointer-events: none; }
+    .map-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(5,50,82,.04), transparent 18%, transparent 80%, rgba(5,50,82,.06)); pointer-events: none; }
+    .map-tools { position: absolute; left: 12px; top: 12px; display: grid; gap: 6px; }
+    .map-tools button { width: 34px; height: 34px; border: 1px solid #c9d6e0; border-radius: 6px; background: rgba(255,255,255,.94); color: #354b5f; box-shadow: 0 3px 12px rgba(33,61,85,.12); cursor: pointer; }
+    .map-title { position: absolute; top: 12px; left: 60px; background: rgba(7,59,102,.88); color: #fff; height: 34px; border-radius: 6px; padding: 0 12px; display: flex; align-items: center; gap: 10px; box-shadow: 0 5px 16px rgba(7,59,102,.2); }
+    .map-title span { color: #bcd9ee; font-size: 11px; }
+    .map-legend { position: absolute; right: 14px; top: 14px; background: rgba(255,255,255,.95); border: 1px solid rgba(196,210,222,.9); border-radius: 7px; padding: 10px 11px; box-shadow: 0 5px 18px rgba(28,58,86,.14); }
+    .map-legend strong { display: block; margin-bottom: 7px; font-size: 12px; }
+    .legend-row { display: flex; align-items: center; gap: 7px; color: #43586c; font-size: 11px; margin: 5px 0; }
+    .line-key { width: 20px; height: 4px; border-radius: 4px; }
+    .depth-scale { position: absolute; right: 14px; bottom: 52px; width: 54px; padding: 9px 8px; background: rgba(255,255,255,.95); border: 1px solid rgba(196,210,222,.9); border-radius: 7px; box-shadow: 0 5px 18px rgba(28,58,86,.14); }
+    .depth-scale strong { font-size: 10px; display: block; text-align: center; margin-bottom: 6px; }
+    .depth-bar { width: 9px; height: 124px; margin: 0 auto; border-radius: 6px; background: linear-gradient(#f5e5b2, #d48950 25%, #3e9b76 48%, #2d71aa 68%, #061643); }
+    .depth-labels { position: absolute; left: 27px; top: 30px; height: 124px; display: flex; flex-direction: column; justify-content: space-between; font-size: 8px; color: #4d6274; }
+    .coords { position: absolute; left: 14px; bottom: 14px; background: rgba(255,255,255,.94); border: 1px solid rgba(196,210,222,.9); color: #4c6072; border-radius: 6px; padding: 7px 10px; box-shadow: 0 4px 14px rgba(28,58,86,.1); font-size: 11px; }
+    .selection-note { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); background: rgba(7,59,102,.93); color: #fff; border-radius: 7px; display: flex; align-items: center; gap: 14px; padding: 9px 12px 9px 14px; box-shadow: 0 8px 24px rgba(7,59,102,.25); }
+    .selection-note b { font-size: 12px; }
+    .selection-note span { color: #bcd9ee; font-size: 11px; }
+    .selection-note button { border: 1px solid rgba(255,255,255,.34); background: rgba(255,255,255,.1); color: #fff; border-radius: 5px; padding: 5px 9px; cursor: pointer; }
+
+    .right-panel { display: grid; grid-template-rows: auto auto 1fr auto; }
+    .decision-head { padding: 13px 14px 11px; border-bottom: 1px solid var(--line); }
+    .decision-head h2 { margin: 0 0 4px; font-size: 15px; }
+    .decision-head p { margin: 0; color: var(--muted); font-size: 11px; }
+    .route-list { padding: 10px; display: grid; gap: 8px; }
+    .route-card { border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 10px 11px; cursor: pointer; position: relative; transition: .15s ease; }
+    .route-card:hover { border-color: #a8bed2; }
+    .route-card.selected { border: 2px solid var(--blue); padding: 9px 10px; box-shadow: 0 4px 14px rgba(23,105,224,.12); }
+    .route-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .route-name { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+    .route-radio { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid #9fb0c0; display: grid; place-items: center; }
+    .selected .route-radio { border-color: var(--blue); }
+    .selected .route-radio::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
+    .badge { border-radius: 10px; padding: 2px 7px; font-size: 10px; font-weight: 700; color: var(--blue); background: var(--blue-2); }
+    .badge.risk { color: var(--green); background: #eaf8f4; }
+    .badge.bad { color: var(--danger); background: var(--danger-bg); }
+    .route-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; margin-top: 9px; gap: 8px; }
+    .route-stat small { display: block; color: var(--muted); font-size: 10px; margin-bottom: 2px; }
+    .route-stat b { font-size: 12px; }
+    .warning { margin-top: 8px; color: #b43b3b; background: var(--danger-bg); border-left: 3px solid #e1635e; border-radius: 4px; padding: 6px 8px; font-size: 10px; line-height: 1.45; }
+    .analysis { min-height: 0; padding: 0 12px 10px; overflow: hidden; }
+    .tabs { height: 34px; display: flex; gap: 18px; align-items: center; border-bottom: 1px solid var(--line); margin-bottom: 9px; }
+    .tab { height: 34px; border: 0; background: transparent; color: #64778a; cursor: pointer; padding: 0 2px; position: relative; font-size: 11px; }
+    .tab.active { color: var(--blue); font-weight: 700; }
+    .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--blue); }
+    .chart-card { border: 1px solid var(--line); border-radius: 7px; padding: 8px 8px 5px; background: #fbfcfe; }
+    .chart-title { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 2px; }
+    .chart-title span { color: var(--muted); font-size: 10px; }
+    #riskChart { width: 100%; height: 115px; display: block; }
+    .insight { margin-top: 8px; border-radius: 6px; padding: 8px 9px; background: #f1f6fb; color: #40566b; font-size: 10px; line-height: 1.5; }
+    .decision-actions { padding: 11px 12px 12px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1.55fr; gap: 8px; }
+    .secondary, .primary { height: 38px; border-radius: 6px; cursor: pointer; font-weight: 700; }
+    .secondary { border: 1px solid #aebdca; background: #fff; color: #354b60; }
+    .primary { border: 1px solid var(--blue); background: var(--blue); color: #fff; box-shadow: 0 5px 14px rgba(23,105,224,.2); }
+    .primary:hover { background: #0f5ccc; }
+
+    .statusbar { background: #fff; border-top: 1px solid var(--line); color: #718397; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; font-size: 10px; }
+    .status-left { display: flex; gap: 18px; align-items: center; }
+    .ok { color: var(--green); }
+    .hidden { display: none; }
+
+    .toast { position: fixed; z-index: 60; right: 22px; bottom: 42px; background: #18384f; color: #fff; border-radius: 7px; padding: 11px 14px; box-shadow: 0 10px 30px rgba(18,39,56,.24); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">缆</div>
+        <nav class="main-nav" aria-label="主导航">
+          <button>项目</button><button>数据</button><button class="active">规划</button><button>监控</button><button>系统管理</button>
+        </nav>
+      </div>
+      <div class="product-title">海底光缆智能规划软件</div>
+      <div class="top-actions">
+        <div class="select-pill">Web Mercator · EPSG:3857</div>
+        <div class="select-pill">GIS 视图</div>
+        <div class="user-pill">admin</div>
+      </div>
+    </header>
+
+    <section class="workflow">
+      <div class="project-meta"><strong>大连登陆段</strong><span class="project-code">DL-2026-014</span></div>
+      <div class="stepper" aria-label="规划进度">
+        <div class="step done"><span class="step-dot">✓</span>数据已就绪</div>
+        <div class="step done"><span class="step-dot">✓</span>规划完成</div>
+        <div class="step current"><span class="step-dot">3</span>选择方案</div>
+        <div class="step"><span class="step-dot">4</span>导出</div>
+      </div>
+      <div class="workflow-actions"><span class="running"><i></i>计算服务正常</span><button class="ghost">保存快照</button></div>
+    </section>
+
+    <main class="workspace">
+      <aside class="panel left-panel">
+        <div class="panel-head"><div><h2>规划图层</h2><span class="head-sub">8 个图层 · 5 个可见</span></div><span class="head-sub">管理</span></div>
+        <div class="layer-filter"><span>所有类型</span><span>⌄</span></div>
+        <div class="layers">
+          <div class="layer-group-title">规划因子</div>
+          <label class="layer-row"><input type="checkbox" checked><span class="layer-main"><i class="swatch" style="background:#d88959"></i>成本底图</span><span class="layer-tag">已生成</span></label>
+          <label class="layer-row"><input type="checkbox" checked><span class="layer-main"><i class="swatch" style="background:#ec4b71"></i>风险底图</span><span class="layer-tag">已生成</span></label>
+          <div class="layer-group-title">海洋环境</div>
+          <label class="layer-row"><input type="checkbox" checked><span class="layer-main"><i class="swatch" style="background:#2773ac"></i>海洋高程</span><span class="layer-tag">已加载</span></label>
+          <label class="layer-row"><input type="checkbox" checked><span class="layer-main"><i class="swatch" style="background:#52a77a"></i>海洋渔区</span><span class="layer-tag">已加载</span></label>
+          <label class="layer-row"><input type="checkbox"><span class="layer-main"><i class="swatch" style="background:#e7b32f"></i>海洋坡度</span><span class="layer-tag muted">未显示</span></label>
+          <div class="layer-group-title">风险与约束</div>
+          <label class="layer-row"><input type="checkbox" checked><span class="layer-main"><i class="swatch" style="background:#b2647f"></i>地震活动</span><span class="layer-tag">已加载</span></label>
+          <label class="layer-row"><input type="checkbox"><span class="layer-main"><i class="swatch" style="background:#73859a"></i>航道分布</span><span class="layer-tag muted">未显示</span></label>
+          <label class="layer-row"><input type="checkbox"><span class="layer-main"><i class="swatch" style="background:#b1553d"></i>火山区</span><span class="layer-tag muted">未显示</span></label>
+        </div>
+        <div class="project-card">
+          <div class="project-card-title"><strong>线路概览</strong><span class="head-sub">实时</span></div>
+          <div class="metrics">
+            <div class="metric"><small>登陆点</small><b>2</b></div>
+            <div class="metric"><small>候选方案</small><b>3</b></div>
+            <div class="metric"><small>规划长度</small><b>108.2 km</b></div>
+            <div class="metric"><small>校验状态</small><b style="color:var(--green)">通过</b></div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="panel center-panel" aria-label="规划地图">
+        <img class="map-img" src="file:///C:/Users/Administrator/AppData/Local/Temp/codex-clipboard-792c3040-2bc8-4c09-88fe-c4420c8f464f.png" alt="大连海域规划底图" />
+        <div class="map-shade"></div>
+        <div class="map-tools"><button aria-label="放大">＋</button><button aria-label="缩小">−</button><button aria-label="定位">◎</button></div>
+        <div class="map-title"><b>候选路径叠加</b><span>已选择：方案 2 · 成本优先</span></div>
+        <div class="map-legend">
+          <strong>路径图例</strong>
+          <div class="legend-row"><i class="line-key" style="background:var(--cyan)"></i>方案 2 · 已选择</div>
+          <div class="legend-row"><i class="line-key" style="background:var(--amber)"></i>方案 3 · 风险优先</div>
+          <div class="legend-row"><i class="line-key" style="background:var(--magenta)"></i>方案 1 · 当前路径</div>
+        </div>
+        <div class="depth-scale"><strong>高程 m</strong><div class="depth-bar"></div><div class="depth-labels"><span>6500</span><span>2000</span><span>0</span><span>-3000</span><span>-9000</span></div></div>
+        <div class="coords">122.1075° E　38.8190° N　比例尺 1:320,000</div>
+        <div class="selection-note"><div><b>方案 2 已高亮</b><br><span>预计总长 107.6 km · 已通过几何校验</span></div><button>聚焦路线</button></div>
+      </section>
+
+      <aside class="panel right-panel">
+        <div class="decision-head"><h2>候选路径</h2><p>比较成本与风险后确认最终铺设路线</p></div>
+        <div class="route-list">
+          <article class="route-card selected" data-route="2">
+            <div class="route-top"><div class="route-name"><span class="route-radio"></span>方案 2 · 成本优先</div><span class="badge">推荐</span></div>
+            <div class="route-stats"><div class="route-stat"><small>总成本</small><b>5.45 亿</b></div><div class="route-stat"><small>风险值</small><b>40.54 万</b></div><div class="route-stat"><small>长度</small><b>107.6 km</b></div></div>
+          </article>
+          <article class="route-card" data-route="3">
+            <div class="route-top"><div class="route-name"><span class="route-radio"></span>方案 3 · 风险优先</div><span class="badge risk">低风险</span></div>
+            <div class="route-stats"><div class="route-stat"><small>总成本</small><b>5.83 亿</b></div><div class="route-stat"><small>风险值</small><b>3.69 万</b></div><div class="route-stat"><small>长度</small><b>111.4 km</b></div></div>
+          </article>
+          <article class="route-card" data-route="1">
+            <div class="route-top"><div class="route-name"><span class="route-radio"></span>方案 1 · 当前路径</div><span class="badge bad">不推荐</span></div>
+            <div class="route-stats"><div class="route-stat"><small>总成本</small><b>5.80 亿</b></div><div class="route-stat"><small>风险值</small><b>51.29 万</b></div><div class="route-stat"><small>长度</small><b>108.2 km</b></div></div>
+            <div class="warning">成本与风险均劣于方案 2，建议重新选择。</div>
+          </article>
+        </div>
+        <div class="analysis">
+          <div class="tabs"><button class="tab active" data-tab="compare">成本－风险</button><button class="tab" data-tab="depth">海缆水深</button><button class="tab" data-tab="terrain">3D 地形</button></div>
+          <div id="comparePane">
+            <div class="chart-card"><div class="chart-title"><b>方案分布</b><span>左下更优</span></div><canvas id="riskChart" width="340" height="115"></canvas></div>
+            <div class="insight"><b>决策提示：</b>方案 2 成本最低；方案 3 将风险进一步降低 90.9%，但成本增加 0.38 亿。</div>
+          </div>
+          <div id="depthPane" class="hidden"><div class="chart-card"><div class="chart-title"><b>沿线水深剖面</b><span>0–107.6 km</span></div><canvas id="depthChart" width="340" height="150"></canvas></div></div>
+          <div id="terrainPane" class="hidden"><div class="insight"><b>地形预览已就绪</b><br>已生成沿线路径的三维海底地形，可在确认方案后打开全屏检查。</div></div>
+        </div>
+        <div class="decision-actions"><button class="secondary" id="adjustBtn">路线调整</button><button class="primary" id="confirmBtn">确认方案并导出</button></div>
+      </aside>
+    </main>
+
+    <footer class="statusbar"><div class="status-left"><span class="ok">● 系统就绪</span><span>路线几何校验通过</span><span>数据更新时间 10:39:12</span></div><span>运行日志（17）　⌃</span></footer>
+  </div>
+  <div class="toast" id="toast">已选择方案 2，正在准备导出包</div>
+
+  <script>
+    const cards = [...document.querySelectorAll('.route-card')];
+    const mapTitle = document.querySelector('.map-title span');
+    const labels = {1:'方案 1 · 当前路径',2:'方案 2 · 成本优先',3:'方案 3 · 风险优先'};
+    cards.forEach(card => card.addEventListener('click', () => {
+      cards.forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      mapTitle.textContent = '已选择：' + labels[card.dataset.route];
+    }));
+
+    document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      ['compare','depth','terrain'].forEach(name => document.getElementById(name+'Pane').classList.toggle('hidden', name !== tab.dataset.tab));
+      if (tab.dataset.tab === 'depth') drawDepth();
+    }));
+
+    const toast = document.getElementById('toast');
+    document.getElementById('confirmBtn').addEventListener('click', () => {
+      const selected = document.querySelector('.route-card.selected').dataset.route;
+      toast.textContent = '已确认方案 ' + selected + '，正在准备导出包';
+      toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2200);
+    });
+    document.getElementById('adjustBtn').addEventListener('click', () => {
+      toast.textContent = '已进入路线调整模式'; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 1800);
+    });
+
+    function setupCanvas(canvas) {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+      const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
+      return {ctx, w:rect.width, h:rect.height};
+    }
+    function drawRisk() {
+      const c = document.getElementById('riskChart'); const {ctx,w,h}=setupCanvas(c);
+      const pad={l:34,r:16,t:12,b:25};
+      ctx.strokeStyle='#dce5ed'; ctx.lineWidth=1;
+      for(let i=0;i<4;i++){const y=pad.t+i*(h-pad.t-pad.b)/3;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke();}
+      ctx.fillStyle='#788b9d';ctx.font='9px "Microsoft YaHei UI"';ctx.fillText('风险',4,11);ctx.fillText('成本（亿元）',w-76,h-5);
+      const pts=[{x:5.80,y:51.29,c:'#e84770',l:'方案1'},{x:5.45,y:40.54,c:'#1769e0',l:'方案2'},{x:5.83,y:3.69,c:'#12966f',l:'方案3'}];
+      pts.forEach(p=>{const x=pad.l+(p.x-5.35)/.58*(w-pad.l-pad.r);const y=h-pad.b-p.y/56*(h-pad.t-pad.b);ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fillStyle=p.c;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle='#fff';ctx.stroke();ctx.fillStyle='#31495e';ctx.font='10px "Microsoft YaHei UI"';ctx.fillText(p.l,x+8,y+3);});
+    }
+    function drawDepth(){
+      const c=document.getElementById('depthChart'); if(!c) return; const {ctx,w,h}=setupCanvas(c);const pad={l:28,r:8,t:12,b:22};
+      ctx.strokeStyle='#dce5ed';for(let i=0;i<4;i++){const y=pad.t+i*(h-pad.t-pad.b)/3;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke();}
+      const data=[18,22,23,21,26,29,28,30,34,88,62,115,54,91,140,70,46,38,34,31,30,27,25];
+      ctx.beginPath(); data.forEach((v,i)=>{const x=pad.l+i*(w-pad.l-pad.r)/(data.length-1);const y=h-pad.b-v/150*(h-pad.t-pad.b);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.lineTo(w-pad.r,h-pad.b);ctx.lineTo(pad.l,h-pad.b);ctx.closePath();ctx.fillStyle='rgba(23,105,224,.15)';ctx.fill();
+      ctx.beginPath();data.forEach((v,i)=>{const x=pad.l+i*(w-pad.l-pad.r)/(data.length-1);const y=h-pad.b-v/150*(h-pad.t-pad.b);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle='#1769e0';ctx.lineWidth=2;ctx.stroke();
+    }
+    window.addEventListener('load', drawRisk);
+  </script>
+</body>
+</html>

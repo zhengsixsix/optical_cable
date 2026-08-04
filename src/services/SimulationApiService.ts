@@ -639,25 +639,42 @@ function buildChannels(
 
 function buildSimulationSummary(root: Record<string, unknown>): SimulationCache['summary'] {
   const source = recordValue(readFirst(root, ['summary', 'end_statistics', 'endStatistics'])) ?? {}
-  const gsnrSource = recordValue(readFirst(source, ['final_gsnr', 'finalGsnr'])) ?? {}
-  const osnrSource = recordValue(readFirst(source, ['final_osnr', 'finalOsnr'])) ?? {}
+  const readSummaryField = (keys: string[]): unknown => readFirst(source, keys) ?? readFirst(root, keys)
+  const gsnrSource = recordValue(readFirst(source, ['final_gsnr', 'finalGsnr']))
+    ?? recordValue(readFirst(root, ['final_gsnr', 'finalGsnr']))
+    ?? {}
+  const osnrSource = recordValue(readFirst(source, ['final_osnr', 'finalOsnr']))
+    ?? recordValue(readFirst(root, ['final_osnr', 'finalOsnr']))
+    ?? {}
   const result: SimulationCache['summary'] = {}
 
-  const totalLengthKm = finiteNumber(readFirst(source, ['total_length_km', 'totalLengthKm']))
+  const totalLengthKm = finiteNumber(readSummaryField([
+    'total_length_km',
+    'totalLengthKm',
+    'total_length',
+    'totalLength',
+  ]))
   if (totalLengthKm != null) result.total_length_km = totalLengthKm
 
-  const totalSpanCount = finiteNumber(readFirst(source, ['total_span_count', 'totalSpanCount']))
+  const totalSpanCount = finiteNumber(readSummaryField([
+    'total_span_count',
+    'totalSpanCount',
+    'span_count',
+    'spanCount',
+  ]))
   if (totalSpanCount != null) result.total_span_count = totalSpanCount
 
   const finalGsnr: NonNullable<SimulationCache['summary']['final_gsnr']> = {}
   const gsnrAvg = finiteNumber(readFirst(gsnrSource, ['avg_db', 'avgDb'])
-    ?? readFirst(source, ['final_gsnr_avg_db', 'finalGsnrAvgDb', 'gsnr_avg_db', 'gsnrAvgDb']))
+    ?? readSummaryField(['final_gsnr_avg_db', 'finalGsnrAvgDb', 'gsnr_avg_db', 'gsnrAvgDb']))
   const gsnrMin = finiteNumber(readFirst(gsnrSource, ['min_db', 'minDb'])
-    ?? readFirst(source, ['final_gsnr_min_db', 'finalGsnrMinDb', 'gsnr_min_db', 'gsnrMinDb']))
+    ?? readSummaryField(['final_gsnr_min_db', 'finalGsnrMinDb', 'gsnr_min_db', 'gsnrMinDb']))
   const gsnrMax = finiteNumber(readFirst(gsnrSource, ['max_db', 'maxDb'])
-    ?? readFirst(source, ['gsnr_max_db', 'gsnrMaxDb']))
+    ?? readSummaryField(['final_gsnr_max_db', 'finalGsnrMaxDb', 'gsnr_max_db', 'gsnrMaxDb']))
   const worstChannel = readFirst(gsnrSource, ['worst_channel', 'worstChannel'])
+    ?? readSummaryField(['final_gsnr_worst_channel', 'finalGsnrWorstChannel', 'worst_channel', 'worstChannel'])
   const bestChannel = readFirst(gsnrSource, ['best_channel', 'bestChannel'])
+    ?? readSummaryField(['final_gsnr_best_channel', 'finalGsnrBestChannel', 'best_channel', 'bestChannel'])
   if (gsnrAvg != null) finalGsnr.avg_db = gsnrAvg
   if (gsnrMin != null) finalGsnr.min_db = gsnrMin
   if (gsnrMax != null) finalGsnr.max_db = gsnrMax
@@ -667,14 +684,19 @@ function buildSimulationSummary(root: Record<string, unknown>): SimulationCache[
 
   const finalOsnr: NonNullable<SimulationCache['summary']['final_osnr']> = {}
   const osnrAvg = finiteNumber(readFirst(osnrSource, ['avg_db', 'avgDb'])
-    ?? readFirst(source, ['final_osnr_avg_db', 'finalOsnrAvgDb', 'osnr_avg_db', 'osnrAvgDb']))
+    ?? readSummaryField(['final_osnr_avg_db', 'finalOsnrAvgDb', 'osnr_avg_db', 'osnrAvgDb']))
   const osnrMin = finiteNumber(readFirst(osnrSource, ['min_db', 'minDb'])
-    ?? readFirst(source, ['osnr_min_db', 'osnrMinDb']))
+    ?? readSummaryField(['osnr_min_db', 'osnrMinDb']))
   if (osnrAvg != null) finalOsnr.avg_db = osnrAvg
   if (osnrMin != null) finalOsnr.min_db = osnrMin
   if (Object.keys(finalOsnr).length > 0) result.final_osnr = finalOsnr
 
-  const systemCapacityTbps = finiteNumber(readFirst(source, ['system_capacity_tbps', 'systemCapacityTbps']))
+  const systemCapacityTbps = finiteNumber(readSummaryField([
+    'system_capacity_tbps',
+    'systemCapacityTbps',
+    'capacity_tbps',
+    'capacityTbps',
+  ]))
   if (systemCapacityTbps != null) result.system_capacity_tbps = systemCapacityTbps
   if (gsnrAvg != null) result.final_gsnr_avg_db = gsnrAvg
   if (gsnrMin != null) result.final_gsnr_min_db = gsnrMin
@@ -703,6 +725,12 @@ export function normalizePlatformSimulationCache(
   const routeParts = request?.linkName.split(/\s*[⇄↔]\s*/) ?? []
   const routeRef = recordValue(readFirst(parsed, ['route_ref', 'routeRef']))
   const modelSelection = recordValue(readFirst(parsed, ['model_selection', 'modelSelection']))
+  const fiberModel = readFirst(modelSelection ?? {}, ['fiber_model_id', 'fiberModelId'])
+    ?? readFirst(parsed, ['fiber_model_id', 'fiberModelId'])
+  const edfaModel = readFirst(modelSelection ?? {}, ['edfa_model_id', 'edfaModelId'])
+    ?? readFirst(parsed, ['edfa_model_id', 'edfaModelId'])
+  const buModel = readFirst(modelSelection ?? {}, ['bu_model_id', 'buModelId'])
+    ?? readFirst(parsed, ['bu_model_id', 'buModelId'])
 
   return {
     is_valid: true,
@@ -713,11 +741,9 @@ export function normalizePlatformSimulationCache(
       route_hash: String(readFirst(routeRef ?? {}, ['route_hash', 'routeHash']) ?? request?.linkId ?? ''),
     },
     model_selection: {
-      fiber_model_id: String(readFirst(modelSelection ?? {}, ['fiber_model_id', 'fiberModelId']) ?? request?.fiberModel ?? ''),
-      edfa_model_id: String(readFirst(modelSelection ?? {}, ['edfa_model_id', 'edfaModelId']) ?? request?.amplifierModel ?? ''),
-      bu_model_id: readFirst(modelSelection ?? {}, ['bu_model_id', 'buModelId']) == null
-        ? null
-        : String(readFirst(modelSelection ?? {}, ['bu_model_id', 'buModelId'])),
+      fiber_model_id: fiberModel == null ? '' : String(fiberModel),
+      edfa_model_id: edfaModel == null ? '' : String(edfaModel),
+      bu_model_id: buModel == null ? null : String(buModel),
     },
     positions,
     channels,

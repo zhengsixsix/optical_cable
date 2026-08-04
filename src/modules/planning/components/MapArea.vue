@@ -21,10 +21,12 @@ import Map from 'ol/Map'
 import View from 'ol/View'
 import WebGLTileLayer from 'ol/layer/WebGLTile'
 import WebGLPointsLayer from 'ol/layer/WebGLPoints'
+import ImageLayer from 'ol/layer/Image'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import GeoTIFFSource from 'ol/source/GeoTIFF'
+import ImageStatic from 'ol/source/ImageStatic'
 import GeoJSONFormat from 'ol/format/GeoJSON'
 import { createBaseTileSource } from '@/utils/mapTileSource'
 import {DragBox, Modify} from 'ol/interaction'
@@ -40,7 +42,7 @@ import 'ol/ol.css'
 import {useShpLoader} from '@/services/ShpLoader'
 import {createColdCoralLayers, createFishingLayers, createShippingLayers} from '@/utils/layerFactory'
 import { fetchPlatformAttachmentBlob, isPlatformAttachmentUrl } from '@/services/platform/attachment'
-import shp from 'shpjs'
+import { parseShapefileAttachment } from '@/services/GisAttachmentParser'
 
 // 图标资源
 import volcanoIconUrl from '@/assets/volcano.svg'
@@ -104,12 +106,12 @@ const loadShpFeatures = async (url: string) => {
   return shpLoader.parseFeatures(geojsonData)
 }
 
-const loadShpFeaturesFromBlob = async (blob: Blob) => {
-  return useShpLoader().parseFeatures(await shp(await blob.arrayBuffer()))
+const loadShpFeaturesFromBlob = async (blob: Blob, fileName = 'layer.zip') => {
+  return useShpLoader().parseFeatures(await parseShapefileAttachment(blob, fileName))
 }
 
-const loadPlatformAttachmentShpFeatures = async (downloadUrl: string) => {
-  return loadShpFeaturesFromBlob(await fetchPlatformAttachmentBlob(downloadUrl))
+const loadPlatformAttachmentShpFeatures = async (downloadUrl: string, fileName: string) => {
+  return loadShpFeaturesFromBlob(await fetchPlatformAttachmentBlob(downloadUrl), fileName)
 }
 
 const parseGeoJsonFeatures = (geojsonData: unknown) => {
@@ -122,6 +124,17 @@ const parseGeoJsonFeatures = (geojsonData: unknown) => {
 const loadPlatformAttachmentGeoJsonFeatures = async (downloadUrl: string) => {
   const blob = await fetchPlatformAttachmentBlob(downloadUrl)
   return parseGeoJsonFeatures(JSON.parse(await blob.text()))
+}
+
+const fitVectorSource = (source: VectorSource, maxZoom = 10) => {
+  if (!map) return
+  const extent = source.getExtent()
+  if (extent.length !== 4 || !extent.every(Number.isFinite) || extent[0] > extent[2] || extent[1] > extent[3]) return
+  map.getView().fit(extent, {
+    padding: [50, 50, 50, 50],
+    duration: 800,
+    maxZoom,
+  })
 }
 
 const getLayerData = (layerId: string) => layerStore.getLayerData(layerId)
@@ -203,9 +216,18 @@ const loadUploadedVectorFeatures = async (layerId: string) => {
     return []
   }
 
+  const fileName = layerData.metadata.fileName || layerData.metadata.attachmentName || '平台图层'
+
   if (layerData.metadata.loadStrategy === 'shapefile-zip-vector') {
     if (isPlatformAttachmentUrl(downloadUrl)) {
-      return loadPlatformAttachmentShpFeatures(downloadUrl)
+      return loadPlatformAttachmentShpFeatures(downloadUrl, fileName)
+    }
+    return loadShpFeatures(downloadUrl)
+  }
+
+  if (layerData.metadata.loadStrategy === 'shapefile-component') {
+    if (isPlatformAttachmentUrl(downloadUrl)) {
+      return loadPlatformAttachmentShpFeatures(downloadUrl, fileName)
     }
     return loadShpFeatures(downloadUrl)
   }
@@ -369,8 +391,8 @@ let segmentNodeSource: VectorSource | null = null
 let routeModify: Modify | null = null
 let adjustingPointGeometry: Point | null = null
 let adjustingPointGeometryChangeHandler: (() => void) | null = null
-let costResultLayer: Heatmap | null = null
-let riskResultLayer: Heatmap | null = null
+let costResultLayer: ImageLayer<ImageStatic> | null = null
+let riskResultLayer: ImageLayer<ImageStatic> | null = null
 let mapContextMenuHandler: ((event: MouseEvent) => void) | null = null
 let elevationNativeMaxZoom = 18
 let elevationFallbackApplied = false
@@ -515,7 +537,82 @@ const renderPlanningRangeSelection = (extent: LonLatExtent | null) => {
   selectionSource.addFeature(new Feature({ geometry, isPlanningRange: true }))
 }
 
-const getResultGridExtent = (): LonLatExtent => {
+interface GridAxisSample {
+  index: number
+  coordinate: number
+}
+
+const fitGridAxis = (samples: GridAxisSample[]) => {
+  if (samples.length < 2) return null
+  const meanIndex = samples.reduce((sum, sample) => sum + sample.index, 0) / samples.length
+  const meanCoordinate = samples.reduce((sum, sample) => sum + sample.coordinate, 0) / samples.length
+  let numerator = 0
+  let denominator = 0
+
+  for (const sample of samples) {
+    numerator += (sample.index - meanIndex) * (sample.coordinate - meanCoordinate)
+    denominator += (sample.index - meanIndex) ** 2
+  }
+  if (denominator <= Number.EPSILON) return null
+
+  const step = numerator / denominator
+  const origin = meanCoordinate - step * meanIndex
+  if (!Number.isFinite(origin) || !Number.isFinite(step) || Math.abs(step) <= Number.EPSILON) return null
+
+  const tolerance = Math.max(Math.abs(step) * 0.02, 1e-7)
+  if (samples.some(sample => Math.abs(sample.coordinate - (origin + step * sample.index)) > tolerance)) {
+    return null
+  }
+  return { origin, step }
+}
+
+const inferResultGridExtent = (grid: NumericGridData): LonLatExtent | null => {
+  const paths = routeStore.algorithmRouteResult?.rawResultFiles['FMM_path_result.json'] ?? []
+  const rowSamples: GridAxisSample[] = []
+  const columnSamples: GridAxisSample[] = []
+
+  for (const path of paths) {
+    const realPointsBySequence: Record<number, number[]> = {}
+    for (const realPoint of path.real_trace ?? []) {
+      if (realPoint.length >= 3 && realPoint.every(Number.isFinite)) {
+        realPointsBySequence[realPoint[0]] = realPoint
+      }
+    }
+
+    for (const gridPoint of path.trace ?? []) {
+      if (gridPoint.length < 3 || !gridPoint.every(Number.isFinite)) continue
+      const realPoint = realPointsBySequence[gridPoint[0]]
+      if (!realPoint) continue
+      const row = gridPoint[1]
+      const column = gridPoint[2]
+      if (row < 0 || row >= grid.rows || column < 0 || column >= grid.columns) continue
+      rowSamples.push({ index: row, coordinate: realPoint[1] })
+      columnSamples.push({ index: column, coordinate: realPoint[2] })
+    }
+  }
+
+  const latitudeAxis = fitGridAxis(rowSamples)
+  const longitudeAxis = fitGridAxis(columnSamples)
+  if (!latitudeAxis || !longitudeAxis) return null
+
+  const firstLongitude = longitudeAxis.origin
+  const lastLongitude = longitudeAxis.origin + longitudeAxis.step * (grid.columns - 1)
+  const firstLatitude = latitudeAxis.origin
+  const lastLatitude = latitudeAxis.origin + latitudeAxis.step * (grid.rows - 1)
+  const longitudePadding = Math.abs(longitudeAxis.step) / 2
+  const latitudePadding = Math.abs(latitudeAxis.step) / 2
+
+  return [
+    Math.min(firstLongitude, lastLongitude) - longitudePadding,
+    Math.min(firstLatitude, lastLatitude) - latitudePadding,
+    Math.max(firstLongitude, lastLongitude) + longitudePadding,
+    Math.max(firstLatitude, lastLatitude) + latitudePadding,
+  ]
+}
+
+const getResultGridExtent = (grid: NumericGridData): LonLatExtent => {
+  const inferredExtent = inferResultGridExtent(grid)
+  if (inferredExtent) return inferredExtent
   if (activePlanningLonLatExtent.value) return activePlanningLonLatExtent.value
 
   const coordinates = routeStore.paretoRoutes.flatMap(route => route.rawTrunkCoordinates ?? [])
@@ -535,38 +632,123 @@ const getResultGridExtent = (): LonLatExtent => {
   return DEFAULT_CHINA_LON_LAT_EXTENT
 }
 
-const buildResultHeatmap = (
-  grid: NumericGridData,
-  gradient: string[],
-  visible: boolean,
-) => {
-  const source = new VectorSource()
-  const [west, south, east, north] = getResultGridExtent()
-  const sampleStep = Math.max(1, Math.ceil(Math.sqrt((grid.rows * grid.columns) / 10000)))
-  const span = grid.max - grid.min
+type RgbColor = readonly [red: number, green: number, blue: number]
 
+const COST_RESULT_PALETTE: readonly RgbColor[] = [
+  [247, 251, 255],
+  [222, 235, 247],
+  [198, 219, 239],
+  [158, 202, 225],
+  [107, 174, 214],
+  [66, 146, 198],
+  [33, 113, 181],
+  [8, 81, 156],
+  [8, 48, 107],
+]
+
+const RISK_RESULT_PALETTE: readonly RgbColor[] = [
+  [255, 245, 240],
+  [254, 224, 210],
+  [252, 187, 161],
+  [252, 146, 114],
+  [251, 106, 74],
+  [239, 59, 44],
+  [203, 24, 29],
+  [165, 15, 21],
+  [103, 0, 13],
+]
+
+const buildPaletteLookup = (palette: readonly RgbColor[]) => Array.from({ length: 256 }, (_, index) => {
+  const position = (index / 255) * (palette.length - 1)
+  const lowerIndex = Math.floor(position)
+  const upperIndex = Math.min(lowerIndex + 1, palette.length - 1)
+  const ratio = position - lowerIndex
+  const lower = palette[lowerIndex]
+  const upper = palette[upperIndex]
+  return lower.map((channel, channelIndex) =>
+    Math.round(channel + (upper[channelIndex] - channel) * ratio),
+  ) as unknown as RgbColor
+})
+
+interface GridRenderOptions {
+  transparentZero?: boolean
+  maximumQuantile?: number
+}
+
+const getGridQuantile = (grid: NumericGridData, quantile: number) => {
+  const targetSampleCount = 100000
+  const sampleStep = Math.max(1, Math.ceil(Math.sqrt((grid.rows * grid.columns) / targetSampleCount)))
+  const samples: number[] = []
   for (let row = 0; row < grid.rows; row += sampleStep) {
     for (let column = 0; column < grid.columns; column += sampleStep) {
       const value = grid.values[row]?.[column]
-      if (!Number.isFinite(value)) continue
-      const longitude = grid.columns === 1 ? (west + east) / 2 : west + (column / (grid.columns - 1)) * (east - west)
-      const latitude = grid.rows === 1 ? (south + north) / 2 : north - (row / (grid.rows - 1)) * (north - south)
-      const feature = new Feature({
-        geometry: new Point(toCurrentMapCoordinate([longitude, latitude])),
-        value,
-        weight: span > 0 ? Math.max(0.05, (value - grid.min) / span) : 1,
-      })
-      source.addFeature(feature)
+      if (Number.isFinite(value)) samples.push(value)
+    }
+  }
+  if (samples.length === 0) return grid.max
+
+  samples.sort((left, right) => left - right)
+  const position = Math.min(1, Math.max(0, quantile)) * (samples.length - 1)
+  const lowerIndex = Math.floor(position)
+  const upperIndex = Math.ceil(position)
+  const ratio = position - lowerIndex
+  return samples[lowerIndex] + (samples[upperIndex] - samples[lowerIndex]) * ratio
+}
+
+const renderGridImage = (
+  grid: NumericGridData,
+  palette: readonly RgbColor[],
+  options: GridRenderOptions,
+) => {
+  const canvas = document.createElement('canvas')
+  canvas.width = grid.columns
+  canvas.height = grid.rows
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('无法创建成本与风险栅格画布')
+
+  const image = context.createImageData(grid.columns, grid.rows)
+  const lookup = buildPaletteLookup(palette)
+  const displayMaximum = options.maximumQuantile === undefined
+    ? grid.max
+    : getGridQuantile(grid, options.maximumQuantile)
+  const span = displayMaximum - grid.min
+
+  for (let row = 0; row < grid.rows; row += 1) {
+    for (let column = 0; column < grid.columns; column += 1) {
+      const value = grid.values[row]?.[column]
+      const pixelOffset = (row * grid.columns + column) * 4
+      if (!Number.isFinite(value) || (options.transparentZero && value === 0)) {
+        image.data[pixelOffset + 3] = 0
+        continue
+      }
+
+      const normalized = span > 0 ? Math.min(1, Math.max(0, (value - grid.min) / span)) : 1
+      const color = lookup[Math.round(normalized * 255)]
+      image.data[pixelOffset] = color[0]
+      image.data[pixelOffset + 1] = color[1]
+      image.data[pixelOffset + 2] = color[2]
+      image.data[pixelOffset + 3] = 255
     }
   }
 
-  const layer = new Heatmap({
-    source,
-    blur: 22,
-    radius: 14,
-    gradient,
-    weight: 'weight',
-    opacity: 0.68,
+  context.putImageData(image, 0, 0)
+  return canvas.toDataURL('image/png')
+}
+
+const buildResultRasterLayer = (
+  grid: NumericGridData,
+  palette: readonly RgbColor[],
+  renderOptions: GridRenderOptions,
+  visible: boolean,
+) => {
+  const layer = new ImageLayer({
+    source: new ImageStatic({
+      url: renderGridImage(grid, palette, renderOptions),
+      imageExtent: toCurrentMapExtent(getResultGridExtent(grid)),
+      projection: getMapProjection(),
+      interpolate: true,
+    }),
+    opacity: 1,
     visible,
   })
   layer.setZIndex(120)
@@ -595,33 +777,53 @@ const refreshAlgorithmResultLayers = () => {
       id: 'algorithm-cost',
       name: '成本底图',
       grid: result?.analysis.costGrid,
-      gradient: ['rgba(255,255,204,0)', '#fed976', '#fd8d3c', '#d94701', '#7f0000'],
+      palette: COST_RESULT_PALETTE,
+      renderOptions: {},
     },
     {
       id: 'algorithm-risk',
       name: '风险底图',
       grid: result?.analysis.riskGrid,
-      gradient: ['rgba(236,253,245,0)', '#86efac', '#facc15', '#f97316', '#b91c1c'],
+      palette: RISK_RESULT_PALETTE,
+      renderOptions: { transparentZero: true, maximumQuantile: 0.99 },
     },
   ] as const
+  const existingCostLayer = layerStore.getLayerById('algorithm-cost')
+  const existingRiskLayer = layerStore.getLayerById('algorithm-risk')
+  const hadAlgorithmLayer = Boolean(existingCostLayer || existingRiskLayer)
+  const previouslyVisibleId = existingCostLayer?.visible
+    ? 'algorithm-cost'
+    : existingRiskLayer?.visible
+      ? 'algorithm-risk'
+      : null
+  const activeLayerId = definitions.some(definition => definition.id === previouslyVisibleId && definition.grid)
+    ? previouslyVisibleId
+    : hadAlgorithmLayer
+      ? null
+      : definitions.find(definition => definition.grid)?.id ?? null
 
   definitions.forEach(definition => {
     if (!definition.grid) {
       layerStore.removeLayer(definition.id)
       return
     }
-    const visible = layerStore.getLayerById(definition.id)?.visible ?? true
+    const visible = definition.id === activeLayerId
     layerStore.upsertLayer({
       id: definition.id,
       name: definition.name,
-      type: 'heatmap',
+      type: 'raster',
       visible,
       loaded: true,
       loading: false,
-      opacity: 0.68,
+      opacity: 1,
       zIndex: 120,
     })
-    const layer = buildResultHeatmap(definition.grid, [...definition.gradient], visible)
+    const layer = buildResultRasterLayer(
+      definition.grid,
+      definition.palette,
+      definition.renderOptions,
+      visible,
+    )
     map!.addLayer(layer)
     if (definition.id === 'algorithm-cost') costResultLayer = layer
     else riskResultLayer = layer
@@ -1203,6 +1405,7 @@ const initMap = () => {
 
       map.addLayer(volcanoHeatmapLayer)
       map.addLayer(volcanoIconLayer)
+      fitVectorSource(volcanoIconSource, 8)
 
       volcanoDataLoaded = true
       layerStore.setLayerLoaded('volcano', true)
@@ -1399,10 +1602,12 @@ const initMap = () => {
           if (!totalExtent) {
             totalExtent = extent
           } else {
-            // 扩展总范围
-            import('ol/extent').then(({extend}) => {
-              extend(totalExtent!, extent)
-            })
+            totalExtent = [
+              Math.min(totalExtent[0], extent[0]),
+              Math.min(totalExtent[1], extent[1]),
+              Math.max(totalExtent[2], extent[2]),
+              Math.max(totalExtent[3], extent[3]),
+            ]
           }
         }
       })

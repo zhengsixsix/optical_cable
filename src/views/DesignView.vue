@@ -184,6 +184,7 @@ interface LinkCalculationSummary {
   }
   systemConfig?: {
     amplifierCount?: number
+    spanCount?: number
     avgSpanLength?: number
     buCount?: number
     equalizerCount?: number
@@ -284,8 +285,15 @@ const restoredPlanningSummary = computed<LinkCalculationSummary | null>(() => {
   const amplifierCount = finiteNumber(layout?.amplifierCount)
     ?? finiteNumber(finalPlacement?.total_edfa_count)
     ?? finiteNumber(legacy?.systemConfig?.amplifierCount)
+  const spanCount = finiteNumber(simulation?.summary.total_span_count)
+    ?? (layout?.spans.length ? layout.spans.length : null)
+    ?? finiteNumber(legacy?.systemConfig?.spanCount)
+  const connectorBuCount = routeConnectorElements.value.length > 0
+    ? routeConnectorElements.value.filter(element => element.type === 'bu').length
+    : null
   const buCount = finiteNumber(finalPlacement?.total_bu_count)
     ?? finiteNumber(legacy?.systemConfig?.buCount)
+    ?? connectorBuCount
   const averageSpan = finiteNumber(layout?.spanKmUsed)
     ?? finiteNumber(planning?.user_decision?.selected_span_km)
     ?? finiteNumber(planning?.sweep_results.recommended_span_km)
@@ -305,6 +313,7 @@ const restoredPlanningSummary = computed<LinkCalculationSummary | null>(() => {
   const systemConfig = {
     ...(legacy?.systemConfig ?? {}),
     ...(amplifierCount != null ? { amplifierCount } : {}),
+    ...(spanCount != null ? { spanCount } : {}),
     ...(buCount != null ? { buCount } : {}),
     ...(averageSpan != null ? { avgSpanLength: averageSpan } : {}),
     ...(channelCount != null ? { channelCount } : {}),
@@ -344,6 +353,21 @@ const deviceStats = computed(() => {
     modulation: systemConfig?.modulation ?? '-',
     totalBuLoss: systemConfig?.totalBuLoss ?? 0,
     totalEqualizerLoss: systemConfig?.totalEqualizerLoss ?? 0,
+  }
+})
+
+const analysisLinkCalcSummary = computed<LinkCalculationSummary | null>(() => {
+  const summary = linkCalcSummary.value
+  if (!summary) return null
+  return {
+    ...summary,
+    systemConfig: {
+      ...(summary.systemConfig ?? {}),
+      amplifierCount: deviceStats.value.amplifierCount,
+      buCount: deviceStats.value.buCount,
+      channelCount: deviceStats.value.channelCount,
+      modulation: deviceStats.value.modulation,
+    },
   }
 })
 
@@ -468,8 +492,12 @@ const handleAmplifierMoved = (data: { id: string; longitude: number; latitude: n
 
 // 打开链路仿真分析
 const openLinkAnalysis = () => {
-  const totalLength = rplStore.currentTable?.metadata?.totalLength ?? 0
-  if (totalLength === 0 && connectorStore.elements.length === 0) {
+  const totalLength = finiteNumber(linkCalcSummary.value?.totalLength)
+    ?? finiteNumber(rplStore.currentTable?.metadata?.totalLength)
+    ?? finiteNumber(routeStore.selectedRoute?.totalLength)
+    ?? 0
+  const hasSimulationCache = settingsStore.simulationCache?.is_valid === true
+  if (!hasSimulationCache && totalLength === 0 && connectorStore.elements.length === 0) {
     appStore.showNotification({ type: 'warning', message: '请先导入路由数据或配置链路' })
     return
   }
@@ -1060,7 +1088,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
 
   <SimulationAnalysisDialog
     :visible="showSimulationAnalysisDialog"
-    :link-calc-summary="linkCalcSummary"
+    :link-calc-summary="analysisLinkCalcSummary"
     @close="showSimulationAnalysisDialog = false"
   />
 

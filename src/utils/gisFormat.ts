@@ -13,7 +13,6 @@ export type GisLayerFormat =
   | 'gpx'
   | 'gpkg'
   | 'csv'
-  | 'xlsx'
   | 'unknown'
 
 export type GisLoadStrategy =
@@ -55,8 +54,6 @@ const knownGisExtensions = [
   'gpx',
   'gpkg',
   'csv',
-  'xlsx',
-  'xls',
 ] as const
 
 const fileNamePattern = new RegExp(`([^\\\\/\\s]+\\.(${knownGisExtensions.join('|')}))`, 'i')
@@ -124,7 +121,7 @@ const formatByExtension: Record<string, GisFormatInfo> = {
     kind: 'vector',
     loadStrategy: 'shapefile-component',
     label: 'Shapefile',
-    supported: false,
+    supported: true,
   },
   dbf: {
     extension: 'dbf',
@@ -188,22 +185,6 @@ const formatByExtension: Record<string, GisFormatInfo> = {
     kind: 'table',
     loadStrategy: 'table-points',
     label: 'CSV',
-    supported: false,
-  },
-  xlsx: {
-    extension: 'xlsx',
-    format: 'xlsx',
-    kind: 'table',
-    loadStrategy: 'table-points',
-    label: 'Excel',
-    supported: false,
-  },
-  xls: {
-    extension: 'xls',
-    format: 'xlsx',
-    kind: 'table',
-    loadStrategy: 'table-points',
-    label: 'Excel',
     supported: false,
   },
 }

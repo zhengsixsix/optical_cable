@@ -85,18 +85,34 @@ const visibleAlgorithmLayers = computed(() =>
   layerType.value === 'all' ? algorithmLayers.value : [])
 
 function handleAlgorithmLayerVisible(id: string, visible: boolean) {
+  if (visible) {
+    for (const layer of algorithmLayers.value) {
+      if (layer.id !== id && layer.visible) {
+        layerStore.toggleLayer(layer.id, false)
+      }
+    }
+  }
   layerStore.toggleLayer(id, visible)
 }
 
 // 全选状态
 const uploadedLayers = computed(() => layers.value.filter(l => l.uploaded))
 const selectableLayers = computed(() => [...visibleAlgorithmLayers.value, ...uploadedLayers.value])
-const allChecked = computed(() => selectableLayers.value.length > 0 && selectableLayers.value.every(l => l.visible))
+const allChecked = computed(() => {
+  const algorithmGroupChecked = visibleAlgorithmLayers.value.length === 0
+    || visibleAlgorithmLayers.value.some(layer => layer.visible)
+  const uploadedGroupChecked = uploadedLayers.value.every(layer => layer.visible)
+  return selectableLayers.value.length > 0 && algorithmGroupChecked && uploadedGroupChecked
+})
 const someChecked = computed(() => selectableLayers.value.some(l => l.visible) && !allChecked.value)
 
 async function handleSelectAll(checked: boolean) {
-  for (const layer of visibleAlgorithmLayers.value) {
-    handleAlgorithmLayerVisible(layer.id, checked)
+  if (!checked) {
+    for (const layer of visibleAlgorithmLayers.value) {
+      handleAlgorithmLayerVisible(layer.id, false)
+    }
+  } else if (visibleAlgorithmLayers.value.length > 0 && !visibleAlgorithmLayers.value.some(layer => layer.visible)) {
+    handleAlgorithmLayerVisible(visibleAlgorithmLayers.value[0].id, true)
   }
   for (const layer of layers.value) {
     if (layer.uploaded) {

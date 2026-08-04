@@ -18,6 +18,7 @@ function block(source, startMarker, endMarker) {
 const dialogSource = read('src/modules/design/dialogs/LinkConfigDialog.vue')
 const platformApiSource = read('src/services/platform/api.ts')
 const simulationSource = read('src/services/SimulationApiService.ts')
+const resultPanelSource = read('src/modules/design/components/SystemPlanningResultPanel.vue')
 
 expect(
   dialogSource.includes('platformDeviceLibraryApi')
@@ -127,6 +128,26 @@ expect(
     && dialogSource.includes('syncConnectorStoreFromDeviceEntities(entities)')
     && dialogSource.includes('platformDeviceEntityToConnectorElement'),
   'layout-generated device entities are not synchronized after planning',
+)
+
+const amplifierResultSource = block(
+  dialogSource,
+  'const buildLayoutAmplifierInfos =',
+  'const platformLayoutTailSpanKm =',
+)
+expect(
+  amplifierResultSource.includes('entityByNodeId')
+    && amplifierResultSource.includes('readBackendAmplifierValues')
+    && amplifierResultSource.includes('nominalGain: backendValues?.nominalGainDb')
+    && amplifierResultSource.includes('maxOutputPower: backendValues?.maxOutputPowerDbm'),
+  'backend amplifier entity values are not mapped into planning results by nodeId',
+)
+expect(
+  resultPanelSource.includes('实际增益')
+    && resultPanelSource.includes('额定增益')
+    && resultPanelSource.includes('实际输出功率')
+    && resultPanelSource.includes('最大输出功率'),
+  'actual and rated backend amplifier fields are not shown separately',
 )
 expect(
   platformApiSource.includes("'/plan/deviceLibrary/search'")

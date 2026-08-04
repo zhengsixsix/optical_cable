@@ -33,6 +33,7 @@ import {
   resolveRouteStationNames,
 } from '@/utils/routeStationNames'
 import { getSystemDeviceIcon } from '@/utils/systemDesignIcons'
+import { readBackendAmplifierValues } from '@/utils/backendAmplifierValues'
 import SystemPlanningResultPanel from '@/modules/design/components/SystemPlanningResultPanel.vue'
 import {
   parsePlanningLayoutResult,
@@ -2161,12 +2162,15 @@ interface AmplifierInfo {
   position: number  // km
   precedingSpan: number | null  // 前段跨段长度 km
   gain: number | null  // dB
+  nominalGain?: number | null  // dB，后端器件实例返回的额定值
   noiseFigure: number | null  // dB
   outputPower: number | null  // dBm
+  maxOutputPower?: number | null  // dBm，后端器件实例返回的上限
   inputPower: number | null  // dBm
   longitude?: number
   latitude?: number
   deviceModel?: string
+  amplifierType?: string
   gainFlatness?: number | null
 }
 
@@ -2777,17 +2781,37 @@ const buildCalculationResultFromPlatformSimulation = (value: unknown): Calculati
     const stableId = readValue(node, ['node_id', 'nodeId', 'event_id', 'eventId'])
       ?? readValue(placement ?? {}, ['amplifier_id', 'amplifierId', 'id', 'amplifier_index', 'amplifierIndex'])
       ?? name
+    const deviceModel = readString(readValue(params ?? {}, [
+      'device_model',
+      'deviceModel',
+      'amplifier_model',
+      'amplifierModel',
+      'model_id',
+      'modelId',
+    ]) ?? readValue(node, [
+      'device_model',
+      'deviceModel',
+      'amplifier_model',
+      'amplifierModel',
+      'model_id',
+      'modelId',
+    ])).trim() || undefined
+    const amplifierType = readString(readValue(params ?? {}, ['amplifier_type', 'amplifierType'])
+      ?? readValue(node, ['amplifier_type', 'amplifierType'])).trim() || undefined
     return [{
       id: String(stableId),
       name,
       position: readNumber(readValue(node, ['position_km', 'positionKm', 'kp_km', 'kpKm', 'kp'])) ?? 0,
       precedingSpan: readNumber(readValue(placement ?? {}, ['preceding_span_km', 'precedingSpanKm'])),
       gain: readNumber(readValue(params ?? {}, ['gain_db', 'gainDb'])),
+      nominalGain: readNumber(readValue(params ?? {}, ['nominal_gain_db', 'nominalGainDb'])),
       noiseFigure: readNumber(readValue(params ?? {}, ['noise_figure_db', 'noiseFigureDb', 'nf_db', 'nfDb'])),
       outputPower: readNumber(readValue(params ?? {}, ['output_power_dbm', 'outputPowerDbm'])),
+      maxOutputPower: readNumber(readValue(params ?? {}, ['max_output_power_dbm', 'maxOutputPowerDbm'])),
       inputPower: readNumber(readValue(params ?? {}, ['input_power_dbm', 'inputPowerDbm'])),
       gainFlatness: readNumber(readValue(params ?? {}, ['gain_flatness_db', 'gainFlatnessDb', 'flatness_db', 'flatnessDb'])),
-      deviceModel: selectedAmplifierTypeId.value || selectedAmplifierModel.value || undefined,
+      deviceModel,
+      amplifierType,
     }]
   })
 
@@ -3040,19 +3064,30 @@ const buildSystemPlanningCache = (): SystemPlanningCache => {
 }
 
 const buildLayoutAmplifierInfos = (layout: PlatformLayoutResult): AmplifierInfo[] => {
+  const entityByNodeId = new Map(settingsStore.platformDeviceEntities
+    .filter(entity => entity.nodeId != null && entity.nodeId !== '')
+    .map(entity => [String(entity.nodeId), entity]))
   return resolveLayoutAmplifiers(layout)
-    .map(node => ({
-      id: node.nodeId,
-      name: node.nodeName || node.nodeId,
-      position: node.positionKm,
-      precedingSpan: node.precedingSpanKm,
-      gain: null,
-      noiseFigure: null,
-      outputPower: null,
-      inputPower: null,
-      longitude: node.longitude ?? undefined,
-      latitude: node.latitude ?? undefined,
-    }))
+    .map(node => {
+      const backendValues = readBackendAmplifierValues(entityByNodeId.get(node.nodeId))
+      return {
+        id: node.nodeId,
+        name: node.nodeName || node.nodeId,
+        position: node.positionKm,
+        precedingSpan: node.precedingSpanKm,
+        gain: backendValues?.gainDb ?? null,
+        nominalGain: backendValues?.nominalGainDb ?? null,
+        noiseFigure: backendValues?.noiseFigureDb ?? null,
+        outputPower: backendValues?.outputPowerDbm ?? null,
+        maxOutputPower: backendValues?.maxOutputPowerDbm ?? null,
+        inputPower: backendValues?.inputPowerDbm ?? null,
+        deviceModel: backendValues?.deviceModel ?? undefined,
+        amplifierType: backendValues?.amplifierType ?? undefined,
+        gainFlatness: backendValues?.gainFlatnessDb ?? null,
+        longitude: node.longitude ?? undefined,
+        latitude: node.latitude ?? undefined,
+      }
+    })
 }
 
 const platformLayoutTailSpanKm = computed(() => {
@@ -3141,10 +3176,6 @@ const resultPerformanceData = computed<ResultPerformanceData | null>(() => {
   }
 })
 
-const resultHasPerformanceMetrics = computed(() => Boolean(
-  resultMetrics.value?.osnr || resultMetrics.value?.gsnr,
-))
-
 const resultTotalLength = computed(() => {
   const fromLayout = platformLayoutResult.value?.totalLengthKm
   if (typeof fromLayout === 'number' && Number.isFinite(fromLayout) && fromLayout > 0) return fromLayout
@@ -3176,11 +3207,14 @@ const resultAmplifiers = computed(() => {
     return {
       ...layoutAmplifier,
       gain: performance?.gain ?? layoutAmplifier.gain,
+      nominalGain: performance?.nominalGain ?? layoutAmplifier.nominalGain,
       noiseFigure: performance?.noiseFigure ?? layoutAmplifier.noiseFigure,
       outputPower: performance?.outputPower ?? layoutAmplifier.outputPower,
+      maxOutputPower: performance?.maxOutputPower ?? layoutAmplifier.maxOutputPower,
       inputPower: performance?.inputPower ?? layoutAmplifier.inputPower,
-      deviceModel: performance?.deviceModel,
-      gainFlatness: performance?.gainFlatness ?? null,
+      deviceModel: performance?.deviceModel ?? layoutAmplifier.deviceModel,
+      amplifierType: performance?.amplifierType ?? layoutAmplifier.amplifierType,
+      gainFlatness: performance?.gainFlatness ?? layoutAmplifier.gainFlatness ?? null,
     }
   })
 })
@@ -4198,7 +4232,6 @@ watch(() => props.visible, async (visible) => {
                     :channel-count="calculationResult?.systemConfig.channelCount ?? null"
                     :modulation="calculationResult?.systemConfig.modulation ?? ''"
                     :optimization-target-label="optimizationTargetLabel"
-                    :has-performance-metrics="resultHasPerformanceMetrics"
                   />
                 </div>
 

@@ -771,7 +771,7 @@ const handleLayerAction = async (item: LayerItem) => {
 
 function isSupportedLayerFile(file: File): boolean {
   const name = file.name.toLowerCase()
-  return ['.tif', '.tiff', '.geojson', '.json', '.zip'].some(ext => name.endsWith(ext))
+  return ['.tif', '.tiff', '.geojson', '.json', '.zip', '.shp'].some(ext => name.endsWith(ext))
 }
 
 function formatFileSize(size: number): string {
@@ -787,14 +787,8 @@ const handleLayerSelected = async (e: Event) => {
     const file = target.files[0]
     const layer = currentBrowseItem.value
 
-    if (file.name.toLowerCase().endsWith('.shp')) {
-      appStore.showNotification({ type: 'warning', message: 'Shapefile 请先将 .shp/.dbf/.shx/.prj 打包为 .zip 后上传' })
-      target.value = ''
-      return
-    }
-
     if (!isSupportedLayerFile(file)) {
-      appStore.showNotification({ type: 'warning', message: '仅支持 .tif/.tiff/.geojson/.json/.zip 图层文件' })
+      appStore.showNotification({ type: 'warning', message: '仅支持 .tif/.tiff/.geojson/.json/.zip/.shp 图层文件' })
       target.value = ''
       return
     }
@@ -941,7 +935,7 @@ const handleSubmit = async () => {
       ref="layerInputRef"
       type="file"
       class="hidden"
-      accept=".tif,.tiff,.geojson,.json,.zip"
+      accept=".tif,.tiff,.geojson,.json,.zip,.shp"
       @change="handleLayerSelected"
     >
     <input

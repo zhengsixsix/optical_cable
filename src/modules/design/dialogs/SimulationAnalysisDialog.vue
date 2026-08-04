@@ -6,9 +6,23 @@ import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import type { SimulationCache } from '@/types/useFile'
 
-defineProps<{
+interface LinkCalculationSummaryInput {
+  linkName?: string
+  totalLength?: number
+  systemCapacityTbps?: number
+  systemConfig?: {
+    spanCount?: number
+    buCount?: number
+    channelCount?: number
+  }
+}
+
+const props = withDefaults(defineProps<{
   visible: boolean
-}>()
+  linkCalcSummary?: LinkCalculationSummaryInput | null
+}>(), {
+  linkCalcSummary: null,
+})
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -147,6 +161,73 @@ function formatNumber(value: unknown, digits = 2, unit = ''): string {
   return isFiniteNumber(value) ? value.toFixed(digits) + unit : '未提供'
 }
 
+type ResultSource = '仿真响应' | '规划结果' | '规划配置'
+
+interface SourcedNumber {
+  value: number | null
+  source: ResultSource | null
+}
+
+interface SourcedText {
+  value: string | null
+  source: ResultSource | null
+}
+
+function sourcedNumber(backendValue: unknown, planningValue: unknown): SourcedNumber {
+  const backend = numberOrNull(backendValue)
+  if (backend != null) return { value: backend, source: '仿真响应' }
+  const planning = numberOrNull(planningValue)
+  return planning == null
+    ? { value: null, source: null }
+    : { value: planning, source: '规划结果' }
+}
+
+function sourcedText(backendValue: unknown, planningValue: unknown): SourcedText {
+  const backend = textOrNull(backendValue)
+  if (backend) return { value: backend, source: '仿真响应' }
+  const planning = textOrNull(planningValue)
+  return planning
+    ? { value: planning, source: '规划配置' }
+    : { value: null, source: null }
+}
+
+const displayedSummary = computed(() => ({
+  totalLength: sourcedNumber(
+    cache.value?.summary?.total_length_km,
+    props.linkCalcSummary?.totalLength,
+  ),
+  spanCount: sourcedNumber(
+    cache.value?.summary?.total_span_count,
+    props.linkCalcSummary?.systemConfig?.spanCount,
+  ),
+  capacity: sourcedNumber(
+    cache.value?.summary?.system_capacity_tbps,
+    props.linkCalcSummary?.systemCapacityTbps,
+  ),
+}))
+
+const planningModels = computed(() => settingsStore.systemPlanningCache?.model_selection ?? null)
+const displayedModels = computed(() => {
+  const buCount = numberOrNull(props.linkCalcSummary?.systemConfig?.buCount)
+  const bu = sourcedText(
+    cache.value?.model_selection?.bu_model_id,
+    planningModels.value?.bu_model_id,
+  )
+  return {
+    fiber: sourcedText(
+      cache.value?.model_selection?.fiber_model_id,
+      planningModels.value?.fiber_model_id,
+    ),
+    edfa: sourcedText(
+      cache.value?.model_selection?.edfa_model_id,
+      planningModels.value?.edfa_model_id,
+    ),
+    bu: bu.value || buCount !== 0
+      ? bu
+      : { value: '不适用（0 BU）', source: '规划结果' as const },
+  }
+})
+
 function readArrayNumber(values: unknown, index: number): number | null {
   if (!Array.isArray(values)) return null
   return numberOrNull(values[index])
@@ -190,19 +271,23 @@ const channelCount = computed(() => explicitCount(cache.value?.channels?.count))
 
 const linkInfo = computed(() => {
   const current = cache.value
+  const planning = props.linkCalcSummary
   if (!current) {
     return {
-      linkName: '暂无后端仿真结果',
-      totalLength: null,
-      channelCount: null,
+      linkName: planning?.linkName || '暂无后端仿真结果',
+      totalLength: displayedSummary.value.totalLength.value,
+      channelCount: numberOrNull(planning?.systemConfig?.channelCount),
     }
   }
+  const fromStation = textOrNull(current.route_ref?.from_station)
+  const toStation = textOrNull(current.route_ref?.to_station)
   return {
-    linkName: textOrMissing(current.route_ref?.from_station)
-      + ' ⇄ '
-      + textOrMissing(current.route_ref?.to_station),
-    totalLength: numberOrNull(current.summary?.total_length_km),
-    channelCount: numberOrNull(current.channels?.count),
+    linkName: fromStation && toStation
+      ? fromStation + ' ⇄ ' + toStation
+      : planning?.linkName || '未提供',
+    totalLength: displayedSummary.value.totalLength.value,
+    channelCount: numberOrNull(current.channels?.count)
+      ?? numberOrNull(planning?.systemConfig?.channelCount),
   }
 })
 
@@ -1088,8 +1173,11 @@ function doGenerateReport() {
                 </div>
                 <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-gray-500">
                   <span>总长度</span>
-                  <span class="text-right font-mono text-gray-700">
-                    {{ formatNumber(linkInfo.totalLength, 2, ' km') }}
+                  <span class="text-right text-gray-700">
+                    <span class="block font-mono">{{ formatNumber(linkInfo.totalLength, 3, ' km') }}</span>
+                    <span v-if="displayedSummary.totalLength.source" class="block text-[9px] text-gray-400">
+                      {{ displayedSummary.totalLength.source }}
+                    </span>
                   </span>
                   <span>信道数</span>
                   <span class="text-right font-mono text-gray-700">
@@ -1102,20 +1190,23 @@ function doGenerateReport() {
             <section class="space-y-2 border-t pt-3">
               <div class="flex items-center gap-1.5 text-xs font-medium text-gray-700">
                 <Cpu class="h-3.5 w-3.5 text-blue-500" />
-                后端计算模型
+                计算模型
               </div>
               <div class="grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg border bg-white p-2.5 text-xs">
                 <span class="text-gray-500">光纤模型</span>
-                <span class="text-right font-mono text-gray-700">
-                  {{ textOrMissing(cache?.model_selection?.fiber_model_id) }}
+                <span class="text-right text-gray-700">
+                  <span class="block font-mono">{{ textOrMissing(displayedModels.fiber.value) }}</span>
+                  <span v-if="displayedModels.fiber.source" class="block text-[9px] text-gray-400">{{ displayedModels.fiber.source }}</span>
                 </span>
                 <span class="text-gray-500">EDFA 模型</span>
-                <span class="text-right font-mono text-gray-700">
-                  {{ textOrMissing(cache?.model_selection?.edfa_model_id) }}
+                <span class="text-right text-gray-700">
+                  <span class="block font-mono">{{ textOrMissing(displayedModels.edfa.value) }}</span>
+                  <span v-if="displayedModels.edfa.source" class="block text-[9px] text-gray-400">{{ displayedModels.edfa.source }}</span>
                 </span>
                 <span class="text-gray-500">BU 模型</span>
-                <span class="text-right font-mono text-gray-700">
-                  {{ textOrMissing(cache?.model_selection?.bu_model_id) }}
+                <span class="text-right text-gray-700">
+                  <span class="block font-mono">{{ textOrMissing(displayedModels.bu.value) }}</span>
+                  <span v-if="displayedModels.bu.source" class="block text-[9px] text-gray-400">{{ displayedModels.bu.source }}</span>
                 </span>
               </div>
             </section>
@@ -1154,7 +1245,7 @@ function doGenerateReport() {
 
             <section class="space-y-2 border-t pt-3">
               <div class="text-[10px] leading-5 text-gray-500">
-                本页面只格式化后端缓存中的原始矩阵与摘要字段，不补算工程结论。
+                原始矩阵只来自仿真响应；规划结果与规划配置字段会单独标注来源，不补算工程结论。
               </div>
               <Button variant="outline" class="w-full" :disabled="!cache" @click="exportReport">
                 <FileText class="mr-1 h-4 w-4" />
@@ -1177,23 +1268,25 @@ function doGenerateReport() {
                 {{ textOrMissing(cache.timestamp) }}
               </span>
               <span v-if="cache" class="ml-auto text-gray-400">
-                {{ textOrMissing(cache.model_selection?.fiber_model_id) }}
-                · {{ textOrMissing(cache.model_selection?.edfa_model_id) }}
+                {{ textOrMissing(displayedModels.fiber.value) }}
+                · {{ textOrMissing(displayedModels.edfa.value) }}
               </span>
             </div>
 
             <div v-if="cache" class="grid flex-shrink-0 grid-cols-4 gap-3 border-b p-4">
               <div class="rounded-lg bg-blue-50 p-3 text-center">
                 <div class="text-lg font-bold text-blue-600">
-                  {{ formatNumber(cache.summary?.total_length_km, 2) }}
+                  {{ formatNumber(displayedSummary.totalLength.value, 3) }}
                 </div>
-                <div class="text-[10px] text-gray-500">后端总长度 (km)</div>
+                <div class="text-[10px] text-gray-500">总长度 (km)</div>
+                <div class="text-[9px] text-gray-400">{{ displayedSummary.totalLength.source || '未返回' }}</div>
               </div>
               <div class="rounded-lg bg-purple-50 p-3 text-center">
                 <div class="text-lg font-bold text-purple-600">
-                  {{ formatNumber(cache.summary?.total_span_count, 0) }}
+                  {{ formatNumber(displayedSummary.spanCount.value, 0) }}
                 </div>
-                <div class="text-[10px] text-gray-500">后端 Span 数</div>
+                <div class="text-[10px] text-gray-500">Span 数</div>
+                <div class="text-[9px] text-gray-400">{{ displayedSummary.spanCount.source || '未返回' }}</div>
               </div>
               <div class="rounded-lg bg-orange-50 p-3 text-center">
                 <div class="text-lg font-bold text-orange-600">
@@ -1203,9 +1296,10 @@ function doGenerateReport() {
               </div>
               <div class="rounded-lg bg-green-50 p-3 text-center">
                 <div class="text-lg font-bold text-green-600">
-                  {{ formatNumber(cache.summary?.system_capacity_tbps, 3) }}
+                  {{ formatNumber(displayedSummary.capacity.value, 3) }}
                 </div>
-                <div class="text-[10px] text-gray-500">后端系统容量 (Tbps)</div>
+                <div class="text-[10px] text-gray-500">系统容量 (Tbps)</div>
+                <div class="text-[9px] text-gray-400">{{ displayedSummary.capacity.source || '未返回' }}</div>
               </div>
             </div>
 

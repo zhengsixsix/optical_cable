@@ -45,10 +45,13 @@ interface ResultAmplifier {
   position: number
   precedingSpan: number | null
   gain: number | null
+  nominalGain?: number | null
   noiseFigure: number | null
   outputPower: number | null
+  maxOutputPower?: number | null
   inputPower: number | null
   deviceModel?: string
+  amplifierType?: string
   gainFlatness?: number | null
 }
 
@@ -116,7 +119,6 @@ const props = withDefaults(defineProps<{
   channelCount: number | null
   modulation: string
   optimizationTargetLabel: string
-  hasPerformanceMetrics: boolean
 }>(), {
   linkName: '-',
   totalLength: null,
@@ -140,7 +142,6 @@ const props = withDefaults(defineProps<{
   channelCount: null,
   modulation: '-',
   optimizationTargetLabel: '-',
-  hasPerformanceMetrics: false,
 })
 
 const activeTab = ref<ResultTab>('overview')
@@ -181,6 +182,29 @@ const backendStatus = computed(() => {
 
 const formatNumber = (value: number | null | undefined, digits = 1): string =>
   typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '-'
+
+const formatReturnedNumber = (
+  value: number | null | undefined,
+  unit: string,
+  digits = 1,
+): string => {
+  const formatted = formatNumber(value, digits)
+  return formatted === '-' ? '未返回' : `${formatted} ${unit}`
+}
+
+const formatAmplifierGain = (amplifier: ResultAmplifier): string => {
+  const actual = formatNumber(amplifier.gain)
+  if (actual !== '-') return actual
+  const nominal = formatNumber(amplifier.nominalGain)
+  return nominal === '-' ? '未返回' : `${nominal}（额定）`
+}
+
+const formatAmplifierOutputPower = (amplifier: ResultAmplifier): string => {
+  const actual = formatNumber(amplifier.outputPower)
+  if (actual !== '-') return actual
+  const maximum = formatNumber(amplifier.maxOutputPower)
+  return maximum === '-' ? '未返回' : `${maximum}（最大）`
+}
 
 const formatKm = (value: number | null | undefined, digits = 1): string => {
   const formatted = formatNumber(value, digits)
@@ -514,9 +538,9 @@ const exportCostReport = (): void => {
                   <td class="px-3 py-2 font-medium">{{ amplifiers[item.amplifierIndex].name }}</td>
                   <td class="px-3 py-2 text-right font-mono">{{ formatNumber(amplifiers[item.amplifierIndex].position) }}</td>
                   <td class="px-3 py-2 text-right font-mono">{{ formatNumber(amplifiers[item.amplifierIndex].precedingSpan) }}</td>
-                  <td class="px-3 py-2 text-right font-mono">{{ formatNumber(amplifiers[item.amplifierIndex].gain) }}</td>
-                  <td class="px-3 py-2 text-right font-mono">{{ hasPerformanceMetrics ? formatNumber(amplifiers[item.amplifierIndex].outputPower) : '未返回' }}</td>
-                  <td class="px-3 py-2 text-right font-mono">{{ formatNumber(amplifiers[item.amplifierIndex].noiseFigure) }}</td>
+                  <td class="px-3 py-2 text-right font-mono">{{ formatAmplifierGain(amplifiers[item.amplifierIndex]) }}</td>
+                  <td class="px-3 py-2 text-right font-mono">{{ formatAmplifierOutputPower(amplifiers[item.amplifierIndex]) }}</td>
+                  <td class="px-3 py-2 text-right font-mono">{{ formatReturnedNumber(amplifiers[item.amplifierIndex].noiseFigure, 'dB') }}</td>
                 </tr>
               </template>
             </tbody>
@@ -528,13 +552,16 @@ const exportCostReport = (): void => {
         <div class="mb-3 text-sm font-semibold text-blue-800">选中放大器详情：{{ selectedAmplifier.name }}</div>
         <div class="grid gap-x-8 gap-y-2 text-sm md:grid-cols-2">
           <div class="flex justify-between gap-3"><span class="text-slate-600">位置</span><span class="font-mono">{{ formatKm(selectedAmplifier.position, 1) }}</span></div>
-          <div class="flex justify-between gap-3"><span class="text-slate-600">器件型号</span><span class="text-right">{{ selectedAmplifier.deviceModel || '未指定' }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">器件型号</span><span class="text-right">{{ selectedAmplifier.deviceModel || '未返回' }}</span></div>
           <div class="flex justify-between gap-3"><span class="text-slate-600">前段光纤长度</span><span class="font-mono">{{ formatKm(selectedAmplifier.precedingSpan, 1) }}</span></div>
-          <div class="flex justify-between gap-3"><span class="text-slate-600">增益</span><span class="font-mono">{{ formatNumber(selectedAmplifier.gain) }} dB</span></div>
-          <div class="flex justify-between gap-3"><span class="text-slate-600">噪声系数</span><span class="font-mono">{{ formatNumber(selectedAmplifier.noiseFigure) }} dB</span></div>
-          <div class="flex justify-between gap-3"><span class="text-slate-600">输入功率</span><span class="font-mono">{{ hasPerformanceMetrics ? `${formatNumber(selectedAmplifier.inputPower)} dBm` : '未返回' }}</span></div>
-          <div class="flex justify-between gap-3"><span class="text-slate-600">输出功率</span><span class="font-mono">{{ hasPerformanceMetrics ? `${formatNumber(selectedAmplifier.outputPower)} dBm` : '未返回' }}</span></div>
-          <div class="flex justify-between gap-3"><span class="text-slate-600">增益平坦度</span><span class="font-mono">{{ selectedAmplifier.gainFlatness == null ? '未返回' : `${formatNumber(selectedAmplifier.gainFlatness)} dB` }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">放大器类型</span><span class="text-right">{{ selectedAmplifier.amplifierType || '未返回' }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">实际增益</span><span class="font-mono">{{ formatReturnedNumber(selectedAmplifier.gain, 'dB') }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">额定增益</span><span class="font-mono">{{ formatReturnedNumber(selectedAmplifier.nominalGain, 'dB') }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">噪声系数</span><span class="font-mono">{{ formatReturnedNumber(selectedAmplifier.noiseFigure, 'dB') }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">输入功率</span><span class="font-mono">{{ formatReturnedNumber(selectedAmplifier.inputPower, 'dBm') }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">实际输出功率</span><span class="font-mono">{{ formatReturnedNumber(selectedAmplifier.outputPower, 'dBm') }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">最大输出功率</span><span class="font-mono">{{ formatReturnedNumber(selectedAmplifier.maxOutputPower, 'dBm') }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-slate-600">增益平坦度</span><span class="font-mono">{{ formatReturnedNumber(selectedAmplifier.gainFlatness, 'dB') }}</span></div>
         </div>
       </div>
     </section>
