@@ -193,4 +193,16 @@ if (!dialogSource.includes("@click=\"optimizationTarget = 'min_amplifiers'\"")
   throw new Error('optimized planning target is not selectable in the planning dialog')
 }
 
+const simulationStart = dialogSource.indexOf('const startCalculation = async () => {')
+const simulationEnd = dialogSource.indexOf('\nconst isCalculationResult', simulationStart)
+const simulationSource = dialogSource.slice(simulationStart, simulationEnd)
+const fixedModeGuard = simulationSource.indexOf("if (spanStrategy.value === 'fixed')")
+const fixedWdmSave = simulationSource.indexOf('await savePlatformWdmConfig(projectId)')
+const simulationRequest = simulationSource.indexOf('await runSimulation({')
+if (fixedModeGuard < 0
+  || fixedWdmSave < fixedModeGuard
+  || simulationRequest < fixedWdmSave) {
+  throw new Error('fixed-spacing physical simulation must save WDM parameters before submission')
+}
+
 console.log('system planning API payload verification passed')

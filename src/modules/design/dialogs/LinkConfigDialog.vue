@@ -174,8 +174,8 @@ const platformEqualizerLibraries = computed(() =>
     .filter((item): item is RuntimeEqualizerLibrary => Boolean(item)),
 )
 
-// 布局算法在计算模型步骤选择。fixed 在该步骤立即执行；optimized
-// 在默认器件库和 WDM 参数配置完成后执行。
+// 布局算法在计算模型步骤选择。fixed 在该步骤立即执行，并在物理仿真前
+// 单独保存 WDM 参数；optimized 在默认器件库和 WDM 参数配置完成后执行。
 const spanStrategy = ref<'auto' | 'fixed'>('auto')
 const spanKm = ref(70)
 const spanScanConfig = reactive({ min: 40, max: 120, step: 5 })
@@ -934,13 +934,14 @@ const uniformLaunchPower = computed({
 const showPerChannelConfig = ref(false)
 const hydratingChannelConfig = ref(false)
 
-// 初始化逐信道功率
+// 同步逐信道配置；系统参数变化后，后端返回的旧频率不再适用。
 watch(
   () => [channelConfig.channelCount, channelConfig.centerFrequencyThz, channelConfig.channelSpacingGhz] as const,
   ([count]) => {
     if (hydratingChannelConfig.value) return
     const normalizedCount = normalizeChannelCount(count)
     if (normalizedCount == null) return
+    channelConfig.channelFrequenciesThz = []
     if (channelConfig.launchPowerDbm?.length !== normalizedCount) {
       channelConfig.launchPowerDbm = Array(normalizedCount).fill(uniformLaunchPower.value)
     }
@@ -948,9 +949,26 @@ watch(
   { immediate: true, flush: 'sync' },
 )
 
+const calculateChannelFrequency = (index: number, channelCount: number): number => {
+  const center = finiteNumberValue(channelConfig.centerFrequencyThz, 193.1)
+  const spacingThz = finiteNumberValue(channelConfig.channelSpacingGhz, 50) / 1000
+  const start = center - ((channelCount - 1) / 2) * spacingThz
+  return start + index * spacingThz
+}
+
 const getChannelFrequency = (index: number) => {
-  const frequency = channelConfig.channelFrequenciesThz?.[index]
-  return typeof frequency === 'number' && Number.isFinite(frequency) ? frequency.toFixed(3) : '-'
+  const channelCount = normalizeChannelCount(channelConfig.channelCount)
+  if (channelCount == null || index < 0 || index >= channelCount) return '-'
+
+  const configuredFrequency = channelConfig.channelFrequenciesThz?.[index]
+  if (channelConfig.channelFrequenciesThz?.length === channelCount
+    && typeof configuredFrequency === 'number'
+    && Number.isFinite(configuredFrequency)) {
+    return configuredFrequency.toFixed(3)
+  }
+
+  const calculatedFrequency = calculateChannelFrequency(index, channelCount)
+  return Number.isFinite(calculatedFrequency) ? calculatedFrequency.toFixed(3) : '-'
 }
 
 // 批量填充功率
@@ -1089,7 +1107,11 @@ function setChannelConfig(config: Omit<PlanConfigChannel, 'projectId'> | null): 
     const fallbackPower = channelConfig.launchPowerDbm?.[0] ?? -1.5
     channelConfig.launchPowerDbm = Array(count).fill(fallbackPower)
   }
-  if (!Array.isArray(channelConfig.channelFrequenciesThz)) channelConfig.channelFrequenciesThz = []
+  if (!Array.isArray(channelConfig.channelFrequenciesThz)
+    || channelConfig.channelFrequenciesThz.length !== count
+    || channelConfig.channelFrequenciesThz.some(value => !Number.isFinite(value))) {
+    channelConfig.channelFrequenciesThz = []
+  }
   const launchPowerDbm = channelConfig.launchPowerDbm
   launchPowerMode.value = launchPowerDbm.length > 0 && launchPowerDbm.every(value => value === launchPowerDbm[0])
     ? 'uniform'
@@ -2001,7 +2023,7 @@ const markRestoredPlanningStepsSaved = (): void => {
   stepOrder.value
     .filter((step): step is ConfigStepId => step !== 'result')
     .filter(step => stepValidation.value[step] == null)
-    // 固定布局不依赖 WDM，不能据此推断后端已经保存信道配置。
+    // 固定布局不依赖 WDM（物理仿真前会另行保存），不能据此推断后端已经保存信道配置。
     .filter(step => step !== 'wdm'
       || hasCompletedPlan
       || isPlatformChannelConfigComplete(snapshot?.channelConfig))
@@ -2429,10 +2451,19 @@ const startCalculation = async () => {
   calculationError.value = ''
   calculationResult.value = null
   calculationProgress.value = 5
-  calculationProgress.message = '正在提交物理仿真任务'
+  calculationProgress.message = spanStrategy.value === 'fixed'
+    ? '正在保存 WDM 参数'
+    : '正在提交物理仿真任务'
   activeStep.value = 'result'
 
   try {
+    if (spanStrategy.value === 'fixed') {
+      const wdmValidationMessage = stepValidation.value.wdm
+      if (wdmValidationMessage) throw new Error(wdmValidationMessage)
+      await savePlatformWdmConfig(projectId)
+      calculationProgress.message = '正在提交物理仿真任务'
+    }
+
     const response = await runSimulation({
       projectId,
       mode: spanStrategy.value === 'fixed' ? 'fixed' : 'optimized',
@@ -2629,10 +2660,8 @@ const buildChannelFrequencies = (channelCount: number): number[] => {
     && channelConfig.channelFrequenciesThz.every(value => Number.isFinite(value))) {
     return [...channelConfig.channelFrequenciesThz]
   }
-  const center = finiteNumberValue(channelConfig.centerFrequencyThz, 193.1)
-  const spacingThz = finiteNumberValue(channelConfig.channelSpacingGhz, 50) / 1000
-  const start = center - ((channelCount - 1) / 2) * spacingThz
-  return Array.from({ length: channelCount }, (_, index) => start + index * spacingThz)
+  return Array.from({ length: channelCount }, (_, index) =>
+    calculateChannelFrequency(index, channelCount))
 }
 
 const buildCalculationResultFromPlatformSimulation = (value: unknown): CalculationResult | null => {
