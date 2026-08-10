@@ -7,6 +7,7 @@ import { Select } from '@/shared/components/base'
 import { RefreshCw, Download, Maximize2, X, Settings, CircleDollarSign, ShieldAlert } from 'lucide-vue-next'
 import { detectGisFormat, getPlanLayerFileName } from '@/utils/gisFormat'
 import { getLocalLayerIdForDictionaryCode } from '@/services/platform/layerTypeAdapter'
+import { getPlanLayerWmsName } from '@/config/geoserver'
 
 const layerStore = useLayerStore()
 const dictionaryStore = useDictionaryStore()
@@ -36,10 +37,11 @@ interface PlatformLayerRow {
   typeName: string
   visible: boolean
   uploaded: boolean
-  status: '已上传' | '未上传'
+  status: '已发布' | '已上传' | '未上传'
   statusClass: 'success' | 'info'
   fileName: string
   formatLabel: string
+  wmsLayerName: string | null
 }
 
 // 图层列表
@@ -48,10 +50,13 @@ const layers = computed<PlatformLayerRow[]>(() => {
     const typeDic = String(dictionaryItem.code)
     const storeLayerId = getLocalLayerIdForDictionaryCode(typeDic)
     const platformLayer = layerStore.platformProjectLayers.find(layer => layer.typeDic === typeDic)
-    const uploaded = Boolean(platformLayer?.attachmentId)
+    const wmsLayerName = getPlanLayerWmsName(typeDic)
+    const uploaded = Boolean(platformLayer && (platformLayer.attachmentId || wmsLayerName))
     const fileName = getPlanLayerFileName(platformLayer)
     const formatInfo = detectGisFormat(fileName)
-    const status: PlatformLayerRow['status'] = uploaded ? '已上传' : '未上传'
+    const status: PlatformLayerRow['status'] = wmsLayerName && platformLayer
+      ? '已发布'
+      : uploaded ? '已上传' : '未上传'
     const statusClass: PlatformLayerRow['statusClass'] = uploaded ? 'success' : 'info'
 
     return {
@@ -66,6 +71,7 @@ const layers = computed<PlatformLayerRow[]>(() => {
       statusClass,
       fileName,
       formatLabel: uploaded ? formatInfo.label : '',
+      wmsLayerName,
     }
   })
 
@@ -126,19 +132,25 @@ async function handleVisibleChange(layer: PlatformLayerRow, visible: boolean) {
 
   const loadingKey = `layer:${layer.storeLayerId}`
   if (visible) {
-    appStore.showGlobalLoading('正在加载图层...', layer.name, loadingKey)
+    appStore.showGlobalLoading(
+      layer.wmsLayerName ? '正在加载影像图层...' : '正在加载图层...',
+      layer.name,
+      loadingKey,
+    )
     await nextTick()
-    try {
-      await layerStore.loadPlatformLayerDetail(layer.storeLayerId)
-    } catch (error) {
-      appStore.showNotification({
-        type: 'error',
-        message: `图层详情加载失败：${(error as Error).message}`,
-        duration: 5000,
-      })
-      layerStore.setLayerVisible(layer.storeLayerId, false)
-      appStore.hideGlobalLoading(loadingKey)
-      return
+    if (!layer.wmsLayerName) {
+      try {
+        await layerStore.loadPlatformLayerDetail(layer.storeLayerId)
+      } catch (error) {
+        appStore.showNotification({
+          type: 'error',
+          message: `图层详情加载失败：${(error as Error).message}`,
+          duration: 5000,
+        })
+        layerStore.setLayerVisible(layer.storeLayerId, false)
+        appStore.hideGlobalLoading(loadingKey)
+        return
+      }
     }
   }
 

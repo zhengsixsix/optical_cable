@@ -6,6 +6,7 @@ import { platformPlanLayerApi } from '@/services/platform/api'
 import type { PlanLayer } from '@/services/platform/types'
 import { detectGisFormat, getPlanLayerFileName } from '@/utils/gisFormat'
 import { getPlatformAttachmentUrl } from '@/services/platform/attachment'
+import { GEOSERVER_WMS_URL, getPlanLayerWmsName } from '@/config/geoserver'
 import {
   getLocalLayerIdForDictionaryCode,
   getRuntimeLayerTypeForDictionaryCode,
@@ -27,6 +28,10 @@ function getPlatformLayerDownloadUrl(platformLayer: PlanLayer): string | null {
     || (platformLayer.attachmentId ? getPlatformAttachmentUrl(platformLayer.attachmentId) : null)
     || layerWithUrl.uploadUrl
     || null
+}
+
+function hasPlatformLayerSource(platformLayer: PlanLayer) {
+  return Boolean(platformLayer.attachmentId || getPlanLayerWmsName(platformLayer.typeDic))
 }
 
 export const useLayerStore = defineStore('layer', () => {
@@ -120,7 +125,7 @@ export const useLayerStore = defineStore('layer', () => {
         || layer.name || layer.attachmentName || layer.filename || `平台图层 ${layer.id ?? ''}`.trim(),
       type: getRuntimeLayerTypeForDictionaryCode(layer.typeDic),
       visible: existingPlatformSource ? (existing?.visible ?? false) : false,
-      loaded: Boolean(layer.attachmentId),
+      loaded: hasPlatformLayerSource(layer),
       loading: false,
       error: false,
       opacity: existing?.opacity,
@@ -133,6 +138,7 @@ export const useLayerStore = defineStore('layer', () => {
     const gisFormat = detectGisFormat(fileName)
     const source = `platform:${platformLayer.id ?? ''}:${platformLayer.attachmentId ?? ''}`
     const downloadUrl = getPlatformLayerDownloadUrl(platformLayer)
+    const wmsLayerName = getPlanLayerWmsName(platformLayer.typeDic)
 
     return {
       id: config.id,
@@ -150,6 +156,8 @@ export const useLayerStore = defineStore('layer', () => {
         platformLayerId: platformLayer.id ?? null,
         typeDic: platformLayer.typeDic ?? null,
         downloadUrl,
+        wmsUrl: wmsLayerName ? GEOSERVER_WMS_URL : undefined,
+        wmsLayerName: wmsLayerName ?? undefined,
       },
     }
   }
@@ -166,12 +174,12 @@ export const useLayerStore = defineStore('layer', () => {
     for (const platformLayer of platformLayers) {
       const config = mapPlatformLayer(platformLayer)
       nextIds.add(config.id)
-      if (platformLayer.attachmentId) {
+      if (hasPlatformLayerSource(platformLayer)) {
         uploadedManagedIds.add(config.id)
       }
       upsertLayer(config)
 
-      if (platformLayer.attachmentId) {
+      if (hasPlatformLayerSource(platformLayer)) {
         layerDataMap.value.set(config.id, buildPlatformLayerData(config, platformLayer))
       } else {
         layerDataMap.value.delete(config.id)

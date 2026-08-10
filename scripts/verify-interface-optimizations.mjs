@@ -23,7 +23,7 @@ const rplTablePanel = read('src/modules/design/panels/RPLTablePanel.vue')
 
 expect(mapArea, /saveSelectedAreaAsBaseMap/, 'selected map area must support project base-map persistence')
 expect(mapArea, /saveSelectedAreaAsBaseMap[\s\S]*activePlanningLonLatExtent\.value = extent[\s\S]*applyPlanningRangeToMap\(extent\)/, 'only a user-confirmed map selection may activate the planning constraint')
-expect(mapArea, /getCurrentRoutePlanningRectRange[\s\S]*if \(activePlanningLonLatExtent\.value\)[\s\S]*createRoutePlanningRectRangeFromExtent\(activePlanningLonLatExtent\.value\)[\s\S]*view\.calculateExtent\(size\)/, 'route planning rectRange must use the active selection or current viewport')
+expect(mapArea, /getCurrentMapRectRange[\s\S]*view\.calculateExtent\(size\)[\s\S]*getCurrentRoutePlanningRectRange[\s\S]*if \(activePlanningLonLatExtent\.value\)[\s\S]*createRoutePlanningRectRangeFromExtent\(activePlanningLonLatExtent\.value\)[\s\S]*return getCurrentMapRectRange\(\)/, 'route planning rectRange must use the active selection or current viewport')
 expect(mapArea, /monitorStore\.devices\.length > 1[\s\S]*drawMonitorDevices\(\)[\s\S]*const planningRangeExtent/, 'existing device routes must render before the planning-range fallback')
 expect(mapArea, /saveSelectedAreaAsBaseMap[\s\S]*resetAreaSelection\(\)/, 'saving a project range must dismiss the transient selection rectangle')
 if (/initialPlanningExtent|getConfiguredPlanningLonLatExtent/.test(mapArea)) {

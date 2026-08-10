@@ -35,6 +35,8 @@ export interface LayerMetadata {
   platformLayerId?: number | string | null
   typeDic?: string | null
   downloadUrl?: string | null
+  wmsUrl?: string
+  wmsLayerName?: string
 }
 
 // 图层数据

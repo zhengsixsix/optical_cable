@@ -4,6 +4,8 @@ import { resolve } from 'path'
 
 const PLATFORM_PROXY_PATH = '/platform-api'
 const DEFAULT_PLATFORM_PROXY_TARGET = 'http://47.92.110.176:9108'
+const GEOSERVER_PROXY_PATH = '/geoserver'
+const DEFAULT_GEOSERVER_PROXY_TARGET = 'http://47.92.110.176:8960'
 const DEFAULT_DEV_HOST = '0.0.0.0'
 const DEFAULT_DEV_PORT = 4395
 
@@ -30,6 +32,22 @@ function parseAllowedHosts(value: string | undefined): true | string[] {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd())
   const platformProxyTarget = env.VITE_PLATFORM_PROXY_TARGET || DEFAULT_PLATFORM_PROXY_TARGET
+  const geoserverProxyTarget = env.VITE_GEOSERVER_PROXY_TARGET || DEFAULT_GEOSERVER_PROXY_TARGET
+
+  const proxy = {
+    [PLATFORM_PROXY_PATH]: {
+      target: platformProxyTarget,
+      changeOrigin: true,
+      secure: false,
+      rewrite: (path: string) => path.replace(new RegExp(`^${PLATFORM_PROXY_PATH}`), ''),
+    },
+    [GEOSERVER_PROXY_PATH]: {
+      target: geoserverProxyTarget,
+      changeOrigin: true,
+      secure: false,
+      rewrite: (path: string) => path.replace(new RegExp(`^${GEOSERVER_PROXY_PATH}`), ''),
+    },
+  }
 
   return {
     plugins: [vue()],
@@ -43,24 +61,10 @@ export default defineConfig(({ mode }) => {
       host: env.VITE_DEV_HOST || DEFAULT_DEV_HOST,
       open: parseOpen(env.VITE_DEV_OPEN),
       allowedHosts: parseAllowedHosts(env.VITE_DEV_ALLOWED_HOSTS),
-      proxy: {
-        [PLATFORM_PROXY_PATH]: {
-          target: platformProxyTarget,
-          changeOrigin: true,
-          secure: false,
-          rewrite: (path: string) => path.replace(new RegExp(`^${PLATFORM_PROXY_PATH}`), ''),
-        },
-      },
+      proxy,
     },
     preview: {
-      proxy: {
-        [PLATFORM_PROXY_PATH]: {
-          target: platformProxyTarget,
-          changeOrigin: true,
-          secure: false,
-          rewrite: (path: string) => path.replace(new RegExp(`^${PLATFORM_PROXY_PATH}`), ''),
-        },
-      },
+      proxy,
     },
     build: {
       rollupOptions: {
