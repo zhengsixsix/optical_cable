@@ -33,6 +33,7 @@ export type DemProfileRequest =
       segment: {
         startPoint: { lon: number; lat: number }
         endPoint: { lon: number; lat: number }
+        points?: Array<{ lon: number; lat: number }>
       }
       sampleCount?: number
     }

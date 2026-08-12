@@ -407,6 +407,7 @@ export type PlanLayerTypeDic = string
 export interface PlanLayer {
   id?: Id
   name?: string | null
+  geoLayerName?: string | null
   filename?: string | null
   fileSize?: number | null
   attachmentName?: string | null

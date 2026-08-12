@@ -8,7 +8,9 @@ import LogPanel from '@/components/panels/LogPanel.vue'
 import RightPanel from '@/components/panels/RightPanel.vue'
 import ImportGisDialog from '@/modules/planning/dialogs/ImportGisDialog.vue'
 import { useAppStore } from '@/stores/app'
+import { useRouteStore } from '@/stores/route'
 const appStore = useAppStore()
+const routeStore = useRouteStore()
 const selectedExtent = ref<[number, number, number, number] | undefined>()
 const showImportGisDialog = ref(false)
 
@@ -17,6 +19,22 @@ const panelVisibility = computed(() => appStore.panelVisibility)
 
 // 项目状态检测
 const hasOpenProject = computed(() => appStore.hasOpenProject)
+const selectedRouteExtent = computed<[number, number, number, number] | undefined>(() => {
+  const coordinates = routeStore.selectedRoute?.rawTrunkCoordinates
+    ?? routeStore.selectedRoute?.points.map(point => point.coordinates)
+    ?? []
+  const longitudes = coordinates.map(coordinate => Number(coordinate[0])).filter(Number.isFinite)
+  const latitudes = coordinates.map(coordinate => Number(coordinate[1])).filter(Number.isFinite)
+  if (longitudes.length === 0 || latitudes.length === 0) return undefined
+  return [
+    Math.min(...longitudes),
+    Math.min(...latitudes),
+    Math.max(...longitudes),
+    Math.max(...latitudes),
+  ]
+})
+
+const depthProfileExtent = computed(() => selectedExtent.value ?? selectedRouteExtent.value)
 
 const handleAreaSelected = (extent: [number, number, number, number]) => {
   selectedExtent.value = extent
@@ -80,7 +98,7 @@ const handleOpenProject = async () => {
     </template>
 
     <template #right>
-      <RightPanel :selected-extent="selectedExtent" />
+      <RightPanel :selected-extent="depthProfileExtent" />
     </template>
   </MainLayout>
   

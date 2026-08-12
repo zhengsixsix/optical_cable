@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Loader2 } from 'lucide-vue-next'
 import { fetchDemProfile } from '@/services/DemApiService'
 
@@ -13,6 +13,7 @@ interface SegmentInfo {
   routeId: string
   startPoint: { lon: number; lat: number }
   endPoint: { lon: number; lat: number }
+  routePoints?: Array<{ lon: number; lat: number }>
   length?: number
   depth?: number
   cableType?: string
@@ -31,6 +32,9 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 const loading = ref(false)
 const hasData = ref(false)
 const profileData = ref<ProfilePoint[]>([])
+const viewRange = ref({ start: 0, end: 1 })
+const dragState = ref<{ startX: number; startRange: { start: number; end: number } } | null>(null)
+const isZoomed = computed(() => viewRange.value.start > 0 || viewRange.value.end < 1)
 
 const hoverInfo = ref({
   visible: false,
@@ -41,6 +45,33 @@ const hoverInfo = ref({
 })
 
 let profileRequestId = 0
+
+const resetZoom = () => {
+  viewRange.value = { start: 0, end: 1 }
+  dragState.value = null
+  hoverInfo.value.visible = false
+  nextTick(() => drawProfile())
+}
+
+const zoomAt = (factor: number, anchorRatio = 0.5) => {
+  if (!hasData.value) return
+  const current = viewRange.value
+  const currentSpan = current.end - current.start
+  const nextSpan = Math.min(1, Math.max(0.05, currentSpan * factor))
+  const anchor = current.start + currentSpan * Math.min(1, Math.max(0, anchorRatio))
+  let start = anchor - nextSpan * anchorRatio
+  let end = start + nextSpan
+  if (start < 0) {
+    end -= start
+    start = 0
+  }
+  if (end > 1) {
+    start -= end - 1
+    end = 1
+  }
+  viewRange.value = { start: Math.max(0, start), end: Math.min(1, end) }
+  drawProfile()
+}
 
 const clearProfileData = () => {
   profileData.value = []
@@ -67,6 +98,7 @@ const loadProfileData = async (extent: [number, number, number, number]) => {
     if (requestId !== profileRequestId) return
     profileData.value = result.points || []
     hasData.value = profileData.value.length > 0
+    resetZoom()
     if (hasData.value) nextTick(() => drawProfile())
   } catch {
     if (requestId === profileRequestId) clearProfileData()
@@ -86,12 +118,14 @@ const loadProfileDataFromSegment = async (segment: SegmentInfo) => {
       segment: {
         startPoint: segment.startPoint,
         endPoint: segment.endPoint,
+        ...(segment.routePoints?.length ? { points: segment.routePoints } : {}),
       },
-      sampleCount: 100,
+      sampleCount: Math.max(100, Math.min(500, segment.routePoints?.length ?? 100)),
     })
     if (requestId !== profileRequestId) return
     profileData.value = result.points || []
     hasData.value = profileData.value.length > 0
+    resetZoom()
     if (hasData.value) nextTick(() => drawProfile())
   } catch {
     if (requestId === profileRequestId) clearProfileData()
@@ -118,20 +152,27 @@ const drawProfile = () => {
 
   const width = rect.width
   const height = rect.height
-  const padding = { top: 20, right: 15, bottom: 35, left: 55 }
+  const padding = { top: 8, right: 8, bottom: 30, left: 44 }
   const chartWidth = width - padding.left - padding.right
   const chartHeight = height - padding.top - padding.bottom
 
-  const seabedData = profileData.value
+  const allData = profileData.value
+  const fullMaxDistance = Math.max(...allData.map(d => d.distance)) || 1
+  const visibleStartDistance = fullMaxDistance * viewRange.value.start
+  const visibleEndDistance = fullMaxDistance * viewRange.value.end
+  const seabedData = allData.filter(point =>
+    point.distance >= visibleStartDistance && point.distance <= visibleEndDistance,
+  )
   if (seabedData.length === 0) return
 
-  const maxDistance = Math.max(...seabedData.map(d => d.distance)) || 1
+  const visibleDistance = Math.max(visibleEndDistance - visibleStartDistance, 1e-6)
   const depths = seabedData.map(d => d.depth)
   const minElev = Math.min(...depths)
   const maxElev = Math.max(...depths)
   const elevRange = maxElev - minElev || 1
 
-  const xScale = (distance: number) => padding.left + (distance / maxDistance) * chartWidth
+  const xScale = (distance: number) =>
+    padding.left + ((distance - visibleStartDistance) / visibleDistance) * chartWidth
   const yScale = (elev: number) => padding.top + ((maxElev - elev) / elevRange) * chartHeight
   const seaLevelY = yScale(0)
 
@@ -190,7 +231,7 @@ const drawProfile = () => {
 
   const xTickCount = 5
   for (let i = 0; i <= xTickCount; i++) {
-    const dist = (maxDistance / xTickCount) * i
+    const dist = visibleStartDistance + (visibleDistance / xTickCount) * i
     const x = xScale(dist)
 
     ctx.beginPath()
@@ -204,7 +245,7 @@ const drawProfile = () => {
   }
 
   ctx.fillStyle = '#6B7280'
-  ctx.fillText('距离 (km)', padding.left + chartWidth / 2, height - 6)
+  ctx.fillText('距离 (km)', padding.left + chartWidth / 2, height - 11)
 
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
@@ -233,7 +274,16 @@ const drawProfile = () => {
   ctx.fillText('高程 (m)', 0, 0)
   ctx.restore()
 
-  ;(canvas as any)._profileData = { seabedData, xScale, yScale, padding, maxDistance, chartWidth, chartHeight }
+  ;(canvas as any)._profileData = {
+    seabedData,
+    xScale,
+    yScale,
+    padding,
+    visibleStartDistance,
+    visibleDistance,
+    chartWidth,
+    chartHeight,
+  }
 }
 
 const handleMouseMove = (e: MouseEvent) => {
@@ -252,7 +302,8 @@ const handleMouseMove = (e: MouseEvent) => {
     return
   }
 
-  const distance = ((x - data.padding.left) / data.chartWidth) * data.maxDistance
+  const distance = data.visibleStartDistance
+    + ((x - data.padding.left) / data.chartWidth) * data.visibleDistance
   const nearestPoint = data.seabedData.reduce((prev: ProfilePoint, curr: ProfilePoint) =>
     Math.abs(curr.distance - distance) < Math.abs(prev.distance - distance) ? curr : prev
   )
@@ -268,6 +319,43 @@ const handleMouseMove = (e: MouseEvent) => {
 
 const handleMouseLeave = () => {
   hoverInfo.value.visible = false
+  dragState.value = null
+}
+
+const handleWheel = (event: WheelEvent) => {
+  const canvas = canvasRef.value
+  const data = canvas && (canvas as any)._profileData
+  if (!canvas || !data || !hasData.value) return
+  const rect = canvas.getBoundingClientRect()
+  const x = event.clientX - rect.left
+  if (x < data.padding.left || x > data.padding.left + data.chartWidth) return
+  event.preventDefault()
+  zoomAt(event.deltaY < 0 ? 0.82 : 1 / 0.82, (x - data.padding.left) / data.chartWidth)
+}
+
+const handleMouseDown = (event: MouseEvent) => {
+  if (!isZoomed.value || event.button !== 0) return
+  dragState.value = {
+    startX: event.clientX,
+    startRange: { ...viewRange.value },
+  }
+}
+
+const handleMouseUp = () => {
+  dragState.value = null
+}
+
+const handleDrag = (event: MouseEvent) => {
+  if (!dragState.value || !canvasRef.value) return
+  const rect = canvasRef.value.getBoundingClientRect()
+  const data = (canvasRef.value as any)._profileData
+  if (!data || rect.width <= 0) return
+  const startRange = dragState.value.startRange
+  const span = startRange.end - startRange.start
+  const delta = ((dragState.value.startX - event.clientX) / data.chartWidth) * span
+  const start = Math.min(1 - span, Math.max(0, startRange.start + delta))
+  viewRange.value = { start, end: start + span }
+  drawProfile()
 }
 
 let resizeObserver: ResizeObserver | null = null
@@ -279,7 +367,11 @@ onMounted(() => {
       resizeObserver = new ResizeObserver(() => drawProfile())
       resizeObserver.observe(containerRef.value)
       containerRef.value.addEventListener('mousemove', handleMouseMove)
+      containerRef.value.addEventListener('mousemove', handleDrag)
       containerRef.value.addEventListener('mouseleave', handleMouseLeave)
+      containerRef.value.addEventListener('wheel', handleWheel, { passive: false })
+      containerRef.value.addEventListener('mousedown', handleMouseDown)
+      window.addEventListener('mouseup', handleMouseUp)
     }
   })
 })
@@ -288,7 +380,11 @@ onUnmounted(() => {
   profileRequestId += 1
   resizeObserver?.disconnect()
   containerRef.value?.removeEventListener('mousemove', handleMouseMove)
+  containerRef.value?.removeEventListener('mousemove', handleDrag)
   containerRef.value?.removeEventListener('mouseleave', handleMouseLeave)
+  containerRef.value?.removeEventListener('wheel', handleWheel)
+  containerRef.value?.removeEventListener('mousedown', handleMouseDown)
+  window.removeEventListener('mouseup', handleMouseUp)
 })
 
 watch(
@@ -306,11 +402,17 @@ watch(
   },
   { immediate: true, deep: true },
 )
+
+defineExpose({ resetZoom })
 </script>
 
 <template>
-  <div ref="containerRef" class="w-full h-full relative bg-gray-50 rounded overflow-hidden">
-    <canvas ref="canvasRef" class="block w-full h-full" />
+  <div
+    ref="containerRef"
+    class="w-full h-full relative bg-gray-50 overflow-hidden"
+    :class="isZoomed ? 'cursor-grab active:cursor-grabbing' : ''"
+  >
+    <canvas ref="canvasRef" class="block h-full w-full select-none" role="img" aria-label="海缆水深剖面" />
 
     <div v-if="loading"
       class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-500 text-xs bg-gray-50/90">
@@ -324,7 +426,7 @@ watch(
 
     <div v-if="hoverInfo.visible"
       class="absolute bg-black/80 text-white px-2 py-1 rounded text-xs pointer-events-none z-10"
-      :style="{ left: hoverInfo.x + 'px', top: hoverInfo.y + 'px' }">
+      :style="{ left: Math.min(hoverInfo.x, (containerRef?.clientWidth ?? hoverInfo.x) - 116) + 'px', top: Math.max(4, hoverInfo.y) + 'px' }">
       <div>距离: {{ hoverInfo.distance.toFixed(2) }} km</div>
       <div v-if="hoverInfo.elevation >= 0">海拔: {{ hoverInfo.elevation.toFixed(1) }} m</div>
       <div v-else>水深: {{ Math.abs(hoverInfo.elevation).toFixed(1) }} m</div>

@@ -469,7 +469,7 @@ const handleConnectorCoordinatePicked = (coordinate: { longitude: number; latitu
   showConnectorCoordinatePicker.value = false
 }
 
-// 地图拖拽仅更新人工选择的经纬度，不在前端计算 KP、Span 或光学性能。
+// 地图组件已将放大器坐标吸附到当前选中路由；这里只同步本地展示状态。
 const handleAmplifierMoved = (data: { id: string; longitude: number; latitude: number }) => {
   const success = connectorStore.updateElement(data.id, {
     longitude: data.longitude,
@@ -875,6 +875,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
               :route-points="routePoints"
               :selected-point-id="selectedPointId"
               :draggable-amplifiers="hasDraggableAmplifiers"
+              :placement-route-points="routeStore.selectedRoute?.points ?? []"
               @point-click="handlePointClick"
               @bu-dblclick="handleBuDblclick"
               @edit="handleEdit"
@@ -1078,6 +1079,7 @@ const handleDelete = (type: 'point' | 'line' | 'segment', id: string | null) => 
             :route-points="routePoints"
             :selected-point-id="selectedPointId"
             :draggable-amplifiers="false"
+            :placement-route-points="routeStore.selectedRoute?.points ?? []"
             coordinate-picking
             @coordinate-picked="handleConnectorCoordinatePicked"
           />

@@ -20,6 +20,9 @@ import {
 } from '@/services/platform/bindFuncForm'
 import { fetchPlatformAttachmentBlob } from '@/services/platform/attachment'
 import { platformDeviceEntityToConnectorElement } from '@/services/platform/deviceLibraryMapping'
+import { getDeviceLibraryCategory } from '@/services/platform/deviceTypeAdapter'
+import { useRouteStore } from '@/stores/route'
+import { nearestPointOnRoute, type LonLatCoordinate } from '@/utils/routeGeometry'
 import type {
   Id,
   PlanDeviceEntity,
@@ -63,6 +66,7 @@ const connectorStore = useConnectorStore()
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const dictionaryStore = useDictionaryStore()
+const routeStore = useRouteStore()
 
 const isEdit = computed(() => !!props.editId)
 const currentProjectId = computed(() => appStore.projectState.currentProject?.platformProjectId ?? null)
@@ -137,6 +141,34 @@ const selectedDeviceTypeName = computed(() => {
   const dictionary = dictionaryStore.getItem(PLATFORM_DICTIONARY_TYPES.deviceType, selected)
   return dictionary?.name || selected || '-'
 })
+
+const isAmplifier = computed(() =>
+  getDeviceLibraryCategory(formData.value.deviceTypeCd) === 'amplifier',
+)
+
+const snapAmplifierCoordinate = () => {
+  if (!isAmplifier.value) return true
+  const longitude = optionalNumber(formData.value.longitude)
+  const latitude = optionalNumber(formData.value.latitude)
+  if (longitude === null || latitude === null) {
+    appStore.showNotification({ type: 'error', message: '请在路由线上选择放大器位置' })
+    return false
+  }
+
+  const route = routeStore.selectedRoute
+  const routeCoordinates = (route?.rawTrunkCoordinates?.length
+    ? route.rawTrunkCoordinates
+    : route?.points.map(point => point.coordinates) ?? []) as LonLatCoordinate[]
+  const snapped = nearestPointOnRoute([longitude, latitude], routeCoordinates)
+  if (!snapped) {
+    appStore.showNotification({ type: 'error', message: '当前没有可用于放大器落位的选中路由' })
+    return false
+  }
+
+  formData.value.longitude = Number(snapped[0].toFixed(6))
+  formData.value.latitude = Number(snapped[1].toFixed(6))
+  return true
+}
 
 const activeDeviceConfigs = computed(() =>
   formData.value.deviceTypeCd
@@ -443,6 +475,8 @@ const handleSave = async () => {
     appStore.showNotification({ type: 'error', message: '请选择已有器件库' })
     return
   }
+
+  if (!snapAmplifierCoordinate()) return
 
   saving.value = true
   try {

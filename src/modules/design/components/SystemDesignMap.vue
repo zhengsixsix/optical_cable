@@ -17,6 +17,7 @@ import { Style, Stroke, Icon, Text, Fill } from 'ol/style'
 import { Translate } from 'ol/interaction'
 import 'ol/ol.css'
 import { getSystemDeviceIcon, systemDeviceLegendItems } from '@/utils/systemDesignIcons'
+import { nearestPointOnRoute, type LonLatCoordinate } from '@/utils/routeGeometry'
 
 // 站点高程缓存（用于判断岸上/水下）
 const elevationCache = ref<Record<string, number>>({})
@@ -92,6 +93,21 @@ const isAmplifierFeature = (feature: Feature) => {
   return ptype === 'ola' || ptype === 'amplifier_e' || ptype === 'amplifier_w'
 }
 
+const selectedRouteCoordinates = (): LonLatCoordinate[] => {
+  const selectedRoute = routeStore.selectedRoute
+  const source = selectedRoute?.rawTrunkCoordinates?.length
+    ? selectedRoute.rawTrunkCoordinates
+    : selectedRoute?.points.map(point => point.coordinates) ?? []
+  return source.filter((coordinate): coordinate is LonLatCoordinate =>
+    Array.isArray(coordinate)
+    && Number.isFinite(Number(coordinate[0]))
+    && Number.isFinite(Number(coordinate[1])),
+  )
+}
+
+const snapCoordinateToSelectedRoute = (coordinate: [number, number]) =>
+  nearestPointOnRoute(coordinate, selectedRouteCoordinates())
+
 /** 初始化/更新 Translate 交互 */
 const setupTranslateInteraction = () => {
   // 清除旧的
@@ -120,14 +136,17 @@ const setupTranslateInteraction = () => {
     if (!feature) return
     const geom = feature.getGeometry() as Point
     const rawCoord = geom.getCoordinates() as [number, number]
+    const snappedCoord = snapCoordinateToSelectedRoute(rawCoord)
+    if (snappedCoord) geom.setCoordinates(snappedCoord)
+    const displayCoord = snappedCoord ?? rawCoord
 
     if (map) {
-      const pixel = map.getPixelFromCoordinate(rawCoord)
+      const pixel = map.getPixelFromCoordinate(displayCoord)
       dragTooltip.value = {
         visible: true,
         x: pixel[0] + 20,
         y: pixel[1] - 30,
-        text: `${rawCoord[0].toFixed(5)}, ${rawCoord[1].toFixed(5)}`,
+        text: `${displayCoord[0].toFixed(5)}, ${displayCoord[1].toFixed(5)}`,
       }
     }
   })
@@ -138,7 +157,14 @@ const setupTranslateInteraction = () => {
     if (!feature || !dragPointId) return
 
     const geom = feature.getGeometry() as Point
-    const finalCoord = geom.getCoordinates() as [number, number]
+    const rawCoord = geom.getCoordinates() as [number, number]
+    const finalCoord = snapCoordinateToSelectedRoute(rawCoord)
+    if (!finalCoord) {
+      scheduleRedraw(false, true)
+      dragPointId = null
+      return
+    }
+    geom.setCoordinates(finalCoord)
 
     emit('amplifier-moved', {
       id: dragPointId,
@@ -838,9 +864,11 @@ const initMap = () => {
     contextMenu.value.visible = false
 
     if (props.coordinatePicking) {
+      const snappedCoordinate = snapCoordinateToSelectedRoute(evt.coordinate as [number, number])
+      if (!snappedCoordinate) return
       emit('coordinate-picked', {
-        longitude: evt.coordinate[0],
-        latitude: evt.coordinate[1],
+        longitude: snappedCoordinate[0],
+        latitude: snappedCoordinate[1],
       })
       return
     }

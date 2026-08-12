@@ -338,6 +338,15 @@ export const platformPlanConfigApi = {
 export const platformPlanLayerApi = {
   search: (payload: PagedSearch = { pageNumber: 1, pageSize: 10 }) =>
     platformClient.postWithPage<PlanLayer[]>('/plan/planLayer/search', payload),
+  searchSysDefault: (condition: PagedSearch = { pageNumber: 1, pageSize: 1000 }) => {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(condition)) {
+      if (value !== null && value !== undefined && value !== '') {
+        query.set(key, String(value))
+      }
+    }
+    return platformClient.postWithPage<PlanLayer[]>(`/plan/planLayer/searchSysDefault?${query}`)
+  },
   save: (payload: PlanLayer) => platformClient.post<Id>('/plan/planLayer/save', payload),
   detail: (id: Id) => platformClient.post<PlanLayer>('/plan/planLayer/detail', { id }),
   remove: (id: Id) => platformClient.post<boolean>('/plan/planLayer/remove', { id }),

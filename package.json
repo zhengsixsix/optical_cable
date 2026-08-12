@@ -15,7 +15,7 @@
     "test:geoserver-wms": "node scripts/verify-geoserver-wms.mjs",
     "test:rpl-export": "node scripts/verify-rpl-export.mjs",
     "test:sld-export": "node scripts/verify-sld-explicit-total-loss.mjs",
-    "test:route-results": "node scripts/verify-backend-route-planning-response.mjs && node scripts/verify-route-planning-result.mjs",
+    "test:route-results": "node scripts/verify-backend-route-planning-response.mjs && node scripts/verify-route-planning-result.mjs && node scripts/verify-route-frontend-interactions.mjs",
     "test:interface-optimizations": "node scripts/verify-interface-optimizations.mjs",
     "test:pareto-analysis": "node scripts/verify-pareto-analysis.mjs",
     "test:platform-project-open": "node scripts/verify-platform-project-detail-open.mjs",

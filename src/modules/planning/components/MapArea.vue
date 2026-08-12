@@ -194,6 +194,11 @@ const getPlatformWmsMetadata = (layerId: string) => {
 
 const isGeoServerWmsPlatformLayer = (layerId: string) => Boolean(getPlatformWmsMetadata(layerId))
 
+const getPlatformWmsSourceKey = (layerId: string) => {
+  const metadata = getPlatformWmsMetadata(layerId)
+  return metadata ? JSON.stringify([metadata.url, metadata.layerName]) : ''
+}
+
 const isViewportScopedPlatformLayer = (layerId: ViewportAttachmentLayerId) => {
   if (isGeoServerWmsPlatformLayer(layerId)) return false
   const layerData = getLayerData(layerId)
@@ -545,6 +550,7 @@ let mapMoveEndHandler: (() => void) | null = null
 
 interface PlatformWmsLayerRuntime {
   layer: TileLayer<TileWMS>
+  sourceKey: string
   pendingTiles: number
   hasRenderedTile: boolean
   successNotified: boolean
@@ -1445,6 +1451,7 @@ const initMap = () => {
           routeId: routeId,
           startPoint: {lon: coords[0][0], lat: coords[0][1]},
           endPoint: {lon: coords[coords.length - 1][0], lat: coords[coords.length - 1][1]},
+          routePoints: coords.map(([lon, lat]) => ({ lon, lat })),
           length: segmentLength,
           depth: segmentDepth,
           cableType: segmentCableType,
@@ -1529,7 +1536,7 @@ const initMap = () => {
     const extent3857 = transformExtent(lonLatExtent, DATA_PROJECTION, MAP_DISPLAY_PROJECTION) as [number, number, number, number]
 
     mapStore.setSelectedExtent(extent3857)
-    emit('area-selected', extent3857)
+    emit('area-selected', lonLatExtent)
     disableBoxSelect()
   })
 
@@ -1584,6 +1591,7 @@ const initMap = () => {
     layerId: PlatformWmsLayerId,
     runtime: PlatformWmsLayerRuntime,
   ) => {
+    if (platformWmsLayerRuntimes.get(layerId) !== runtime) return
     if (!runtime.layer.getVisible()) return
     if (runtime.failureTimer !== null) {
       clearTimeout(runtime.failureTimer)
@@ -1602,12 +1610,21 @@ const initMap = () => {
     }
   }
 
-  const ensurePlatformWmsLayer = (layerId: PlatformWmsLayerId) => {
-    const existing = platformWmsLayerRuntimes.get(layerId)
-    if (existing) return existing
+  const removePlatformWmsLayerRuntime = (layerId: PlatformWmsLayerId) => {
+    const runtime = platformWmsLayerRuntimes.get(layerId)
+    if (!runtime) return
+    if (runtime.failureTimer !== null) clearTimeout(runtime.failureTimer)
+    map?.removeLayer(runtime.layer)
+    platformWmsLayerRuntimes.delete(layerId)
+  }
 
+  const ensurePlatformWmsLayer = (layerId: PlatformWmsLayerId) => {
     const metadata = getPlatformWmsMetadata(layerId)
     if (!map || !metadata) return null
+    const sourceKey = getPlatformWmsSourceKey(layerId)
+    const existing = platformWmsLayerRuntimes.get(layerId)
+    if (existing?.sourceKey === sourceKey) return existing
+    if (existing) removePlatformWmsLayerRuntime(layerId)
 
     const source = new TileWMS({
       url: metadata.url,
@@ -1631,6 +1648,7 @@ const initMap = () => {
     })
     const runtime: PlatformWmsLayerRuntime = {
       layer,
+      sourceKey,
       pendingTiles: 0,
       hasRenderedTile: false,
       successNotified: false,
@@ -1646,7 +1664,12 @@ const initMap = () => {
     })
     source.on('tileloaderror', () => {
       runtime.pendingTiles = Math.max(0, runtime.pendingTiles - 1)
-      if (!runtime.layer.getVisible() || runtime.hasRenderedTile || runtime.failureTimer !== null) return
+      if (
+        platformWmsLayerRuntimes.get(layerId) !== runtime
+        || !runtime.layer.getVisible()
+        || runtime.hasRenderedTile
+        || runtime.failureTimer !== null
+      ) return
 
       runtime.failureTimer = setTimeout(() => {
         runtime.failureTimer = null
@@ -1663,10 +1686,15 @@ const initMap = () => {
 
   const setPlatformWmsLayerVisible = (layerId: PlatformWmsLayerId, visible: boolean) => {
     const metadata = getPlatformWmsMetadata(layerId)
-    const existing = platformWmsLayerRuntimes.get(layerId)
     if (!metadata) {
-      existing?.layer.setVisible(false)
+      removePlatformWmsLayerRuntime(layerId)
       return false
+    }
+    const sourceKey = getPlatformWmsSourceKey(layerId)
+    let existing = platformWmsLayerRuntimes.get(layerId)
+    if (existing && existing.sourceKey !== sourceKey) {
+      removePlatformWmsLayerRuntime(layerId)
+      existing = undefined
     }
 
     if (!visible) {
@@ -1913,8 +1941,8 @@ const initMap = () => {
 
   // 监听火山图层可见性变化
   watch(
-      () => layerStore.layers.find(l => l.id === 'volcano')?.visible,
-      async (visible) => {
+      () => [layerStore.layers.find(l => l.id === 'volcano')?.visible, getPlatformWmsSourceKey('volcano')] as const,
+      async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('volcano')) {
           setVolcanoPointsVisible(false)
           setPlatformWmsLayerVisible('volcano', Boolean(visible))
@@ -1940,8 +1968,8 @@ const initMap = () => {
 
   // 监听地震图层可见性变化
   watch(
-      () => layerStore.layers.find(l => l.id === 'earthquake')?.visible,
-      async (visible) => {
+      () => [layerStore.layers.find(l => l.id === 'earthquake')?.visible, getPlatformWmsSourceKey('earthquake')] as const,
+      async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('earthquake')) {
           setEarthquakePointsVisible(false)
           setPlatformWmsLayerVisible('earthquake', Boolean(visible))
@@ -2063,8 +2091,8 @@ const initMap = () => {
 
   // 监听冷水珊瑚图层可见性
   watch(
-      () => layerStore.layers.find(l => l.id === 'coldCoral')?.visible,
-      async (visible) => {
+      () => [layerStore.layers.find(l => l.id === 'coldCoral')?.visible, getPlatformWmsSourceKey('coldCoral')] as const,
+      async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('coldCoral')) {
           setColdCoralVisible(false)
           setPlatformWmsLayerVisible('coldCoral', Boolean(visible))
@@ -2156,8 +2184,8 @@ const initMap = () => {
 
   // 监听渔业图层可见性
   watch(
-      () => layerStore.layers.find(l => l.id === 'fishing')?.visible,
-      async (visible) => {
+      () => [layerStore.layers.find(l => l.id === 'fishing')?.visible, getPlatformWmsSourceKey('fishing')] as const,
+      async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('fishing')) {
           setFishingVisible(false)
           setPlatformWmsLayerVisible('fishing', Boolean(visible))
@@ -2249,8 +2277,8 @@ const initMap = () => {
 
   // 监听航道图层可见性
   watch(
-      () => layerStore.layers.find(l => l.id === 'shipping')?.visible,
-      async (visible) => {
+      () => [layerStore.layers.find(l => l.id === 'shipping')?.visible, getPlatformWmsSourceKey('shipping')] as const,
+      async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('shipping')) {
           setShippingVisible(false)
           setPlatformWmsLayerVisible('shipping', Boolean(visible))
@@ -2385,8 +2413,13 @@ const initMap = () => {
   }
 }
 
-// 路径颜色配置
-const routeColors = ['#3b82f6', '#10b981', '#f59e0b'] // 蓝、绿、橙
+// 路径与风险颜色配置
+const routeColors = ['#2563eb', '#0891b2', '#7c3aed']
+const riskColors = {
+  high: '#dc2626',
+  medium: '#d97706',
+  low: '#16a34a',
+} as const
 
 interface ProjectStationMarker {
   id: string
@@ -2511,9 +2544,8 @@ const drawParetoRoutes = async () => {
     for (const { route, routeIndex } of orderedRoutes) {
       const baseColor = routeColors[routeIndex % routeColors.length]
       const isRouteSelected = routeStore.selectedRoute?.id === route.id
-      // 所有后端路线均保持实线；选中状态只通过颜色和粗细区分。
       const lineWidth = isRouteSelected ? 5 : 3
-      const lineColor = isRouteSelected ? '#ef4444' : baseColor
+      const lineColor = baseColor
 
       // 构建点 ID 到坐标的映射
       const pointMap: Record<string, [number, number]> = {}
@@ -2525,6 +2557,17 @@ const drawParetoRoutes = async () => {
         .filter(isFiniteCoordinate)
 
       if (route.segments.length > 0) {
+        if (isRouteSelected && rawTrunkCoords.length >= 2) {
+          const routeSelectionFeature = new Feature({
+            geometry: new LineString(toCurrentMapCoordinates(rawTrunkCoords)),
+            routeId: route.id,
+            isRouteSelectionOutline: true,
+          })
+          routeSelectionFeature.setStyle(new Style({
+            stroke: new Stroke({ color: '#ffffff', width: lineWidth + 3 }),
+          }))
+          routeSource!.addFeature(routeSelectionFeature)
+        }
         route.segments.forEach((segment, segmentIndex) => {
           const start = pointMap[segment.startPointId]
           const end = pointMap[segment.endPointId]
@@ -2546,12 +2589,23 @@ const drawParetoRoutes = async () => {
             segmentCableType: segment.cableType,
             segmentRiskLevel: segment.riskLevel,
           })
-          segmentFeature.setStyle(new Style({
-            stroke: new Stroke({
-              color: isSegmentSelected ? '#f59e0b' : lineColor,
-              width: isSegmentSelected ? lineWidth + 3 : lineWidth,
+          const segmentColor = segment.riskLevel ? riskColors[segment.riskLevel] : lineColor
+          segmentFeature.setStyle([
+            ...(isSegmentSelected
+              ? [new Style({
+                  stroke: new Stroke({
+                    color: '#111827',
+                    width: lineWidth + 5,
+                  }),
+                })]
+              : []),
+            new Style({
+              stroke: new Stroke({
+                color: segmentColor,
+                width: isSegmentSelected ? lineWidth + 1 : lineWidth,
+              }),
             }),
-          }))
+          ])
           routeSource!.addFeature(segmentFeature)
         })
       } else {
@@ -2692,7 +2746,7 @@ const drawParetoRoutes = async () => {
 
     // 算法路线存在时仅使用算法返回的点位。
     // routeSource 已在本次绘制开始时清空，避免继续叠加项目配置中的起终点。
-    if (routes.length > 0 && routeSource.getFeatures().length > 0) {
+    if (routes.length > 0 && routeSource.getFeatures().length > 0 && !routeStore.selectedSegmentInfo) {
       const extent = routeSource.getExtent()
       map.getView().fit(extent, {padding: [50, 50, 50, 50], duration: 500})
     }

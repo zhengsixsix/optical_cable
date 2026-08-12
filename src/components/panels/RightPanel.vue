@@ -2,7 +2,7 @@
 import { useRouteStore } from '@/stores/route'
 import { ref, computed } from 'vue'
 import { Card, CardHeader, CardContent } from '@/shared/components/base'
-import { Printer, X, Maximize2 } from 'lucide-vue-next'
+import { RotateCcw, X, Maximize2 } from 'lucide-vue-next'
 import DepthProfile from '@/modules/planning/components/DepthProfile.vue'
 import Terrain3D from '@/modules/planning/components/Terrain3D.vue'
 import RouteRiskCostPanel from '@/modules/planning/panels/RouteRiskCostPanel.vue'
@@ -20,6 +20,7 @@ const panelVisibility = computed(() => appStore.panelVisibility)
 // 获取选中的线段信息用于水深剖面显示
 const selectedSegment = computed(() => routeStore.selectedSegmentInfo)
 
+const depthProfileRef = ref<InstanceType<typeof DepthProfile> | null>(null)
 const showFullscreen3D = ref(false)
 
 function togglePanel(panel: 'depthProfile' | 'terrain3D') {
@@ -30,20 +31,33 @@ function togglePanel(panel: 'depthProfile' | 'terrain3D') {
 <template>
   <div class="flex flex-col gap-2 h-full">
     <!-- 水深剖面 -->
-    <Card v-if="panelVisibility.depthProfile" class="h-[200px] flex-shrink-0 flex flex-col overflow-hidden">
-      <CardHeader>
+    <Card
+      v-if="panelVisibility.depthProfile"
+      class="h-[180px] flex-shrink-0 flex flex-col overflow-hidden rounded-md shadow-none"
+    >
+      <CardHeader class="min-h-8 px-2 py-1">
         <span class="font-semibold text-sm text-gray-700">海缆水深剖面</span>
-        <div class="flex gap-1">
-          <button class="p-1 hover:bg-gray-200 rounded" title="打印">
-            <Printer class="w-4 h-4 text-gray-500" />
+        <div class="flex items-center gap-0.5">
+          <button
+            class="grid h-6 w-6 place-items-center rounded hover:bg-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+            title="重置视图"
+            aria-label="重置水深剖面视图"
+            @click="depthProfileRef?.resetZoom()"
+          >
+            <RotateCcw class="h-3.5 w-3.5 text-gray-500" />
           </button>
-          <button class="p-1 hover:bg-gray-200 rounded" title="隐藏" @click="togglePanel('depthProfile')">
-            <X class="w-4 h-4 text-gray-500" />
+          <button
+            class="grid h-6 w-6 place-items-center rounded hover:bg-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+            title="隐藏"
+            aria-label="隐藏水深剖面"
+            @click="togglePanel('depthProfile')"
+          >
+            <X class="h-3.5 w-3.5 text-gray-500" />
           </button>
         </div>
       </CardHeader>
       <CardContent class="flex-1 p-0 overflow-hidden">
-        <DepthProfile :extent="selectedExtent" :segment-info="selectedSegment" />
+        <DepthProfile ref="depthProfileRef" :extent="selectedExtent" :segment-info="selectedSegment" />
       </CardContent>
     </Card>
 

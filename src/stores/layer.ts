@@ -6,7 +6,12 @@ import { platformPlanLayerApi } from '@/services/platform/api'
 import type { PlanLayer } from '@/services/platform/types'
 import { detectGisFormat, getPlanLayerFileName } from '@/utils/gisFormat'
 import { getPlatformAttachmentUrl } from '@/services/platform/attachment'
-import { GEOSERVER_WMS_URL, getPlanLayerWmsName } from '@/config/geoserver'
+import { GEOSERVER_WMS_URL } from '@/config/geoserver'
+import {
+  getPlanLayerGeoName,
+  hasPlanLayerSource,
+  mergePlanLayersWithDefaults,
+} from '@/services/platform/planLayerSelection'
 import {
   getLocalLayerIdForDictionaryCode,
   getRuntimeLayerTypeForDictionaryCode,
@@ -30,18 +35,16 @@ function getPlatformLayerDownloadUrl(platformLayer: PlanLayer): string | null {
     || null
 }
 
-function hasPlatformLayerSource(platformLayer: PlanLayer) {
-  return Boolean(platformLayer.attachmentId || getPlanLayerWmsName(platformLayer.typeDic))
-}
-
 export const useLayerStore = defineStore('layer', () => {
   const dictionaryStore = useDictionaryStore()
   // 状态
   const layers = ref<LayerConfig[]>([])
 
   const platformProjectLayers = ref<PlanLayer[]>([])
+  const platformDefaultLayers = ref<PlanLayer[]>([])
   const platformLayersLoading = ref(false)
   const platformLayersError = ref<string | null>(null)
+  const platformLayersVersion = ref(0)
 
   // Actions
   function toggleLayer(id: string, visible: boolean) {
@@ -125,7 +128,7 @@ export const useLayerStore = defineStore('layer', () => {
         || layer.name || layer.attachmentName || layer.filename || `平台图层 ${layer.id ?? ''}`.trim(),
       type: getRuntimeLayerTypeForDictionaryCode(layer.typeDic),
       visible: existingPlatformSource ? (existing?.visible ?? false) : false,
-      loaded: hasPlatformLayerSource(layer),
+      loaded: hasPlanLayerSource(layer),
       loading: false,
       error: false,
       opacity: existing?.opacity,
@@ -136,9 +139,9 @@ export const useLayerStore = defineStore('layer', () => {
   function buildPlatformLayerData(config: LayerConfig, platformLayer: PlanLayer): LayerData {
     const fileName = getPlanLayerFileName(platformLayer)
     const gisFormat = detectGisFormat(fileName)
-    const source = `platform:${platformLayer.id ?? ''}:${platformLayer.attachmentId ?? ''}`
     const downloadUrl = getPlatformLayerDownloadUrl(platformLayer)
-    const wmsLayerName = getPlanLayerWmsName(platformLayer.typeDic)
+    const wmsLayerName = getPlanLayerGeoName(platformLayer)
+    const source = `platform:${platformLayer.id ?? ''}:${platformLayer.attachmentId ?? ''}:${wmsLayerName ?? ''}`
 
     return {
       id: config.id,
@@ -165,7 +168,7 @@ export const useLayerStore = defineStore('layer', () => {
   function applyPlatformLayers(platformLayers: PlanLayer[]) {
     syncDictionaryLayers()
     const nextIds = new Set<string>()
-    const uploadedManagedIds = new Set<string>()
+    const sourceManagedIds = new Set<string>()
     const platformManagedLayerIds = new Set(
       dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType)
         .map(item => getLocalLayerIdForDictionaryCode(item.code)),
@@ -174,12 +177,12 @@ export const useLayerStore = defineStore('layer', () => {
     for (const platformLayer of platformLayers) {
       const config = mapPlatformLayer(platformLayer)
       nextIds.add(config.id)
-      if (hasPlatformLayerSource(platformLayer)) {
-        uploadedManagedIds.add(config.id)
+      if (hasPlanLayerSource(platformLayer)) {
+        sourceManagedIds.add(config.id)
       }
       upsertLayer(config)
 
-      if (hasPlatformLayerSource(platformLayer)) {
+      if (hasPlanLayerSource(platformLayer)) {
         layerDataMap.value.set(config.id, buildPlatformLayerData(config, platformLayer))
       } else {
         layerDataMap.value.delete(config.id)
@@ -188,7 +191,7 @@ export const useLayerStore = defineStore('layer', () => {
 
     for (const layer of layers.value) {
       if (!platformManagedLayerIds.has(layer.id)) continue
-      if (uploadedManagedIds.has(layer.id)) continue
+      if (sourceManagedIds.has(layer.id)) continue
 
       layer.visible = false
       layer.loaded = false
@@ -200,21 +203,41 @@ export const useLayerStore = defineStore('layer', () => {
   }
 
   async function loadPlatformLayerDetail(localLayerId: string) {
+    const requestId = platformLayersVersion.value
     const layerData = layerDataMap.value.get(localLayerId)
+    const source = layerData?.metadata.source
     const platformLayerId = layerData?.metadata.platformLayerId
     const listLayer = platformProjectLayers.value.find(layer => getPlatformLayerId(layer) === localLayerId)
     const detailId = platformLayerId ?? listLayer?.id
-    if (!detailId) return null
+    if (detailId === null || detailId === undefined || detailId === '') return null
 
-    const detail = await platformPlanLayerApi.detail(detailId)
+    let detail: PlanLayer
+    try {
+      detail = await platformPlanLayerApi.detail(detailId)
+    } catch (error) {
+      if (requestId !== platformLayersVersion.value) return null
+      throw error
+    }
+
+    if (requestId !== platformLayersVersion.value) return null
+    const currentLayerData = layerDataMap.value.get(localLayerId)
+    const currentListLayer = platformProjectLayers.value.find(
+      layer => getPlatformLayerId(layer) === localLayerId,
+    )
+    const currentDetailId = currentLayerData?.metadata.platformLayerId ?? currentListLayer?.id
+    if (currentLayerData?.metadata.source !== source || String(currentDetailId ?? '') !== String(detailId)) {
+      return null
+    }
+
     const mergedLayer = {
-      ...listLayer,
+      ...currentListLayer,
       ...detail,
       id: detail.id ?? detailId,
-      typeDic: detail.typeDic ?? listLayer?.typeDic ?? layerData?.metadata.typeDic ?? null,
-      attachmentId: detail.attachmentId ?? listLayer?.attachmentId ?? layerData?.metadata.attachmentId ?? null,
-      attachmentName: detail.attachmentName ?? listLayer?.attachmentName ?? layerData?.metadata.attachmentName ?? null,
-      projectId: detail.projectId ?? listLayer?.projectId ?? null,
+      typeDic: detail.typeDic ?? currentListLayer?.typeDic ?? currentLayerData?.metadata.typeDic ?? null,
+      geoLayerName: detail.geoLayerName ?? currentListLayer?.geoLayerName ?? currentLayerData?.metadata.wmsLayerName ?? null,
+      attachmentId: detail.attachmentId ?? currentListLayer?.attachmentId ?? currentLayerData?.metadata.attachmentId ?? null,
+      attachmentName: detail.attachmentName ?? currentListLayer?.attachmentName ?? currentLayerData?.metadata.attachmentName ?? null,
+      projectId: detail.projectId ?? currentListLayer?.projectId ?? null,
     } as PlanLayer
 
     const index = platformProjectLayers.value.findIndex(layer => getPlatformLayerId(layer) === localLayerId)
@@ -226,7 +249,7 @@ export const useLayerStore = defineStore('layer', () => {
 
     const config = mapPlatformLayer(mergedLayer)
     upsertLayer(config)
-    if (mergedLayer.attachmentId) {
+    if (hasPlanLayerSource(mergedLayer)) {
       layerDataMap.value.set(config.id, buildPlatformLayerData(config, mergedLayer))
     }
 
@@ -263,33 +286,71 @@ export const useLayerStore = defineStore('layer', () => {
     return layerDataMap.value.get(id)
   }
 
-  async function loadPlatformProjectLayers(projectId?: number | string | null) {
+  async function loadPlatformDefaultLayers() {
+    const requestId = ++platformLayersVersion.value
     platformLayersLoading.value = true
     platformLayersError.value = null
 
     try {
       await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType)
       syncDictionaryLayers()
-      if (!projectId) {
-        platformProjectLayers.value = []
-        applyPlatformLayers([])
+      const response = await platformPlanLayerApi.searchSysDefault()
+      if (requestId !== platformLayersVersion.value) return
+
+      platformDefaultLayers.value = response.data ?? []
+      platformProjectLayers.value = [...platformDefaultLayers.value]
+      applyPlatformLayers(platformProjectLayers.value)
+    } catch (error) {
+      if (requestId !== platformLayersVersion.value) return
+      platformLayersError.value = (error as Error).message
+      platformProjectLayers.value = [...platformDefaultLayers.value]
+      applyPlatformLayers(platformProjectLayers.value)
+      throw error
+    } finally {
+      if (requestId === platformLayersVersion.value) {
+        platformLayersLoading.value = false
+      }
+    }
+  }
+
+  async function loadPlatformProjectLayers(projectId?: number | string | null) {
+    const requestId = ++platformLayersVersion.value
+    platformLayersLoading.value = true
+    platformLayersError.value = null
+
+    try {
+      await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType)
+      syncDictionaryLayers()
+      const hasProjectId = projectId !== null && projectId !== undefined && projectId !== ''
+      if (!hasProjectId) {
+        if (requestId !== platformLayersVersion.value) return
+        platformProjectLayers.value = [...platformDefaultLayers.value]
+        applyPlatformLayers(platformProjectLayers.value)
         return
       }
 
-      const payload = {
+      const response = await platformPlanLayerApi.search({
         pageNumber: 1,
         pageSize: 1000,
         projectId,
-      }
-      const response = await platformPlanLayerApi.search(payload)
-      platformProjectLayers.value = response.data ?? []
+      })
+      if (requestId !== platformLayersVersion.value) return
+
+      platformProjectLayers.value = mergePlanLayersWithDefaults(
+        response.data ?? [],
+        platformDefaultLayers.value,
+      )
       applyPlatformLayers(platformProjectLayers.value)
     } catch (error) {
+      if (requestId !== platformLayersVersion.value) return
       platformLayersError.value = (error as Error).message
-      platformProjectLayers.value = []
+      platformProjectLayers.value = [...platformDefaultLayers.value]
+      applyPlatformLayers(platformProjectLayers.value)
       throw error
     } finally {
-      platformLayersLoading.value = false
+      if (requestId === platformLayersVersion.value) {
+        platformLayersLoading.value = false
+      }
     }
   }
 
@@ -297,8 +358,10 @@ export const useLayerStore = defineStore('layer', () => {
     layers,
     layerDataMap,
     platformProjectLayers,
+    platformDefaultLayers,
     platformLayersLoading,
     platformLayersError,
+    platformLayersVersion,
     toggleLayer,
     setLayerLoaded,
     setLayerLoading,
@@ -309,6 +372,7 @@ export const useLayerStore = defineStore('layer', () => {
     getLayerById,
     setLayerData,
     getLayerData,
+    loadPlatformDefaultLayers,
     loadPlatformProjectLayers,
     loadPlatformLayerDetail,
     syncDictionaryLayers,

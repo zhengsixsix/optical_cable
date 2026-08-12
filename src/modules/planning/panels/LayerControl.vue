@@ -7,13 +7,16 @@ import { Select } from '@/shared/components/base'
 import { RefreshCw, Download, Maximize2, X, Settings, CircleDollarSign, ShieldAlert } from 'lucide-vue-next'
 import { detectGisFormat, getPlanLayerFileName } from '@/utils/gisFormat'
 import { getLocalLayerIdForDictionaryCode } from '@/services/platform/layerTypeAdapter'
-import { getPlanLayerWmsName } from '@/config/geoserver'
+import {
+  getPlanLayerGeoName,
+  getPlanLayerTypeKey,
+  hasPlanLayerSource,
+} from '@/services/platform/planLayerSelection'
 
 const layerStore = useLayerStore()
 const dictionaryStore = useDictionaryStore()
 const appStore = useAppStore()
 const currentProject = computed(() => appStore.projectState.currentProject)
-const hasOpenProject = computed(() => currentProject.value !== null)
 const currentPlatformProjectId = computed(() => currentProject.value?.platformProjectId ?? null)
 const hasPlatformProjectId = computed(() => currentPlatformProjectId.value !== null && currentPlatformProjectId.value !== undefined && currentPlatformProjectId.value !== '')
 
@@ -36,7 +39,7 @@ interface PlatformLayerRow {
   type: string
   typeName: string
   visible: boolean
-  uploaded: boolean
+  available: boolean
   status: '已发布' | '已上传' | '未上传'
   statusClass: 'success' | 'info'
   fileName: string
@@ -49,15 +52,18 @@ const layers = computed<PlatformLayerRow[]>(() => {
   const allLayers = dictionaryStore.getItems(PLATFORM_DICTIONARY_TYPES.layerType).map((dictionaryItem) => {
     const typeDic = String(dictionaryItem.code)
     const storeLayerId = getLocalLayerIdForDictionaryCode(typeDic)
-    const platformLayer = layerStore.platformProjectLayers.find(layer => layer.typeDic === typeDic)
-    const wmsLayerName = getPlanLayerWmsName(typeDic)
-    const uploaded = Boolean(platformLayer && (platformLayer.attachmentId || wmsLayerName))
+    const typeKey = getPlanLayerTypeKey(typeDic)
+    const platformLayer = layerStore.platformProjectLayers.find(
+      layer => getPlanLayerTypeKey(layer.typeDic) === typeKey,
+    )
+    const wmsLayerName = getPlanLayerGeoName(platformLayer)
+    const available = hasPlanLayerSource(platformLayer)
     const fileName = getPlanLayerFileName(platformLayer)
     const formatInfo = detectGisFormat(fileName)
     const status: PlatformLayerRow['status'] = wmsLayerName && platformLayer
       ? '已发布'
-      : uploaded ? '已上传' : '未上传'
-    const statusClass: PlatformLayerRow['statusClass'] = uploaded ? 'success' : 'info'
+      : available ? '已上传' : '未上传'
+    const statusClass: PlatformLayerRow['statusClass'] = available ? 'success' : 'info'
 
     return {
       id: typeDic,
@@ -65,12 +71,12 @@ const layers = computed<PlatformLayerRow[]>(() => {
       name: dictionaryItem.name || typeDic,
       type: typeDic,
       typeName: typeDic,
-      visible: uploaded && layerStore.getLayerVisible(storeLayerId),
-      uploaded,
+      visible: available && layerStore.getLayerVisible(storeLayerId),
+      available,
       status,
       statusClass,
       fileName,
-      formatLabel: uploaded ? formatInfo.label : '',
+      formatLabel: available ? formatInfo.label : '',
       wmsLayerName,
     }
   })
@@ -102,13 +108,13 @@ function handleAlgorithmLayerVisible(id: string, visible: boolean) {
 }
 
 // 全选状态
-const uploadedLayers = computed(() => layers.value.filter(l => l.uploaded))
-const selectableLayers = computed(() => [...visibleAlgorithmLayers.value, ...uploadedLayers.value])
+const availableLayers = computed(() => layers.value.filter(l => l.available))
+const selectableLayers = computed(() => [...visibleAlgorithmLayers.value, ...availableLayers.value])
 const allChecked = computed(() => {
   const algorithmGroupChecked = visibleAlgorithmLayers.value.length === 0
     || visibleAlgorithmLayers.value.some(layer => layer.visible)
-  const uploadedGroupChecked = uploadedLayers.value.every(layer => layer.visible)
-  return selectableLayers.value.length > 0 && algorithmGroupChecked && uploadedGroupChecked
+  const availableGroupChecked = availableLayers.value.every(layer => layer.visible)
+  return selectableLayers.value.length > 0 && algorithmGroupChecked && availableGroupChecked
 })
 const someChecked = computed(() => selectableLayers.value.some(l => l.visible) && !allChecked.value)
 
@@ -121,16 +127,18 @@ async function handleSelectAll(checked: boolean) {
     handleAlgorithmLayerVisible(visibleAlgorithmLayers.value[0].id, true)
   }
   for (const layer of layers.value) {
-    if (layer.uploaded) {
+    if (layer.available) {
       await handleVisibleChange(layer, checked)
     }
   }
 }
 
 async function handleVisibleChange(layer: PlatformLayerRow, visible: boolean) {
-  if (!layer.uploaded) return
+  if (!layer.available) return
 
   const loadingKey = `layer:${layer.storeLayerId}`
+  const layersVersion = layerStore.platformLayersVersion
+  let source = layerStore.getLayerData(layer.storeLayerId)?.metadata.source
   if (visible) {
     appStore.showGlobalLoading(
       layer.wmsLayerName ? '正在加载影像图层...' : '正在加载图层...',
@@ -140,7 +148,12 @@ async function handleVisibleChange(layer: PlatformLayerRow, visible: boolean) {
     await nextTick()
     if (!layer.wmsLayerName) {
       try {
-        await layerStore.loadPlatformLayerDetail(layer.storeLayerId)
+        const detail = await layerStore.loadPlatformLayerDetail(layer.storeLayerId)
+        if (!detail) {
+          appStore.hideGlobalLoading(loadingKey)
+          return
+        }
+        source = layerStore.getLayerData(layer.storeLayerId)?.metadata.source
       } catch (error) {
         appStore.showNotification({
           type: 'error',
@@ -152,6 +165,14 @@ async function handleVisibleChange(layer: PlatformLayerRow, visible: boolean) {
         return
       }
     }
+  }
+
+  if (
+    layerStore.platformLayersVersion !== layersVersion
+    || layerStore.getLayerData(layer.storeLayerId)?.metadata.source !== source
+  ) {
+    appStore.hideGlobalLoading(loadingKey)
+    return
   }
 
   layerStore.toggleLayer(layer.storeLayerId, visible)
@@ -167,45 +188,51 @@ async function handleVisibleChange(layer: PlatformLayerRow, visible: boolean) {
   }, 800)
 }
 
-async function loadProjectLayers(showSuccess = false, forceDictionary = false) {
-  if (forceDictionary) {
-    try {
-      await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType, true)
-      layerStore.syncDictionaryLayers()
-    } catch (error) {
-      appStore.showNotification({ type: 'error', message: `图层类型字典加载失败：${(error as Error).message}` })
-      return
-    }
-  }
-  if (!hasOpenProject.value) {
-    await layerStore.loadPlatformProjectLayers(null)
-    return
-  }
+function notifyLayerLoadError(error: unknown) {
+  appStore.showNotification({
+    type: 'error',
+    message: `图层列表加载失败：${(error as Error).message}`,
+    duration: 5000,
+  })
+}
 
-  if (!hasPlatformProjectId.value) {
-    await layerStore.loadPlatformProjectLayers(null)
-    if (showSuccess) {
-      appStore.showNotification({ type: 'warning', message: '当前项目尚未同步到平台，暂无平台图层数据' })
-    }
-    return
-  }
-
+async function loadCurrentProjectLayers() {
   try {
     await layerStore.loadPlatformProjectLayers(currentPlatformProjectId.value)
-    if (showSuccess) {
-      appStore.showNotification({ type: 'success', message: '图层列表已刷新' })
-    }
   } catch (error) {
-    appStore.showNotification({
-      type: 'error',
-      message: `图层列表加载失败：${(error as Error).message}`,
-      duration: 5000,
-    })
+    notifyLayerLoadError(error)
   }
 }
 
-function handleRefresh() {
-  void loadProjectLayers(true, true)
+let initialDefaultLayersPromise: Promise<void> | null = null
+
+async function initializeLayers() {
+  if (!initialDefaultLayersPromise) {
+    initialDefaultLayersPromise = (async () => {
+      try {
+        await layerStore.loadPlatformDefaultLayers()
+      } catch (error) {
+        notifyLayerLoadError(error)
+      }
+    })()
+  }
+
+  await initialDefaultLayersPromise
+  await loadCurrentProjectLayers()
+}
+
+async function handleRefresh() {
+  try {
+    await dictionaryStore.loadDictionary(PLATFORM_DICTIONARY_TYPES.layerType, true)
+    layerStore.syncDictionaryLayers()
+    await layerStore.loadPlatformDefaultLayers()
+    if (hasPlatformProjectId.value) {
+      await layerStore.loadPlatformProjectLayers(currentPlatformProjectId.value)
+    }
+    appStore.showNotification({ type: 'success', message: '图层列表已刷新' })
+  } catch (error) {
+    notifyLayerLoadError(error)
+  }
 }
 
 function handleImportGis() {
@@ -217,11 +244,11 @@ function handleLayerSettings(layerId: string) {
 }
 
 onMounted(() => {
-  void loadProjectLayers()
+  void initializeLayers()
 })
 
 watch(currentPlatformProjectId, () => {
-  void loadProjectLayers()
+  void initializeLayers()
 })
 </script>
 
@@ -263,11 +290,6 @@ watch(currentPlatformProjectId, () => {
     </div>
     
     <div class="flex-1 overflow-auto p-2">
-      <div v-if="!hasOpenProject" class="h-full min-h-[180px] flex flex-col items-center justify-center text-center text-xs text-[#909399] px-6">
-        <div class="font-medium text-[#606266] mb-1">尚未打开项目</div>
-        <div>请先新建或打开项目后查看图层信息</div>
-      </div>
-      <template v-else>
       <!-- 图层类型筛选 -->
       <div class="mb-2">
         <Select 
@@ -280,8 +302,8 @@ watch(currentPlatformProjectId, () => {
       <!-- Layer Table -->
       <div class="text-xs">
         <!-- Table Header -->
-        <div class="flex items-center py-1.5 border-b border-[#ebeef5] text-[#909399] font-medium">
-          <div class="w-[24px] flex justify-center">
+        <div class="grid grid-cols-[20px_minmax(0,1fr)_64px_40px_24px] items-center gap-x-1 py-1.5 border-b border-[#ebeef5] text-[#909399] font-medium">
+          <div class="flex justify-center">
             <input 
               type="checkbox"
               :checked="allChecked"
@@ -290,19 +312,19 @@ watch(currentPlatformProjectId, () => {
               @change="handleSelectAll(($event.target as HTMLInputElement).checked)"
             >
           </div>
-          <span class="flex-1 pl-1">名称</span>
-          <span class="w-[40px] text-center">类型</span>
-          <span class="w-[52px] text-center">状态</span>
-          <span class="w-[44px] text-center">操作</span>
+          <span class="min-w-0 pl-1">名称</span>
+          <span class="text-center">类型</span>
+          <span class="text-center">状态</span>
+          <span class="text-center">操作</span>
         </div>
 
         <!-- Algorithm result layers use the same table as platform layers. -->
         <div
           v-for="layer in visibleAlgorithmLayers"
           :key="layer.id"
-          class="flex items-center py-2 border-b border-dashed border-[#ebeef5] hover:bg-gray-50"
+          class="grid grid-cols-[20px_minmax(0,1fr)_64px_40px_24px] items-center gap-x-1 py-2 border-b border-dashed border-[#ebeef5] hover:bg-gray-50"
         >
-          <div class="w-[24px] flex justify-center">
+          <div class="flex justify-center">
             <input
               type="checkbox"
               :checked="layer.visible"
@@ -310,14 +332,14 @@ watch(currentPlatformProjectId, () => {
               @change="handleAlgorithmLayerVisible(layer.id, ($event.target as HTMLInputElement).checked)"
             >
           </div>
-          <div class="flex flex-1 min-w-0 items-center gap-1.5 pl-1">
+          <div class="flex min-w-0 items-center gap-1.5 pl-1">
             <div class="truncate text-[#606266]">{{ layer.name }}</div>
           </div>
-          <span class="w-[40px] text-center text-[#909399]">{{ layer.typeName }}</span>
-          <div class="w-[52px] flex justify-center">
-            <span class="text-[10px] text-green-600">已生成</span>
+          <span class="truncate text-center text-[11px] text-[#909399]" :title="layer.typeName">{{ layer.typeName }}</span>
+          <div class="flex justify-center">
+            <span class="whitespace-nowrap text-[10px] text-green-600">已生成</span>
           </div>
-          <div class="w-[44px] flex justify-center gap-0.5">
+          <div class="flex justify-center">
             <button
               class="p-0.5 hover:text-blue-500 text-gray-400 transition-colors"
               title="设置"
@@ -332,24 +354,24 @@ watch(currentPlatformProjectId, () => {
         <div 
           v-for="layer in layers" 
           :key="layer.id"
-          class="flex items-center py-2 border-b border-dashed border-[#ebeef5] hover:bg-gray-50"
+          class="grid grid-cols-[20px_minmax(0,1fr)_64px_40px_24px] items-center gap-x-1 py-2 border-b border-dashed border-[#ebeef5] hover:bg-gray-50"
         >
-          <div class="w-[24px] flex justify-center">
+          <div class="flex justify-center">
             <input 
               type="checkbox"
               :checked="layer.visible"
-              :disabled="!layer.uploaded"
+              :disabled="!layer.available"
               class="w-3.5 h-3.5 accent-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
               @change="handleVisibleChange(layer, ($event.target as HTMLInputElement).checked)"
             >
           </div>
-          <div class="flex-1 min-w-0 pl-1" :title="layer.fileName ? `${layer.name} · ${layer.formatLabel} · ${layer.fileName}` : layer.name">
+          <div class="min-w-0 pl-1" :title="layer.fileName ? `${layer.name} · ${layer.formatLabel} · ${layer.fileName}` : layer.name">
             <div class="truncate text-[#606266]">{{ layer.name }}</div>
           </div>
-          <span class="w-[40px] text-center text-[#909399]">{{ layer.typeName }}</span>
-          <div class="w-[52px] flex justify-center">
+          <span class="truncate text-center text-[11px] text-[#909399]" :title="layer.typeName">{{ layer.typeName }}</span>
+          <div class="flex justify-center">
             <span 
-              class="px-1.5 py-0.5 rounded text-[10px]"
+              class="whitespace-nowrap text-[10px]"
               :class="{
                 'text-green-600': layer.statusClass === 'success',
                 'text-gray-400': layer.statusClass === 'info'
@@ -358,7 +380,7 @@ watch(currentPlatformProjectId, () => {
               {{ layer.status }}
             </span>
           </div>
-          <div class="w-[44px] flex justify-center gap-0.5">
+          <div class="flex justify-center">
             <button
               class="p-0.5 hover:text-blue-500 text-gray-400 transition-colors"
               title="设置"
@@ -373,10 +395,9 @@ watch(currentPlatformProjectId, () => {
           正在加载图层列表...
         </div>
         <div v-else-if="!layerStore.platformLayersLoading && layers.length === 0 && visibleAlgorithmLayers.length === 0" class="py-10 text-center text-xs text-[#909399]">
-          暂无上传图层
+          暂无可用图层
         </div>
       </div>
-      </template>
     </div>
   </div>
 </template>

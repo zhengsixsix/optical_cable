@@ -8,6 +8,8 @@ import { useLayerStore } from '@/stores/layer'
 import { PLATFORM_DICTIONARY_TYPES, useDictionaryStore } from '@/stores/dictionary'
 import { platformPlanLayerApi } from '@/services/platform/api'
 import type { PlanLayer } from '@/services/platform/types'
+import { GEOSERVER_WMS_URL } from '@/config/geoserver'
+import { getPlanLayerGeoName, hasPlanLayerSource } from '@/services/platform/planLayerSelection'
 import {
   getLocalLayerIdForDictionaryCode,
   getRuntimeLayerTypeForDictionaryCode,
@@ -185,7 +187,13 @@ async function removeLayer(layer: PlanLayer) {
 
 function useLayerInPlanning(layer: PlanLayer) {
   if (!layer.id) return
+  if (!hasPlanLayerSource(layer)) {
+    appStore.showNotification({ type: 'warning', message: '该图层没有可用的附件或 GeoServer 图层名称' })
+    return
+  }
+
   const key = getLocalLayerId(layer)
+  const wmsLayerName = getPlanLayerGeoName(layer)
   layerStore.upsertLayer({
     id: key,
     name: layer.name || getLayerTypeLabel(layer.typeDic) || `平台图层 ${layer.id}`,
@@ -198,7 +206,12 @@ function useLayerInPlanning(layer: PlanLayer) {
   layerStore.setLayerData(key, {
     id: key,
     metadata: {
-      source: `platform:${layer.id}:${layer.name || ''}:${layer.attachmentId ?? ''}`,
+      source: `platform:${layer.id}:${layer.name || ''}:${layer.attachmentId ?? ''}:${wmsLayerName ?? ''}`,
+      platformLayerId: layer.id,
+      attachmentId: layer.attachmentId ?? null,
+      typeDic: layer.typeDic ?? null,
+      wmsUrl: wmsLayerName ? GEOSERVER_WMS_URL : undefined,
+      wmsLayerName: wmsLayerName ?? undefined,
     },
   })
   appStore.showNotification({ type: 'success', message: `已加入当前规划图层：${layer.name || layer.id}` })

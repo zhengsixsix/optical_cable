@@ -11,6 +11,7 @@ export interface SelectedSegmentInfo {
   routeId: string
   startPoint: { lon: number; lat: number; name?: string }
   endPoint: { lon: number; lat: number; name?: string }
+  routePoints?: Array<{ lon: number; lat: number }>
   length?: number
   depth?: number
   cableType?: string
