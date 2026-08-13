@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { mars3dPlugin } from 'vite-plugin-mars3d'
 import { resolve } from 'path'
 
 const PLATFORM_PROXY_PATH = '/platform-api'
@@ -50,7 +51,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [vue()],
+    plugins: [vue(), mars3dPlugin({ useStatic: false })],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),
@@ -67,6 +68,10 @@ export default defineConfig(({ mode }) => {
       proxy,
     },
     build: {
+      // 本地 Mars3D SDK 是 UMD 包，需要将 packages 目录纳入 CommonJS 转换。
+      commonjsOptions: {
+        include: /node_modules|packages/,
+      },
       rollupOptions: {
         output: {
           chunkFileNames: 'assets/[name]-[hash].js',
@@ -75,7 +80,7 @@ export default defineConfig(({ mode }) => {
           manualChunks: {
             'vendor-vue': ['vue', 'vue-router', 'pinia'],
             'vendor-map': ['ol'],
-            'vendor-3d': ['three'],
+            'vendor-3d': ['three', 'mars3d', 'olcs'],
             'vendor-ui': ['radix-vue', 'lucide-vue-next'],
             'vendor-geo': ['shpjs'],
           },
@@ -87,7 +92,7 @@ export default defineConfig(({ mode }) => {
       assetsInlineLimit: 4096,
     },
     optimizeDeps: {
-      include: ['vue', 'vue-router', 'pinia', 'ol', 'three'],
+      include: ['vue', 'vue-router', 'pinia', 'ol', 'three', 'mars3d', 'mars3d-cesium', 'olcs'],
     },
   }
 })

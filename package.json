@@ -28,13 +28,19 @@
     "test:regression": "npm run test:architecture && npm run test:cycles && npm run test:attachment-download && npm run test:excel-import && npm run test:gis-attachment && npm run test:geoserver-wms && npm run test:rpl-export && npm run test:sld-export && npm run test:route-results && npm run test:interface-optimizations && npm run test:pareto-analysis && npm run test:platform-project-open && npm run test:system-planning && npm run test:project-import && npm run test:lifecycle && npm run test:dictionary-source"
   },
   "dependencies": {
+    "@turf/turf": "^6.5.0",
     "@uppy/core": "^5.2.0",
     "@uppy/tus": "^5.1.1",
     "clsx": "^2.1.0",
+    "cesium": "npm:mars3d-cesium@~1.115.0",
     "exceljs": "^4.4.0",
+    "geotiff": "^2.1.3",
     "jszip": "^3.10.1",
     "lucide-vue-next": "^0.344.0",
+    "mars3d": "file:packages/mars3d",
+    "mars3d-cesium": "~1.115.0",
     "ol": "^10.7.0",
+    "olcs": "^2.23.0",
     "pinia": "^2.1.7",
     "radix-vue": "^1.9.0",
     "shpjs": "^6.2.0",
@@ -54,6 +60,7 @@
     "tailwindcss": "^3.4.1",
     "typescript": "^5.2.0",
     "vite": "^5.1.0",
+    "vite-plugin-mars3d": "^4.0.0",
     "vue-tsc": "^2.2.12"
   }
 }

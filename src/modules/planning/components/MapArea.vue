@@ -5,7 +5,7 @@ import { useMonitorStore } from '@/stores/monitor'
 import { useRouteStore } from '@/stores/route'
 import { useSettingsStore } from '@/stores/settings'
 import { useCableSegmentStore } from '@/stores/cableSegment'
-import { ref, onMounted, onUnmounted, watch, toRef } from 'vue'
+import { effectScope, ref, onMounted, onUnmounted, watch, toRef, nextTick, type EffectScope } from 'vue'
 import { useMapStore } from '@/stores/map'
 import {Button, Tooltip} from '@/shared/components/base'
 import {
@@ -70,6 +70,11 @@ import {
   type LonLatExtent,
   type RoutePlanningRectRange,
 } from '@/utils/routePlanningViewport'
+import {
+  Mars3dPlanningAdapter,
+  type MarsRouteSegmentSelection,
+  type MarsThematicStyle,
+} from '@/modules/planning/map/Mars3dPlanningAdapter'
 
 const mapStore = useMapStore()
 const layerStore = useLayerStore()
@@ -87,6 +92,9 @@ const emit = defineEmits<{
 }>()
 
 const mapContainer = ref<HTMLElement | null>(null)
+const MARS3D_CONTAINER_ID = 'planning-mars3d-container'
+const mapMode = ref<'2d' | '3d'>('2d')
+const isMapModeSwitching = ref(false)
 const loading = ref(false)
 const coordinates = ref({lon: 0, lat: 0})
 const isPlanning = ref(false)
@@ -514,6 +522,10 @@ const selectedCableId = ref<string | null>(null)
 
 
 let map: Map | null = null
+let mars3dMap: import('mars3d').Map | null = null
+let mars3dModule: typeof import('mars3d') | null = null
+let mars3dAdapter: Mars3dPlanningAdapter | null = null
+let olMapEffectScope: EffectScope | null = null
 let dragBox: DragBox | null = null
 let selectionSource: VectorSource | null = null
 let volcanoIconLayer: VectorLayer<VectorSource> | null = null
@@ -547,6 +559,9 @@ let viewportAttachmentRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let scheduleViewportAttachmentRefresh: (() => void) | null = null
 let mapMoveStartHandler: (() => void) | null = null
 let mapMoveEndHandler: (() => void) | null = null
+let mars3dContextMenuHandler: ((event: MouseEvent) => void) | null = null
+let mars3dViewportRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let lastMapLonLatExtent: LonLatExtent | null = null
 
 interface PlatformWmsLayerRuntime {
   layer: TileLayer<TileWMS>
@@ -598,6 +613,31 @@ const getMapViewCenter = () => toMapCoordinate(DEFAULT_CHINA_MAP_CENTER, current
 const getPointerLonLat = (coordinate: [number, number]) => fromCurrentMapCoordinate(coordinate)
 
 const enableBoxSelect = () => {
+  if (mapMode.value === '3d') {
+    if (!mars3dAdapter) return
+    mapStore.setBoxSelecting(true)
+    appStore.showNotification({type: 'info', message: '框选模式已开启，拖动鼠标选择区域'})
+    void mars3dAdapter.startBoxSelection().then(extent => {
+      if (!extent || mapMode.value !== '3d') {
+        mapStore.setBoxSelecting(false)
+        return
+      }
+      selectedAreaLonLatExtent.value = extent
+      areaContextMenu.value.visible = false
+      mapStore.setSelectedExtent(transformExtent(
+        extent,
+        DATA_PROJECTION,
+        MAP_DISPLAY_PROJECTION,
+      ) as [number, number, number, number])
+      emit('area-selected', extent)
+      mapStore.setBoxSelecting(false)
+      appStore.showNotification({
+        type: 'success',
+        message: `已选择区域: 经度 ${extent[0].toFixed(2)}° ~ ${extent[2].toFixed(2)}°`,
+      })
+    })
+    return
+  }
   if (!map || !dragBox) return
   mapStore.setBoxSelecting(true)
   map.addInteraction(dragBox)
@@ -605,6 +645,11 @@ const enableBoxSelect = () => {
 }
 
 const disableBoxSelect = () => {
+  if (mapMode.value === '3d') {
+    mars3dAdapter?.stopBoxSelection()
+    mapStore.setBoxSelecting(false)
+    return
+  }
   if (!map || !dragBox) return
   mapStore.setBoxSelecting(false)
   map.removeInteraction(dragBox)
@@ -629,6 +674,7 @@ const resetAreaSelection = () => {
   if (selectionSource) {
     selectionSource.clear()
   }
+  mars3dAdapter?.clearSelection()
 }
 
 const clearSelection = () => {
@@ -655,6 +701,10 @@ const configuredPointsOutsideExtent = (extent: LonLatExtent) => {
 }
 
 const applyPlanningRangeToMap = (extent: LonLatExtent, fit = true) => {
+  if (mars3dAdapter) {
+    if (fit) mars3dAdapter.flyToExtent(extent)
+    return
+  }
   if (!map) return
   const currentView = map.getView()
   const projection = currentView.getProjection()
@@ -675,6 +725,7 @@ const applyPlanningRangeToMap = (extent: LonLatExtent, fit = true) => {
 }
 
 const releasePlanningRangeConstraint = () => {
+  if (mars3dAdapter) return
   if (!map) return
   const currentView = map.getView()
   const center = currentView.getCenter()
@@ -690,6 +741,12 @@ const releasePlanningRangeConstraint = () => {
 }
 
 const renderPlanningRangeSelection = (extent: LonLatExtent | null) => {
+  if (mars3dAdapter) {
+    selectedAreaLonLatExtent.value = extent
+    if (extent) mapStore.setSelectedExtent(toMapExtent(extent, MAP_DISPLAY_PROJECTION))
+    mars3dAdapter.setSelectionExtent(extent)
+    return
+  }
   if (!selectionSource) return
   selectionSource.clear()
   if (!extent) return
@@ -922,6 +979,7 @@ const buildResultRasterLayer = (
 const clearAlgorithmResultLayers = () => {
   if (map && costResultLayer) map.removeLayer(costResultLayer)
   if (map && riskResultLayer) map.removeLayer(riskResultLayer)
+  mars3dAdapter?.clearResults()
   costResultLayer = null
   riskResultLayer = null
   layerStore.removeLayer('algorithm-cost')
@@ -929,9 +987,9 @@ const clearAlgorithmResultLayers = () => {
 }
 
 const refreshAlgorithmResultLayers = () => {
-  if (!map) return
-  if (costResultLayer) map.removeLayer(costResultLayer)
-  if (riskResultLayer) map.removeLayer(riskResultLayer)
+  if (!map && !mars3dAdapter) return
+  if (map && costResultLayer) map.removeLayer(costResultLayer)
+  if (map && riskResultLayer) map.removeLayer(riskResultLayer)
   costResultLayer = null
   riskResultLayer = null
 
@@ -982,16 +1040,104 @@ const refreshAlgorithmResultLayers = () => {
       opacity: 1,
       zIndex: ALGORITHM_RESULT_RASTER_Z_INDEX,
     })
-    const layer = buildResultRasterLayer(
-      definition.grid,
-      definition.palette,
-      definition.renderOptions,
-      visible,
-    )
-    map!.addLayer(layer)
-    if (definition.id === 'algorithm-cost') costResultLayer = layer
-    else riskResultLayer = layer
+    const image = renderGridImage(definition.grid, definition.palette, definition.renderOptions)
+    if (map) {
+      const layer = new ImageLayer({
+        source: new ImageStatic({
+          url: image,
+          imageExtent: toCurrentMapExtent(getResultGridExtent(definition.grid)),
+          projection: getMapProjection(),
+          interpolate: true,
+        }),
+        opacity: 1,
+        visible,
+      })
+      layer.setZIndex(ALGORITHM_RESULT_RASTER_Z_INDEX)
+      map.addLayer(layer)
+      if (definition.id === 'algorithm-cost') costResultLayer = layer
+      else riskResultLayer = layer
+    } else {
+      mars3dAdapter?.setResultRaster(
+        definition.id,
+        image,
+        getResultGridExtent(definition.grid),
+        visible,
+      )
+    }
   })
+}
+
+const toWgs84GeoJson = (features: Feature[]): GeoJSON.FeatureCollection =>
+  geoJSONFormat.writeFeaturesObject(features, {
+    dataProjection: DATA_PROJECTION,
+    featureProjection: DATA_PROJECTION,
+    decimals: 8,
+  }) as GeoJSON.FeatureCollection
+
+interface RasterImageOverlay {
+  image: string
+  extent: LonLatExtent
+}
+
+const loadGeoTiffOverlayFromBlob = async (blob: Blob): Promise<RasterImageOverlay> => {
+  const { fromBlob } = await import('geotiff')
+  const tiff = await fromBlob(blob)
+  const sourceImage = await tiff.getImage()
+  const sourceWidth = sourceImage.getWidth()
+  const sourceHeight = sourceImage.getHeight()
+  const maxDimension = 2048
+  const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight))
+  const width = Math.max(1, Math.round(sourceWidth * scale))
+  const height = Math.max(1, Math.round(sourceHeight * scale))
+  const rgb = await sourceImage.readRGB({ width, height, interleave: true, enableAlpha: true })
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('无法创建 GeoTIFF 三维叠加画布')
+  const pixels = context.createImageData(width, height)
+  const values = rgb as ArrayLike<number>
+  const samplesPerPixel = Math.max(3, Math.round(values.length / (width * height)))
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const sourceOffset = pixel * samplesPerPixel
+    const targetOffset = pixel * 4
+    pixels.data[targetOffset] = values[sourceOffset] ?? 0
+    pixels.data[targetOffset + 1] = values[sourceOffset + 1] ?? values[sourceOffset] ?? 0
+    pixels.data[targetOffset + 2] = values[sourceOffset + 2] ?? values[sourceOffset] ?? 0
+    pixels.data[targetOffset + 3] = samplesPerPixel > 3 ? values[sourceOffset + 3] ?? 255 : 255
+  }
+  context.putImageData(pixels, 0, 0)
+  const boundingBox = sourceImage.getBoundingBox()
+  const projectionCode = sourceImage.getGeoKeys()?.ProjectedCSTypeGeoKey
+    ? `EPSG:${sourceImage.getGeoKeys().ProjectedCSTypeGeoKey}`
+    : DATA_PROJECTION
+  const extent = projectionCode === DATA_PROJECTION
+    ? boundingBox as LonLatExtent
+    : transformExtent(boundingBox, projectionCode, DATA_PROJECTION) as LonLatExtent
+  return { image: canvas.toDataURL('image/png'), extent }
+}
+
+const loadMars3dElevationOverlay = async (
+  viewportRequest?: ViewportAttachmentRequest,
+): Promise<RasterImageOverlay | null> => {
+  const layerData = getLayerData('elevation')
+  if (!layerData || layerData.metadata.loadStrategy !== 'geotiff-raster') return null
+  if (layerData.rasterData) {
+    return loadGeoTiffOverlayFromBlob(new Blob([layerData.rasterData], { type: 'image/tiff' }))
+  }
+  const downloadUrl = layerData.metadata.downloadUrl
+  if (!downloadUrl) return null
+  const blob = isPlatformAttachmentUrl(downloadUrl)
+    ? await fetchPlatformAttachmentBlob(
+        downloadUrl,
+        viewportRequest?.rectRange ?? getCurrentMapRectRange(),
+        viewportRequest?.signal,
+      )
+    : await fetch(downloadUrl).then(response => {
+        if (!response.ok) throw new Error(`GeoTIFF 下载失败: ${response.status}`)
+        return response.blob()
+      })
+  return loadGeoTiffOverlayFromBlob(blob)
 }
 
 const saveSelectedAreaAsBaseMap = async () => {
@@ -1120,6 +1266,7 @@ const clearRouteAdjustmentPreviewListener = () => {
 const disableRouteAdjustment = () => {
   clearRouteAdjustmentPreviewListener()
   if (map && routeModify) map.removeInteraction(routeModify)
+  mars3dAdapter?.setRouteAdjustment(false)
   isAdjustingRoute.value = false
   segmentNodeLayer?.changed()
 }
@@ -1150,7 +1297,6 @@ const updateRouteAdjustmentPreview = (feature: Feature) => {
 }
 
 const toggleRouteAdjustment = () => {
-  if (!map || !segmentNodeSource) return
   if (isAdjustingRoute.value) {
     disableRouteAdjustment()
     return
@@ -1159,6 +1305,15 @@ const toggleRouteAdjustment = () => {
     appStore.showNotification({ type: 'warning', message: '当前路由没有可调整的分段点' })
     return
   }
+
+  if (mars3dAdapter) {
+    isAdjustingRoute.value = true
+    mars3dAdapter.setRouteAdjustment(true)
+    appStore.showNotification({ type: 'info', message: '路由调整已开启，请拖动分段点' })
+    return
+  }
+
+  if (!map || !segmentNodeSource) return
 
   routeModify = new Modify({ source: segmentNodeSource })
   routeModify.on('modifystart', (event) => {
@@ -1236,8 +1391,67 @@ const getSegmentInfo = (routeId: string, segmentIndex: number) => {
   return null
 }
 
+const selectMars3dRouteSegment = (selection: MarsRouteSegmentSelection) => {
+  if (isAdjustingRoute.value && routeStore.selectedRoute?.id !== selection.routeId) {
+    disableRouteAdjustment()
+  }
+  selectedCableId.value = selection.routeId
+  routeStore.selectRoute(selection.routeId)
+  const coordinates = selection.coordinates
+  if (coordinates.length < 2) return
+  routeStore.selectSegmentInfo({
+    id: selection.id,
+    routeId: selection.routeId,
+    startPoint: { lon: coordinates[0][0], lat: coordinates[0][1] },
+    endPoint: {
+      lon: coordinates[coordinates.length - 1][0],
+      lat: coordinates[coordinates.length - 1][1],
+    },
+    routePoints: coordinates.map(([lon, lat]) => ({ lon, lat })),
+    length: selection.length,
+    depth: selection.depth,
+    cableType: selection.cableType,
+    riskLevel: selection.riskLevel,
+  })
+  void drawParetoRoutes()
+}
+
+const refreshOlMapViewport = (targetMap: Map, extent: LonLatExtent | null, attempt = 0) => {
+  requestAnimationFrame(() => {
+    if (map !== targetMap) return
+
+    targetMap.updateSize()
+    const size = targetMap.getSize()
+    if ((!size || size[0] <= 0 || size[1] <= 0) && attempt < 2) {
+      refreshOlMapViewport(targetMap, extent, attempt + 1)
+      return
+    }
+
+    const canRestoreExtent = extent
+      && extent.every(Number.isFinite)
+      && extent[0] < extent[2]
+      && extent[1] < extent[3]
+    const projectedExtent = canRestoreExtent
+      ? toMapExtent(extent, targetMap.getView().getProjection())
+      : null
+    if (
+      projectedExtent
+      && projectedExtent.every(Number.isFinite)
+      && projectedExtent[0] < projectedExtent[2]
+      && projectedExtent[1] < projectedExtent[3]
+      && size
+    ) {
+      targetMap.getView().fit(projectedExtent, { size })
+    }
+    targetMap.renderSync()
+  })
+}
+
 const initMap = () => {
-  if (!mapContainer.value) return
+  if (!mapContainer.value || map) return
+  olMapEffectScope?.stop()
+  olMapEffectScope = effectScope()
+  mapContainer.value.removeAttribute('id')
 
   const bindGeoTiffSource = (
     source: GeoTIFFSource,
@@ -1327,6 +1541,7 @@ const initMap = () => {
       maxZoom: 18,
     }),
   })
+  refreshOlMapViewport(map, lastMapLonLatExtent)
 
   const setElevationSource = (
     key: string,
@@ -1939,8 +2154,9 @@ const initMap = () => {
     if (!visible && earthquakeHeatmapLayer) earthquakeHeatmapLayer.setVisible(false)
   }
 
-  // 监听火山图层可见性变化
-  watch(
+  olMapEffectScope.run(() => {
+    // 监听火山图层可见性变化
+    watch(
       () => [layerStore.layers.find(l => l.id === 'volcano')?.visible, getPlatformWmsSourceKey('volcano')] as const,
       async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('volcano')) {
@@ -1964,10 +2180,10 @@ const initMap = () => {
         }
       },
       {immediate: true}
-  )
+    )
 
   // 监听地震图层可见性变化
-  watch(
+    watch(
       () => [layerStore.layers.find(l => l.id === 'earthquake')?.visible, getPlatformWmsSourceKey('earthquake')] as const,
       async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('earthquake')) {
@@ -1991,7 +2207,7 @@ const initMap = () => {
         }
       },
       {immediate: true}
-  )
+    )
 
   // 加载并渲染冷水珊瑚数据
   const loadAndRenderColdCoral = async (options: PlatformLayerLoadOptions = {}) => {
@@ -2090,7 +2306,7 @@ const initMap = () => {
   }
 
   // 监听冷水珊瑚图层可见性
-  watch(
+    watch(
       () => [layerStore.layers.find(l => l.id === 'coldCoral')?.visible, getPlatformWmsSourceKey('coldCoral')] as const,
       async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('coldCoral')) {
@@ -2114,7 +2330,7 @@ const initMap = () => {
         }
       },
       {immediate: true}
-  )
+    )
 
   // 加载并渲染渔业数据
   const loadAndRenderFishing = async (options: PlatformLayerLoadOptions = {}) => {
@@ -2183,7 +2399,7 @@ const initMap = () => {
   }
 
   // 监听渔业图层可见性
-  watch(
+    watch(
       () => [layerStore.layers.find(l => l.id === 'fishing')?.visible, getPlatformWmsSourceKey('fishing')] as const,
       async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('fishing')) {
@@ -2207,7 +2423,7 @@ const initMap = () => {
         }
       },
       {immediate: true}
-  )
+    )
 
   // 加载并渲染航道数据
   const loadAndRenderShipping = async (options: PlatformLayerLoadOptions = {}) => {
@@ -2276,7 +2492,7 @@ const initMap = () => {
   }
 
   // 监听航道图层可见性
-  watch(
+    watch(
       () => [layerStore.layers.find(l => l.id === 'shipping')?.visible, getPlatformWmsSourceKey('shipping')] as const,
       async ([visible]) => {
         if (isGeoServerWmsPlatformLayer('shipping')) {
@@ -2300,10 +2516,10 @@ const initMap = () => {
         }
       },
       {immediate: true}
-  )
+    )
 
   // 监听海洋高程图层可见性（控制 GeoTIFF 底图）
-  watch(
+    watch(
       () => {
         const elevationLayer = layerStore.layers.find(l => l.id === 'elevation')
         const elevationData = layerStore.getLayerData('elevation')
@@ -2318,7 +2534,7 @@ const initMap = () => {
         await setElevationVisible(visible, { silent: Boolean(activeElevationSourceKey) })
       },
       {immediate: false}
-  )
+    )
 
   const getVisibleViewportAttachmentLayerIds = () => {
     return VIEWPORT_ATTACHMENT_LAYER_IDS.filter(layerId => {
@@ -2389,14 +2605,16 @@ const initMap = () => {
     }, VIEWPORT_ATTACHMENT_REFRESH_DELAY_MS)
   }
 
+  const targetMapForMoveEvents = map!
   mapMoveStartHandler = () => {
     clearViewportAttachmentRefreshTimer()
     lastViewportAttachmentRefreshKey = ''
     cancelViewportAttachmentLoads(getVisibleViewportAttachmentLayerIds())
   }
   mapMoveEndHandler = () => scheduleViewportAttachmentRefresh?.()
-  map.on('movestart', mapMoveStartHandler)
-  map.on('moveend', mapMoveEndHandler)
+  targetMapForMoveEvents.on('movestart', mapMoveStartHandler)
+  targetMapForMoveEvents.on('moveend', mapMoveEndHandler)
+  })
 
   setTimeout(() => {
     loading.value = false
@@ -2420,6 +2638,157 @@ const riskColors = {
   medium: '#d97706',
   low: '#16a34a',
 } as const
+
+const MARS3D_THEMATIC_LAYER_IDS = [
+  'volcano',
+  'earthquake',
+  'coldCoral',
+  'fishing',
+  'shipping',
+  'elevation',
+  'slope',
+] as const
+type Mars3dThematicLayerId = typeof MARS3D_THEMATIC_LAYER_IDS[number]
+
+const MARS3D_THEMATIC_STYLES: Record<Mars3dThematicLayerId, MarsThematicStyle> = {
+  volcano: { color: '#dc2626', opacity: 0.85, outlineColor: '#ffffff', pixelSize: 12 },
+  earthquake: { color: '#f97316', opacity: 0.82, outlineColor: '#ffffff', pixelSize: 10 },
+  coldCoral: { color: '#ec4899', opacity: 0.52, outlineColor: '#f9a8d4', width: 2 },
+  fishing: { color: '#eab308', opacity: 0.42, outlineColor: '#fde047', width: 2 },
+  shipping: { color: '#06b6d4', opacity: 0.82, outlineColor: '#67e8f9', width: 3 },
+  elevation: { color: '#2563eb', opacity: 0.72 },
+  slope: { color: '#7c3aed', opacity: 0.62, outlineColor: '#c4b5fd', width: 2 },
+}
+
+const syncMars3dThematicLayer = async (
+  layerId: Mars3dThematicLayerId,
+  force = false,
+) => {
+  const adapter = mars3dAdapter
+  if (!adapter || mapMode.value !== '3d') return
+  const layer = layerStore.getLayerById(layerId)
+  const visible = Boolean(layer?.visible)
+  if (!visible) {
+    invalidateViewportAttachmentRequest(layerId as ViewportAttachmentLayerId)
+    adapter.setThematicLayerVisible(layerId, false)
+    layerStore.setLayerLoading(layerId, false)
+    hideLayerGlobalLoading(layerId)
+    return
+  }
+
+  const opacity = layer?.opacity ?? MARS3D_THEMATIC_STYLES[layerId].opacity ?? 1
+
+  const metadata = getPlatformWmsMetadata(layerId)
+  if (metadata) {
+    layerStore.setLayerLoading(layerId, true)
+    showLayerGlobalLoading(layerId)
+    try {
+      await adapter.setWmsLayer(layerId, {
+        url: metadata.url,
+        layers: metadata.layerName,
+        name: layer?.name ?? layerId,
+        opacity,
+        visible: true,
+      })
+      if (mars3dAdapter !== adapter || mapMode.value !== '3d') return
+      layerStore.setLayerLoaded(layerId, true)
+    } catch (error) {
+      failPlatformLayerRender(layerId, ' 三维 WMS 图层加载失败', error)
+    } finally {
+      layerStore.setLayerLoading(layerId, false)
+      hideLayerGlobalLoading(layerId)
+    }
+    return
+  }
+
+  const viewportRequest = VIEWPORT_ATTACHMENT_LAYER_IDS.includes(layerId as ViewportAttachmentLayerId)
+    && isViewportScopedPlatformLayer(layerId as ViewportAttachmentLayerId)
+    ? beginViewportAttachmentRequest(
+        layerId as ViewportAttachmentLayerId,
+        getCurrentMapRectRange(),
+      )
+    : undefined
+  if (!force && layer?.loaded && adapter.hasThematicLayer(layerId)) {
+    adapter.setThematicLayerVisible(layerId, true)
+    adapter.setThematicLayerOpacity(layerId, opacity)
+    return
+  }
+
+  layerStore.setLayerLoading(layerId, true)
+  showLayerGlobalLoading(layerId)
+  try {
+    if (layerId === 'elevation') {
+      const overlay = await loadMars3dElevationOverlay(viewportRequest)
+      if (!overlay) {
+        // 地形本身保持启用；只有上传的 GeoTIFF 才额外作为业务图层叠加。
+        adapter.removeThematicLayer(layerId)
+        layerStore.setLayerLoaded(layerId, true)
+        return
+      }
+      if (viewportRequest && !isViewportAttachmentRequestCurrent(viewportRequest)) return
+      adapter.setRasterLayer(layerId, overlay.image, overlay.extent, {
+        visible: true,
+        opacity,
+        zIndex: layer?.zIndex ?? 80,
+      })
+      layerStore.setLayerLoaded(layerId, true)
+      return
+    }
+
+    const features = await loadUploadedVectorFeatures(layerId, viewportRequest)
+    if (viewportRequest && !isViewportAttachmentRequestCurrent(viewportRequest)) return
+    if (features.length === 0) {
+      if (viewportRequest) {
+        adapter.removeThematicLayer(layerId)
+        layerStore.setLayerLoaded(layerId, true)
+        return
+      }
+      failPlatformLayerRender(layerId, ' 没有可加载的三维图层数据')
+      return
+    }
+    adapter.setGeoJsonLayer(
+      layerId,
+      toWgs84GeoJson(features),
+      { ...MARS3D_THEMATIC_STYLES[layerId], opacity },
+      true,
+    )
+    layerStore.setLayerLoaded(layerId, true)
+  } catch (error) {
+    if (!isAbortError(error)) failPlatformLayerRender(layerId, ' 三维图层加载失败', error)
+  } finally {
+    if (viewportRequest) finishViewportAttachmentRequest(viewportRequest)
+    layerStore.setLayerLoading(layerId, false)
+    hideLayerGlobalLoading(layerId)
+  }
+}
+
+const syncVisibleMars3dThematicLayers = async (force = false) => {
+  if (!mars3dAdapter || mapMode.value !== '3d') return
+  await Promise.allSettled(MARS3D_THEMATIC_LAYER_IDS.map(layerId =>
+    syncMars3dThematicLayer(layerId, force && isViewportScopedPlatformLayer(layerId as ViewportAttachmentLayerId)),
+  ))
+}
+
+watch(
+  () => MARS3D_THEMATIC_LAYER_IDS.map(layerId => {
+    const layer = layerStore.getLayerById(layerId)
+    const data = layerStore.getLayerData(layerId)
+    return [
+      layerId,
+      layer?.visible,
+      layer?.opacity,
+      data?.metadata.source,
+      data?.metadata.downloadUrl,
+      data?.metadata.wmsUrl,
+      data?.metadata.wmsLayerName,
+      data?.rasterData?.byteLength,
+    ]
+  }),
+  () => {
+    if (mapMode.value === '3d') void syncVisibleMars3dThematicLayers()
+  },
+  { deep: true },
+)
 
 interface ProjectStationMarker {
   id: string
@@ -2459,9 +2828,10 @@ const getConfiguredProjectStations = (): ProjectStationMarker[] => {
 }
 
 const getConfiguredPlanningRangeExtent = (): number[] | null => {
-  if (!map || !appStore.hasOpenProject) return null
+  if ((!map && !mars3dAdapter) || !appStore.hasOpenProject) return null
   const extent = activePlanningLonLatExtent.value
-  return extent ? toCurrentMapExtent(extent) : null
+  if (!extent) return null
+  return map ? toCurrentMapExtent(extent) : extent
 }
 
 const drawConfiguredProjectStations = (fitView = true): boolean => {
@@ -2509,6 +2879,23 @@ const drawConfiguredProjectStations = (fitView = true): boolean => {
 
 // 绑制路径到地图
 const drawParetoRoutes = async () => {
+  if (mars3dAdapter) {
+    const hasRoutes = routeStore.paretoRoutes.length > 0
+    mars3dAdapter.renderRoutes({
+      routes: routeStore.paretoRoutes,
+      selectedRouteId: routeStore.selectedRoute?.id ?? null,
+      selectedSegmentId: routeStore.selectedSegmentInfo?.id ?? null,
+      devices: monitorStore.devices,
+      selectedDeviceId: monitorStore.selectedDeviceId,
+      projectStations: getConfiguredProjectStations(),
+      showProjectStations: appStore.hasOpenProject && !hasRoutes && monitorStore.devices.length === 0,
+      fit: !routeStore.selectedSegmentInfo,
+    })
+    if (!hasRoutes && activePlanningLonLatExtent.value) {
+      mars3dAdapter.flyToExtent(activePlanningLonLatExtent.value, 0.45)
+    }
+    return
+  }
   if (!map) return
 
   // 不再强制加载 DEM 数据（避免下载 tif 文件）
@@ -2953,7 +3340,7 @@ const drawMonitorDevices = () => {
 
 // 监听选中路径变化，更新样式
 watch(() => [routeStore.selectedRoute?.id, routeStore.selectedSegmentInfo?.id], () => {
-  if (routeSource && routeStore.paretoRoutes.length > 0) {
+  if ((routeSource || mars3dAdapter) && routeStore.paretoRoutes.length > 0) {
     drawParetoRoutes()
   }
 })
@@ -2961,7 +3348,7 @@ watch(() => [routeStore.selectedRoute?.id, routeStore.selectedSegmentInfo?.id], 
 // 监听 monitorStore 设备数据变化（与实时监控一致）
 watch(() => monitorStore.devices.length, (newLen) => {
   if (newLen > 0) {
-    if (map) {
+    if (map || mars3dAdapter) {
       drawParetoRoutes()
       isPlanning.value = true
     } else {
@@ -2988,7 +3375,7 @@ watch(
   () => {
     if (routeStore.paretoRoutes.length > 0) {
     ensureSelectedRoute()
-    if (map) {
+    if (map || mars3dAdapter) {
       drawParetoRoutes()
       isPlanning.value = true
     } else {
@@ -3001,7 +3388,7 @@ watch(
       }, 100)
       setTimeout(() => clearInterval(checkMap), 5000)
     }
-    } else if (map) {
+    } else if (map || mars3dAdapter) {
       void drawParetoRoutes()
       isPlanning.value = false
     }
@@ -3010,7 +3397,7 @@ watch(
 )
 
 watch(() => settingsStore.routePlanningConfig, () => {
-  if (map && routeStore.paretoRoutes.length === 0) {
+  if ((map || mars3dAdapter) && routeStore.paretoRoutes.length === 0) {
     void drawParetoRoutes()
   }
 }, { deep: true })
@@ -3040,11 +3427,17 @@ watch(
   ([costVisible, riskVisible]) => {
     costResultLayer?.setVisible(costVisible)
     riskResultLayer?.setVisible(riskVisible)
+    mars3dAdapter?.setResultVisible('algorithm-cost', costVisible)
+    mars3dAdapter?.setResultVisible('algorithm-risk', riskVisible)
   },
 )
 
 // 清除地图上的路径
 const clearRoutes = () => {
+  if (mars3dAdapter) {
+    mars3dAdapter.clearRoutes()
+    void drawParetoRoutes()
+  }
   if (routeSource) {
     routeSource.clear()
     drawConfiguredProjectStations()
@@ -3085,8 +3478,15 @@ const togglePlanning = () => {
 const isPlanningLoading = ref(false)
 
 const getCurrentMapRectRange = (): RoutePlanningRectRange => {
+  if (mars3dAdapter) {
+    const extent = mars3dAdapter.getExtent()
+    if (extent) {
+      lastMapLonLatExtent = extent
+      return createRoutePlanningRectRangeFromExtent(extent)
+    }
+  }
   if (!map) {
-    return createRoutePlanningRectRangeFromExtent(DEFAULT_CHINA_LON_LAT_EXTENT)
+    return createRoutePlanningRectRangeFromExtent(lastMapLonLatExtent ?? DEFAULT_CHINA_LON_LAT_EXTENT)
   }
 
   const size = map.getSize()
@@ -3101,6 +3501,7 @@ const getCurrentMapRectRange = (): RoutePlanningRectRange => {
     ? extent as LonLatExtent
     : transformExtent(extent, projection, 'EPSG:4326') as LonLatExtent
 
+  lastMapLonLatExtent = lonLatExtent
   return createRoutePlanningRectRangeFromExtent(lonLatExtent)
 }
 
@@ -3185,6 +3586,214 @@ const handleRunPlanning = async () => {
   }
 }
 
+const destroyOlMap = () => {
+  const currentRectRange = map ? getCurrentMapRectRange() : null
+  if (currentRectRange) {
+    lastMapLonLatExtent = [
+      currentRectRange[1],
+      currentRectRange[2],
+      currentRectRange[0],
+      currentRectRange[3],
+    ]
+  }
+  olMapEffectScope?.stop()
+  olMapEffectScope = null
+  if (viewportAttachmentRefreshTimer !== null) {
+    clearTimeout(viewportAttachmentRefreshTimer)
+    viewportAttachmentRefreshTimer = null
+  }
+  invalidateAllViewportAttachmentRequests()
+  platformWmsLayerRuntimes.forEach(runtime => {
+    if (runtime.failureTimer !== null) clearTimeout(runtime.failureTimer)
+  })
+  platformWmsLayerRuntimes.clear()
+  const currentMap = map
+  if (currentMap) {
+    disableRouteAdjustment()
+    if (mapMoveStartHandler) currentMap.un('movestart', mapMoveStartHandler)
+    if (mapMoveEndHandler) currentMap.un('moveend', mapMoveEndHandler)
+    if (mapContextMenuHandler) {
+      currentMap.getViewport().removeEventListener('contextmenu', mapContextMenuHandler)
+    }
+    currentMap.dispose()
+    map = null
+  }
+  scheduleViewportAttachmentRefresh = null
+  mapMoveStartHandler = null
+  mapMoveEndHandler = null
+  mapContextMenuHandler = null
+  dragBox = null
+  selectionSource = null
+  routeLayer = null
+  routeSource = null
+  segmentNodeLayer = null
+  segmentNodeSource = null
+  routeModify = null
+  costResultLayer = null
+  riskResultLayer = null
+  volcanoIconLayer = null
+  volcanoHeatmapLayer = null
+  earthquakeIconLayer = null
+  earthquakeHeatmapLayer = null
+  coldCoralLayers = []
+  fishingLayers = []
+  shippingLayers = []
+  elevationLayers = []
+  activeElevationSourceKey = ''
+  volcanoDataLoaded = false
+  earthquakeDataLoaded = false
+  coldCoralDataLoaded = false
+  fishingDataLoaded = false
+  shippingDataLoaded = false
+}
+
+const initMars3dMap = async () => {
+  if (!mapContainer.value || mars3dMap) return
+
+  const mars3d = await import('mars3d')
+  if (mapMode.value !== '3d' || !mapContainer.value) return
+
+  mapContainer.value.id = MARS3D_CONTAINER_ID
+  mars3dMap = new mars3d.Map(MARS3D_CONTAINER_ID, {
+    scene: {
+      center: { lat: 34.5, lng: 105, alt: 12500000, heading: 0, pitch: -90 },
+    },
+    basemaps: [
+      {
+        type: 'gaode',
+        layer: 'img_d',
+        show: true,
+      },
+    ] as any,
+    control: {
+      baseLayerPicker: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      fullscreenButton: false,
+      vrButton: false,
+      geocoder: false,
+      infoBox: false,
+      selectionIndicator: false,
+      timeline: false,
+      animation: false,
+    },
+  })
+
+  mars3dModule = mars3d
+  const targetMap = mars3dMap
+  mars3dAdapter = new Mars3dPlanningAdapter(mars3d, targetMap, {
+    onCoordinates: (longitude, latitude) => {
+      coordinates.value = { lon: longitude, lat: latitude }
+    },
+    onRouteClick: routeId => {
+      routeStore.selectRoute(routeId)
+      routeStore.clearSelectedSegmentInfo()
+      void drawParetoRoutes()
+    },
+    onRouteSegmentClick: selectMars3dRouteSegment,
+    onDeviceClick: deviceId => {
+      monitorStore.selectDevice(deviceId)
+      void drawParetoRoutes()
+    },
+    onBlankClick: () => {
+      selectedCableId.value = null
+      routeStore.clearSelectedSegmentInfo()
+      void drawParetoRoutes()
+    },
+    onRoutePointEdited: (routeId, pointId, coordinate) => {
+      if (!routeStore.updateRoutePoint(routeId, pointId, coordinate)) return
+      appStore.setProjectDirty(true)
+      void drawParetoRoutes()
+      appStore.showNotification({ type: 'success', message: '路由分段点已更新' })
+    },
+    onCameraMoveEnd: extent => {
+      lastMapLonLatExtent = extent
+      if (mars3dViewportRefreshTimer !== null) clearTimeout(mars3dViewportRefreshTimer)
+      mars3dViewportRefreshTimer = setTimeout(() => {
+        mars3dViewportRefreshTimer = null
+        void syncVisibleMars3dThematicLayers(true)
+      }, VIEWPORT_ATTACHMENT_REFRESH_DELAY_MS)
+    },
+  })
+
+  mars3dContextMenuHandler = (event: MouseEvent) => {
+    if (!selectedAreaLonLatExtent.value || !mapContainer.value) return
+    event.preventDefault()
+    const rect = mapContainer.value.getBoundingClientRect()
+    areaContextMenu.value = {
+      visible: true,
+      x: Math.max(8, Math.min(event.clientX - rect.left, rect.width - 190)),
+      y: Math.max(8, Math.min(event.clientY - rect.top, rect.height - 96)),
+    }
+  }
+  mapContainer.value.addEventListener('contextmenu', mars3dContextMenuHandler)
+  if (lastMapLonLatExtent) mars3dAdapter.flyToExtent(lastMapLonLatExtent, 0)
+  else if (activePlanningLonLatExtent.value) mars3dAdapter.flyToExtent(activePlanningLonLatExtent.value, 0)
+  await drawParetoRoutes()
+  refreshAlgorithmResultLayers()
+  await syncVisibleMars3dThematicLayers()
+}
+
+const destroyMars3dMap = () => {
+  if (mars3dAdapter) {
+    const extent = mars3dAdapter.getExtent()
+    if (extent) lastMapLonLatExtent = extent
+  }
+  if (mars3dViewportRefreshTimer !== null) {
+    clearTimeout(mars3dViewportRefreshTimer)
+    mars3dViewportRefreshTimer = null
+  }
+  if (mapContainer.value && mars3dContextMenuHandler) {
+    mapContainer.value.removeEventListener('contextmenu', mars3dContextMenuHandler)
+  }
+  mars3dContextMenuHandler = null
+  mars3dAdapter?.destroy()
+  mars3dAdapter = null
+  mars3dModule = null
+  if (!mars3dMap) return
+  mars3dMap.destroy()
+  mars3dMap = null
+}
+
+const restoreOlMap = () => {
+  initMap()
+  refreshAlgorithmResultLayers()
+  void drawParetoRoutes()
+}
+
+const switchMapMode = async (nextMode: '2d' | '3d') => {
+  if (nextMode === mapMode.value || isMapModeSwitching.value) return
+
+  isMapModeSwitching.value = true
+  try {
+    if (nextMode === '3d') {
+      destroyOlMap()
+      mapMode.value = '3d'
+      await nextTick()
+      await initMars3dMap()
+      appStore.addLog('INFO', '已切换至 3D 地球')
+      return
+    }
+
+    destroyMars3dMap()
+    mapMode.value = '2d'
+    await nextTick()
+    restoreOlMap()
+    appStore.addLog('INFO', '已切换至 2D 地图')
+  } catch (error) {
+    destroyMars3dMap()
+    mapMode.value = '2d'
+    await nextTick()
+    restoreOlMap()
+    const message = error instanceof Error ? error.message : String(error)
+    appStore.showNotification({ type: 'error', message: `3D 地球加载失败：${message}` })
+    appStore.addLog('ERROR', `3D 地球加载失败: ${message}`)
+  } finally {
+    isMapModeSwitching.value = false
+  }
+}
+
 onMounted(() => {
   initMap()
   const restoredResult = routeStore.algorithmRouteResult
@@ -3198,29 +3807,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   appStore.hideGlobalLoading()
-  if (viewportAttachmentRefreshTimer !== null) {
-    clearTimeout(viewportAttachmentRefreshTimer)
-    viewportAttachmentRefreshTimer = null
-  }
-  invalidateAllViewportAttachmentRequests()
-  platformWmsLayerRuntimes.forEach(runtime => {
-    if (runtime.failureTimer !== null) clearTimeout(runtime.failureTimer)
-  })
-  platformWmsLayerRuntimes.clear()
-  if (map) {
-    disableRouteAdjustment()
-    if (mapMoveStartHandler) map.un('movestart', mapMoveStartHandler)
-    if (mapMoveEndHandler) map.un('moveend', mapMoveEndHandler)
-    if (mapContextMenuHandler) {
-      map.getViewport().removeEventListener('contextmenu', mapContextMenuHandler)
-    }
-    map.setTarget(undefined)
-    map = null
-  }
-  scheduleViewportAttachmentRefresh = null
-  mapMoveStartHandler = null
-  mapMoveEndHandler = null
-  mapContextMenuHandler = null
+  destroyOlMap()
+  destroyMars3dMap()
 })
 </script>
 
@@ -3252,6 +3840,29 @@ onUnmounted(() => {
       </div>
 
       <div class="flex items-center gap-2">
+        <div class="map-mode-switch" role="group" aria-label="地图显示模式">
+          <button
+            type="button"
+            class="map-mode-switch__option"
+            :class="{ 'map-mode-switch__option--active': mapMode === '2d' }"
+            :aria-pressed="mapMode === '2d'"
+            :disabled="isMapModeSwitching"
+            @click="switchMapMode('2d')"
+          >
+            2D
+          </button>
+          <button
+            type="button"
+            class="map-mode-switch__option"
+            :class="{ 'map-mode-switch__option--active': mapMode === '3d' }"
+            :aria-pressed="mapMode === '3d'"
+            :disabled="isMapModeSwitching"
+            @click="switchMapMode('3d')"
+          >
+            <Loader2 v-if="isMapModeSwitching" class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+            <span>3D</span>
+          </button>
+        </div>
         <Tooltip :content="isPlanningLoading ? '正在规划中...' : isPlanning ? '停止规划' : '运行规划'">
           <Button :variant="isPlanning ? 'destructive' : 'default'" size="sm" :disabled="isPlanningLoading" @click="togglePlanning">
             <Loader2 v-if="isPlanningLoading" class="w-4 h-4 mr-1 animate-spin"/>
@@ -3271,7 +3882,12 @@ onUnmounted(() => {
 
     <!-- 地图视口 -->
     <div class="flex-1 relative overflow-hidden" @click="areaContextMenu.visible = false">
-      <div ref="mapContainer" class="w-full h-full"/>
+      <div
+        :key="mapMode"
+        ref="mapContainer"
+        class="w-full h-full"
+        :aria-label="mapMode === '2d' ? '二维地图' : '三维地球'"
+      />
 
       <div
         v-if="areaContextMenu.visible"
@@ -3345,3 +3961,70 @@ onUnmounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.map-mode-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 2.25rem);
+  height: 2rem;
+  padding: 2px;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 4px;
+  background: rgb(248 250 252);
+}
+
+.map-mode-switch__option {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: rgb(100 116 139);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.map-mode-switch__option:hover:not(:disabled) {
+  color: rgb(30 41 59);
+}
+
+.map-mode-switch__option:focus-visible {
+  outline: 2px solid rgb(37 99 235);
+  outline-offset: 1px;
+}
+
+.map-mode-switch__option--active {
+  background: rgb(255 255 255);
+  color: rgb(15 23 42);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.12);
+}
+
+.map-mode-switch__option:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+:global(.dark) .map-mode-switch {
+  border-color: rgb(51 65 85);
+  background: rgb(15 23 42);
+}
+
+:global(.dark) .map-mode-switch__option {
+  color: rgb(148 163 184);
+}
+
+:global(.dark) .map-mode-switch__option:hover:not(:disabled) {
+  color: rgb(226 232 240);
+}
+
+:global(.dark) .map-mode-switch__option--active {
+  background: rgb(51 65 85);
+  color: rgb(248 250 252);
+  box-shadow: none;
+}
+</style>

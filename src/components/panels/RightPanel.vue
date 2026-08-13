@@ -21,6 +21,8 @@ const panelVisibility = computed(() => appStore.panelVisibility)
 const selectedSegment = computed(() => routeStore.selectedSegmentInfo)
 
 const depthProfileRef = ref<InstanceType<typeof DepthProfile> | null>(null)
+const fullscreenDepthProfileRef = ref<InstanceType<typeof DepthProfile> | null>(null)
+const showFullscreenDepthProfile = ref(false)
 const showFullscreen3D = ref(false)
 
 function togglePanel(panel: 'depthProfile' | 'terrain3D') {
@@ -45,6 +47,14 @@ function togglePanel(panel: 'depthProfile' | 'terrain3D') {
             @click="depthProfileRef?.resetZoom()"
           >
             <RotateCcw class="h-3.5 w-3.5 text-gray-500" />
+          </button>
+          <button
+            class="grid h-6 w-6 place-items-center rounded hover:bg-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+            title="放大"
+            aria-label="放大海缆水深剖面"
+            @click="showFullscreenDepthProfile = true"
+          >
+            <Maximize2 class="h-3.5 w-3.5 text-gray-500" />
           </button>
           <button
             class="grid h-6 w-6 place-items-center rounded hover:bg-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
@@ -91,6 +101,51 @@ function togglePanel(panel: 'depthProfile' | 'terrain3D') {
         <RouteRiskCostPanel />
       </CardContent>
     </Card>
+
+    <!-- 放大水深剖面对话框 -->
+    <Teleport to="body">
+      <div
+        v-if="showFullscreenDepthProfile"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fullscreen-depth-profile-title"
+        @click.self="showFullscreenDepthProfile = false"
+        @keydown.esc="showFullscreenDepthProfile = false"
+      >
+        <div class="flex h-[90vh] w-[90vw] max-w-[1400px] flex-col overflow-hidden rounded-lg bg-white shadow-2xl">
+          <div class="flex min-h-12 items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
+            <span id="fullscreen-depth-profile-title" class="font-semibold text-gray-800">海缆水深剖面</span>
+            <div class="flex items-center gap-1">
+              <button
+                class="grid h-8 w-8 place-items-center rounded hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                title="重置视图"
+                aria-label="重置放大后的水深剖面视图"
+                @click="fullscreenDepthProfileRef?.resetZoom()"
+              >
+                <RotateCcw class="h-4 w-4 text-gray-600" />
+              </button>
+              <button
+                class="grid h-8 w-8 place-items-center rounded hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                title="关闭"
+                aria-label="关闭放大的水深剖面"
+                autofocus
+                @click="showFullscreenDepthProfile = false"
+              >
+                <X class="h-4 w-4 text-gray-600" />
+              </button>
+            </div>
+          </div>
+          <div class="min-h-0 flex-1">
+            <DepthProfile
+              ref="fullscreenDepthProfileRef"
+              :extent="selectedExtent"
+              :segment-info="selectedSegment"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 全屏 3D 对话框 -->
     <Teleport to="body">

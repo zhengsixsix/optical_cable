@@ -2,6 +2,8 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
+import 'mars3d-cesium/Build/Cesium/Widgets/widgets.css'
+import 'mars3d/dist/mars3d.css'
 import './style.css'
 
 import { initAppearance } from '@/composables/useAppearance'
