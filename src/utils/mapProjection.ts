@@ -10,6 +10,16 @@ function getProjectionCode(projection: ProjectionLike): string {
   return projection?.getCode?.() ?? String(projection)
 }
 
+export function normalizeLongitude(longitude: number): number {
+  if (!Number.isFinite(longitude)) return longitude
+  const normalized = ((longitude + 180) % 360 + 360) % 360 - 180
+  return Object.is(normalized, -0) ? 0 : normalized
+}
+
+export function normalizeLonLatCoordinate(coordinate: Coordinate): Coordinate {
+  return [normalizeLongitude(coordinate[0]), coordinate[1]]
+}
+
 export function toMapCoordinate(
   coordinate: Coordinate,
   mapProjection: ProjectionLike = MAP_DISPLAY_PROJECTION,
@@ -33,10 +43,12 @@ export function fromMapCoordinate(
   mapProjection: ProjectionLike = MAP_DISPLAY_PROJECTION,
 ): Coordinate {
   if (getProjectionCode(mapProjection) === DATA_PROJECTION) {
-    return [coordinate[0], coordinate[1]]
+    return normalizeLonLatCoordinate(coordinate)
   }
 
-  return transform([coordinate[0], coordinate[1]], mapProjection, DATA_PROJECTION) as Coordinate
+  return normalizeLonLatCoordinate(
+    transform([coordinate[0], coordinate[1]], mapProjection, DATA_PROJECTION) as Coordinate,
+  )
 }
 
 export function fromMapCoordinates(

@@ -24,6 +24,8 @@ const layerStore = read('src/stores/layer.ts')
 const layerControl = read('src/modules/planning/panels/LayerControl.vue')
 const adminLayers = read('src/modules/admin/views/AdminLayersView.vue')
 const mapArea = read('src/modules/planning/components/MapArea.vue')
+const mars3dAdapter = read('src/modules/planning/map/Mars3dPlanningAdapter.ts')
+const wmsRendering = read('src/services/platform/wmsRendering.ts')
 const viteConfig = read('vite.config.ts')
 const defaultLayerLoader = layerStore.slice(
   layerStore.indexOf('async function loadPlatformDefaultLayers'),
@@ -108,7 +110,12 @@ expectMatch(
   'queried admin layers must use response geoLayerName',
 )
 expectMatch(mapArea, /import TileWMS from 'ol\/source\/TileWMS'/, 'MapArea must use the OpenLayers WMS source')
-expectMatch(mapArea, /new TileWMS\(\{[\s\S]*?LAYERS: metadata\.layerName[\s\S]*?FORMAT: 'image\/png'[\s\S]*?TRANSPARENT: true[\s\S]*?TILED: true/, 'WMS source parameters are incomplete')
+expectMatch(mapArea, /new TileWMS\(\{[\s\S]*?LAYERS: metadata\.layerName[\s\S]*?STYLES: renderOptions\.styles[\s\S]*?SLD_BODY: renderOptions\.sldBody[\s\S]*?FORMAT: 'image\/png'[\s\S]*?TRANSPARENT: true[\s\S]*?TILED: true/, 'WMS source parameters are incomplete')
+expectMatch(wmsRendering, /createElevationColorRampSld[\s\S]*?ColorMapEntry[\s\S]*?quantity="\$\{quantity\}"/, 'elevation WMS must use a color-ramp SLD')
+expectMatch(wmsRendering, /isElevation \? 0\.72 : 0\.9/, 'elevation WMS must remain transparent enough to preserve the base map')
+expectNoMatch(mapArea, /defaultElevationGeoTiffUrl|output2_cog\.tif|defaultGeoTiffLayer/, 'the planning map must not load a built-in elevation GeoTIFF')
+expectMatch(mapArea, /new TileLayer\(\{ source: createBaseTileSource\(\), opacity: 1 \}\)/, 'the original base map must remain fully visible')
+expectMatch(mars3dAdapter, /styles: options\.styles \?\? ''[\s\S]*?sld_body: options\.sldBody/, '3D WMS must use the same server-side style as 2D')
 expectMatch(
   mapArea,
   /existing && existing\.sourceKey !== sourceKey[\s\S]*?removePlatformWmsLayerRuntime\(layerId\)/,
@@ -120,7 +127,7 @@ expectMatch(
   'WMS layers must not enter the attachment viewport download flow',
 )
 
-for (const layerId of ['volcano', 'earthquake', 'coldCoral', 'fishing', 'shipping']) {
+for (const layerId of ['volcano', 'earthquake', 'coldCoral', 'fishing', 'shipping', 'elevation']) {
   expectMatch(
     mapArea,
     new RegExp(`getPlatformWmsSourceKey\\('${layerId}'\\)`),
@@ -132,6 +139,12 @@ for (const layerId of ['volcano', 'earthquake', 'coldCoral', 'fishing', 'shippin
     `${layerId} visibility watcher must use WMS`,
   )
 }
+
+expectMatch(
+  mapArea,
+  /isGeoServerWmsPlatformLayer\('elevation'\)[\s\S]*?setPlatformWmsLayerVisible\('elevation', visible\)[\s\S]*?setPlatformWmsLayerVisible\('elevation', false\)[\s\S]*?setElevationVisible\(visible/,
+  'elevation must prefer GeoServer WMS and retain the GeoTIFF fallback',
+)
 
 const temporaryDirectory = await mkdtemp(path.join(root, '.geoserver-wms-test-'))
 const outFile = path.join(temporaryDirectory, 'planLayerSelection.mjs')

@@ -7,6 +7,7 @@ import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import { createBaseTileSource } from '@/utils/mapTileSource'
+import { normalizeLonLatCoordinate } from '@/utils/mapProjection'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
@@ -309,7 +310,8 @@ const initMap = () => {
   
   // 鼠标移动显示坐标
   map.on('pointermove', (evt) => {
-    coordinates.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
+    const [lon, lat] = normalizeLonLatCoordinate(evt.coordinate as [number, number])
+    coordinates.value = { lon, lat }
     
     // 检测是否悬停在设备上
     const features = map!.getFeaturesAtPixel(evt.pixel, {

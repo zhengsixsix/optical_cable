@@ -7,7 +7,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useCableSegmentStore } from '@/stores/cableSegment'
 import { effectScope, ref, onMounted, onUnmounted, watch, toRef, nextTick, type EffectScope } from 'vue'
 import { useMapStore } from '@/stores/map'
-import {Button, Tooltip} from '@/shared/components/base'
+import { Button, Tooltip } from '@/shared/components/base'
 import {
   Square, Play, Pause, Loader2, FileSpreadsheet, MapPinned, Move3d, Trash2
 } from 'lucide-vue-next'
@@ -30,20 +30,21 @@ import GeoTIFFSource from 'ol/source/GeoTIFF'
 import ImageStatic from 'ol/source/ImageStatic'
 import GeoJSONFormat from 'ol/format/GeoJSON'
 import { createBaseTileSource } from '@/utils/mapTileSource'
-import {DragBox, Modify} from 'ol/interaction'
+import { DragBox, Modify } from 'ol/interaction'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
 import { fromExtent as polygonFromExtent } from 'ol/geom/Polygon'
-import {Style, Stroke, Fill, Icon, Circle as CircleStyle, Text} from 'ol/style'
+import { Style, Stroke, Fill, Icon, Circle as CircleStyle, Text } from 'ol/style'
 import Heatmap from 'ol/layer/Heatmap'
 import { transform, transformExtent } from 'ol/proj'
 import 'ol/ol.css'
 
-import {useShpLoader} from '@/services/ShpLoader'
-import {createColdCoralLayers, createFishingLayers, createShippingLayers} from '@/utils/layerFactory'
+import { useShpLoader } from '@/services/ShpLoader'
+import { createColdCoralLayers, createFishingLayers, createShippingLayers } from '@/utils/layerFactory'
 import { fetchPlatformAttachmentBlob, isPlatformAttachmentUrl } from '@/services/platform/attachment'
 import { parseShapefileAttachment } from '@/services/GisAttachmentParser'
+import { getPlatformWmsRenderOptions } from '@/services/platform/wmsRendering'
 
 // 图标资源
 import volcanoIconUrl from '@/assets/volcano.svg'
@@ -82,7 +83,6 @@ const appStore = useAppStore()
 const routeStore = useRouteStore()
 const cableSegmentStore = useCableSegmentStore()
 const monitorStore = useMonitorStore()
-const defaultElevationGeoTiffUrl = '/data/output2_cog.tif'
 
 // 监听投影变化
 const currentProjection = toRef(mapStore, 'projection')
@@ -96,7 +96,7 @@ const MARS3D_CONTAINER_ID = 'planning-mars3d-container'
 const mapMode = ref<'2d' | '3d'>('2d')
 const isMapModeSwitching = ref(false)
 const loading = ref(false)
-const coordinates = ref({lon: 0, lat: 0})
+const coordinates = ref({ lon: 0, lat: 0 })
 const isPlanning = ref(false)
 const settingsStore = useSettingsStore()
 const selectedAreaLonLatExtent = ref<LonLatExtent | null>(null)
@@ -107,7 +107,7 @@ const isAdjustingRoute = ref(false)
 // 新增弹窗状态
 const showParetoFrontierDialog = ref(false)
 const geoJSONFormat = new GeoJSONFormat()
-const geoTiffRgbStyle = {color: ['array', ['band', 1], ['band', 2], ['band', 3], ['band', 4]]}
+const geoTiffRgbStyle = { color: ['array', ['band', 1], ['band', 2], ['band', 3], ['band', 4]] }
 const VIEWPORT_ATTACHMENT_LAYER_IDS = [
   'volcano',
   'earthquake',
@@ -119,7 +119,7 @@ const VIEWPORT_ATTACHMENT_LAYER_IDS = [
 const VIEWPORT_ATTACHMENT_REFRESH_DELAY_MS = 200
 
 type ViewportAttachmentLayerId = typeof VIEWPORT_ATTACHMENT_LAYER_IDS[number]
-type PlatformWmsLayerId = Exclude<ViewportAttachmentLayerId, 'elevation'>
+type PlatformWmsLayerId = ViewportAttachmentLayerId
 
 interface ViewportAttachmentRequest {
   layerId: ViewportAttachmentLayerId
@@ -204,7 +204,20 @@ const isGeoServerWmsPlatformLayer = (layerId: string) => Boolean(getPlatformWmsM
 
 const getPlatformWmsSourceKey = (layerId: string) => {
   const metadata = getPlatformWmsMetadata(layerId)
-  return metadata ? JSON.stringify([metadata.url, metadata.layerName]) : ''
+  if (!metadata) return ''
+  const layer = layerStore.getLayerById(layerId)
+  const renderOptions = getPlatformWmsRenderOptions(layerId, metadata.layerName, {
+    opacity: layer?.opacity,
+    zIndex: layer?.zIndex,
+  })
+  return JSON.stringify([
+    metadata.url,
+    metadata.layerName,
+    renderOptions.styles,
+    renderOptions.sldBody,
+    renderOptions.opacity,
+    renderOptions.zIndex,
+  ])
 }
 
 const isViewportScopedPlatformLayer = (layerId: ViewportAttachmentLayerId) => {
@@ -413,16 +426,6 @@ const createPlatformAttachmentGeoTiffSource = async (
   wrapX: true,
 })
 
-const createDefaultGeoTiffSource = () => ({
-  key: `default:${defaultElevationGeoTiffUrl}`,
-  source: new GeoTIFFSource({
-    sources: [{ url: defaultElevationGeoTiffUrl }],
-    convertToRGB: 'auto',
-    normalize: true,
-    wrapX: true,
-  }),
-})
-
 const createUploadedGeoTiffSource = async (
   layerId: string,
   viewportRequest?: ViewportAttachmentRequest,
@@ -616,7 +619,7 @@ const enableBoxSelect = () => {
   if (mapMode.value === '3d') {
     if (!mars3dAdapter) return
     mapStore.setBoxSelecting(true)
-    appStore.showNotification({type: 'info', message: '框选模式已开启，拖动鼠标选择区域'})
+    appStore.showNotification({ type: 'info', message: '框选模式已开启，拖动鼠标选择区域' })
     void mars3dAdapter.startBoxSelection().then(extent => {
       if (!extent || mapMode.value !== '3d') {
         mapStore.setBoxSelecting(false)
@@ -641,7 +644,7 @@ const enableBoxSelect = () => {
   if (!map || !dragBox) return
   mapStore.setBoxSelecting(true)
   map.addInteraction(dragBox)
-  appStore.showNotification({type: 'info', message: '框选模式已开启，拖动鼠标选择区域'})
+  appStore.showNotification({ type: 'info', message: '框选模式已开启，拖动鼠标选择区域' })
 }
 
 const disableBoxSelect = () => {
@@ -661,7 +664,7 @@ const toggleBoxSelect = () => {
     clearSelection()
   } else if (mapStore.isBoxSelecting) {
     disableBoxSelect()
-    appStore.showNotification({type: 'info', message: '框选模式已关闭'})
+    appStore.showNotification({ type: 'info', message: '框选模式已关闭' })
   } else {
     enableBoxSelect()
   }
@@ -679,7 +682,7 @@ const resetAreaSelection = () => {
 
 const clearSelection = () => {
   resetAreaSelection()
-  appStore.showNotification({type: 'info', message: '已清除区域选择'})
+  appStore.showNotification({ type: 'info', message: '已清除区域选择' })
 }
 
 const coordinateInsideExtent = (coordinate: [number, number], extent: LonLatExtent) =>
@@ -1129,14 +1132,14 @@ const loadMars3dElevationOverlay = async (
   if (!downloadUrl) return null
   const blob = isPlatformAttachmentUrl(downloadUrl)
     ? await fetchPlatformAttachmentBlob(
-        downloadUrl,
-        viewportRequest?.rectRange ?? getCurrentMapRectRange(),
-        viewportRequest?.signal,
-      )
+      downloadUrl,
+      viewportRequest?.rectRange ?? getCurrentMapRectRange(),
+      viewportRequest?.signal,
+    )
     : await fetch(downloadUrl).then(response => {
-        if (!response.ok) throw new Error(`GeoTIFF 下载失败: ${response.status}`)
-        return response.blob()
-      })
+      if (!response.ok) throw new Error(`GeoTIFF 下载失败: ${response.status}`)
+      return response.blob()
+    })
   return loadGeoTiffOverlayFromBlob(blob)
 }
 
@@ -1504,7 +1507,7 @@ const initMap = () => {
           ? transformExtent(sourceViewOptions.extent, sourceProjection, viewProjection)
           : sourceViewOptions.extent
 
-        map.getView().fit(fitExtent, {padding: [20, 20, 20, 20]})
+        map.getView().fit(fitExtent, { padding: [20, 20, 20, 20] })
       }
       if (sourceViewOptions.resolutions) {
         elevationNativeMaxZoom = Math.min(sourceViewOptions.resolutions.length - 1, 18)
@@ -1514,12 +1517,6 @@ const initMap = () => {
     })
   }
 
-  const defaultGeoTiffSource = createDefaultGeoTiffSource()
-  const defaultGeoTiffLayer = createGeoTiffLayer(defaultGeoTiffSource.source, true)
-  bindGeoTiffSource(defaultGeoTiffSource.source, [defaultGeoTiffLayer], {
-    fitOnLoad: false,
-    trackLayerLoading: false,
-  })
 
   const geoTiffLayers: WebGLTileLayer[] = []
 
@@ -1529,8 +1526,7 @@ const initMap = () => {
   map = new Map({
     target: mapContainer.value,
     layers: [
-      new TileLayer({source: createBaseTileSource(), opacity: 0.5}),
-      defaultGeoTiffLayer,
+      new TileLayer({ source: createBaseTileSource(), opacity: 1 }),
       ...geoTiffLayers,
     ],
     view: new View({
@@ -1620,7 +1616,7 @@ const initMap = () => {
 
   map.on('pointermove', (evt) => {
     const [lon, lat] = getPointerLonLat(evt.coordinate as [number, number])
-    coordinates.value = {lon, lat}
+    coordinates.value = { lon, lat }
   })
 
   // 单击事件 - 选中光纤线或设备
@@ -1664,8 +1660,8 @@ const initMap = () => {
         routeStore.selectSegmentInfo({
           id: lineFeature.get('segmentId') || routeId,
           routeId: routeId,
-          startPoint: {lon: coords[0][0], lat: coords[0][1]},
-          endPoint: {lon: coords[coords.length - 1][0], lat: coords[coords.length - 1][1]},
+          startPoint: { lon: coords[0][0], lat: coords[0][1] },
+          endPoint: { lon: coords[coords.length - 1][0], lat: coords[coords.length - 1][1] },
           routePoints: coords.map(([lon, lat]) => ({ lon, lat })),
           length: segmentLength,
           depth: segmentDepth,
@@ -1698,8 +1694,8 @@ const initMap = () => {
     source: selectionSource,
     zIndex: 220,
     style: new Style({
-      stroke: new Stroke({color: '#165DFF', width: 2, lineDash: [5, 5]}),
-      fill: new Fill({color: 'rgba(22, 93, 255, 0.1)'}),
+      stroke: new Stroke({ color: '#165DFF', width: 2, lineDash: [5, 5] }),
+      fill: new Fill({ color: 'rgba(22, 93, 255, 0.1)' }),
     }),
   })
   map.addLayer(selectionLayer)
@@ -1730,7 +1726,7 @@ const initMap = () => {
   }
   map.getViewport().addEventListener('contextmenu', mapContextMenuHandler)
 
-  dragBox = new DragBox({condition: () => true})
+  dragBox = new DragBox({ condition: () => true })
 
   dragBox.on('boxend', () => {
     if (!selectionSource) return
@@ -1741,7 +1737,7 @@ const initMap = () => {
     selectedAreaLonLatExtent.value = lonLatExtent
     areaContextMenu.value.visible = false
     const boxGeom = dragBox!.getGeometry()
-    selectionSource.addFeature(new Feature({geometry: boxGeom}))
+    selectionSource.addFeature(new Feature({ geometry: boxGeom }))
 
     appStore.showNotification({
       type: 'success',
@@ -1841,11 +1837,17 @@ const initMap = () => {
     if (existing?.sourceKey === sourceKey) return existing
     if (existing) removePlatformWmsLayerRuntime(layerId)
 
+    const configuredLayer = layerStore.getLayerById(layerId)
+    const renderOptions = getPlatformWmsRenderOptions(layerId, metadata.layerName, {
+      opacity: configuredLayer?.opacity,
+      zIndex: configuredLayer?.zIndex,
+    })
     const source = new TileWMS({
       url: metadata.url,
       params: {
         LAYERS: metadata.layerName,
-        STYLES: '',
+        STYLES: renderOptions.styles,
+        ...(renderOptions.sldBody ? { SLD_BODY: renderOptions.sldBody } : {}),
         FORMAT: 'image/png',
         TRANSPARENT: true,
         TILED: true,
@@ -1858,8 +1860,8 @@ const initMap = () => {
     const layer = new TileLayer<TileWMS>({
       source,
       visible: false,
-      opacity: 0.9,
-      zIndex: 80,
+      opacity: renderOptions.opacity,
+      zIndex: renderOptions.zIndex,
     })
     const runtime: PlatformWmsLayerRuntime = {
       layer,
@@ -1982,7 +1984,7 @@ const initMap = () => {
         })
       })
 
-      const volcanoIconSource = new VectorSource({features: volcanoFeatures})
+      const volcanoIconSource = new VectorSource({ features: volcanoFeatures })
 
       const nextVolcanoIconLayer = new VectorLayer({
         source: volcanoIconSource,
@@ -1998,7 +2000,7 @@ const initMap = () => {
         })
       })
 
-      const volcanoHeatmapSource = new VectorSource({features: volcanoHeatmapFeatures})
+      const volcanoHeatmapSource = new VectorSource({ features: volcanoHeatmapFeatures })
 
       const nextVolcanoHeatmapLayer = new Heatmap({
         source: volcanoHeatmapSource,
@@ -2023,7 +2025,7 @@ const initMap = () => {
 
       const sourceLabel = getUploadedLayerLabel('volcano')
       if (!options.silent) {
-        appStore.showNotification({type: 'success', message: `已加载 ${volcanoData.length} 个火山位置（${sourceLabel}）`})
+        appStore.showNotification({ type: 'success', message: `已加载 ${volcanoData.length} 个火山位置（${sourceLabel}）` })
         appStore.addLog('INFO', `火山数据加载完成: ${volcanoData.length} 个点位（${sourceLabel}）`)
       }
     } catch (error) {
@@ -2079,7 +2081,7 @@ const initMap = () => {
         })
       })
 
-      const earthquakeIconSource = new VectorSource({features: earthquakeFeatures})
+      const earthquakeIconSource = new VectorSource({ features: earthquakeFeatures })
 
       const webglStyle = {
         'circle-radius': [
@@ -2115,7 +2117,7 @@ const initMap = () => {
         }))
       })
 
-      const earthquakeHeatmapSource = new VectorSource({features: earthquakeHeatmapFeatures})
+      const earthquakeHeatmapSource = new VectorSource({ features: earthquakeHeatmapFeatures })
 
       const nextEarthquakeHeatmapLayer = new Heatmap({
         source: earthquakeHeatmapSource,
@@ -2139,7 +2141,7 @@ const initMap = () => {
 
       const sourceLabel = getUploadedLayerLabel('earthquake')
       if (!options.silent) {
-        appStore.showNotification({type: 'success', message: `已加载 ${earthquakeData.length} 条地震数据（${sourceLabel}）`})
+        appStore.showNotification({ type: 'success', message: `已加载 ${earthquakeData.length} 条地震数据（${sourceLabel}）` })
         appStore.addLog('INFO', `地震数据加载完成: ${earthquakeData.length} 条记录（${sourceLabel}）`)
       }
     } catch (error) {
@@ -2179,10 +2181,10 @@ const initMap = () => {
           hideLayerGlobalLoading('volcano')
         }
       },
-      {immediate: true}
+      { immediate: true }
     )
 
-  // 监听地震图层可见性变化
+    // 监听地震图层可见性变化
     watch(
       () => [layerStore.layers.find(l => l.id === 'earthquake')?.visible, getPlatformWmsSourceKey('earthquake')] as const,
       async ([visible]) => {
@@ -2206,106 +2208,106 @@ const initMap = () => {
           hideLayerGlobalLoading('earthquake')
         }
       },
-      {immediate: true}
+      { immediate: true }
     )
 
-  // 加载并渲染冷水珊瑚数据
-  const loadAndRenderColdCoral = async (options: PlatformLayerLoadOptions = {}) => {
-    if (!map || (coldCoralDataLoaded && !options.force)) return
+    // 加载并渲染冷水珊瑚数据
+    const loadAndRenderColdCoral = async (options: PlatformLayerLoadOptions = {}) => {
+      if (!map || (coldCoralDataLoaded && !options.force)) return
 
-    const targetMap = map
-    const viewportRequest = beginLayerViewportRequest('coldCoral', options)
-    if (!options.silent) showLayerGlobalLoading('coldCoral')
-    layerStore.setLayerLoading('coldCoral', true)
+      const targetMap = map
+      const viewportRequest = beginLayerViewportRequest('coldCoral', options)
+      if (!options.silent) showLayerGlobalLoading('coldCoral')
+      layerStore.setLayerLoading('coldCoral', true)
 
-    try {
-      const { features, sourceLabel } = await loadRequiredVectorFeatures('coldCoral', viewportRequest)
-      if (!shouldApplyLayerLoad('coldCoral', targetMap, viewportRequest)) return
+      try {
+        const { features, sourceLabel } = await loadRequiredVectorFeatures('coldCoral', viewportRequest)
+        if (!shouldApplyLayerLoad('coldCoral', targetMap, viewportRequest)) return
 
-      if (features.length === 0) {
-        if (viewportRequest) {
-          removeLayersFromMap(coldCoralLayers)
-          coldCoralLayers = []
-          coldCoralDataLoaded = true
-          layerStore.setLayerLoaded('coldCoral', true)
-          if (!options.silent) appStore.addLog('INFO', '当前视口没有冷水珊瑚数据')
-        } else {
-          failPlatformLayerRender('coldCoral', ' 没有可加载的图层数据')
-        }
-        return
-      }
-
-      // 使用工厂方法创建图层
-      const layers = createColdCoralLayers(toCurrentMapFeatures(features))
-
-      if (layers.length === 0) {
-        if (viewportRequest) {
-          removeLayersFromMap(coldCoralLayers)
-          coldCoralLayers = []
-          coldCoralDataLoaded = true
-          layerStore.setLayerLoaded('coldCoral', true)
-        } else {
-          failPlatformLayerRender('coldCoral', ' 没有生成可渲染图层')
-        }
-        return
-      }
-
-      removeLayersFromMap(coldCoralLayers)
-      coldCoralLayers = []
-      layers.forEach((layer: any) => {
-        targetMap.addLayer(layer)
-        coldCoralLayers.push(layer)
-      })
-
-      coldCoralDataLoaded = true
-      layerStore.setLayerLoaded('coldCoral', true)
-
-      if (!options.silent) {
-        appStore.showNotification({type: 'success', message: `已加载冷水珊瑚数据，共 ${layers.length} 个图层（${sourceLabel}）`})
-        appStore.addLog('INFO', `冷水珊瑚数据加载完成（${sourceLabel}）`)
-      }
-
-      // 计算所有要素的范围并缩放 (恢复全球视图)
-      // 获取所有图层的源并计算总范围
-      let totalExtent: number[] | null = null
-
-      layers.forEach((layer: any) => {
-        const source = layer.getSource()
-        if (source && typeof source.getExtent === 'function') {
-          const extent = source.getExtent()
-          if (!totalExtent) {
-            totalExtent = extent
+        if (features.length === 0) {
+          if (viewportRequest) {
+            removeLayersFromMap(coldCoralLayers)
+            coldCoralLayers = []
+            coldCoralDataLoaded = true
+            layerStore.setLayerLoaded('coldCoral', true)
+            if (!options.silent) appStore.addLog('INFO', '当前视口没有冷水珊瑚数据')
           } else {
-            totalExtent = [
-              Math.min(totalExtent[0], extent[0]),
-              Math.min(totalExtent[1], extent[1]),
-              Math.max(totalExtent[2], extent[2]),
-              Math.max(totalExtent[3], extent[3]),
-            ]
+            failPlatformLayerRender('coldCoral', ' 没有可加载的图层数据')
           }
+          return
         }
-      })
 
-      if (totalExtent && !viewportRequest) {
-        targetMap.getView().fit(totalExtent, {
-          padding: [50, 50, 50, 50],
-          duration: 1000,
-          maxZoom: 10
+        // 使用工厂方法创建图层
+        const layers = createColdCoralLayers(toCurrentMapFeatures(features))
+
+        if (layers.length === 0) {
+          if (viewportRequest) {
+            removeLayersFromMap(coldCoralLayers)
+            coldCoralLayers = []
+            coldCoralDataLoaded = true
+            layerStore.setLayerLoaded('coldCoral', true)
+          } else {
+            failPlatformLayerRender('coldCoral', ' 没有生成可渲染图层')
+          }
+          return
+        }
+
+        removeLayersFromMap(coldCoralLayers)
+        coldCoralLayers = []
+        layers.forEach((layer: any) => {
+          targetMap.addLayer(layer)
+          coldCoralLayers.push(layer)
         })
+
+        coldCoralDataLoaded = true
+        layerStore.setLayerLoaded('coldCoral', true)
+
+        if (!options.silent) {
+          appStore.showNotification({ type: 'success', message: `已加载冷水珊瑚数据，共 ${layers.length} 个图层（${sourceLabel}）` })
+          appStore.addLog('INFO', `冷水珊瑚数据加载完成（${sourceLabel}）`)
+        }
+
+        // 计算所有要素的范围并缩放 (恢复全球视图)
+        // 获取所有图层的源并计算总范围
+        let totalExtent: number[] | null = null
+
+        layers.forEach((layer: any) => {
+          const source = layer.getSource()
+          if (source && typeof source.getExtent === 'function') {
+            const extent = source.getExtent()
+            if (!totalExtent) {
+              totalExtent = extent
+            } else {
+              totalExtent = [
+                Math.min(totalExtent[0], extent[0]),
+                Math.min(totalExtent[1], extent[1]),
+                Math.max(totalExtent[2], extent[2]),
+                Math.max(totalExtent[3], extent[3]),
+              ]
+            }
+          }
+        })
+
+        if (totalExtent && !viewportRequest) {
+          targetMap.getView().fit(totalExtent, {
+            padding: [50, 50, 50, 50],
+            duration: 1000,
+            maxZoom: 10
+          })
+        }
+
+      } catch (error) {
+        handleLayerLoadError('coldCoral', '加载失败', error, options, viewportRequest)
+      } finally {
+        finalizeLayerLoad('coldCoral', viewportRequest)
       }
-
-    } catch (error) {
-      handleLayerLoadError('coldCoral', '加载失败', error, options, viewportRequest)
-    } finally {
-      finalizeLayerLoad('coldCoral', viewportRequest)
     }
-  }
 
-  const setColdCoralVisible = (visible: boolean) => {
-    coldCoralLayers.forEach(layer => layer.setVisible(visible))
-  }
+    const setColdCoralVisible = (visible: boolean) => {
+      coldCoralLayers.forEach(layer => layer.setVisible(visible))
+    }
 
-  // 监听冷水珊瑚图层可见性
+    // 监听冷水珊瑚图层可见性
     watch(
       () => [layerStore.layers.find(l => l.id === 'coldCoral')?.visible, getPlatformWmsSourceKey('coldCoral')] as const,
       async ([visible]) => {
@@ -2329,76 +2331,76 @@ const initMap = () => {
           hideLayerGlobalLoading('coldCoral')
         }
       },
-      {immediate: true}
+      { immediate: true }
     )
 
-  // 加载并渲染渔业数据
-  const loadAndRenderFishing = async (options: PlatformLayerLoadOptions = {}) => {
-    if (!map || (fishingDataLoaded && !options.force)) return
+    // 加载并渲染渔业数据
+    const loadAndRenderFishing = async (options: PlatformLayerLoadOptions = {}) => {
+      if (!map || (fishingDataLoaded && !options.force)) return
 
-    const targetMap = map
-    const viewportRequest = beginLayerViewportRequest('fishing', options)
-    if (!options.silent) showLayerGlobalLoading('fishing')
-    layerStore.setLayerLoading('fishing', true)
+      const targetMap = map
+      const viewportRequest = beginLayerViewportRequest('fishing', options)
+      if (!options.silent) showLayerGlobalLoading('fishing')
+      layerStore.setLayerLoading('fishing', true)
 
-    try {
-      const { features, sourceLabel } = await loadRequiredVectorFeatures('fishing', viewportRequest)
-      if (!shouldApplyLayerLoad('fishing', targetMap, viewportRequest)) return
+      try {
+        const { features, sourceLabel } = await loadRequiredVectorFeatures('fishing', viewportRequest)
+        if (!shouldApplyLayerLoad('fishing', targetMap, viewportRequest)) return
 
-      if (features.length === 0) {
-        if (viewportRequest) {
-          removeLayersFromMap(fishingLayers)
-          fishingLayers = []
-          fishingDataLoaded = true
-          layerStore.setLayerLoaded('fishing', true)
-          if (!options.silent) appStore.addLog('INFO', '当前视口没有渔业数据')
-        } else {
-          failPlatformLayerRender('fishing', ' 没有可加载的图层数据')
+        if (features.length === 0) {
+          if (viewportRequest) {
+            removeLayersFromMap(fishingLayers)
+            fishingLayers = []
+            fishingDataLoaded = true
+            layerStore.setLayerLoaded('fishing', true)
+            if (!options.silent) appStore.addLog('INFO', '当前视口没有渔业数据')
+          } else {
+            failPlatformLayerRender('fishing', ' 没有可加载的图层数据')
+          }
+          return
         }
-        return
-      }
 
-      const layers = createFishingLayers(toCurrentMapFeatures(features))
+        const layers = createFishingLayers(toCurrentMapFeatures(features))
 
-      if (layers.length === 0) {
-        if (viewportRequest) {
-          removeLayersFromMap(fishingLayers)
-          fishingLayers = []
-          fishingDataLoaded = true
-          layerStore.setLayerLoaded('fishing', true)
-        } else {
-          failPlatformLayerRender('fishing', ' 没有生成可渲染图层')
+        if (layers.length === 0) {
+          if (viewportRequest) {
+            removeLayersFromMap(fishingLayers)
+            fishingLayers = []
+            fishingDataLoaded = true
+            layerStore.setLayerLoaded('fishing', true)
+          } else {
+            failPlatformLayerRender('fishing', ' 没有生成可渲染图层')
+          }
+          return
         }
-        return
+
+        removeLayersFromMap(fishingLayers)
+        fishingLayers = []
+        layers.forEach((layer: any) => {
+          targetMap.addLayer(layer)
+          fishingLayers.push(layer)
+        })
+
+        fishingDataLoaded = true
+        layerStore.setLayerLoaded('fishing', true)
+
+        if (!options.silent) {
+          appStore.showNotification({ type: 'success', message: `已加载渔业数据，共 ${features.length} 个要素（${sourceLabel}）` })
+          appStore.addLog('INFO', `渔业数据加载完成（${sourceLabel}）`)
+        }
+
+      } catch (error) {
+        handleLayerLoadError('fishing', '加载失败', error, options, viewportRequest)
+      } finally {
+        finalizeLayerLoad('fishing', viewportRequest)
       }
-
-      removeLayersFromMap(fishingLayers)
-      fishingLayers = []
-      layers.forEach((layer: any) => {
-        targetMap.addLayer(layer)
-        fishingLayers.push(layer)
-      })
-
-      fishingDataLoaded = true
-      layerStore.setLayerLoaded('fishing', true)
-
-      if (!options.silent) {
-        appStore.showNotification({type: 'success', message: `已加载渔业数据，共 ${features.length} 个要素（${sourceLabel}）`})
-        appStore.addLog('INFO', `渔业数据加载完成（${sourceLabel}）`)
-      }
-
-    } catch (error) {
-      handleLayerLoadError('fishing', '加载失败', error, options, viewportRequest)
-    } finally {
-      finalizeLayerLoad('fishing', viewportRequest)
     }
-  }
 
-  const setFishingVisible = (visible: boolean) => {
-    fishingLayers.forEach(layer => layer.setVisible(visible))
-  }
+    const setFishingVisible = (visible: boolean) => {
+      fishingLayers.forEach(layer => layer.setVisible(visible))
+    }
 
-  // 监听渔业图层可见性
+    // 监听渔业图层可见性
     watch(
       () => [layerStore.layers.find(l => l.id === 'fishing')?.visible, getPlatformWmsSourceKey('fishing')] as const,
       async ([visible]) => {
@@ -2422,76 +2424,76 @@ const initMap = () => {
           hideLayerGlobalLoading('fishing')
         }
       },
-      {immediate: true}
+      { immediate: true }
     )
 
-  // 加载并渲染航道数据
-  const loadAndRenderShipping = async (options: PlatformLayerLoadOptions = {}) => {
-    if (!map || (shippingDataLoaded && !options.force)) return
+    // 加载并渲染航道数据
+    const loadAndRenderShipping = async (options: PlatformLayerLoadOptions = {}) => {
+      if (!map || (shippingDataLoaded && !options.force)) return
 
-    const targetMap = map
-    const viewportRequest = beginLayerViewportRequest('shipping', options)
-    if (!options.silent) showLayerGlobalLoading('shipping')
-    layerStore.setLayerLoading('shipping', true)
+      const targetMap = map
+      const viewportRequest = beginLayerViewportRequest('shipping', options)
+      if (!options.silent) showLayerGlobalLoading('shipping')
+      layerStore.setLayerLoading('shipping', true)
 
-    try {
-      const { features, sourceLabel } = await loadRequiredVectorFeatures('shipping', viewportRequest)
-      if (!shouldApplyLayerLoad('shipping', targetMap, viewportRequest)) return
+      try {
+        const { features, sourceLabel } = await loadRequiredVectorFeatures('shipping', viewportRequest)
+        if (!shouldApplyLayerLoad('shipping', targetMap, viewportRequest)) return
 
-      if (features.length === 0) {
-        if (viewportRequest) {
-          removeLayersFromMap(shippingLayers)
-          shippingLayers = []
-          shippingDataLoaded = true
-          layerStore.setLayerLoaded('shipping', true)
-          if (!options.silent) appStore.addLog('INFO', '当前视口没有航道数据')
-        } else {
-          failPlatformLayerRender('shipping', ' 没有可加载的图层数据')
+        if (features.length === 0) {
+          if (viewportRequest) {
+            removeLayersFromMap(shippingLayers)
+            shippingLayers = []
+            shippingDataLoaded = true
+            layerStore.setLayerLoaded('shipping', true)
+            if (!options.silent) appStore.addLog('INFO', '当前视口没有航道数据')
+          } else {
+            failPlatformLayerRender('shipping', ' 没有可加载的图层数据')
+          }
+          return
         }
-        return
-      }
 
-      const layers = createShippingLayers(toCurrentMapFeatures(features))
+        const layers = createShippingLayers(toCurrentMapFeatures(features))
 
-      if (layers.length === 0) {
-        if (viewportRequest) {
-          removeLayersFromMap(shippingLayers)
-          shippingLayers = []
-          shippingDataLoaded = true
-          layerStore.setLayerLoaded('shipping', true)
-        } else {
-          failPlatformLayerRender('shipping', ' 没有生成可渲染图层')
+        if (layers.length === 0) {
+          if (viewportRequest) {
+            removeLayersFromMap(shippingLayers)
+            shippingLayers = []
+            shippingDataLoaded = true
+            layerStore.setLayerLoaded('shipping', true)
+          } else {
+            failPlatformLayerRender('shipping', ' 没有生成可渲染图层')
+          }
+          return
         }
-        return
+
+        removeLayersFromMap(shippingLayers)
+        shippingLayers = []
+        layers.forEach((layer: any) => {
+          targetMap.addLayer(layer)
+          shippingLayers.push(layer)
+        })
+
+        shippingDataLoaded = true
+        layerStore.setLayerLoaded('shipping', true)
+
+        if (!options.silent) {
+          appStore.showNotification({ type: 'success', message: `已加载航道数据，共 ${features.length} 个要素（${sourceLabel}）` })
+          appStore.addLog('INFO', `航道数据加载完成（${sourceLabel}）`)
+        }
+
+      } catch (error) {
+        handleLayerLoadError('shipping', '加载失败', error, options, viewportRequest)
+      } finally {
+        finalizeLayerLoad('shipping', viewportRequest)
       }
-
-      removeLayersFromMap(shippingLayers)
-      shippingLayers = []
-      layers.forEach((layer: any) => {
-        targetMap.addLayer(layer)
-        shippingLayers.push(layer)
-      })
-
-      shippingDataLoaded = true
-      layerStore.setLayerLoaded('shipping', true)
-
-      if (!options.silent) {
-        appStore.showNotification({type: 'success', message: `已加载航道数据，共 ${features.length} 个要素（${sourceLabel}）`})
-        appStore.addLog('INFO', `航道数据加载完成（${sourceLabel}）`)
-      }
-
-    } catch (error) {
-      handleLayerLoadError('shipping', '加载失败', error, options, viewportRequest)
-    } finally {
-      finalizeLayerLoad('shipping', viewportRequest)
     }
-  }
 
-  const setShippingVisible = (visible: boolean) => {
-    shippingLayers.forEach(layer => layer.setVisible(visible))
-  }
+    const setShippingVisible = (visible: boolean) => {
+      shippingLayers.forEach(layer => layer.setVisible(visible))
+    }
 
-  // 监听航道图层可见性
+    // 监听航道图层可见性
     watch(
       () => [layerStore.layers.find(l => l.id === 'shipping')?.visible, getPlatformWmsSourceKey('shipping')] as const,
       async ([visible]) => {
@@ -2515,10 +2517,10 @@ const initMap = () => {
           hideLayerGlobalLoading('shipping')
         }
       },
-      {immediate: true}
+      { immediate: true }
     )
 
-  // 监听海洋高程图层可见性（控制 GeoTIFF 底图）
+    // 监听海洋高程图层可见性（优先使用 GeoServer WMS，附件回退为 GeoTIFF）
     watch(
       () => {
         const elevationLayer = layerStore.layers.find(l => l.id === 'elevation')
@@ -2526,94 +2528,103 @@ const initMap = () => {
         return {
           visible: Boolean(elevationLayer?.visible),
           source: elevationData?.metadata.source ?? '',
+          wmsSourceKey: getPlatformWmsSourceKey('elevation'),
           downloadUrl: elevationData?.metadata.downloadUrl ?? '',
           rasterSize: elevationData?.rasterData?.byteLength ?? 0,
         }
       },
       async ({ visible }) => {
+        if (isGeoServerWmsPlatformLayer('elevation')) {
+          invalidateViewportAttachmentRequest('elevation')
+          elevationLayers.forEach(layer => layer.setVisible(false))
+          setPlatformWmsLayerVisible('elevation', visible)
+          return
+        }
+
+        setPlatformWmsLayerVisible('elevation', false)
         await setElevationVisible(visible, { silent: Boolean(activeElevationSourceKey) })
       },
-      {immediate: false}
+      { immediate: true }
     )
 
-  const getVisibleViewportAttachmentLayerIds = () => {
-    return VIEWPORT_ATTACHMENT_LAYER_IDS.filter(layerId => {
-      return layerStore.getLayerVisible(layerId) && isViewportScopedPlatformLayer(layerId)
-    })
-  }
-
-  const clearViewportAttachmentRefreshTimer = () => {
-    if (viewportAttachmentRefreshTimer === null) return
-    clearTimeout(viewportAttachmentRefreshTimer)
-    viewportAttachmentRefreshTimer = null
-  }
-
-  const cancelViewportAttachmentLoads = (layerIds: readonly ViewportAttachmentLayerId[]) => {
-    layerIds.forEach(layerId => {
-      invalidateViewportAttachmentRequest(layerId)
-      layerStore.setLayerLoading(layerId, false)
-      hideLayerGlobalLoading(layerId)
-    })
-  }
-
-  const refreshVisibleViewportAttachments = async (
-    layerIds: readonly ViewportAttachmentLayerId[],
-    rectRange: RoutePlanningRectRange,
-  ) => {
-    const options: PlatformLayerLoadOptions = {
-      force: true,
-      silent: true,
-      rectRange,
+    const getVisibleViewportAttachmentLayerIds = () => {
+      return VIEWPORT_ATTACHMENT_LAYER_IDS.filter(layerId => {
+        return layerStore.getLayerVisible(layerId) && isViewportScopedPlatformLayer(layerId)
+      })
     }
-    await Promise.allSettled(layerIds.map(layerId => {
-      if (layerId === 'volcano') return loadAndRenderVolcano(options)
-      if (layerId === 'earthquake') return loadAndRenderEarthquake(options)
-      if (layerId === 'coldCoral') return loadAndRenderColdCoral(options)
-      if (layerId === 'fishing') return loadAndRenderFishing(options)
-      if (layerId === 'shipping') return loadAndRenderShipping(options)
-      return setElevationVisible(true, options)
-    }))
-  }
 
-  let lastViewportAttachmentRefreshKey = ''
-  scheduleViewportAttachmentRefresh = () => {
-    if (!map) return
-    const targetMap = map
-    const layerIds = getVisibleViewportAttachmentLayerIds()
-    if (layerIds.length === 0) return
-
-    const rectRange = getCurrentMapRectRange()
-    const projection = targetMap.getView().getProjection().getCode()
-    const refreshKey = `${projection}:${rectRange.join(',')}:${layerIds.join(',')}`
-    if (refreshKey === lastViewportAttachmentRefreshKey && viewportAttachmentRefreshTimer === null) return
-
-    clearViewportAttachmentRefreshTimer()
-    cancelViewportAttachmentLoads(layerIds)
-    viewportAttachmentRefreshTimer = setTimeout(() => {
+    const clearViewportAttachmentRefreshTimer = () => {
+      if (viewportAttachmentRefreshTimer === null) return
+      clearTimeout(viewportAttachmentRefreshTimer)
       viewportAttachmentRefreshTimer = null
-      if (map !== targetMap) return
+    }
 
-      const currentLayerIds = getVisibleViewportAttachmentLayerIds()
-      if (currentLayerIds.length === 0) return
-      const currentRectRange = getCurrentMapRectRange()
-      const currentProjection = targetMap.getView().getProjection().getCode()
-      const currentRefreshKey = `${currentProjection}:${currentRectRange.join(',')}:${currentLayerIds.join(',')}`
-      if (currentRefreshKey === lastViewportAttachmentRefreshKey) return
+    const cancelViewportAttachmentLoads = (layerIds: readonly ViewportAttachmentLayerId[]) => {
+      layerIds.forEach(layerId => {
+        invalidateViewportAttachmentRequest(layerId)
+        layerStore.setLayerLoading(layerId, false)
+        hideLayerGlobalLoading(layerId)
+      })
+    }
 
-      lastViewportAttachmentRefreshKey = currentRefreshKey
-      void refreshVisibleViewportAttachments(currentLayerIds, currentRectRange)
-    }, VIEWPORT_ATTACHMENT_REFRESH_DELAY_MS)
-  }
+    const refreshVisibleViewportAttachments = async (
+      layerIds: readonly ViewportAttachmentLayerId[],
+      rectRange: RoutePlanningRectRange,
+    ) => {
+      const options: PlatformLayerLoadOptions = {
+        force: true,
+        silent: true,
+        rectRange,
+      }
+      await Promise.allSettled(layerIds.map(layerId => {
+        if (layerId === 'volcano') return loadAndRenderVolcano(options)
+        if (layerId === 'earthquake') return loadAndRenderEarthquake(options)
+        if (layerId === 'coldCoral') return loadAndRenderColdCoral(options)
+        if (layerId === 'fishing') return loadAndRenderFishing(options)
+        if (layerId === 'shipping') return loadAndRenderShipping(options)
+        return setElevationVisible(true, options)
+      }))
+    }
 
-  const targetMapForMoveEvents = map!
-  mapMoveStartHandler = () => {
-    clearViewportAttachmentRefreshTimer()
-    lastViewportAttachmentRefreshKey = ''
-    cancelViewportAttachmentLoads(getVisibleViewportAttachmentLayerIds())
-  }
-  mapMoveEndHandler = () => scheduleViewportAttachmentRefresh?.()
-  targetMapForMoveEvents.on('movestart', mapMoveStartHandler)
-  targetMapForMoveEvents.on('moveend', mapMoveEndHandler)
+    let lastViewportAttachmentRefreshKey = ''
+    scheduleViewportAttachmentRefresh = () => {
+      if (!map) return
+      const targetMap = map
+      const layerIds = getVisibleViewportAttachmentLayerIds()
+      if (layerIds.length === 0) return
+
+      const rectRange = getCurrentMapRectRange()
+      const projection = targetMap.getView().getProjection().getCode()
+      const refreshKey = `${projection}:${rectRange.join(',')}:${layerIds.join(',')}`
+      if (refreshKey === lastViewportAttachmentRefreshKey && viewportAttachmentRefreshTimer === null) return
+
+      clearViewportAttachmentRefreshTimer()
+      cancelViewportAttachmentLoads(layerIds)
+      viewportAttachmentRefreshTimer = setTimeout(() => {
+        viewportAttachmentRefreshTimer = null
+        if (map !== targetMap) return
+
+        const currentLayerIds = getVisibleViewportAttachmentLayerIds()
+        if (currentLayerIds.length === 0) return
+        const currentRectRange = getCurrentMapRectRange()
+        const currentProjection = targetMap.getView().getProjection().getCode()
+        const currentRefreshKey = `${currentProjection}:${currentRectRange.join(',')}:${currentLayerIds.join(',')}`
+        if (currentRefreshKey === lastViewportAttachmentRefreshKey) return
+
+        lastViewportAttachmentRefreshKey = currentRefreshKey
+        void refreshVisibleViewportAttachments(currentLayerIds, currentRectRange)
+      }, VIEWPORT_ATTACHMENT_REFRESH_DELAY_MS)
+    }
+
+    const targetMapForMoveEvents = map!
+    mapMoveStartHandler = () => {
+      clearViewportAttachmentRefreshTimer()
+      lastViewportAttachmentRefreshKey = ''
+      cancelViewportAttachmentLoads(getVisibleViewportAttachmentLayerIds())
+    }
+    mapMoveEndHandler = () => scheduleViewportAttachmentRefresh?.()
+    targetMapForMoveEvents.on('movestart', mapMoveStartHandler)
+    targetMapForMoveEvents.on('moveend', mapMoveEndHandler)
   })
 
   setTimeout(() => {
@@ -2683,11 +2694,17 @@ const syncMars3dThematicLayer = async (
     layerStore.setLayerLoading(layerId, true)
     showLayerGlobalLoading(layerId)
     try {
+      const renderOptions = getPlatformWmsRenderOptions(layerId, metadata.layerName, {
+        opacity,
+        zIndex: layer?.zIndex,
+      })
       await adapter.setWmsLayer(layerId, {
         url: metadata.url,
         layers: metadata.layerName,
         name: layer?.name ?? layerId,
-        opacity,
+        styles: renderOptions.styles,
+        sldBody: renderOptions.sldBody,
+        opacity: renderOptions.opacity,
         visible: true,
       })
       if (mars3dAdapter !== adapter || mapMode.value !== '3d') return
@@ -2704,9 +2721,9 @@ const syncMars3dThematicLayer = async (
   const viewportRequest = VIEWPORT_ATTACHMENT_LAYER_IDS.includes(layerId as ViewportAttachmentLayerId)
     && isViewportScopedPlatformLayer(layerId as ViewportAttachmentLayerId)
     ? beginViewportAttachmentRequest(
-        layerId as ViewportAttachmentLayerId,
-        getCurrentMapRectRange(),
-      )
+      layerId as ViewportAttachmentLayerId,
+      getCurrentMapRectRange(),
+    )
     : undefined
   if (!force && layer?.loaded && adapter.hasThematicLayer(layerId)) {
     adapter.setThematicLayerVisible(layerId, true)
@@ -2980,11 +2997,11 @@ const drawParetoRoutes = async () => {
           segmentFeature.setStyle([
             ...(isSegmentSelected
               ? [new Style({
-                  stroke: new Stroke({
-                    color: '#111827',
-                    width: lineWidth + 5,
-                  }),
-                })]
+                stroke: new Stroke({
+                  color: '#111827',
+                  width: lineWidth + 5,
+                }),
+              })]
               : []),
             new Style({
               stroke: new Stroke({
@@ -3058,8 +3075,8 @@ const drawParetoRoutes = async () => {
               text: point.name,
               offsetY: 18,
               font: isSharedPointSelected ? 'bold 12px sans-serif' : '12px sans-serif',
-              fill: new Fill({color: isSharedPointSelected ? '#ef4444' : '#333'}),
-              stroke: new Stroke({color: '#fff', width: 3}),
+              fill: new Fill({ color: isSharedPointSelected ? '#ef4444' : '#333' }),
+              stroke: new Stroke({ color: '#fff', width: 3 }),
             }) : undefined,
           }))
         } else if (point.type === 'branching') {
@@ -3067,15 +3084,15 @@ const drawParetoRoutes = async () => {
           pointFeature.setStyle(new Style({
             image: new CircleStyle({
               radius: radius,
-              fill: new Fill({color: '#a855f7'}),
-              stroke: new Stroke({color: '#fff', width: isSharedPointSelected ? 3 : 2}),
+              fill: new Fill({ color: '#a855f7' }),
+              stroke: new Stroke({ color: '#fff', width: isSharedPointSelected ? 3 : 2 }),
             }),
             text: point.name ? new Text({
               text: point.name,
               offsetY: -(radius + 8),
               font: isSharedPointSelected ? 'bold 12px sans-serif' : '12px sans-serif',
-              fill: new Fill({color: '#a855f7'}),
-              stroke: new Stroke({color: '#fff', width: 3}),
+              fill: new Fill({ color: '#a855f7' }),
+              stroke: new Stroke({ color: '#fff', width: 3 }),
             }) : undefined,
           }))
         }
@@ -3120,8 +3137,8 @@ const drawParetoRoutes = async () => {
               text: branchTo.name,
               offsetY: 18,
               font: isBranchStationSelected ? 'bold 12px sans-serif' : '12px sans-serif',
-              fill: new Fill({color: isBranchStationSelected ? '#ef4444' : '#333'}),
-              stroke: new Stroke({color: '#fff', width: 3}),
+              fill: new Fill({ color: isBranchStationSelected ? '#ef4444' : '#333' }),
+              stroke: new Stroke({ color: '#fff', width: 3 }),
             }) : undefined,
           }))
           routeSource!.addFeature(branchStationFeature)
@@ -3135,7 +3152,7 @@ const drawParetoRoutes = async () => {
     // routeSource 已在本次绘制开始时清空，避免继续叠加项目配置中的起终点。
     if (routes.length > 0 && routeSource.getFeatures().length > 0 && !routeStore.selectedSegmentInfo) {
       const extent = routeSource.getExtent()
-      map.getView().fit(extent, {padding: [50, 50, 50, 50], duration: 500})
+      map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
     }
     return  // paretoRoutes 已绘制，直接返回
   }
@@ -3304,8 +3321,8 @@ const drawMonitorDevices = () => {
           text: device.name,
           offsetY: -20,
           font: '11px sans-serif',
-          fill: new Fill({color: '#333'}),
-          stroke: new Stroke({color: '#fff', width: 3}),
+          fill: new Fill({ color: '#333' }),
+          stroke: new Stroke({ color: '#fff', width: 3 }),
         }),
       }))
     } else {
@@ -3315,15 +3332,15 @@ const drawMonitorDevices = () => {
       pointFeature.setStyle(new Style({
         image: new CircleStyle({
           radius: radius,
-          fill: new Fill({color: color}),
-          stroke: new Stroke({color: '#fff', width: 2}),
+          fill: new Fill({ color: color }),
+          stroke: new Stroke({ color: '#fff', width: 2 }),
         }),
         text: new Text({
           text: device.name,
           offsetY: -(radius + 8),
           font: '11px sans-serif',
-          fill: new Fill({color: '#333'}),
-          stroke: new Stroke({color: '#fff', width: 3}),
+          fill: new Fill({ color: '#333' }),
+          stroke: new Stroke({ color: '#fff', width: 3 }),
         }),
       }))
     }
@@ -3333,7 +3350,7 @@ const drawMonitorDevices = () => {
 
   if (routeSource.getFeatures().length > 0) {
     const extent = routeSource.getExtent()
-    map.getView().fit(extent, {padding: [50, 50, 50, 50], duration: 500})
+    map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 500 })
   }
 
 }
@@ -3362,7 +3379,7 @@ watch(() => monitorStore.devices.length, (newLen) => {
       setTimeout(() => clearInterval(checkMap), 5000)
     }
   }
-}, {immediate: true})
+}, { immediate: true })
 
 // 监听项目和路径结果变化；切换到无结果项目时也必须清除旧路径并显示规划范围/站点。
 watch(
@@ -3374,20 +3391,20 @@ watch(
   }),
   () => {
     if (routeStore.paretoRoutes.length > 0) {
-    ensureSelectedRoute()
-    if (map || mars3dAdapter) {
-      drawParetoRoutes()
-      isPlanning.value = true
-    } else {
-      const checkMap = setInterval(() => {
-        if (map) {
-          clearInterval(checkMap)
-          drawParetoRoutes()
-          isPlanning.value = true
-        }
-      }, 100)
-      setTimeout(() => clearInterval(checkMap), 5000)
-    }
+      ensureSelectedRoute()
+      if (map || mars3dAdapter) {
+        drawParetoRoutes()
+        isPlanning.value = true
+      } else {
+        const checkMap = setInterval(() => {
+          if (map) {
+            clearInterval(checkMap)
+            drawParetoRoutes()
+            isPlanning.value = true
+          }
+        }, 100)
+        setTimeout(() => clearInterval(checkMap), 5000)
+      }
     } else if (map || mars3dAdapter) {
       void drawParetoRoutes()
       isPlanning.value = false
@@ -3461,7 +3478,7 @@ const handleStopPlanning = () => {
   // 更新状态
   isPlanning.value = false
 
-  appStore.showNotification({type: 'info', message: '已停止规划，路径已清除'})
+  appStore.showNotification({ type: 'info', message: '已停止规划，路径已清除' })
   appStore.addLog('INFO', '停止规划，清除路径数据')
 }
 
@@ -3816,23 +3833,19 @@ onUnmounted(() => {
   <div class="flex-1 rounded shadow-sm flex flex-col overflow-hidden" style="background-color: var(--app-card-bg);">
     <!-- 工具栏 -->
     <div class="h-12 px-4 border-b flex items-center justify-between"
-         style="background-color: var(--app-bg-secondary); border-color: var(--app-border-color);">
+      style="background-color: var(--app-bg-secondary); border-color: var(--app-border-color);">
       <div class="flex items-center gap-2">
         <!-- 区域选择 -->
         <Tooltip :content="mapStore.hasSelection ? '清除已选区域' : '框选区域'">
           <Button :variant="mapStore.isBoxSelecting || mapStore.hasSelection ? 'default' : 'outline'" size="sm"
-                  @click="toggleBoxSelect">
-            <Square class="w-4 h-4 mr-1"/>
+            @click="toggleBoxSelect">
+            <Square class="w-4 h-4 mr-1" />
             {{ mapStore.hasSelection ? '清除选择' : '区域选择' }}
           </Button>
         </Tooltip>
         <Tooltip content="拖动当前路由的分段点">
-          <Button
-            :variant="isAdjustingRoute ? 'default' : 'outline'"
-            size="sm"
-            :disabled="!routeStore.selectedRoute?.segments.length || isPlanningLoading"
-            @click="toggleRouteAdjustment"
-          >
+          <Button :variant="isAdjustingRoute ? 'default' : 'outline'" size="sm"
+            :disabled="!routeStore.selectedRoute?.segments.length || isPlanningLoading" @click="toggleRouteAdjustment">
             <Move3d class="w-4 h-4 mr-1" />
             路由调整
           </Button>
@@ -3841,39 +3854,30 @@ onUnmounted(() => {
 
       <div class="flex items-center gap-2">
         <div class="map-mode-switch" role="group" aria-label="地图显示模式">
-          <button
-            type="button"
-            class="map-mode-switch__option"
-            :class="{ 'map-mode-switch__option--active': mapMode === '2d' }"
-            :aria-pressed="mapMode === '2d'"
-            :disabled="isMapModeSwitching"
-            @click="switchMapMode('2d')"
-          >
+          <button type="button" class="map-mode-switch__option"
+            :class="{ 'map-mode-switch__option--active': mapMode === '2d' }" :aria-pressed="mapMode === '2d'"
+            :disabled="isMapModeSwitching" @click="switchMapMode('2d')">
             2D
           </button>
-          <button
-            type="button"
-            class="map-mode-switch__option"
-            :class="{ 'map-mode-switch__option--active': mapMode === '3d' }"
-            :aria-pressed="mapMode === '3d'"
-            :disabled="isMapModeSwitching"
-            @click="switchMapMode('3d')"
-          >
+          <button type="button" class="map-mode-switch__option"
+            :class="{ 'map-mode-switch__option--active': mapMode === '3d' }" :aria-pressed="mapMode === '3d'"
+            :disabled="isMapModeSwitching" @click="switchMapMode('3d')">
             <Loader2 v-if="isMapModeSwitching" class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
             <span>3D</span>
           </button>
         </div>
         <Tooltip :content="isPlanningLoading ? '正在规划中...' : isPlanning ? '停止规划' : '运行规划'">
-          <Button :variant="isPlanning ? 'destructive' : 'default'" size="sm" :disabled="isPlanningLoading" @click="togglePlanning">
-            <Loader2 v-if="isPlanningLoading" class="w-4 h-4 mr-1 animate-spin"/>
-            <Pause v-else-if="isPlanning" class="w-4 h-4 mr-1"/>
-            <Play v-else class="w-4 h-4 mr-1"/>
+          <Button :variant="isPlanning ? 'destructive' : 'default'" size="sm" :disabled="isPlanningLoading"
+            @click="togglePlanning">
+            <Loader2 v-if="isPlanningLoading" class="w-4 h-4 mr-1 animate-spin" />
+            <Pause v-else-if="isPlanning" class="w-4 h-4 mr-1" />
+            <Play v-else class="w-4 h-4 mr-1" />
             {{ isPlanningLoading ? '规划中...' : isPlanning ? '停止' : '运行规划' }}
           </Button>
         </Tooltip>
         <Tooltip content="导出RPL表格">
           <Button variant="outline" size="sm" :disabled="!isPlanning" @click="appStore.openDialog('rpl-manage')">
-            <FileSpreadsheet class="w-4 h-4 mr-1"/>
+            <FileSpreadsheet class="w-4 h-4 mr-1" />
             导出RPL
           </Button>
         </Tooltip>
@@ -3882,38 +3886,28 @@ onUnmounted(() => {
 
     <!-- 地图视口 -->
     <div class="flex-1 relative overflow-hidden" @click="areaContextMenu.visible = false">
-      <div
-        :key="mapMode"
-        ref="mapContainer"
-        class="w-full h-full"
-        :aria-label="mapMode === '2d' ? '二维地图' : '三维地球'"
-      />
+      <div :key="mapMode" ref="mapContainer" class="w-full h-full" :aria-label="mapMode === '2d' ? '二维地图' : '三维地球'" />
 
-      <div
-        v-if="areaContextMenu.visible"
+      <div v-if="areaContextMenu.visible"
         class="absolute z-30 w-44 overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg"
-        :style="{ left: `${areaContextMenu.x}px`, top: `${areaContextMenu.y}px` }"
-        @click.stop
-      >
+        :style="{ left: `${areaContextMenu.x}px`, top: `${areaContextMenu.y}px` }" @click.stop>
         <button
           class="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700"
-          @click="saveSelectedAreaAsBaseMap"
-        >
+          @click="saveSelectedAreaAsBaseMap">
           <MapPinned class="w-4 h-4" />
           设置为工程底图
         </button>
-        <button
-          class="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50"
-          @click="clearSelection"
-        >
+        <button class="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50"
+          @click="clearSelection">
           <Trash2 class="w-4 h-4" />
           清除选区
         </button>
       </div>
 
       <!-- 加载状态 -->
-      <div v-if="loading && appStore.hasOpenProject" class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center gap-3 z-50">
-        <Loader2 class="w-8 h-8 text-primary animate-spin"/>
+      <div v-if="loading && appStore.hasOpenProject"
+        class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center gap-3 z-50">
+        <Loader2 class="w-8 h-8 text-primary animate-spin" />
         <span class="text-sm text-gray-600">正在加载 GeoTIFF 数据...</span>
       </div>
 
@@ -3924,18 +3918,15 @@ onUnmounted(() => {
       </div>
 
       <!-- Pareto路径列表面板 -->
-      <ParetoPanel
-          v-if="isPlanning || routeStore.paretoRoutes.length > 0"
-          @view-pareto-chart="handleViewParetoChart"
-          @select-route="handleSelectRoute"
-      />
+      <ParetoPanel v-if="isPlanning || routeStore.paretoRoutes.length > 0" @view-pareto-chart="handleViewParetoChart"
+        @select-route="handleSelectRoute" />
 
       <!-- 高程图例 -->
       <div class="absolute bottom-5 right-5 bg-white/95 p-3 rounded-md shadow z-10">
         <div class="text-xs font-semibold text-gray-700 mb-2 text-center">高程 (m)</div>
         <div class="flex">
           <div class="w-4 h-60 rounded border"
-               style="background: linear-gradient(to bottom, #fff 0%, #c8c8c8 5%, #a0522d 10%, #c86432 15%, #f0c832 22%, #c8dc64 30%, #64c832 38%, #228b22 45%, #c8f0ff 46%, #96dcff 50%, #0078c8 60%, #1e3c96 75%, #0a1e64 88%, #000014 100%);"/>
+            style="background: linear-gradient(to bottom, #fff 0%, #c8c8c8 5%, #a0522d 10%, #c86432 15%, #f0c832 22%, #c8dc64 30%, #64c832 38%, #228b22 45%, #c8f0ff 46%, #96dcff 50%, #0078c8 60%, #1e3c96 75%, #0a1e64 88%, #000014 100%);" />
           <div class="flex flex-col justify-between ml-1.5 text-[10px] text-gray-700 font-medium">
             <span>8848</span>
             <span>6500</span>
@@ -3956,9 +3947,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Pareto前沿图弹窗 -->
-    <ParetoFrontierDialog
-        v-model:visible="showParetoFrontierDialog"
-    />
+    <ParetoFrontierDialog v-model:visible="showParetoFrontierDialog" />
   </div>
 </template>
 

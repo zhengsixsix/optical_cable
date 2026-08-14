@@ -1,6 +1,7 @@
 import type { MonitorDevice } from '@/stores/monitor'
 import type { Route } from '@/types/route'
 import type { LonLatExtent } from '@/utils/routePlanningViewport'
+import { normalizeLonLatCoordinate } from '@/utils/mapProjection'
 
 type Mars3dModule = typeof import('mars3d')
 type MarsMap = import('mars3d').Map
@@ -123,7 +124,8 @@ export class Mars3dPlanningAdapter {
     if (!event?.cartesian) return
     const point = this.mars3d.LngLatPoint.fromCartesian(event.cartesian)
     if (!Number.isFinite(point.lng) || !Number.isFinite(point.lat)) return
-    this.callbacks.onCoordinates(point.lng, point.lat)
+    const [longitude, latitude] = normalizeLonLatCoordinate([point.lng, point.lat])
+    this.callbacks.onCoordinates(longitude, latitude)
   }
 
   private readonly handleMapClick = (event: any) => {
@@ -177,7 +179,11 @@ export class Mars3dPlanningAdapter {
     if (!graphic || attr?.kind !== 'route-edit-point') return
     const point = graphic.point ?? this.mars3d.LngLatPoint.fromCartesian(graphic.positionShow)
     if (!Number.isFinite(point.lng) || !Number.isFinite(point.lat)) return
-    this.callbacks.onRoutePointEdited(String(attr.routeId), String(attr.pointId), [point.lng, point.lat])
+    this.callbacks.onRoutePointEdited(
+      String(attr.routeId),
+      String(attr.pointId),
+      normalizeLonLatCoordinate([point.lng, point.lat]),
+    )
   }
 
   private readonly handleCameraMoveEnd = () => {
@@ -321,11 +327,19 @@ export class Mars3dPlanningAdapter {
 
   async setWmsLayer(
     id: string,
-    options: { url: string; layers: string; name: string; opacity?: number; visible: boolean },
+    options: {
+      url: string
+      layers: string
+      name: string
+      styles?: string
+      sldBody?: string
+      opacity?: number
+      visible: boolean
+    },
   ) {
     if (this.destroyed) return
     this.removeThematicGraphicLayer(id)
-    const sourceKey = JSON.stringify([options.url, options.layers])
+    const sourceKey = JSON.stringify([options.url, options.layers, options.styles, options.sldBody])
     const existing = this.thematicTileLayers.get(id) as (BaseLayer & { __sourceKey?: string }) | undefined
     if (existing?.__sourceKey === sourceKey) {
       existing.show = options.visible
@@ -345,7 +359,8 @@ export class Mars3dPlanningAdapter {
         service: 'WMS',
         version: '1.1.1',
         request: 'GetMap',
-        styles: '',
+        styles: options.styles ?? '',
+        ...(options.sldBody ? { sld_body: options.sldBody } : {}),
       },
       opacity: options.opacity ?? 0.9,
       show: options.visible,

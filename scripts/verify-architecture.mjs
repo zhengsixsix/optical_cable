@@ -155,7 +155,7 @@ assert.equal(packageData.scripts?.['test:excel-import'], 'node scripts/verify-ex
 assert.equal(packageData.scripts?.['test:rpl-export'], 'node scripts/verify-rpl-export.mjs')
 assert.equal(
   packageData.scripts?.['test:route-results'],
-  'node scripts/verify-backend-route-planning-response.mjs && node scripts/verify-route-planning-result.mjs',
+  'node scripts/verify-backend-route-planning-response.mjs && node scripts/verify-route-planning-result.mjs && node scripts/verify-route-frontend-interactions.mjs',
 )
 assert.equal(packageData.scripts?.['test:project-import'], 'node scripts/verify-project-import-isolation.mjs')
 

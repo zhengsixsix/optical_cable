@@ -23,6 +23,7 @@
       const layerStore = useLayerStore(pinia)
 
       const definitions = [
+        ['elevation', 'BATHY', '海洋高程', 'cable:OceanElevation'],
         ['coldCoral', 'CWCORAL', '冷水珊瑚', 'cable:WCMC008_CoralReef2021_Py_v4_1'],
         ['fishing', 'FISHZONE', '海洋渔区分布', 'cable:fishing_area_NoDuplicate_Classify_two_level'],
         ['earthquake', 'SEISMIC', '地震活动', 'cable:earthQuakeData'],
@@ -47,30 +48,32 @@
         })),
       }
       dictionaryStore.loadedByType = { LAYER_TYPE: true }
-      layerStore.platformProjectLayers = definitions.map(([, code, name], index) => ({
+      layerStore.platformProjectLayers = definitions.map(([, code, name, wmsLayerName], index) => ({
         id: String(index + 1),
         name,
         typeDic: code,
-        attachmentId: String(100 + index),
-        attachmentName: `${name}.shp`,
+        geoLayerName: wmsLayerName,
+        isDefault: 1,
       }))
+      layerStore.platformDefaultLayers = [...layerStore.platformProjectLayers]
+      layerStore.loadPlatformDefaultLayers = async () => {}
       layerStore.loadPlatformProjectLayers = async () => {}
 
       definitions.forEach(([id, code, name, wmsLayerName], index) => {
         layerStore.upsertLayer({
           id,
           name,
-          type: 'vector',
-          visible: false,
+          type: id === 'elevation' ? 'raster' : 'vector',
+          visible: id === 'elevation',
           loaded: true,
           loading: false,
-          opacity: 1,
+          opacity: id === 'elevation' ? 0.72 : 1,
           zIndex: 80 + index,
         })
         layerStore.setLayerData(id, {
           id,
           metadata: {
-            source: `platform:${index + 1}:${100 + index}`,
+            source: `platform:${index + 1}::${wmsLayerName}`,
             typeDic: code,
             wmsUrl: '/geoserver/geo/wms',
             wmsLayerName,

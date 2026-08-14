@@ -13,6 +13,7 @@
     "test:excel-import": "node scripts/verify-excel-import.mjs",
     "test:gis-attachment": "node scripts/verify-gis-attachment-parsing.mjs",
     "test:geoserver-wms": "node scripts/verify-geoserver-wms.mjs",
+    "test:map-projection": "node scripts/verify-map-display-projection.mjs",
     "test:rpl-export": "node scripts/verify-rpl-export.mjs",
     "test:sld-export": "node scripts/verify-sld-explicit-total-loss.mjs",
     "test:route-results": "node scripts/verify-backend-route-planning-response.mjs && node scripts/verify-route-planning-result.mjs && node scripts/verify-route-frontend-interactions.mjs",
@@ -25,7 +26,7 @@
     "test:project-import": "node scripts/verify-project-import-isolation.mjs",
     "test:lifecycle": "node scripts/verify-alarm-websocket-lifecycle.mjs",
     "test:dictionary-source": "node scripts/verify-platform-dictionary-source.mjs",
-    "test:regression": "npm run test:architecture && npm run test:cycles && npm run test:attachment-download && npm run test:excel-import && npm run test:gis-attachment && npm run test:geoserver-wms && npm run test:rpl-export && npm run test:sld-export && npm run test:route-results && npm run test:interface-optimizations && npm run test:pareto-analysis && npm run test:platform-project-open && npm run test:system-planning && npm run test:project-import && npm run test:lifecycle && npm run test:dictionary-source"
+    "test:regression": "npm run test:architecture && npm run test:cycles && npm run test:attachment-download && npm run test:excel-import && npm run test:gis-attachment && npm run test:geoserver-wms && npm run test:map-projection && npm run test:rpl-export && npm run test:sld-export && npm run test:route-results && npm run test:interface-optimizations && npm run test:pareto-analysis && npm run test:platform-project-open && npm run test:system-planning && npm run test:project-import && npm run test:lifecycle && npm run test:dictionary-source"
   },
   "dependencies": {
     "@turf/turf": "^6.5.0",

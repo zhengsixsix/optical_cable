@@ -20,13 +20,6 @@ function extentEquals(a: [number, number, number, number], b: [number, number, n
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3]
 }
 
-function mercatorToLatLon(x: number, y: number): [number, number] {
-  const lon = (x / 20037508.34) * 180
-  let lat = (y / 20037508.34) * 180
-  lat = (180 / Math.PI) * (2 * Math.atan(Math.exp((lat * Math.PI) / 180)) - Math.PI / 2)
-  return [lon, lat]
-}
-
 function calculateElevationStats(elevationData: Int16Array): { minElev: number; maxElev: number; elevRange: number } {
   let minElev = Infinity
   let maxElev = -Infinity
@@ -60,16 +53,21 @@ export async function getTerrainData(
   }
 
   isLoading.value = true
-  cachedExtent.value = extent
+  // MapArea emits a WGS84 lon/lat extent. Keep the cache key in the same
+  // coordinate system as the DEM API and Terrain3D's coordinate conversion.
+  const extentLonLat: [number, number, number, number] = [...extent]
+  cachedExtent.value = extentLonLat
 
   loadingPromise.value = (async () => {
     try {
-      const [lonMin, latMin] = mercatorToLatLon(extent[0], extent[1])
-      const [lonMax, latMax] = mercatorToLatLon(extent[2], extent[3])
-      const extentLonLat: [number, number, number, number] = [lonMin, latMin, lonMax, latMax]
-
       const apiAvailable = await checkDemService()
-      if (!apiAvailable) return null
+      if (!apiAvailable) {
+        if (cachedExtent.value && extentEquals(cachedExtent.value, extentLonLat)) {
+          cachedExtent.value = null
+          cachedData.value = null
+        }
+        return null
+      }
 
       const result = await fetchDemClip(extentLonLat, 128, 128)
       const elevationData = new Int16Array(result.elevation)
@@ -85,6 +83,12 @@ export async function getTerrainData(
       cachedData.value = data
       return data
     } catch {
+      // Do not let a failed request make a previous terrain look like a hit
+      // for the new extent on the next render.
+      if (cachedExtent.value && extentEquals(cachedExtent.value, extentLonLat)) {
+        cachedExtent.value = null
+        cachedData.value = null
+      }
       return null
     } finally {
       isLoading.value = false

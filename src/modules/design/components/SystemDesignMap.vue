@@ -10,6 +10,7 @@ import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import { createBaseTileSource } from '@/utils/mapTileSource'
+import { normalizeLonLatCoordinate } from '@/utils/mapProjection'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import LineString from 'ol/geom/LineString'
@@ -158,12 +159,13 @@ const setupTranslateInteraction = () => {
 
     const geom = feature.getGeometry() as Point
     const rawCoord = geom.getCoordinates() as [number, number]
-    const finalCoord = snapCoordinateToSelectedRoute(rawCoord)
-    if (!finalCoord) {
+    const snappedCoord = snapCoordinateToSelectedRoute(rawCoord)
+    if (!snappedCoord) {
       scheduleRedraw(false, true)
       dragPointId = null
       return
     }
+    const finalCoord = normalizeLonLatCoordinate(snappedCoord)
     geom.setCoordinates(finalCoord)
 
     emit('amplifier-moved', {
@@ -827,7 +829,8 @@ const initMap = () => {
   
   // 鼠标移动显示坐标
   map.on('pointermove', (evt) => {
-    coordinates.value = { lon: evt.coordinate[0], lat: evt.coordinate[1] }
+    const [lon, lat] = normalizeLonLatCoordinate(evt.coordinate as [number, number])
+    coordinates.value = { lon, lat }
     handlePointerMove(evt)
   })
 
@@ -866,9 +869,10 @@ const initMap = () => {
     if (props.coordinatePicking) {
       const snappedCoordinate = snapCoordinateToSelectedRoute(evt.coordinate as [number, number])
       if (!snappedCoordinate) return
+      const [longitude, latitude] = normalizeLonLatCoordinate(snappedCoordinate)
       emit('coordinate-picked', {
-        longitude: snappedCoordinate[0],
-        latitude: snappedCoordinate[1],
+        longitude,
+        latitude,
       })
       return
     }
